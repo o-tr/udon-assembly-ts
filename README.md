@@ -76,4 +76,4 @@ pnpm test
 
 ## License
 
-See repository root for license information.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
