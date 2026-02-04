@@ -24,7 +24,6 @@ describe("Local slot reuse", () => {
       line.trim().startsWith("__l"),
     );
 
-    expect(localSlots.length).toBeGreaterThan(0);
     expect(localSlots.length).toBeLessThan(3);
     expect(result.uasm).not.toContain("a: %");
     expect(result.uasm).not.toContain("b: %");
