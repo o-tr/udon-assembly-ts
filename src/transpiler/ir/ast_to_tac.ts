@@ -1686,11 +1686,12 @@ export class ASTToTACConverter {
           : calleeName;
         const collectionType = this.typeMapper.mapTypeScriptType(typeArgText);
         const collectionResult = this.newTemp(collectionType);
+        const paramTypes = args.map((arg) => this.getOperandType(arg).name);
         const externSig = this.requireExternSignature(
           calleeName,
           "ctor",
           "method",
-          [],
+          paramTypes,
           calleeName,
         );
         this.instructions.push(
