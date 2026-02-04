@@ -30,15 +30,27 @@ type ExternOverride = {
 };
 
 const DEFAULT_SCRIPT_TARGET = ts.ScriptTarget.ES2020;
+let externRegistryInitialized = false;
+const scannedFiles = new Set<string>();
 
 export function buildExternRegistryFromFiles(filePaths: string[]): void {
-  clearExternTypeAliases();
-  typeMetadataRegistry.clear();
-
   const scanFiles = collectScanFiles(filePaths);
+  const newFiles = scanFiles.filter((filePath) => !scannedFiles.has(filePath));
+  if (!externRegistryInitialized) {
+    clearExternTypeAliases();
+    typeMetadataRegistry.clear();
+    externRegistryInitialized = true;
+  }
+  if (newFiles.length === 0) {
+    return;
+  }
+  for (const filePath of newFiles) {
+    scannedFiles.add(filePath);
+  }
+
   const stubClasses: StubClassInfo[] = [];
 
-  for (const filePath of scanFiles) {
+  for (const filePath of newFiles) {
     if (!isSupportedSource(filePath)) continue;
     let sourceText = "";
     try {

@@ -6,7 +6,7 @@ import { UdonExtern, UdonStub } from "./UdonDecorators.js";
 import type { UdonDouble, UdonInt } from "./UdonTypes.js";
 
 @UdonStub("System.String")
-export class String {
+export class SystemString {
   @UdonExtern("Length")
   length: UdonInt = 0 as UdonInt;
 
@@ -64,7 +64,7 @@ export class SystemArray {
 export class Convert {}
 
 @UdonStub("System.Math")
-export class Math {
+export class SystemMath {
   static Truncate(_value: UdonDouble | number): UdonDouble {
     return 0 as UdonDouble;
   }
@@ -79,3 +79,5 @@ export class Type {
 
 @UdonStub("System.Collections.IEnumerator")
 export class SystemCollectionsIEnumerator {}
+
+export { SystemString as String, SystemMath as Math };

@@ -221,7 +221,7 @@ export class Networking {
   }
 }
 
-@UdonStub("VRCInstantiate")
+@UdonStub("VRC.SDKBase.VRCInstantiate")
 export class VRCInstantiate {
   static Instantiate(_obj: GameObject): GameObject {
     return null as unknown as GameObject;
