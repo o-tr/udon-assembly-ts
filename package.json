@@ -1,6 +1,7 @@
 {
   "name": "@ootr/udon-assembly-ts",
-  "version": "0.1.0",
+  "version": "0.0.1",
+  "private": false,
   "description": "TypeScript to Udon Assembly transpiler and UdonSharp stubs",
   "type": "module",
   "bin": {
