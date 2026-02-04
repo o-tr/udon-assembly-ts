@@ -569,6 +569,8 @@ export class TACOptimizer {
         if (condJump.condition.kind === TACOperandKind.Constant) {
           const constOp = condJump.condition as ConstantOperand;
           const value = constOp.value;
+          // Conditions in TAC should be boolean/number; other ConstantValue
+          // types are not treated as truthy/falsy here.
           if (typeof value === "boolean" || typeof value === "number") {
             const isFalse =
               typeof value === "boolean"

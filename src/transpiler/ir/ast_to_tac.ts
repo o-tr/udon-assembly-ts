@@ -635,6 +635,8 @@ export class ASTToTACConverter {
       const rawCaseValue = this.visitExpression(entry.node.expression);
       const caseValue = this.coerceSwitchOperand(rawCaseValue, switchType);
       const comparisonResult = this.newTemp(PrimitiveTypes.boolean);
+      // Use "!=" because ConditionalJump jumps when the condition is false,
+      // so we branch to the case label when values are equal.
       this.instructions.push(
         new BinaryOpInstruction(comparisonResult, switchTemp, "!=", caseValue),
       );
