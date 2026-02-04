@@ -24,7 +24,7 @@ describe("optional chaining", () => {
     const tac = converter.convert(ast);
     const tacText = stringify(tac);
 
-    expect(tacText).toContain("opt_null");
+    expect(tacText).toContain("opt_notnull");
     expect(tacText).toContain("opt_end");
     expect(tacText).toContain("prop");
   });

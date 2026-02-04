@@ -4,6 +4,11 @@
     "module": "ESNext",
     "lib": ["ESNext"],
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@ootr/udon-assembly-ts": ["src/index.ts"],
+      "@ootr/udon-assembly-ts/*": ["src/*"]
+    },
     "resolveJsonModule": true,
     "declaration": true,
     "outDir": "./dist",

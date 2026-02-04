@@ -118,7 +118,7 @@ export class CastInstruction implements TACInstruction {
 }
 
 /**
- * Conditional jump: if condition goto label
+ * Conditional jump: if condition is false goto label
  */
 export class ConditionalJumpInstruction implements TACInstruction {
   kind = TACInstructionKind.ConditionalJump as const;
@@ -129,7 +129,7 @@ export class ConditionalJumpInstruction implements TACInstruction {
   ) {}
 
   toString(): string {
-    return `if ${operandToString(this.condition)} goto ${operandToString(this.label)}`;
+    return `ifFalse ${operandToString(this.condition)} goto ${operandToString(this.label)}`;
   }
 }
 
