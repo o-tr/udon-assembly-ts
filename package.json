@@ -1,5 +1,5 @@
 {
-  "name": "udon-assembly-ts",
+  "name": "@ootr/udon-assembly-ts",
   "version": "0.1.0",
   "description": "TypeScript to Udon Assembly transpiler and UdonSharp stubs",
   "type": "module",
