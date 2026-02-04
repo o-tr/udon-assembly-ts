@@ -11,7 +11,7 @@ import {
   BinaryOpInstruction,
   type CallInstruction,
   CastInstruction,
-  type ConditionalJumpInstruction,
+  ConditionalJumpInstruction,
   CopyInstruction,
   type LabelInstruction,
   type MethodCallInstruction,
@@ -767,7 +767,7 @@ export class TACOptimizer {
         inst.kind === TACInstructionKind.UnconditionalJump ||
         inst.kind === TACInstructionKind.ConditionalJump
       ) {
-        const label = (inst as { label: TACOperand }).label;
+        const label = (inst as unknown as { label: TACOperand }).label;
         if (label.kind === TACOperandKind.Label) {
           const labelName = (label as LabelOperand).name;
           const resolvedName = resolved.get(labelName) ?? labelName;
