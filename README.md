@@ -12,13 +12,13 @@ TypeScript to Udon Assembly (.uasm) transpiler and UdonSharp-compatible TypeScri
 ## Installation
 
 ```bash
-pnpm add udon-assembly-ts
+pnpm add @ootr/udon-assembly-ts
 ```
 
 ## Library Usage
 
 ```ts
-import { TypeScriptToUdonTranspiler } from "udon-assembly-ts";
+import { TypeScriptToUdonTranspiler } from "@ootr/udon-assembly-ts";
 
 const transpiler = new TypeScriptToUdonTranspiler();
 const result = transpiler.transpile(`
@@ -55,8 +55,8 @@ Options:
 ## Stubs Usage
 
 ```ts
-import { UdonTypeConverters } from "udon-assembly-ts/stubs";
-import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonDecorators";
+import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 ```
 
 ## Project Structure
