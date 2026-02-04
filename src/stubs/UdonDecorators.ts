@@ -1,0 +1,31 @@
+/**
+ * UdonSharp互換用のデコレータースタブ
+ */
+
+export const UdonStatic: ClassDecorator = () => undefined;
+export const UdonExport: MethodDecorator = () => undefined;
+// Transpiler strips TsOnly calls from UASM; TS runtime executes the callback.
+export function TsOnly(action: () => void): void {
+  action();
+}
+export const UdonTsOnly = TsOnly;
+
+export function UdonBehaviour(_options?: {
+  syncMode?: "None" | "Continuous" | "Manual";
+}): ClassDecorator {
+  return () => undefined;
+}
+export const SerializeField: PropertyDecorator = () => undefined;
+
+// UdonSharp stub requires generic arguments
+export function UdonStub(target: (...args: never[]) => unknown): void;
+export function UdonStub(typePath?: string): ClassDecorator;
+// UdonSharp stub requires generic arguments
+export function UdonStub(
+  arg?: string | ((...args: never[]) => unknown),
+): ClassDecorator | undefined {
+  if (typeof arg === "function") {
+    return;
+  }
+  return () => undefined;
+}

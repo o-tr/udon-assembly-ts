@@ -1,0 +1,250 @@
+/**
+ * Class registry for transpiler
+ */
+
+import {
+  type ASTNode,
+  ASTNodeKind,
+  type ClassDeclarationNode,
+  type DecoratorNode,
+  type InterfaceDeclarationNode,
+  type MethodDeclarationNode,
+  type ProgramNode,
+  type PropertyDeclarationNode,
+} from "./types.js";
+
+export interface DecoratorInfo {
+  name: string;
+  arguments: unknown[];
+}
+
+export interface MethodInfo {
+  name: string;
+  parameters: Array<{ name: string; type: string }>;
+  returnType: string;
+  isPublic: boolean;
+  isStatic: boolean;
+  isExported?: boolean;
+  node: MethodDeclarationNode;
+}
+
+export interface PropertyInfo {
+  name: string;
+  type: string;
+  isPublic: boolean;
+  isStatic: boolean;
+  node: PropertyDeclarationNode;
+  syncMode?: string;
+  fieldChangeCallback?: string;
+  isSerializeField?: boolean;
+}
+
+export interface ClassMetadata {
+  name: string;
+  filePath: string;
+  baseClass: string | null;
+  decorators: DecoratorInfo[];
+  isEntryPoint: boolean;
+  methods: MethodInfo[];
+  properties: PropertyInfo[];
+  constructor?: {
+    parameters: Array<{ name: string; type: string }>;
+    body: ASTNode;
+  };
+  node: ClassDeclarationNode;
+  behaviourSyncMode?: string;
+}
+
+export interface InterfaceMetadata {
+  name: string;
+  filePath: string;
+  properties: Array<{ name: string; type: string }>;
+  methods: Array<{
+    name: string;
+    parameters: Array<{ name: string; type: string }>;
+    returnType: string;
+  }>;
+  node: InterfaceDeclarationNode;
+}
+
+export class ClassRegistry {
+  private classes: Map<string, ClassMetadata> = new Map();
+  private interfaces: Map<string, InterfaceMetadata> = new Map();
+
+  register(classInfo: ClassMetadata): void {
+    this.classes.set(classInfo.name, classInfo);
+  }
+
+  getClass(name: string): ClassMetadata | undefined {
+    return this.classes.get(name);
+  }
+
+  getInterface(name: string): InterfaceMetadata | undefined {
+    return this.interfaces.get(name);
+  }
+
+  getInheritanceChain(className: string): string[] {
+    const chain: string[] = [];
+    let current = this.classes.get(className);
+    while (current) {
+      chain.push(current.name);
+      if (!current.baseClass) break;
+      current = this.classes.get(current.baseClass);
+    }
+    return chain;
+  }
+
+  getEntryPoints(): ClassMetadata[] {
+    return Array.from(this.classes.values()).filter((cls) => cls.isEntryPoint);
+  }
+
+  getAllClasses(): ClassMetadata[] {
+    return Array.from(this.classes.values());
+  }
+
+  getClassesInFile(filePath: string): ClassMetadata[] {
+    return Array.from(this.classes.values()).filter(
+      (cls) => cls.filePath === filePath,
+    );
+  }
+
+  isStub(className: string): boolean {
+    const metadata = this.classes.get(className);
+    if (!metadata) return false;
+    return metadata.decorators.some(
+      (decorator) => decorator.name === "UdonStub",
+    );
+  }
+
+  getMergedMethods(className: string): MethodInfo[] {
+    const chain = this.getInheritanceChain(className).slice().reverse();
+    const merged = new Map<string, MethodInfo>();
+
+    for (const name of chain) {
+      if (this.isStub(name)) continue;
+      const metadata = this.classes.get(name);
+      if (!metadata) continue;
+      for (const method of metadata.methods) {
+        merged.set(method.name, method);
+      }
+    }
+
+    return Array.from(merged.values());
+  }
+
+  getMergedProperties(className: string): PropertyInfo[] {
+    const chain = this.getInheritanceChain(className).slice().reverse();
+    const merged = new Map<string, PropertyInfo>();
+
+    for (const name of chain) {
+      if (this.isStub(name)) continue;
+      const metadata = this.classes.get(name);
+      if (!metadata) continue;
+      for (const prop of metadata.properties) {
+        merged.set(prop.name, prop);
+      }
+    }
+
+    return Array.from(merged.values());
+  }
+
+  registerFromProgram(program: ProgramNode, filePath: string): void {
+    for (const stmt of program.statements) {
+      if (stmt.kind === ASTNodeKind.InterfaceDeclaration) {
+        const interfaceNode = stmt as InterfaceDeclarationNode;
+        this.interfaces.set(interfaceNode.name, {
+          name: interfaceNode.name,
+          filePath,
+          properties: interfaceNode.properties.map((prop) => ({
+            name: prop.name,
+            type: prop.type.name,
+          })),
+          methods: interfaceNode.methods.map((method) => ({
+            name: method.name,
+            parameters: method.parameters.map((param) => ({
+              name: param.name,
+              type: param.type.name,
+            })),
+            returnType: method.returnType.name,
+          })),
+          node: interfaceNode,
+        });
+        continue;
+      }
+      if (stmt.kind !== ASTNodeKind.ClassDeclaration) continue;
+      const classNode = stmt as ClassDeclarationNode;
+      const decorators = classNode.decorators.map((decorator) =>
+        this.toDecoratorInfo(decorator),
+      );
+      const isEntryPoint = decorators.some(
+        (decorator) => decorator.name === "UdonBehaviour",
+      );
+      const methods = classNode.methods.map((method) =>
+        this.toMethodInfo(method),
+      );
+      const properties = classNode.properties.map((prop) =>
+        this.toPropertyInfo(prop),
+      );
+      const behaviourSyncMode = decorators.find(
+        (decorator) => decorator.name === "UdonBehaviour",
+      )?.arguments?.[0];
+
+      this.register({
+        name: classNode.name,
+        filePath,
+        baseClass: classNode.baseClass,
+        decorators,
+        isEntryPoint,
+        methods,
+        properties,
+        constructor: classNode.constructor,
+        node: classNode,
+        behaviourSyncMode:
+          typeof behaviourSyncMode === "string"
+            ? behaviourSyncMode
+            : typeof behaviourSyncMode === "object" &&
+                behaviourSyncMode !== null &&
+                "syncMode" in behaviourSyncMode
+              ? String(
+                  (behaviourSyncMode as { syncMode?: string }).syncMode ?? "",
+                )
+              : undefined,
+      });
+    }
+  }
+
+  private toDecoratorInfo(decorator: DecoratorNode): DecoratorInfo {
+    return {
+      name: decorator.name,
+      arguments: decorator.arguments,
+    };
+  }
+
+  private toMethodInfo(method: MethodDeclarationNode): MethodInfo {
+    return {
+      name: method.name,
+      parameters: method.parameters.map((param) => ({
+        name: param.name,
+        type: param.type.name,
+      })),
+      returnType: method.returnType.name,
+      isPublic: method.isPublic,
+      isStatic: method.isStatic,
+      isExported: method.isExported,
+      node: method,
+    };
+  }
+
+  private toPropertyInfo(property: PropertyDeclarationNode): PropertyInfo {
+    return {
+      name: property.name,
+      type: property.type.name,
+      isPublic: property.isPublic,
+      isStatic: property.isStatic,
+      node: property,
+      syncMode: property.syncMode,
+      fieldChangeCallback: property.fieldChangeCallback,
+      isSerializeField: property.isSerializeField,
+    };
+  }
+}

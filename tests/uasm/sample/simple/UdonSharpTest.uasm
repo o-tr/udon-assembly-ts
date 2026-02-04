@@ -1,0 +1,14 @@
+.data_start
+    __const_SystemString_0: %SystemString, "hello udon-sharp"
+    __t0: %SystemSingle, null
+.data_end
+.code_start
+    .behaviourSyncMode none
+    .export _start
+    _start:
+        PUSH, __const_SystemString_0
+        EXTERN, "UnityEngineDebug.__Log__SystemObject__SystemVoid"
+        PUSH, __t0
+        COPY
+        JUMP, 0xFFFFFFFF
+.code_end
