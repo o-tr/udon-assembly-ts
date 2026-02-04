@@ -313,10 +313,6 @@ function normalizeTypeText(
   if (text.startsWith("readonly ")) {
     text = text.slice("readonly ".length).trim();
   }
-  const arrayMatch = text.match(/^(ReadonlyArray|Array)<(.+)>$/);
-  if (arrayMatch) {
-    return `${arrayMatch[2].trim()}[]`;
-  }
   if (text.includes("|")) {
     const parts = text
       .split("|")
@@ -325,15 +321,33 @@ function normalizeTypeText(
         (part) => part !== "" && part !== "null" && part !== "undefined",
       );
     if (parts.length === 1) {
-      return parts[0];
+      return normalizeSingleType(parts[0]);
     }
     if (parts.length > 1) {
       const selected = selectUnionType(parts);
       warnUnionFallback(text, parts, selected);
-      return selected;
+      return normalizeSingleType(selected);
     }
   }
-  return text;
+  return normalizeSingleType(text);
+}
+
+function normalizeSingleType(text: string): string {
+  const arrayMatch = text.match(/^(ReadonlyArray|Array)<(.+)>$/);
+  if (arrayMatch) {
+    return `${stripGenericArguments(arrayMatch[2].trim())}[]`;
+  }
+  if (text.endsWith("[]")) {
+    const element = text.slice(0, -2).trim();
+    return `${stripGenericArguments(element)}[]`;
+  }
+  return stripGenericArguments(text);
+}
+
+function stripGenericArguments(text: string): string {
+  const genericIndex = text.indexOf("<");
+  if (genericIndex === -1) return text;
+  return text.slice(0, genericIndex).trim();
 }
 
 function selectUnionType(parts: string[]): string {

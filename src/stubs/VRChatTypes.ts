@@ -24,6 +24,18 @@ import { UdonStub } from "./UdonDecorators.js";
 import { type UdonInt, UdonTypeConverters } from "./UdonTypes.js";
 import type { GameObject, Quaternion, Vector3 } from "./UnityTypes.js";
 
+@UdonStub("UnityEngine.HumanBodyBones")
+export class HumanBodyBones {}
+
+@UdonStub("VRC.SDKBase.VRCPlayerApi+TrackingDataType")
+export class TrackingDataType {}
+
+@UdonStub("VRC.SDKBase.VRCPlayerApi+TrackingData")
+export class TrackingData {
+  position: Vector3 = null as unknown as Vector3;
+  rotation: Quaternion = null as unknown as Quaternion;
+}
+
 @UdonStub("VRC.SDKBase.VRCPlayerApi")
 export class VRCPlayerApi {
   /**
@@ -98,16 +110,16 @@ export class VRCPlayerApi {
 
   SetVelocity(_velocity: Vector3): void {}
 
-  GetBonePosition(_bone: unknown): Vector3 {
+  GetBonePosition(_bone: HumanBodyBones): Vector3 {
     return null as unknown as Vector3;
   }
 
-  GetBoneRotation(_bone: unknown): Quaternion {
+  GetBoneRotation(_bone: HumanBodyBones): Quaternion {
     return null as unknown as Quaternion;
   }
 
-  GetTrackingData(_type: unknown): unknown {
-    return null as unknown;
+  GetTrackingData(_type: TrackingDataType): TrackingData {
+    return new TrackingData();
   }
 
   IsUserInVR(): boolean {
