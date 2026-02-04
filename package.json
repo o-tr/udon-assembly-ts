@@ -2,6 +2,7 @@
   "name": "@ootr/udon-assembly-ts",
   "version": "0.0.1",
   "private": false,
+  "license": "MIT",
   "description": "TypeScript to Udon Assembly transpiler and UdonSharp stubs",
   "type": "module",
   "bin": {
