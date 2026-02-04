@@ -8,6 +8,10 @@
   "bin": {
     "udon-assembly-ts": "./dist/cli/index.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/o-tr/udon-assembly-ts.git"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
