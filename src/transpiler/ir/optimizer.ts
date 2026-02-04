@@ -684,6 +684,14 @@ export class TACOptimizer {
     const loops = this.collectLoops(cfg);
     if (loops.length === 0) return instructions;
 
+    const dom = this.computeDominators(cfg);
+    const indexToBlock = new Map<number, number>();
+    for (const block of cfg.blocks) {
+      for (let i = block.start; i <= block.end; i++) {
+        indexToBlock.set(i, block.id);
+      }
+    }
+
     const hoistMap = new Map<number, TACInstruction[]>();
     const hoistIndices = new Set<number>();
 
@@ -740,6 +748,17 @@ export class TACOptimizer {
         if ((defCounts.get(defKey) ?? 0) !== 1) continue;
         if (usedOutside.has(defKey)) continue;
         if ((useBeforeDef.get(defKey) ?? index) < index) continue;
+
+        const defBlockId = indexToBlock.get(index);
+        if (defBlockId === undefined) continue;
+        let dominatesLoop = true;
+        for (const blockId of loopBlocks) {
+          if (!(dom.get(blockId)?.has(defBlockId) ?? false)) {
+            dominatesLoop = false;
+            break;
+          }
+        }
+        if (!dominatesLoop) continue;
 
         const operands = this.getUsedOperandsForReuse(inst);
         const allInvariant = operands.every((op) => {
@@ -863,6 +882,7 @@ export class TACOptimizer {
         const key = this.livenessKey(bin.dest);
         if (!key) continue;
         if (updates.has(key)) continue;
+        if ((defCounts.get(key) ?? 0) !== 1) continue;
         updates.set(key, {
           index,
           delta: rightConst.value,
