@@ -1303,7 +1303,10 @@ export class TACOptimizer {
 
   private isTruthyConstant(value: ConstantValue): boolean | null {
     if (typeof value === "boolean") return value;
-    if (typeof value === "number") return value !== 0;
+    if (typeof value === "number") {
+      if (Number.isNaN(value)) return false;
+      return value !== 0;
+    }
     return null;
   }
 
@@ -1456,7 +1459,11 @@ export class TACOptimizer {
     const typeKey = this.getOperandType(inst.dest).udonType;
     let leftKey = this.operandKey(inst.left);
     let rightKey = this.operandKey(inst.right);
-    if (this.isCommutativeOperator(inst.operator)) {
+    const commutative =
+      inst.operator === "+" && typeKey === "String"
+        ? false
+        : this.isCommutativeOperator(inst.operator);
+    if (commutative) {
       if (leftKey > rightKey) {
         const tmp = leftKey;
         leftKey = rightKey;
@@ -3636,7 +3643,7 @@ export class TACOptimizer {
     }
 
     const result = evaluator.eval(args);
-    if (!Number.isFinite(result)) return null;
+    if (!Number.isFinite(result) || Number.isNaN(result)) return null;
 
     const destType = this.getOperandType(inst.dest);
     const casted = this.evaluateCastValue(result, destType);
