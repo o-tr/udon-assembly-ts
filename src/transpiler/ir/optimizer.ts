@@ -1475,8 +1475,8 @@ export class TACOptimizer {
     operandKey: string,
   ): void {
     const needle = `|${operandKey}|`;
-    for (const key of Array.from(map.keys())) {
-      if (key.includes(needle)) {
+    for (const [key, value] of Array.from(map.entries())) {
+      if (key.includes(needle) || value.operandKey === operandKey) {
         map.delete(key);
       }
     }
