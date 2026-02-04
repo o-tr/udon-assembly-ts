@@ -42,6 +42,11 @@ type ValueInfo =
   | { kind: "constant"; operand: ConstantOperand }
   | { kind: "copy"; operand: TACOperand };
 
+type LatticeValue =
+  | { kind: "unknown" }
+  | { kind: "constant"; operand: ConstantOperand }
+  | { kind: "copy"; operand: VariableOperand };
+
 type BasicBlock = {
   id: number;
   start: number;
@@ -50,10 +55,99 @@ type BasicBlock = {
   succs: number[];
 };
 
+type ExprValue = { operandKey: string; operand: TACOperand };
+
+const bankersRound = (value: number): number => {
+  const integer = Math.floor(value);
+  const frac = value - integer;
+  if (Math.abs(frac) === 0.5) {
+    return integer % 2 === 0 ? integer : Math.ceil(value);
+  }
+  if (frac > 0.5) return integer + 1;
+  return integer;
+};
+
 /**
  * TAC optimizer
  */
 export class TACOptimizer {
+  private static readonly pureExternEvaluators = new Map<
+    string,
+    { arity: number; eval: (args: number[]) => number }
+  >([
+    [
+      "UnityEngineMathf.__Abs__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.abs(a) },
+    ],
+    [
+      "UnityEngineMathf.__Ceil__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.ceil(a) },
+    ],
+    [
+      "UnityEngineMathf.__CeilToInt__SystemSingle__SystemInt32",
+      { arity: 1, eval: ([a]) => Math.ceil(a) },
+    ],
+    [
+      "UnityEngineMathf.__Clamp__SystemSingle_SystemSingle_SystemSingle__SystemSingle",
+      {
+        arity: 3,
+        eval: ([v, min, max]) => Math.min(Math.max(v, min), max),
+      },
+    ],
+    [
+      "UnityEngineMathf.__Clamp01__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([v]) => Math.min(Math.max(v, 0), 1) },
+    ],
+    [
+      "UnityEngineMathf.__Floor__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.floor(a) },
+    ],
+    [
+      "UnityEngineMathf.__FloorToInt__SystemSingle__SystemInt32",
+      { arity: 1, eval: ([a]) => Math.floor(a) },
+    ],
+    [
+      "UnityEngineMathf.__Lerp__SystemSingle_SystemSingle_SystemSingle__SystemSingle",
+      { arity: 3, eval: ([a, b, t]) => a + (b - a) * t },
+    ],
+    [
+      "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle",
+      { arity: 2, eval: ([a, b]) => Math.max(a, b) },
+    ],
+    [
+      "UnityEngineMathf.__Min__SystemSingle_SystemSingle__SystemSingle",
+      { arity: 2, eval: ([a, b]) => Math.min(a, b) },
+    ],
+    [
+      "UnityEngineMathf.__Pow__SystemSingle_SystemSingle__SystemSingle",
+      { arity: 2, eval: ([a, b]) => Math.pow(a, b) },
+    ],
+    [
+      "UnityEngineMathf.__Round__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => bankersRound(a) },
+    ],
+    [
+      "UnityEngineMathf.__RoundToInt__SystemSingle__SystemInt32",
+      { arity: 1, eval: ([a]) => bankersRound(a) },
+    ],
+    [
+      "UnityEngineMathf.__Sin__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.sin(a) },
+    ],
+    [
+      "UnityEngineMathf.__Cos__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.cos(a) },
+    ],
+    [
+      "UnityEngineMathf.__Sqrt__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.sqrt(a) },
+    ],
+    [
+      "UnityEngineMathf.__Tan__SystemSingle__SystemSingle",
+      { arity: 1, eval: ([a]) => Math.tan(a) },
+    ],
+  ]);
+
   /**
    * Apply all optimization passes
    */
@@ -63,17 +157,17 @@ export class TACOptimizer {
     // Apply constant folding
     optimized = this.constantFolding(optimized);
 
-    // Apply CFG-based constant and copy propagation
-    optimized = this.cfgPropagateConstantsAndCopies(optimized);
+    // Apply SCCP and prune unreachable blocks
+    optimized = this.sccpAndPrune(optimized);
 
-    // Apply common subexpression elimination
-    optimized = this.commonSubexpressionElimination(optimized);
+    // Apply boolean simplifications
+    optimized = this.booleanSimplification(optimized);
 
     // Apply algebraic simplifications and redundant cast removal
     optimized = this.algebraicSimplification(optimized);
 
-    // Simplify branches based on constant conditions
-    optimized = this.simplifyBranches(optimized);
+    // Apply global value numbering / CSE across blocks
+    optimized = this.globalValueNumbering(optimized);
 
     // Eliminate single-use temporaries inside basic blocks
     optimized = this.eliminateSingleUseTemporaries(optimized);
@@ -81,14 +175,20 @@ export class TACOptimizer {
     // Remove no-op copies/assignments
     optimized = this.eliminateNoopCopies(optimized);
 
+    // Remove dead stores using CFG liveness
+    optimized = this.eliminateDeadStoresCFG(optimized);
+
     // Apply dead code elimination
     optimized = this.deadCodeElimination(optimized);
 
     // Remove redundant jumps and thread jump chains
     optimized = this.simplifyJumps(optimized);
 
-    // Remove unused variable assignments
-    optimized = this.deadVariableElimination(optimized);
+    // Hoist loop-invariant code
+    optimized = this.performLICM(optimized);
+
+    // Optimize simple induction variables
+    optimized = this.optimizeInductionVariables(optimized);
 
     // Remove unused temporary computations
     optimized = this.eliminateDeadTemporaries(optimized);
@@ -103,6 +203,1361 @@ export class TACOptimizer {
     optimized = this.reuseLocalVariables(optimized);
 
     return optimized;
+  }
+
+  private sccpAndPrune(instructions: TACInstruction[]): TACInstruction[] {
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+
+    const labelToBlock = new Map<string, number>();
+    for (const block of cfg.blocks) {
+      for (let i = block.start; i <= block.end; i++) {
+        const inst = instructions[i];
+        if (inst.kind !== TACInstructionKind.Label) continue;
+        const labelInst = inst as LabelInstruction;
+        if (labelInst.label.kind !== TACOperandKind.Label) continue;
+        labelToBlock.set((labelInst.label as LabelOperand).name, block.id);
+      }
+    }
+
+    const inMaps = new Map<number, Map<string, LatticeValue>>();
+    const outMaps = new Map<number, Map<string, LatticeValue>>();
+    for (const block of cfg.blocks) {
+      inMaps.set(block.id, new Map());
+      outMaps.set(block.id, new Map());
+    }
+
+    const reachable = new Set<number>();
+    const queue: number[] = [];
+    const inQueue = new Set<number>();
+    const enqueue = (id: number): void => {
+      if (!inQueue.has(id)) {
+        inQueue.add(id);
+        queue.push(id);
+      }
+    };
+
+    reachable.add(0);
+    enqueue(0);
+
+    while (queue.length > 0) {
+      const blockId = queue.shift() as number;
+      inQueue.delete(blockId);
+      const block = cfg.blocks[blockId];
+
+      const predMaps = block.preds
+        .filter((id) => reachable.has(id))
+        .map((id) => outMaps.get(id) ?? new Map());
+      const mergedIn = this.mergeLatticeMaps(predMaps);
+      const currentIn = inMaps.get(blockId) ?? new Map();
+      if (!this.latticeMapsEqual(currentIn, mergedIn)) {
+        inMaps.set(blockId, mergedIn);
+      }
+
+      let working = new Map(mergedIn);
+      for (let i = block.start; i <= block.end; i++) {
+        working = this.transferLatticeMap(working, instructions[i]);
+      }
+
+      const currentOut = outMaps.get(blockId) ?? new Map();
+      const outChanged = !this.latticeMapsEqual(currentOut, working);
+      if (outChanged) {
+        outMaps.set(blockId, working);
+      }
+
+      const succs = this.resolveReachableSuccs(
+        block,
+        instructions,
+        labelToBlock,
+        working,
+        cfg.blocks.length,
+      );
+      for (const succ of succs) {
+        if (!reachable.has(succ)) {
+          reachable.add(succ);
+          enqueue(succ);
+          continue;
+        }
+        if (outChanged) enqueue(succ);
+      }
+    }
+
+    const result: TACInstruction[] = [];
+    for (const block of cfg.blocks) {
+      if (!reachable.has(block.id)) continue;
+      let working = new Map(inMaps.get(block.id) ?? new Map());
+      for (let i = block.start; i <= block.end; i++) {
+        let inst = instructions[i];
+        inst = this.replaceInstructionWithLatticeMap(inst, working);
+
+        if (inst.kind === TACInstructionKind.ConditionalJump) {
+          const condInst = inst as ConditionalJumpInstruction;
+          const condConst = this.resolveLatticeConstant(
+            condInst.condition,
+            working,
+          );
+          const truthy = condConst
+            ? this.isTruthyConstant(condConst.value)
+            : null;
+          if (truthy === false) {
+            result.push(new UnconditionalJumpInstruction(condInst.label));
+          } else if (truthy === true) {
+            // Always true; skip conditional jump (fallthrough).
+          } else {
+            result.push(inst);
+          }
+        } else {
+          result.push(inst);
+        }
+
+        working = this.transferLatticeMap(working, inst);
+      }
+    }
+
+    return result;
+  }
+
+  private booleanSimplification(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    const result: TACInstruction[] = [];
+
+    for (const inst of instructions) {
+      if (inst.kind !== TACInstructionKind.BinaryOp) {
+        result.push(inst);
+        continue;
+      }
+
+      const bin = inst as BinaryOpInstruction;
+      const destType = this.getOperandType(bin.dest);
+      if (destType.udonType !== "Boolean") {
+        result.push(inst);
+        continue;
+      }
+
+      const leftConst = this.getBooleanConstant(bin.left);
+      const rightConst = this.getBooleanConstant(bin.right);
+
+      if (bin.operator === "&&") {
+        if (leftConst !== null) {
+          if (!leftConst) {
+            result.push(
+              new AssignmentInstruction(
+                bin.dest,
+                createConstant(false, destType),
+              ),
+            );
+          } else {
+            result.push(new AssignmentInstruction(bin.dest, bin.right));
+          }
+          continue;
+        }
+        if (rightConst !== null) {
+          if (!rightConst) {
+            result.push(
+              new AssignmentInstruction(
+                bin.dest,
+                createConstant(false, destType),
+              ),
+            );
+          } else {
+            result.push(new AssignmentInstruction(bin.dest, bin.left));
+          }
+          continue;
+        }
+      }
+
+      if (bin.operator === "||") {
+        if (leftConst !== null) {
+          if (leftConst) {
+            result.push(
+              new AssignmentInstruction(
+                bin.dest,
+                createConstant(true, destType),
+              ),
+            );
+          } else {
+            result.push(new AssignmentInstruction(bin.dest, bin.right));
+          }
+          continue;
+        }
+        if (rightConst !== null) {
+          if (rightConst) {
+            result.push(
+              new AssignmentInstruction(
+                bin.dest,
+                createConstant(true, destType),
+              ),
+            );
+          } else {
+            result.push(new AssignmentInstruction(bin.dest, bin.left));
+          }
+          continue;
+        }
+      }
+
+      if (bin.operator === "==" || bin.operator === "!=") {
+        const constantSide =
+          rightConst !== null
+            ? { constant: rightConst, operand: bin.left }
+            : leftConst !== null
+              ? { constant: leftConst, operand: bin.right }
+              : null;
+        if (constantSide) {
+          const { constant, operand } = constantSide;
+          const shouldNegate =
+            (bin.operator === "==" && !constant) ||
+            (bin.operator === "!=" && constant);
+          if (shouldNegate) {
+            result.push(new UnaryOpInstruction(bin.dest, "!", operand));
+          } else {
+            result.push(new AssignmentInstruction(bin.dest, operand));
+          }
+          continue;
+        }
+      }
+
+      result.push(inst);
+    }
+
+    return result;
+  }
+
+  private eliminateDeadStoresCFG(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+
+    const useMap = new Map<number, Set<string>>();
+    const defMap = new Map<number, Set<string>>();
+
+    for (const block of cfg.blocks) {
+      const use = new Set<string>();
+      const def = new Set<string>();
+      for (let i = block.start; i <= block.end; i++) {
+        const inst = instructions[i];
+        for (const op of this.getUsedOperandsForReuse(inst)) {
+          const key = this.livenessKey(op);
+          if (!key) continue;
+          if (!def.has(key)) {
+            use.add(key);
+          }
+        }
+        const defined = this.getDefinedOperandForReuse(inst);
+        const defKey = this.livenessKey(defined);
+        if (defKey) {
+          def.add(defKey);
+        }
+      }
+      useMap.set(block.id, use);
+      defMap.set(block.id, def);
+    }
+
+    const liveIn = new Map<number, Set<string>>();
+    const liveOut = new Map<number, Set<string>>();
+    for (const block of cfg.blocks) {
+      liveIn.set(block.id, new Set());
+      liveOut.set(block.id, new Set());
+    }
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const block of cfg.blocks.slice().reverse()) {
+        const out = new Set<string>();
+        for (const succ of block.succs) {
+          const succIn = liveIn.get(succ) ?? new Set();
+          for (const key of succIn) out.add(key);
+        }
+
+        const use = useMap.get(block.id) ?? new Set();
+        const def = defMap.get(block.id) ?? new Set();
+        const inSet = new Set<string>(use);
+        for (const key of out) {
+          if (!def.has(key)) inSet.add(key);
+        }
+
+        const prevOut = liveOut.get(block.id) ?? new Set();
+        const prevIn = liveIn.get(block.id) ?? new Set();
+        if (!this.stringSetEqual(prevOut, out)) {
+          liveOut.set(block.id, out);
+          changed = true;
+        }
+        if (!this.stringSetEqual(prevIn, inSet)) {
+          liveIn.set(block.id, inSet);
+          changed = true;
+        }
+      }
+    }
+
+    const result: TACInstruction[] = [];
+    for (const block of cfg.blocks) {
+      const live = new Set(liveOut.get(block.id) ?? new Set());
+      const kept: TACInstruction[] = [];
+      for (let i = block.end; i >= block.start; i--) {
+        const inst = instructions[i];
+        const defOp = this.getDefinedOperandForReuse(inst);
+        const defKey = this.livenessKey(defOp);
+        const uses = this.getUsedOperandsForReuse(inst)
+          .map((op) => this.livenessKey(op))
+          .filter((key): key is string => Boolean(key));
+
+        if (this.isPureProducer(inst) && defKey && !live.has(defKey)) {
+          continue;
+        }
+
+        if (defKey) {
+          live.delete(defKey);
+        }
+        for (const key of uses) {
+          live.add(key);
+        }
+        kept.push(inst);
+      }
+      kept.reverse();
+      result.push(...kept);
+    }
+
+    return result;
+  }
+
+  private globalValueNumbering(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+
+    const inMaps = new Map<number, Map<string, ExprValue>>();
+    const outMaps = new Map<number, Map<string, ExprValue>>();
+
+    for (const block of cfg.blocks) {
+      inMaps.set(block.id, new Map());
+      outMaps.set(block.id, new Map());
+    }
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const block of cfg.blocks) {
+        const predMaps = block.preds.map((id) => outMaps.get(id) ?? new Map());
+        const mergedIn = this.intersectExpressionMaps(predMaps);
+        const currentIn = inMaps.get(block.id) ?? new Map();
+        if (!this.exprMapsEqual(currentIn, mergedIn)) {
+          inMaps.set(block.id, mergedIn);
+          changed = true;
+        }
+
+        const simulated = this.simulateExpressionMap(
+          mergedIn,
+          instructions,
+          block.start,
+          block.end,
+        );
+        const currentOut = outMaps.get(block.id) ?? new Map();
+        if (!this.exprMapsEqual(currentOut, simulated)) {
+          outMaps.set(block.id, simulated);
+          changed = true;
+        }
+      }
+    }
+
+    const result: TACInstruction[] = [];
+    for (const block of cfg.blocks) {
+      let working = new Map(inMaps.get(block.id) ?? new Map());
+      for (let i = block.start; i <= block.end; i++) {
+        let inst = instructions[i];
+        const defined = this.getDefinedOperandForReuse(inst);
+        const defKey = this.gvnOperandKey(defined);
+        if (defKey) {
+          this.killExpressionsUsingOperand(working, defKey);
+        }
+
+        if (inst.kind === TACInstructionKind.BinaryOp) {
+          const bin = inst as BinaryOpInstruction;
+          const exprKey = this.binaryExprKey(bin);
+          const existing = working.get(exprKey);
+          if (
+            existing &&
+            existing.operandKey !== this.operandKey(bin.dest) &&
+            this.sameUdonType(existing.operand, bin.dest)
+          ) {
+            inst = new CopyInstruction(bin.dest, existing.operand);
+          }
+          result.push(inst);
+          working.set(exprKey, {
+            operandKey: this.operandKey(bin.dest),
+            operand: bin.dest,
+          });
+          continue;
+        }
+
+        if (inst.kind === TACInstructionKind.UnaryOp) {
+          const un = inst as UnaryOpInstruction;
+          const exprKey = this.unaryExprKey(un);
+          const existing = working.get(exprKey);
+          if (
+            existing &&
+            existing.operandKey !== this.operandKey(un.dest) &&
+            this.sameUdonType(existing.operand, un.dest)
+          ) {
+            inst = new CopyInstruction(un.dest, existing.operand);
+          }
+          result.push(inst);
+          working.set(exprKey, {
+            operandKey: this.operandKey(un.dest),
+            operand: un.dest,
+          });
+          continue;
+        }
+
+        if (inst.kind === TACInstructionKind.Cast) {
+          const castInst = inst as CastInstruction;
+          const exprKey = this.castExprKey(castInst);
+          const existing = working.get(exprKey);
+          if (
+            existing &&
+            existing.operandKey !== this.operandKey(castInst.dest) &&
+            this.sameUdonType(existing.operand, castInst.dest)
+          ) {
+            inst = new CopyInstruction(castInst.dest, existing.operand);
+          }
+          result.push(inst);
+          working.set(exprKey, {
+            operandKey: this.operandKey(castInst.dest),
+            operand: castInst.dest,
+          });
+          continue;
+        }
+
+        result.push(inst);
+      }
+    }
+
+    return result;
+  }
+
+  private computeDominators(
+    cfg: { blocks: BasicBlock[] },
+  ): Map<number, Set<number>> {
+    const dom = new Map<number, Set<number>>();
+    const all = new Set(cfg.blocks.map((block) => block.id));
+
+    for (const block of cfg.blocks) {
+      if (block.id === 0) {
+        dom.set(block.id, new Set([block.id]));
+      } else {
+        dom.set(block.id, new Set(all));
+      }
+    }
+
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const block of cfg.blocks) {
+        if (block.id === 0) continue;
+        const preds = block.preds;
+        if (preds.length === 0) continue;
+        let intersection = new Set(dom.get(preds[0]) ?? new Set());
+        for (let i = 1; i < preds.length; i++) {
+          const predDom = dom.get(preds[i]) ?? new Set();
+          intersection = new Set(
+            Array.from(intersection).filter((id) => predDom.has(id)),
+          );
+        }
+        intersection.add(block.id);
+        const current = dom.get(block.id) ?? new Set();
+        if (!this.numberSetEqual(current, intersection)) {
+          dom.set(block.id, intersection);
+          changed = true;
+        }
+      }
+    }
+
+    return dom;
+  }
+
+  private performLICM(instructions: TACInstruction[]): TACInstruction[] {
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+
+    const loops = this.collectLoops(cfg);
+    if (loops.length === 0) return instructions;
+
+    const hoistMap = new Map<number, TACInstruction[]>();
+    const hoistIndices = new Set<number>();
+
+    for (const loop of loops) {
+      const loopBlocks = loop.blocks;
+      const preheader = cfg.blocks[loop.preheaderId];
+      const preheaderInsert = this.preheaderInsertIndex(preheader, instructions);
+
+      const loopDefKeys = new Set<string>();
+      const defCounts = new Map<string, number>();
+      const loopIndices: number[] = [];
+
+      for (const blockId of loopBlocks) {
+        const block = cfg.blocks[blockId];
+        for (let i = block.start; i <= block.end; i++) {
+          loopIndices.push(i);
+          const defOp = this.getDefinedOperandForReuse(instructions[i]);
+          const defKey = this.livenessKey(defOp);
+          if (defKey) {
+            loopDefKeys.add(defKey);
+            defCounts.set(defKey, (defCounts.get(defKey) ?? 0) + 1);
+          }
+        }
+      }
+
+      const loopIndexSet = new Set(loopIndices);
+      const useBeforeDef = new Map<string, number>();
+      for (const index of loopIndices) {
+        const inst = instructions[index];
+        for (const op of this.getUsedOperandsForReuse(inst)) {
+          const key = this.livenessKey(op);
+          if (key && !useBeforeDef.has(key)) {
+            useBeforeDef.set(key, index);
+          }
+        }
+      }
+
+      const usedOutside = new Set<string>();
+      for (let i = 0; i < instructions.length; i++) {
+        if (loopIndexSet.has(i)) continue;
+        for (const op of this.getUsedOperandsForReuse(instructions[i])) {
+          const key = this.livenessKey(op);
+          if (key) usedOutside.add(key);
+        }
+      }
+
+      const candidates: Array<{ index: number; inst: TACInstruction }> = [];
+      for (const index of loopIndices) {
+        const inst = instructions[index];
+        if (!this.isPureProducer(inst)) continue;
+        const defined = this.getDefinedOperandForReuse(inst);
+        const defKey = this.livenessKey(defined);
+        if (!defKey) continue;
+        if ((defCounts.get(defKey) ?? 0) !== 1) continue;
+        if (usedOutside.has(defKey)) continue;
+        if ((useBeforeDef.get(defKey) ?? index) < index) continue;
+
+        const operands = this.getUsedOperandsForReuse(inst);
+        const allInvariant = operands.every((op) => {
+          const key = this.livenessKey(op);
+          if (!key) return true;
+          return !loopDefKeys.has(key);
+        });
+        if (!allInvariant) continue;
+        candidates.push({ index, inst });
+      }
+
+      if (candidates.length === 0) continue;
+
+      candidates.sort((a, b) => a.index - b.index);
+      for (const candidate of candidates) {
+        hoistIndices.add(candidate.index);
+      }
+
+      const hoisted = candidates.map((candidate) => candidate.inst);
+      if (hoisted.length > 0) {
+        const existing = hoistMap.get(preheaderInsert) ?? [];
+        hoistMap.set(preheaderInsert, existing.concat(hoisted));
+      }
+    }
+
+    if (hoistIndices.size === 0) return instructions;
+
+    const result: TACInstruction[] = [];
+    for (let i = 0; i < instructions.length; i++) {
+      const inserts = hoistMap.get(i);
+      if (inserts) {
+        result.push(...inserts);
+      }
+      if (hoistIndices.has(i)) continue;
+      result.push(instructions[i]);
+    }
+
+    const tailInserts = hoistMap.get(instructions.length);
+    if (tailInserts) {
+      result.push(...tailInserts);
+    }
+
+    return result;
+  }
+
+  private optimizeInductionVariables(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+
+    const loops = this.collectLoops(cfg);
+    if (loops.length === 0) return instructions;
+
+    const replacements = new Map<number, TACInstruction>();
+    const inserts = new Map<number, TACInstruction[]>();
+    const handled = new Set<string>();
+
+    for (const loop of loops) {
+      const loopBlocks = loop.blocks;
+      const preheader = cfg.blocks[loop.preheaderId];
+      const insertIndex = this.preheaderInsertIndex(preheader, instructions);
+
+      const loopIndices: number[] = [];
+      const loopIndexSet = new Set<number>();
+      for (const blockId of loopBlocks) {
+        const block = cfg.blocks[blockId];
+        for (let i = block.start; i <= block.end; i++) {
+          loopIndices.push(i);
+          loopIndexSet.add(i);
+        }
+      }
+      loopIndices.sort((a, b) => a - b);
+
+      const defCounts = new Map<string, number>();
+      for (const index of loopIndices) {
+        const defOp = this.getDefinedOperandForReuse(instructions[index]);
+        const defKey = this.livenessKey(defOp);
+        if (defKey) {
+          defCounts.set(defKey, (defCounts.get(defKey) ?? 0) + 1);
+        }
+      }
+
+      const usedOutside = new Set<string>();
+      for (let i = 0; i < instructions.length; i++) {
+        if (loopIndexSet.has(i)) continue;
+        for (const op of this.getUsedOperandsForReuse(instructions[i])) {
+          const key = this.livenessKey(op);
+          if (key) usedOutside.add(key);
+        }
+      }
+
+      const updates = new Map<
+        string,
+        { index: number; delta: number; op: "+" | "-"; operand: VariableOperand }
+      >();
+      for (const index of loopIndices) {
+        const inst = instructions[index];
+        if (inst.kind !== TACInstructionKind.BinaryOp) continue;
+        const bin = inst as BinaryOpInstruction;
+        if (bin.operator !== "+" && bin.operator !== "-") continue;
+        if (bin.dest.kind !== TACOperandKind.Variable) continue;
+        if (bin.left.kind !== TACOperandKind.Variable) continue;
+        if ((bin.dest as VariableOperand).name !== (bin.left as VariableOperand).name) {
+          continue;
+        }
+        if (bin.right.kind !== TACOperandKind.Constant) continue;
+        const rightConst = bin.right as ConstantOperand;
+        if (typeof rightConst.value !== "number") continue;
+        if (!Number.isFinite(rightConst.value)) continue;
+        const destType = this.getOperandType(bin.dest);
+        if (!this.isNumericUdonType(destType.udonType)) continue;
+        const key = this.livenessKey(bin.dest);
+        if (!key) continue;
+        if (updates.has(key)) continue;
+        updates.set(key, {
+          index,
+          delta: rightConst.value,
+          op: bin.operator as "+" | "-",
+          operand: bin.dest as VariableOperand,
+        });
+      }
+
+      for (const [varKey, update] of updates) {
+        if (handled.has(varKey)) continue;
+
+        let multiplyCandidate:
+          | {
+              index: number;
+              dest: TACOperand;
+              factor: number;
+              factorType: TypeSymbol;
+              operator: "*";
+            }
+          | null = null;
+
+        for (const index of loopIndices) {
+          if (index <= update.index) continue;
+          const inst = instructions[index];
+          if (inst.kind !== TACInstructionKind.BinaryOp) continue;
+          const bin = inst as BinaryOpInstruction;
+          if (bin.operator !== "*") continue;
+          const leftKey = this.livenessKey(bin.left);
+          const rightKey = this.livenessKey(bin.right);
+          const varIsLeft = leftKey === varKey;
+          const varIsRight = rightKey === varKey;
+          if (!varIsLeft && !varIsRight) continue;
+          const other = varIsLeft ? bin.right : bin.left;
+          if (other.kind !== TACOperandKind.Constant) continue;
+          const constOp = other as ConstantOperand;
+          if (typeof constOp.value !== "number") continue;
+          if (!Number.isFinite(constOp.value)) continue;
+          const destType = this.getOperandType(bin.dest);
+          if (!this.isNumericUdonType(destType.udonType)) continue;
+          const destKey = this.livenessKey(bin.dest);
+          if (!destKey) continue;
+          if ((defCounts.get(destKey) ?? 0) !== 1) continue;
+          if (usedOutside.has(destKey)) continue;
+          multiplyCandidate = {
+            index,
+            dest: bin.dest,
+            factor: constOp.value,
+            factorType: constOp.type,
+            operator: "*",
+          };
+          break;
+        }
+
+        if (!multiplyCandidate) continue;
+
+        const destKey = this.livenessKey(multiplyCandidate.dest);
+        if (!destKey) continue;
+        if (handled.has(destKey)) continue;
+
+        const delta = update.delta * multiplyCandidate.factor;
+        if (!Number.isFinite(delta)) continue;
+
+        const destType = this.getOperandType(multiplyCandidate.dest);
+        const deltaValue = this.evaluateCastValue(delta, destType);
+        if (deltaValue === null || typeof deltaValue !== "number") continue;
+
+        const initOp = new BinaryOpInstruction(
+          multiplyCandidate.dest,
+          update.operand,
+          "*",
+          createConstant(multiplyCandidate.factor, multiplyCandidate.factorType),
+        );
+
+        const insertList = inserts.get(insertIndex) ?? [];
+        insertList.push(initOp);
+        inserts.set(insertIndex, insertList);
+
+        const updateOp =
+          update.op === "-"
+            ? new BinaryOpInstruction(
+                multiplyCandidate.dest,
+                multiplyCandidate.dest,
+                "-",
+                createConstant(deltaValue, destType),
+              )
+            : new BinaryOpInstruction(
+                multiplyCandidate.dest,
+                multiplyCandidate.dest,
+                "+",
+                createConstant(deltaValue, destType),
+              );
+        replacements.set(multiplyCandidate.index, updateOp);
+        handled.add(destKey);
+      }
+    }
+
+    if (replacements.size === 0 && inserts.size === 0) return instructions;
+
+    const result: TACInstruction[] = [];
+    for (let i = 0; i < instructions.length; i++) {
+      const pending = inserts.get(i);
+      if (pending) result.push(...pending);
+      const replacement = replacements.get(i);
+      if (replacement) {
+        result.push(replacement);
+        continue;
+      }
+      result.push(instructions[i]);
+    }
+
+    const tail = inserts.get(instructions.length);
+    if (tail) result.push(...tail);
+
+    return result;
+  }
+
+  private mergeLatticeMaps(
+    predMaps: Array<Map<string, LatticeValue>>,
+  ): Map<string, LatticeValue> {
+    const valid = predMaps.filter((map) => map !== undefined);
+    if (valid.length === 0) return new Map();
+    const [first, ...rest] = valid;
+    const merged = new Map<string, LatticeValue>();
+    for (const [key, value] of first.entries()) {
+      let same = true;
+      for (const map of rest) {
+        const other = map.get(key);
+        if (!other || !this.latticeValueEquals(value, other)) {
+          same = false;
+          break;
+        }
+      }
+      if (same) merged.set(key, value);
+    }
+    return merged;
+  }
+
+  private latticeMapsEqual(
+    a: Map<string, LatticeValue>,
+    b: Map<string, LatticeValue>,
+  ): boolean {
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a.entries()) {
+      const other = b.get(key);
+      if (!other || !this.latticeValueEquals(value, other)) return false;
+    }
+    return true;
+  }
+
+  private latticeValueEquals(a: LatticeValue, b: LatticeValue): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === "constant" && b.kind === "constant") {
+      return (
+        a.operand.type.udonType === b.operand.type.udonType &&
+        this.stringifyConstant(a.operand.value) ===
+          this.stringifyConstant(b.operand.value)
+      );
+    }
+    if (a.kind === "copy" && b.kind === "copy") {
+      return a.operand.name === b.operand.name;
+    }
+    if (a.kind === "unknown" && b.kind === "unknown") return true;
+    return false;
+  }
+
+  private transferLatticeMap(
+    current: Map<string, LatticeValue>,
+    inst: TACInstruction,
+  ): Map<string, LatticeValue> {
+    const next = new Map(current);
+    if (
+      inst.kind === TACInstructionKind.Assignment ||
+      inst.kind === TACInstructionKind.Copy
+    ) {
+      const { dest, src } = inst as unknown as InstWithDestSrc;
+      if (dest.kind === TACOperandKind.Variable) {
+        const destName = (dest as VariableOperand).name;
+        const resolvedConst = this.resolveLatticeConstant(src, next);
+        if (resolvedConst) {
+          next.set(destName, { kind: "constant", operand: resolvedConst });
+        } else if (src.kind === TACOperandKind.Variable) {
+          next.set(destName, { kind: "copy", operand: src as VariableOperand });
+        } else {
+          next.delete(destName);
+        }
+      }
+      return next;
+    }
+
+    const defined = this.getDefinedOperandForReuse(inst);
+    if (defined && defined.kind === TACOperandKind.Variable) {
+      next.delete((defined as VariableOperand).name);
+    }
+    return next;
+  }
+
+  private resolveLatticeConstant(
+    operand: TACOperand,
+    map: Map<string, LatticeValue>,
+  ): ConstantOperand | null {
+    if (operand.kind === TACOperandKind.Constant) {
+      return operand as ConstantOperand;
+    }
+    if (operand.kind !== TACOperandKind.Variable) return null;
+
+    const visited = new Set<string>();
+    let current = operand as VariableOperand;
+    while (!visited.has(current.name)) {
+      visited.add(current.name);
+      const info = map.get(current.name);
+      if (!info || info.kind === "unknown") return null;
+      if (info.kind === "constant") return info.operand;
+      if (info.kind === "copy") {
+        current = info.operand;
+      }
+    }
+    return null;
+  }
+
+  private resolveLatticeOperand(
+    operand: TACOperand,
+    map: Map<string, LatticeValue>,
+  ): TACOperand {
+    if (operand.kind !== TACOperandKind.Variable) return operand;
+    const visited = new Set<string>();
+    let current = operand as VariableOperand;
+    while (!visited.has(current.name)) {
+      visited.add(current.name);
+      const info = map.get(current.name);
+      if (!info || info.kind === "unknown") return current;
+      if (info.kind === "constant") return info.operand;
+      if (info.kind === "copy") {
+        current = info.operand;
+      }
+    }
+    return current;
+  }
+
+  private replaceInstructionWithLatticeMap(
+    inst: TACInstruction,
+    map: Map<string, LatticeValue>,
+  ): TACInstruction {
+    const replace = (operand: TACOperand): TACOperand =>
+      this.resolveLatticeOperand(operand, map);
+
+    if (inst.kind === TACInstructionKind.BinaryOp) {
+      const bin = inst as BinaryOpInstruction;
+      const left = replace(bin.left);
+      const right = replace(bin.right);
+      if (left !== bin.left || right !== bin.right) {
+        return new (bin.constructor as typeof BinaryOpInstruction)(
+          bin.dest,
+          left,
+          bin.operator,
+          right,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.UnaryOp) {
+      const un = inst as UnaryOpInstruction;
+      const operand = replace(un.operand);
+      if (operand !== un.operand) {
+        return new (un.constructor as typeof UnaryOpInstruction)(
+          un.dest,
+          un.operator,
+          operand,
+        );
+      }
+    }
+
+    if (
+      inst.kind === TACInstructionKind.Assignment ||
+      inst.kind === TACInstructionKind.Copy
+    ) {
+      const { dest, src } = inst as unknown as InstWithDestSrc;
+      const resolved = replace(src);
+      if (resolved !== src) {
+        return new AssignmentInstruction(dest, resolved);
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.Cast) {
+      const castInst = inst as unknown as InstWithDestSrc;
+      const resolved = replace(castInst.src);
+      if (resolved !== castInst.src) {
+        return new CastInstruction(castInst.dest, resolved);
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.ConditionalJump) {
+      const cond = inst as ConditionalJumpInstruction;
+      const condition = replace(cond.condition);
+      if (condition !== cond.condition) {
+        return new (cond.constructor as typeof ConditionalJumpInstruction)(
+          condition,
+          cond.label,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.Call) {
+      const call = inst as CallInstruction;
+      const args = call.args.map((arg) => replace(arg));
+      if (args.some((arg, idx) => arg !== call.args[idx])) {
+        return new (call.constructor as typeof CallInstruction)(
+          call.dest,
+          call.func,
+          args,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.MethodCall) {
+      const call = inst as MethodCallInstruction;
+      const object = replace(call.object);
+      const args = call.args.map((arg) => replace(arg));
+      if (
+        object !== call.object ||
+        args.some((arg, idx) => arg !== call.args[idx])
+      ) {
+        return new (call.constructor as typeof MethodCallInstruction)(
+          call.dest,
+          object,
+          call.method,
+          args,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.PropertyGet) {
+      const get = inst as PropertyGetInstruction;
+      const object = replace(get.object);
+      if (object !== get.object) {
+        return new (get.constructor as typeof PropertyGetInstruction)(
+          get.dest,
+          object,
+          get.property,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.PropertySet) {
+      const set = inst as PropertySetInstruction;
+      const object = replace(set.object);
+      const value = replace(set.value);
+      if (object !== set.object || value !== set.value) {
+        return new (set.constructor as typeof PropertySetInstruction)(
+          object,
+          set.property,
+          value,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.Return) {
+      const ret = inst as ReturnInstruction;
+      if (ret.value) {
+        const value = replace(ret.value);
+        if (value !== ret.value) {
+          return new (ret.constructor as typeof ReturnInstruction)(
+            value,
+            ret.returnVarName,
+          );
+        }
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.ArrayAccess) {
+      const access = inst as ArrayAccessInstruction;
+      const array = replace(access.array);
+      const index = replace(access.index);
+      if (array !== access.array || index !== access.index) {
+        return new (access.constructor as typeof ArrayAccessInstruction)(
+          access.dest,
+          array,
+          index,
+        );
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.ArrayAssignment) {
+      const assign = inst as ArrayAssignmentInstruction;
+      const array = replace(assign.array);
+      const index = replace(assign.index);
+      const value = replace(assign.value);
+      if (
+        array !== assign.array ||
+        index !== assign.index ||
+        value !== assign.value
+      ) {
+        return new (assign.constructor as typeof ArrayAssignmentInstruction)(
+          array,
+          index,
+          value,
+        );
+      }
+    }
+
+    return inst;
+  }
+
+  private resolveReachableSuccs(
+    block: BasicBlock,
+    instructions: TACInstruction[],
+    labelToBlock: Map<string, number>,
+    map: Map<string, LatticeValue>,
+    blockCount: number,
+  ): number[] {
+    if (block.end < block.start) return [];
+    const last = instructions[block.end];
+    const fallthrough =
+      block.id + 1 < blockCount ? block.id + 1 : undefined;
+
+    if (last.kind === TACInstructionKind.UnconditionalJump) {
+      const label = (last as UnconditionalJumpInstruction).label;
+      if (label.kind === TACOperandKind.Label) {
+        const target = labelToBlock.get((label as LabelOperand).name);
+        return target !== undefined ? [target] : [];
+      }
+      return [];
+    }
+
+    if (last.kind === TACInstructionKind.ConditionalJump) {
+      const condInst = last as ConditionalJumpInstruction;
+      const conditionConst = this.resolveLatticeConstant(
+        condInst.condition,
+        map,
+      );
+      const label = condInst.label;
+      const target =
+        label.kind === TACOperandKind.Label
+          ? labelToBlock.get((label as LabelOperand).name)
+          : undefined;
+      const truthy = conditionConst
+        ? this.isTruthyConstant(conditionConst.value)
+        : null;
+      if (truthy === true) {
+        return fallthrough !== undefined ? [fallthrough] : [];
+      }
+      if (truthy === false) {
+        return target !== undefined ? [target] : [];
+      }
+      const succs: number[] = [];
+      if (target !== undefined) succs.push(target);
+      if (fallthrough !== undefined) succs.push(fallthrough);
+      return succs;
+    }
+
+    if (last.kind === TACInstructionKind.Return) {
+      return [];
+    }
+
+    return fallthrough !== undefined ? [fallthrough] : [];
+  }
+
+  private isTruthyConstant(value: ConstantValue): boolean | null {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") {
+      if (Number.isNaN(value)) return false;
+      return value !== 0;
+    }
+    return null;
+  }
+
+  private getBooleanConstant(operand: TACOperand): boolean | null {
+    if (operand.kind !== TACOperandKind.Constant) return null;
+    const constOp = operand as ConstantOperand;
+    if (typeof constOp.value !== "boolean") return null;
+    return constOp.value;
+  }
+
+  private livenessKey(operand: TACOperand | undefined): string | null {
+    if (!operand) return null;
+    if (operand.kind === TACOperandKind.Variable) {
+      return `v:${(operand as VariableOperand).name}`;
+    }
+    if (operand.kind === TACOperandKind.Temporary) {
+      return `t:${(operand as TemporaryOperand).id}`;
+    }
+    return null;
+  }
+
+  private stringSetEqual(a: Set<string>, b: Set<string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const item of a) {
+      if (!b.has(item)) return false;
+    }
+    return true;
+  }
+
+  private numberSetEqual(a: Set<number>, b: Set<number>): boolean {
+    if (a.size !== b.size) return false;
+    for (const item of a) {
+      if (!b.has(item)) return false;
+    }
+    return true;
+  }
+
+  private intersectExpressionMaps(
+    predMaps: Array<Map<string, ExprValue>>,
+  ): Map<string, ExprValue> {
+    if (predMaps.length === 0) return new Map();
+    const [first, ...rest] = predMaps;
+    const merged = new Map<string, ExprValue>();
+    for (const [key, value] of first.entries()) {
+      let same = true;
+      for (const map of rest) {
+        const other = map.get(key);
+        if (!other || other.operandKey !== value.operandKey) {
+          same = false;
+          break;
+        }
+      }
+      if (same) merged.set(key, value);
+    }
+    return merged;
+  }
+
+  private exprMapsEqual(
+    a: Map<string, ExprValue>,
+    b: Map<string, ExprValue>,
+  ): boolean {
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a.entries()) {
+      const other = b.get(key);
+      if (!other || other.operandKey !== value.operandKey) return false;
+    }
+    return true;
+  }
+
+  private simulateExpressionMap(
+    start: Map<string, ExprValue>,
+    instructions: TACInstruction[],
+    startIndex: number,
+    endIndex: number,
+  ): Map<string, ExprValue> {
+    const working = new Map(start);
+    for (let i = startIndex; i <= endIndex; i++) {
+      const inst = instructions[i];
+      const defined = this.getDefinedOperandForReuse(inst);
+      const defKey = this.gvnOperandKey(defined);
+      if (defKey) {
+        this.killExpressionsUsingOperand(working, defKey);
+      }
+
+      if (inst.kind === TACInstructionKind.BinaryOp) {
+        const bin = inst as BinaryOpInstruction;
+        const exprKey = this.binaryExprKey(bin);
+        working.set(exprKey, {
+          operandKey: this.operandKey(bin.dest),
+          operand: bin.dest,
+        });
+      }
+
+      if (inst.kind === TACInstructionKind.UnaryOp) {
+        const un = inst as UnaryOpInstruction;
+        const exprKey = this.unaryExprKey(un);
+        working.set(exprKey, {
+          operandKey: this.operandKey(un.dest),
+          operand: un.dest,
+        });
+      }
+
+      if (inst.kind === TACInstructionKind.Cast) {
+        const castInst = inst as CastInstruction;
+        const exprKey = this.castExprKey(castInst);
+        working.set(exprKey, {
+          operandKey: this.operandKey(castInst.dest),
+          operand: castInst.dest,
+        });
+      }
+    }
+    return working;
+  }
+
+  private killExpressionsUsingOperand(
+    map: Map<string, ExprValue>,
+    operandKey: string,
+  ): void {
+    const needle = `|${operandKey}|`;
+    for (const key of Array.from(map.keys())) {
+      if (key.includes(needle)) {
+        map.delete(key);
+      }
+    }
+  }
+
+  private gvnOperandKey(operand: TACOperand | undefined): string | null {
+    if (!operand) return null;
+    if (operand.kind === TACOperandKind.Variable) {
+      return `v:${(operand as VariableOperand).name}`;
+    }
+    if (operand.kind === TACOperandKind.Temporary) {
+      return `t:${(operand as TemporaryOperand).id}`;
+    }
+    return null;
+  }
+
+  private isCommutativeOperator(op: string): boolean {
+    return (
+      op === "+" ||
+      op === "*" ||
+      op === "==" ||
+      op === "!=" ||
+      op === "&&" ||
+      op === "||"
+    );
+  }
+
+  private binaryExprKey(inst: BinaryOpInstruction): string {
+    const typeKey = this.getOperandType(inst.dest).udonType;
+    let leftKey = this.operandKey(inst.left);
+    let rightKey = this.operandKey(inst.right);
+    const commutative =
+      inst.operator === "+" && typeKey === "String"
+        ? false
+        : this.isCommutativeOperator(inst.operator);
+    if (commutative) {
+      if (leftKey > rightKey) {
+        const tmp = leftKey;
+        leftKey = rightKey;
+        rightKey = tmp;
+      }
+    }
+    return `bin|${inst.operator}|${leftKey}|${rightKey}|${typeKey}|`;
+  }
+
+  private unaryExprKey(inst: UnaryOpInstruction): string {
+    const typeKey = this.getOperandType(inst.dest).udonType;
+    const operandKey = this.operandKey(inst.operand);
+    return `un|${inst.operator}|${operandKey}|${typeKey}|`;
+  }
+
+  private castExprKey(inst: CastInstruction): string {
+    const typeKey = this.getOperandType(inst.dest).udonType;
+    const operandKey = this.operandKey(inst.src);
+    return `cast|${operandKey}|${typeKey}|`;
+  }
+
+  private collectLoops(cfg: { blocks: BasicBlock[] }): Array<{
+    headerId: number;
+    blocks: Set<number>;
+    preheaderId: number;
+  }> {
+    const dom = this.computeDominators(cfg);
+    const loopsByHeader = new Map<number, Set<number>>();
+
+    for (const block of cfg.blocks) {
+      for (const succ of block.succs) {
+        const doms = dom.get(block.id);
+        if (doms && doms.has(succ)) {
+          const loop = new Set<number>([succ, block.id]);
+          const stack = [block.id];
+          while (stack.length > 0) {
+            const current = stack.pop() as number;
+            if (current === succ) continue;
+            const preds = cfg.blocks[current].preds;
+            for (const pred of preds) {
+              if (!loop.has(pred)) {
+                loop.add(pred);
+                stack.push(pred);
+              }
+            }
+          }
+          const existing = loopsByHeader.get(succ);
+          if (existing) {
+            for (const id of loop) existing.add(id);
+          } else {
+            loopsByHeader.set(succ, loop);
+          }
+        }
+      }
+    }
+
+    const loops: Array<{
+      headerId: number;
+      blocks: Set<number>;
+      preheaderId: number;
+    }> = [];
+    for (const [headerId, blocks] of loopsByHeader.entries()) {
+      const headerBlock = cfg.blocks[headerId];
+      const externalPreds = headerBlock.preds.filter((id) => !blocks.has(id));
+      if (externalPreds.length !== 1) continue;
+      loops.push({
+        headerId,
+        blocks,
+        preheaderId: externalPreds[0],
+      });
+    }
+    return loops;
+  }
+
+  private preheaderInsertIndex(
+    preheader: BasicBlock,
+    instructions: TACInstruction[],
+  ): number {
+    if (preheader.end < preheader.start) return preheader.start;
+    const last = instructions[preheader.end];
+    if (last && this.isBlockTerminator(last)) {
+      return preheader.end;
+    }
+    return preheader.end + 1;
   }
 
   private cfgPropagateConstantsAndCopies(
@@ -703,17 +2158,45 @@ export class TACOptimizer {
   private simplifyJumps(instructions: TACInstruction[]): TACInstruction[] {
     if (instructions.length === 0) return instructions;
 
+    const labelAlias = new Map<string, string>();
+    for (let i = 0; i < instructions.length; i += 1) {
+      const inst = instructions[i];
+      if (inst.kind !== TACInstructionKind.Label) continue;
+      const names: string[] = [];
+      let j = i;
+      while (
+        j < instructions.length &&
+        instructions[j].kind === TACInstructionKind.Label
+      ) {
+        const labelInst = instructions[j] as LabelInstruction;
+        if (labelInst.label.kind === TACOperandKind.Label) {
+          names.push((labelInst.label as LabelOperand).name);
+        }
+        j += 1;
+      }
+      if (names.length > 0) {
+        const canonical = names[names.length - 1];
+        for (const name of names) {
+          labelAlias.set(name, canonical);
+        }
+      }
+      i = j - 1;
+    }
+
+    const canonicalLabel = (name: string): string => labelAlias.get(name) ?? name;
+
     const labelIndex = new Map<string, number>();
     for (let i = 0; i < instructions.length; i += 1) {
       const inst = instructions[i];
       if (inst.kind !== TACInstructionKind.Label) continue;
       const labelInst = inst as LabelInstruction;
       if (labelInst.label.kind !== TACOperandKind.Label) continue;
-      labelIndex.set((labelInst.label as LabelOperand).name, i);
+      const name = canonicalLabel((labelInst.label as LabelOperand).name);
+      labelIndex.set(name, i);
     }
 
     const resolveLabelName = (name: string): string => {
-      let current = name;
+      let current = canonicalLabel(name);
       const seen = new Set<string>();
 
       while (!seen.has(current)) {
@@ -736,7 +2219,7 @@ export class TACOptimizer {
         const target = (nextInst as UnconditionalJumpInstruction).label;
         if (target.kind !== TACOperandKind.Label) break;
 
-        current = (target as LabelOperand).name;
+        current = canonicalLabel((target as LabelOperand).name);
       }
 
       return current;
@@ -753,9 +2236,8 @@ export class TACOptimizer {
         if (inst.kind !== TACInstructionKind.Label) return false;
         const labelInst = inst as LabelInstruction;
         if (labelInst.label.kind !== TACOperandKind.Label) continue;
-        if ((labelInst.label as LabelOperand).name === targetName) {
-          return true;
-        }
+        const name = canonicalLabel((labelInst.label as LabelOperand).name);
+        if (name === targetName) return true;
       }
       return false;
     };
@@ -763,13 +2245,22 @@ export class TACOptimizer {
     const result: TACInstruction[] = [];
     for (let i = 0; i < instructions.length; i += 1) {
       const inst = instructions[i];
+      if (inst.kind === TACInstructionKind.Label) {
+        const labelInst = inst as LabelInstruction;
+        if (labelInst.label.kind === TACOperandKind.Label) {
+          const name = (labelInst.label as LabelOperand).name;
+          if (canonicalLabel(name) !== name) {
+            continue;
+          }
+        }
+      }
       if (
         inst.kind === TACInstructionKind.UnconditionalJump ||
         inst.kind === TACInstructionKind.ConditionalJump
       ) {
         const label = (inst as unknown as { label: TACOperand }).label;
         if (label.kind === TACOperandKind.Label) {
-          const labelName = (label as LabelOperand).name;
+          const labelName = canonicalLabel((label as LabelOperand).name);
           const resolvedName = resolved.get(labelName) ?? labelName;
           if (isJumpToNextLabel(i, resolvedName)) {
             continue;
@@ -789,7 +2280,74 @@ export class TACOptimizer {
       result.push(inst);
     }
 
-    return result;
+    return this.mergeLinearBlocks(result);
+  }
+
+  private mergeLinearBlocks(instructions: TACInstruction[]): TACInstruction[] {
+    let current = instructions;
+    while (true) {
+      const cfg = this.buildCFG(current);
+      if (cfg.blocks.length === 0) return current;
+
+      const labelToBlock = new Map<string, number>();
+      for (const block of cfg.blocks) {
+        for (let i = block.start; i <= block.end; i++) {
+          const inst = current[i];
+          if (inst.kind !== TACInstructionKind.Label) continue;
+          const labelInst = inst as LabelInstruction;
+          if (labelInst.label.kind !== TACOperandKind.Label) continue;
+          labelToBlock.set((labelInst.label as LabelOperand).name, block.id);
+        }
+      }
+
+      const mergeMap = new Map<number, number>();
+      const mergedTargets = new Set<number>();
+      for (const block of cfg.blocks) {
+        if (mergedTargets.has(block.id)) continue;
+        const lastInst = current[block.end];
+        if (lastInst?.kind !== TACInstructionKind.UnconditionalJump) continue;
+        const targetLabel = (lastInst as UnconditionalJumpInstruction).label;
+        if (targetLabel.kind !== TACOperandKind.Label) continue;
+        const targetId = labelToBlock.get((targetLabel as LabelOperand).name);
+        if (targetId === undefined || targetId === block.id) continue;
+        const targetBlock = cfg.blocks[targetId];
+        if (targetBlock.preds.length !== 1) continue;
+        mergeMap.set(block.id, targetId);
+        mergedTargets.add(targetId);
+      }
+
+      if (mergeMap.size === 0) return current;
+
+      const result: TACInstruction[] = [];
+      for (const block of cfg.blocks) {
+        if (mergedTargets.has(block.id)) continue;
+        const mergeTarget = mergeMap.get(block.id);
+        if (mergeTarget !== undefined) {
+          for (let i = block.start; i <= block.end; i++) {
+            if (i === block.end) continue; // drop the unconditional jump
+            result.push(current[i]);
+          }
+          const targetBlock = cfg.blocks[mergeTarget];
+          let start = targetBlock.start;
+          while (
+            start <= targetBlock.end &&
+            current[start].kind === TACInstructionKind.Label
+          ) {
+            start += 1;
+          }
+          for (let i = start; i <= targetBlock.end; i++) {
+            result.push(current[i]);
+          }
+          continue;
+        }
+
+        for (let i = block.start; i <= block.end; i++) {
+          result.push(current[i]);
+        }
+      }
+
+      current = result;
+    }
   }
 
   private buildCFG(instructions: TACInstruction[]): { blocks: BasicBlock[] } {
@@ -1434,20 +2992,16 @@ export class TACOptimizer {
       active.sort((a, b) => a.end - b.end);
     }
 
-    const rewriteTemp = (operand: TACOperand | undefined) => {
-      if (!operand || operand.kind !== TACOperandKind.Temporary) return;
+    const rewriteTemp = (operand: TACOperand): TACOperand => {
+      if (operand.kind !== TACOperandKind.Temporary) return operand;
       const temp = operand as TemporaryOperand;
       const mapped = oldToNew.get(temp.id);
-      if (mapped !== undefined) {
-        temp.id = mapped;
-      }
+      if (mapped === undefined || mapped === temp.id) return operand;
+      return { ...temp, id: mapped };
     };
 
     for (const inst of instructions) {
-      const used = this.getUsedOperandsForReuse(inst);
-      for (const op of used) rewriteTemp(op);
-      const defined = this.getDefinedOperandForReuse(inst);
-      rewriteTemp(defined);
+      this.rewriteOperands(inst, rewriteTemp);
     }
 
     return instructions;
@@ -1561,20 +3115,16 @@ export class TACOptimizer {
       active.sort((a, b) => a.end - b.end);
     }
 
-    const rewriteVar = (operand: TACOperand | undefined) => {
-      if (!operand || operand.kind !== TACOperandKind.Variable) return;
+    const rewriteVar = (operand: TACOperand): TACOperand => {
+      if (operand.kind !== TACOperandKind.Variable) return operand;
       const variable = operand as VariableOperand;
       const mapped = oldToNew.get(variable.name);
-      if (mapped) {
-        variable.name = mapped;
-      }
+      if (!mapped || mapped === variable.name) return operand;
+      return { ...variable, name: mapped };
     };
 
     for (const inst of instructions) {
-      const used = this.getUsedOperandsForReuse(inst);
-      for (const op of used) rewriteVar(op);
-      const defined = this.getDefinedOperandForReuse(inst);
-      rewriteVar(defined);
+      this.rewriteOperands(inst, rewriteVar);
     }
 
     return instructions;
@@ -1598,6 +3148,15 @@ export class TACOptimizer {
     const result: TACInstruction[] = [];
 
     for (const inst of instructions) {
+      if (inst.kind === TACInstructionKind.Call) {
+        const callInst = inst as CallInstruction;
+        const folded = this.tryFoldPureExternCall(callInst);
+        if (folded) {
+          result.push(folded);
+          continue;
+        }
+      }
+
       if (inst.kind === TACInstructionKind.Cast) {
         const castInst = inst as CastInstruction;
         const folded = this.tryFoldCastInstruction(castInst);
@@ -1878,6 +3437,86 @@ export class TACOptimizer {
     }
   }
 
+  private rewriteOperands(
+    inst: TACInstruction,
+    rewrite: (operand: TACOperand) => TACOperand,
+  ): void {
+    switch (inst.kind) {
+      case TACInstructionKind.Assignment:
+      case TACInstructionKind.Copy:
+      case TACInstructionKind.Cast: {
+        const typed = inst as InstWithDestSrc;
+        typed.dest = rewrite(typed.dest);
+        typed.src = rewrite(typed.src);
+        return;
+      }
+      case TACInstructionKind.BinaryOp: {
+        const bin = inst as BinaryOpInstruction;
+        bin.dest = rewrite(bin.dest);
+        bin.left = rewrite(bin.left);
+        bin.right = rewrite(bin.right);
+        return;
+      }
+      case TACInstructionKind.UnaryOp: {
+        const unary = inst as UnaryOpInstruction;
+        unary.dest = rewrite(unary.dest);
+        unary.operand = rewrite(unary.operand);
+        return;
+      }
+      case TACInstructionKind.ConditionalJump: {
+        const cond = inst as ConditionalJumpInstruction;
+        cond.condition = rewrite(cond.condition);
+        return;
+      }
+      case TACInstructionKind.Call: {
+        const call = inst as CallInstruction;
+        if (call.dest) call.dest = rewrite(call.dest);
+        call.args = call.args.map(rewrite);
+        return;
+      }
+      case TACInstructionKind.MethodCall: {
+        const method = inst as MethodCallInstruction;
+        if (method.dest) method.dest = rewrite(method.dest);
+        method.object = rewrite(method.object);
+        method.args = method.args.map(rewrite);
+        return;
+      }
+      case TACInstructionKind.PropertyGet: {
+        const get = inst as PropertyGetInstruction;
+        get.dest = rewrite(get.dest);
+        get.object = rewrite(get.object);
+        return;
+      }
+      case TACInstructionKind.PropertySet: {
+        const set = inst as PropertySetInstruction;
+        set.object = rewrite(set.object);
+        set.value = rewrite(set.value);
+        return;
+      }
+      case TACInstructionKind.Return: {
+        const ret = inst as ReturnInstruction;
+        if (ret.value) ret.value = rewrite(ret.value);
+        return;
+      }
+      case TACInstructionKind.ArrayAccess: {
+        const acc = inst as ArrayAccessInstruction;
+        acc.dest = rewrite(acc.dest);
+        acc.array = rewrite(acc.array);
+        acc.index = rewrite(acc.index);
+        return;
+      }
+      case TACInstructionKind.ArrayAssignment: {
+        const assign = inst as ArrayAssignmentInstruction;
+        assign.array = rewrite(assign.array);
+        assign.index = rewrite(assign.index);
+        assign.value = rewrite(assign.value);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
   private getDefinedOperandForReuse(
     inst: TACInstruction,
   ): TACOperand | undefined {
@@ -2067,6 +3706,34 @@ export class TACOptimizer {
     return new AssignmentInstruction(
       inst.dest,
       createConstant(foldedValue, destType),
+    );
+  }
+
+  private tryFoldPureExternCall(inst: CallInstruction): TACInstruction | null {
+    if (!inst.dest) return null;
+    const evaluator = TACOptimizer.pureExternEvaluators.get(inst.func);
+    if (!evaluator) return null;
+    if (inst.args.length !== evaluator.arity) return null;
+
+    const args: number[] = [];
+    for (const arg of inst.args) {
+      if (arg.kind !== TACOperandKind.Constant) return null;
+      const constArg = arg as ConstantOperand;
+      if (typeof constArg.value !== "number") return null;
+      if (!Number.isFinite(constArg.value)) return null;
+      args.push(constArg.value);
+    }
+
+    const result = evaluator.eval(args);
+    if (!Number.isFinite(result)) return null;
+
+    const destType = this.getOperandType(inst.dest);
+    const casted = this.evaluateCastValue(result, destType);
+    if (casted === null || typeof casted !== "number") return null;
+
+    return new AssignmentInstruction(
+      inst.dest,
+      createConstant(casted, destType),
     );
   }
 
