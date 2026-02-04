@@ -794,6 +794,14 @@ export class TACOptimizer {
     const loops = this.collectLoops(cfg);
     if (loops.length === 0) return instructions;
 
+    const dom = this.computeDominators(cfg);
+    const indexToBlock = new Map<number, number>();
+    for (const block of cfg.blocks) {
+      for (let i = block.start; i <= block.end; i++) {
+        indexToBlock.set(i, block.id);
+      }
+    }
+
     const replacements = new Map<number, TACInstruction>();
     const inserts = new Map<number, TACInstruction[]>();
     const handled = new Set<string>();
@@ -898,6 +906,17 @@ export class TACOptimizer {
           if (!destKey) continue;
           if ((defCounts.get(destKey) ?? 0) !== 1) continue;
           if (usedOutside.has(destKey)) continue;
+          const updateBlockId = indexToBlock.get(update.index);
+          const multiplyBlockId = indexToBlock.get(index);
+          if (updateBlockId === undefined || multiplyBlockId === undefined) {
+            continue;
+          }
+          if (
+            updateBlockId !== multiplyBlockId &&
+            !(dom.get(multiplyBlockId)?.has(updateBlockId) ?? false)
+          ) {
+            continue;
+          }
           multiplyCandidate = {
             index,
             dest: bin.dest,
@@ -1632,6 +1651,38 @@ export class TACOptimizer {
       const defined = this.getDefinedOperandForReuse(inst);
       recordTemp(defined);
     }
+
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+    const blocksInOrder = Array.from(cfg.blocks).sort(
+      (a, b) => a.start - b.start,
+    );
+    const isStraightLine = blocksInOrder.every((block, index) => {
+      if (index === 0) {
+        if (block.preds.length !== 0) return false;
+      } else {
+        const prev = blocksInOrder[index - 1];
+        if (
+          block.preds.length !== 1 ||
+          block.preds[0] !== prev.id
+        ) {
+          return false;
+        }
+      }
+      if (index === blocksInOrder.length - 1) {
+        if (block.succs.length !== 0) return false;
+      } else {
+        const next = blocksInOrder[index + 1];
+        if (
+          block.succs.length !== 1 ||
+          block.succs[0] !== next.id
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (!isStraightLine) return instructions;
 
     let nextTempId = maxTempId + 1;
     const aliasMap = new Map<number, TemporaryOperand>();
