@@ -39,6 +39,11 @@ import {
   discoverTypeScriptFiles,
 } from "./file_discovery.js";
 
+function isTranspilableSource(filePath: string): boolean {
+  if (filePath.endsWith(".d.ts")) return false;
+  return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+}
+
 export interface BatchTranspilerOptions {
   sourceDir: string;
   outputDir: string;
@@ -135,8 +140,9 @@ export class BatchTranspiler {
       }
     } else {
       const reachableFiles = reachable.size > 0 ? Array.from(reachable) : files;
+      const transpilableFiles = reachableFiles.filter(isTranspilableSource);
       // Register only reachable files
-      for (const filePath of reachableFiles) {
+      for (const filePath of transpilableFiles) {
         try {
           const source = fs.readFileSync(filePath, "utf8");
           const program = parser.parse(source, filePath);

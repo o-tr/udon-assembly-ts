@@ -32,8 +32,13 @@ type ExternOverride = {
 const DEFAULT_SCRIPT_TARGET = ts.ScriptTarget.ES2020;
 let externRegistryInitialized = false;
 const scannedFiles = new Set<string>();
+let cachedBuiltinStubFiles: string[] | null = null;
+const warnedUnionTypes = new Set<string>();
 
 export function buildExternRegistryFromFiles(filePaths: string[]): void {
+  if (externRegistryInitialized && filePaths.length === 0) {
+    return;
+  }
   const scanFiles = collectScanFiles(filePaths);
   const newFiles = scanFiles.filter((filePath) => !scannedFiles.has(filePath));
   if (!externRegistryInitialized) {
@@ -316,15 +321,71 @@ function normalizeTypeText(
     const parts = text
       .split("|")
       .map((part) => part.trim())
-      .filter((part) => part !== "null" && part !== "undefined");
+      .filter(
+        (part) => part !== "" && part !== "null" && part !== "undefined",
+      );
     if (parts.length === 1) {
       return parts[0];
     }
     if (parts.length > 1) {
-      return parts[0];
+      const selected = selectUnionType(parts);
+      warnUnionFallback(text, parts, selected);
+      return selected;
     }
   }
   return text;
+}
+
+function selectUnionType(parts: string[]): string {
+  let best = parts[0];
+  let bestScore = -1;
+  for (const part of parts) {
+    const score = scoreUnionType(part);
+    if (score > bestScore) {
+      best = part;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function scoreUnionType(typeName: string): number {
+  if (typeName.startsWith("Udon")) return 3;
+  if (isPrimitiveUnionType(typeName)) return 1;
+  return 2;
+}
+
+function isPrimitiveUnionType(typeName: string): boolean {
+  return (
+    typeName === "number" ||
+    typeName === "string" ||
+    typeName === "boolean" ||
+    typeName === "object" ||
+    typeName === "unknown" ||
+    typeName === "any"
+  );
+}
+
+function warnUnionFallback(
+  original: string,
+  parts: string[],
+  selected: string,
+): void {
+  if (!shouldWarnUnion(parts)) return;
+  if (warnedUnionTypes.has(original)) return;
+  warnedUnionTypes.add(original);
+  console.warn(
+    `transpiler: Union type "${original}" collapsed to "${selected}" for extern metadata`,
+  );
+}
+
+function shouldWarnUnion(parts: string[]): boolean {
+  const hasUdon = parts.some((part) => part.startsWith("Udon"));
+  const onlyUdonAndPrimitive = parts.every(
+    (part) => part.startsWith("Udon") || isPrimitiveUnionType(part),
+  );
+  if (hasUdon && onlyUdonAndPrimitive) return false;
+  return true;
 }
 
 function isSupportedSource(filePath: string): boolean {
@@ -336,11 +397,7 @@ function isSupportedSource(filePath: string): boolean {
 }
 
 function isLikelyStubFile(filePath: string): boolean {
-  return (
-    filePath.includes(`${path.sep}stubs${path.sep}`) ||
-    filePath.includes(`${path.sep}node_modules${path.sep}`) ||
-    filePath.endsWith(".d.ts")
-  );
+  return filePath.includes(`${path.sep}stubs${path.sep}`);
 }
 
 function collectScanFiles(filePaths: string[]): string[] {
@@ -348,10 +405,15 @@ function collectScanFiles(filePaths: string[]): string[] {
   for (const filePath of filePaths) {
     unique.add(filePath);
   }
-  for (const dir of findBuiltinStubDirs()) {
-    for (const filePath of walkTypescriptFiles(dir)) {
-      unique.add(filePath);
+  if (!cachedBuiltinStubFiles) {
+    const builtins: string[] = [];
+    for (const dir of findBuiltinStubDirs()) {
+      builtins.push(...walkTypescriptFiles(dir));
     }
+    cachedBuiltinStubFiles = builtins;
+  }
+  for (const filePath of cachedBuiltinStubFiles) {
+    unique.add(filePath);
   }
   return Array.from(unique);
 }

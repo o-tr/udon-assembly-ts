@@ -51,7 +51,7 @@ export class Transform extends Component {
 
   SetParent(_parent: Transform): void {}
 
-  GetChild(_index: UdonInt | number): Transform {
+  GetChild(_index: UdonInt): Transform {
     return null as unknown as Transform;
   }
 }

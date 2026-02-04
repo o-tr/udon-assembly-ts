@@ -75,7 +75,13 @@ export class DataDictionary {
   constructor() {}
 
   Count!: UdonInt;
-  [key: string]: any;
+  // Allow both token-style values and method properties on the stub.
+  [key: string]:
+    | DataToken
+    | DataList
+    | number
+    | boolean
+    | ((...args: DataToken[]) => DataToken | DataList | boolean | void);
 
   SetValue(_key: DataToken, _value: DataToken): void {}
   GetValue(_key: DataToken): DataToken {
