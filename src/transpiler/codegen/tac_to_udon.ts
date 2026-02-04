@@ -2,7 +2,6 @@
  * Convert TAC to Udon Assembly instructions
  */
 
-import { PrimitiveTypes } from "../frontend/type_symbols.js";
 import {
   type AssignmentInstruction as TACAssignmentInstruction,
   type BinaryOpInstruction as TACBinaryOpInstruction,
@@ -22,7 +21,6 @@ import {
 } from "../ir/tac_instruction.js";
 import {
   type ConstantOperand,
-  createConstant,
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
@@ -53,13 +51,11 @@ export class TACToUdonConverter {
   private tempTypes: Map<number, string> = new Map();
   private constantAddresses: Map<string, number> = new Map();
   private constantTypes: Map<string, string> = new Map();
-  private booleanConstTemps: Map<boolean, string> = new Map();
   private nextAddress = 0;
   private externSignatures: Set<string> = new Set();
   private externSymbolBySignature: Map<string, string> = new Map();
   private externAddressBySignature: Map<string, number> = new Map();
   private nextExternId = 0;
-  private syntheticTempId = 0;
   private entryClassName: string | null = null;
   private inlineClassNames: Set<string> = new Set();
 
@@ -77,13 +73,11 @@ export class TACToUdonConverter {
     this.tempTypes.clear();
     this.constantAddresses.clear();
     this.constantTypes.clear();
-    this.booleanConstTemps.clear();
     this.externSignatures.clear();
     this.externSymbolBySignature.clear();
     this.externAddressBySignature.clear();
     this.nextAddress = 0;
     this.nextExternId = 0;
-    this.syntheticTempId = 0;
     this.entryClassName = options?.entryClassName ?? null;
     this.inlineClassNames = options?.inlineClassNames ?? new Set();
 
@@ -467,51 +461,8 @@ export class TACToUdonConverter {
    * Push operand onto stack
    */
   private pushOperand(operand: TACOperand): void {
-    if (operand.kind === TACOperandKind.Constant) {
-      const constOp = operand as ConstantOperand;
-      if (constOp.type?.udonType === "Boolean") {
-        const tempName = this.materializeBooleanConstant(
-          Boolean(constOp.value),
-        );
-        this.instructions.push(new PushInstruction(tempName));
-        return;
-      }
-    }
-
     const addr = this.getOperandAddress(operand);
     this.instructions.push(new PushInstruction(addr));
-  }
-
-  private materializeBooleanConstant(value: boolean): string {
-    const cached = this.booleanConstTemps.get(value);
-    if (cached) {
-      return cached;
-    }
-
-    const tempName = this.createSyntheticTemp("Boolean");
-    const leftConst = createConstant(0, PrimitiveTypes.int32);
-    const rightConst = createConstant(value ? 0 : 1, PrimitiveTypes.int32);
-    const leftAddr = this.getOperandAddress(leftConst);
-    const rightAddr = this.getOperandAddress(rightConst);
-
-    this.instructions.push(new PushInstruction(leftAddr));
-    this.instructions.push(new PushInstruction(rightAddr));
-    const externSig = this.getExternForBinaryOp("==", "Int32");
-    this.externSignatures.add(externSig);
-    this.instructions.push(
-      new ExternInstruction(this.getExternSymbol(externSig), true),
-    );
-    this.instructions.push(new PushInstruction(tempName));
-    this.instructions.push(new CopyInstruction());
-    this.booleanConstTemps.set(value, tempName);
-    return tempName;
-  }
-
-  private createSyntheticTemp(type: string): string {
-    const name = `__bool_const_${this.syntheticTempId++}`;
-    this.variableAddresses.set(name, this.nextAddress++);
-    this.variableTypes.set(name, type);
-    return name;
   }
 
   /**

@@ -18,7 +18,7 @@ describe("short-circuit evaluation", () => {
     const andLabel = tac.find(
       (inst) =>
         inst.kind === TACInstructionKind.Label &&
-        inst.toString().includes("and_short"),
+        inst.toString().includes("and_end"),
     );
     expect(andLabel).toBeDefined();
   });

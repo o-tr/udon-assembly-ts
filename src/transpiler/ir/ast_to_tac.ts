@@ -415,13 +415,8 @@ export class ASTToTACConverter {
     const elseLabel = this.newLabel("else");
     const endLabel = this.newLabel("endif");
 
-    // Invert condition for jump to else
-    const notCondition = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
-      new UnaryOpInstruction(notCondition, "!", condition),
-    );
-    this.instructions.push(
-      new ConditionalJumpInstruction(notCondition, elseLabel),
+      new ConditionalJumpInstruction(condition, elseLabel),
     );
 
     // Then branch
@@ -450,12 +445,8 @@ export class ASTToTACConverter {
 
     // Condition
     const condition = this.visitExpression(node.condition);
-    const notCondition = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
-      new UnaryOpInstruction(notCondition, "!", condition),
-    );
-    this.instructions.push(
-      new ConditionalJumpInstruction(notCondition, endLabel),
+      new ConditionalJumpInstruction(condition, endLabel),
     );
 
     // Body
@@ -492,12 +483,8 @@ export class ASTToTACConverter {
 
     if (node.condition) {
       const condition = this.visitExpression(node.condition);
-      const notCondition = this.newTemp(PrimitiveTypes.boolean);
       this.instructions.push(
-        new UnaryOpInstruction(notCondition, "!", condition),
-      );
-      this.instructions.push(
-        new ConditionalJumpInstruction(notCondition, endLabel),
+        new ConditionalJumpInstruction(condition, endLabel),
       );
     }
 
@@ -578,9 +565,7 @@ export class ASTToTACConverter {
     this.instructions.push(
       new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
     );
-    const notCond = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(new UnaryOpInstruction(notCond, "!", condTemp));
-    this.instructions.push(new ConditionalJumpInstruction(notCond, loopEnd));
+    this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
 
     this.instructions.push(
       new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
@@ -651,7 +636,7 @@ export class ASTToTACConverter {
       const caseValue = this.coerceSwitchOperand(rawCaseValue, switchType);
       const comparisonResult = this.newTemp(PrimitiveTypes.boolean);
       this.instructions.push(
-        new BinaryOpInstruction(comparisonResult, switchTemp, "==", caseValue),
+        new BinaryOpInstruction(comparisonResult, switchTemp, "!=", caseValue),
       );
       this.instructions.push(
         new ConditionalJumpInstruction(comparisonResult, entry.label),
@@ -697,12 +682,8 @@ export class ASTToTACConverter {
 
     this.instructions.push(new LabelInstruction(conditionLabel));
     const condition = this.visitExpression(node.condition);
-    const notCondition = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
-      new UnaryOpInstruction(notCondition, "!", condition),
-    );
-    this.instructions.push(
-      new ConditionalJumpInstruction(notCondition, endLabel),
+      new ConditionalJumpInstruction(condition, endLabel),
     );
     this.instructions.push(new UnconditionalJumpInstruction(startLabel));
     this.instructions.push(new LabelInstruction(endLabel));
@@ -1062,28 +1043,20 @@ export class ASTToTACConverter {
   }
 
   private visitShortCircuitAnd(node: BinaryExpressionNode): TACOperand {
-    const result = this.newTemp(PrimitiveTypes.boolean);
-    const shortCircuitLabel = this.newLabel("and_short");
     const endLabel = this.newLabel("and_end");
 
     const left = this.visitExpression(node.left);
-    const notLeft = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(new UnaryOpInstruction(notLeft, "!", left));
-    this.instructions.push(
-      new ConditionalJumpInstruction(notLeft, shortCircuitLabel),
-    );
-
-    const right = this.visitExpression(node.right);
-    this.instructions.push(new CopyInstruction(result, right));
-    this.instructions.push(new UnconditionalJumpInstruction(endLabel));
-
-    this.instructions.push(new LabelInstruction(shortCircuitLabel));
+    const result = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
       new AssignmentInstruction(
         result,
         createConstant(false, PrimitiveTypes.boolean),
       ),
     );
+    this.instructions.push(new ConditionalJumpInstruction(left, endLabel));
+
+    const right = this.visitExpression(node.right);
+    this.instructions.push(new CopyInstruction(result, right));
     this.instructions.push(new LabelInstruction(endLabel));
     return result;
   }
@@ -1094,10 +1067,8 @@ export class ASTToTACConverter {
     const endLabel = this.newLabel("or_end");
 
     const left = this.visitExpression(node.left);
-    const notLeft = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(new UnaryOpInstruction(notLeft, "!", left));
     this.instructions.push(
-      new ConditionalJumpInstruction(notLeft, shortCircuitLabel),
+      new ConditionalJumpInstruction(left, shortCircuitLabel),
     );
 
     this.instructions.push(
@@ -1136,12 +1107,8 @@ export class ASTToTACConverter {
     const falseLabel = this.newLabel("cond_false");
     const endLabel = this.newLabel("cond_end");
 
-    const notCondition = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
-      new UnaryOpInstruction(notCondition, "!", condition),
-    );
-    this.instructions.push(
-      new ConditionalJumpInstruction(notCondition, falseLabel),
+      new ConditionalJumpInstruction(condition, falseLabel),
     );
 
     const trueVal = this.visitExpression(node.whenTrue);
@@ -1161,7 +1128,7 @@ export class ASTToTACConverter {
   ): TACOperand {
     const left = this.visitExpression(node.left);
     const result = this.newTemp(this.getOperandType(left));
-    const useDefaultLabel = this.newLabel("null_default");
+    const notNullLabel = this.newLabel("null_not");
     const endLabel = this.newLabel("null_end");
 
     const isNull = this.newTemp(PrimitiveTypes.boolean);
@@ -1169,18 +1136,16 @@ export class ASTToTACConverter {
     this.instructions.push(
       new BinaryOpInstruction(isNull, left, "==", nullConstant),
     );
-    // Jump to default branch when left IS null
     this.instructions.push(
-      new ConditionalJumpInstruction(isNull, useDefaultLabel),
+      new ConditionalJumpInstruction(isNull, notNullLabel),
     );
 
-    // left not null -> result = left
-    this.instructions.push(new CopyInstruction(result, left));
-    this.instructions.push(new UnconditionalJumpInstruction(endLabel));
-
-    this.instructions.push(new LabelInstruction(useDefaultLabel));
     const right = this.visitExpression(node.right);
     this.instructions.push(new CopyInstruction(result, right));
+    this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+
+    this.instructions.push(new LabelInstruction(notNullLabel));
+    this.instructions.push(new CopyInstruction(result, left));
     this.instructions.push(new LabelInstruction(endLabel));
     return result;
   }
@@ -2052,19 +2017,21 @@ export class ASTToTACConverter {
           createConstant(null, ObjectType),
         ),
       );
-      const nullLabel = this.newLabel("opt_call_null");
+      const notNullLabel = this.newLabel("opt_call_notnull");
       const endLabel = this.newLabel("opt_call_end");
-      this.instructions.push(new ConditionalJumpInstruction(isNull, nullLabel));
-
       const callResult = this.newTemp(ObjectType);
       this.instructions.push(
-        new MethodCallInstruction(callResult, objTemp, opt.property, args),
+        new ConditionalJumpInstruction(isNull, notNullLabel),
+      );
+
+      this.instructions.push(
+        new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
       );
       this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
-      this.instructions.push(new LabelInstruction(nullLabel));
+      this.instructions.push(new LabelInstruction(notNullLabel));
       this.instructions.push(
-        new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
+        new MethodCallInstruction(callResult, objTemp, opt.property, args),
       );
       this.instructions.push(new LabelInstruction(endLabel));
       return callResult;
@@ -2270,9 +2237,7 @@ export class ASTToTACConverter {
     this.instructions.push(
       new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
     );
-    const notCond = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(new UnaryOpInstruction(notCond, "!", condTemp));
-    this.instructions.push(new ConditionalJumpInstruction(notCond, loopEnd));
+    this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
 
     const keyTemp = this.newTemp(ObjectType);
     this.instructions.push(
@@ -2621,19 +2586,20 @@ export class ASTToTACConverter {
         createConstant(null, ObjectType),
       ),
     );
-    const nullLabel = this.newLabel("opt_null");
+    const notNullLabel = this.newLabel("opt_notnull");
     const endLabel = this.newLabel("opt_end");
-    this.instructions.push(new ConditionalJumpInstruction(isNull, nullLabel));
-
     const result = this.newTemp(ObjectType);
     this.instructions.push(
-      new PropertyGetInstruction(result, objTemp, node.property),
+      new ConditionalJumpInstruction(isNull, notNullLabel),
+    );
+    this.instructions.push(
+      new AssignmentInstruction(result, createConstant(null, ObjectType)),
     );
     this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
-    this.instructions.push(new LabelInstruction(nullLabel));
+    this.instructions.push(new LabelInstruction(notNullLabel));
     this.instructions.push(
-      new AssignmentInstruction(result, createConstant(null, ObjectType)),
+      new PropertyGetInstruction(result, objTemp, node.property),
     );
     this.instructions.push(new LabelInstruction(endLabel));
 
@@ -2840,10 +2806,8 @@ export class ASTToTACConverter {
         new BinaryOpInstruction(changed, currentVal, "!=", prevVar),
       );
       const skipLabel = this.newLabel("fcb_skip");
-      const notChanged = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(new UnaryOpInstruction(notChanged, "!", changed));
       this.instructions.push(
-        new ConditionalJumpInstruction(notChanged, skipLabel),
+        new ConditionalJumpInstruction(changed, skipLabel),
       );
       this.instructions.push(new CopyInstruction(prevVar, currentVal));
       if (prop.fieldChangeCallback) {
@@ -2902,13 +2866,10 @@ export class ASTToTACConverter {
           createConstant(null, ObjectType),
         ),
       );
-      const setLabel = this.newLabel("try_error_set");
       const continueLabel = this.newLabel("try_continue");
       this.instructions.push(
-        new ConditionalJumpInstruction(isNullTemp, setLabel),
+        new ConditionalJumpInstruction(isNullTemp, continueLabel),
       );
-      this.instructions.push(new UnconditionalJumpInstruction(continueLabel));
-      this.instructions.push(new LabelInstruction(setLabel));
       this.instructions.push(
         new AssignmentInstruction(
           errorFlag,

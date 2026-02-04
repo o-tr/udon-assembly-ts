@@ -27,6 +27,7 @@ import {
   type ConstantOperand,
   type ConstantValue,
   createConstant,
+  createLabel,
   createTemporary,
   type LabelOperand,
   type TACOperand,
@@ -77,11 +78,20 @@ export class TACOptimizer {
     // Eliminate single-use temporaries inside basic blocks
     optimized = this.eliminateSingleUseTemporaries(optimized);
 
-    // Remove unused variable assignments
-    optimized = this.deadVariableElimination(optimized);
+    // Remove no-op copies/assignments
+    optimized = this.eliminateNoopCopies(optimized);
 
     // Apply dead code elimination
     optimized = this.deadCodeElimination(optimized);
+
+    // Remove redundant jumps and thread jump chains
+    optimized = this.simplifyJumps(optimized);
+
+    // Remove unused variable assignments
+    optimized = this.deadVariableElimination(optimized);
+
+    // Remove unused temporary computations
+    optimized = this.eliminateDeadTemporaries(optimized);
 
     // Apply copy-on-write temporary reuse to reduce heap usage
     optimized = this.copyOnWriteTemporaries(optimized);
@@ -560,10 +570,14 @@ export class TACOptimizer {
           const constOp = condJump.condition as ConstantOperand;
           const value = constOp.value;
           if (typeof value === "boolean" || typeof value === "number") {
-            if (value) {
+            const isFalse =
+              typeof value === "boolean"
+                ? value === false
+                : value === 0 || Number.isNaN(value);
+            if (isFalse) {
               result.push(new UnconditionalJumpInstruction(condJump.label));
-              continue;
             }
+            continue;
           }
         }
       }
@@ -616,6 +630,161 @@ export class TACOptimizer {
 
         result.push(inst);
       }
+    }
+
+    return result;
+  }
+
+  private eliminateNoopCopies(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    const result: TACInstruction[] = [];
+
+    for (const inst of instructions) {
+      if (
+        inst.kind === TACInstructionKind.Assignment ||
+        inst.kind === TACInstructionKind.Copy
+      ) {
+        const { dest, src } = inst as unknown as InstWithDestSrc;
+        if (this.sameOperand(dest, src)) {
+          continue;
+        }
+      }
+      result.push(inst);
+    }
+
+    return result;
+  }
+
+  private eliminateDeadTemporaries(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    let current = instructions;
+
+    while (true) {
+      const uses = new Map<number, number>();
+      const recordUse = (operand: TACOperand) => {
+        if (operand.kind !== TACOperandKind.Temporary) return;
+        const id = (operand as TemporaryOperand).id;
+        uses.set(id, (uses.get(id) ?? 0) + 1);
+      };
+
+      for (const inst of current) {
+        for (const op of this.getUsedOperandsForReuse(inst)) {
+          recordUse(op);
+        }
+      }
+
+      let changed = false;
+      const result: TACInstruction[] = [];
+      for (const inst of current) {
+        if (this.isPureProducer(inst)) {
+          const defined = this.getDefinedOperandForReuse(inst);
+          if (defined?.kind === TACOperandKind.Temporary) {
+            const id = (defined as TemporaryOperand).id;
+            if (!uses.has(id)) {
+              changed = true;
+              continue;
+            }
+          }
+        }
+        result.push(inst);
+      }
+
+      if (!changed) {
+        return result;
+      }
+      current = result;
+    }
+  }
+
+  private simplifyJumps(instructions: TACInstruction[]): TACInstruction[] {
+    if (instructions.length === 0) return instructions;
+
+    const labelIndex = new Map<string, number>();
+    for (let i = 0; i < instructions.length; i += 1) {
+      const inst = instructions[i];
+      if (inst.kind !== TACInstructionKind.Label) continue;
+      const labelInst = inst as LabelInstruction;
+      if (labelInst.label.kind !== TACOperandKind.Label) continue;
+      labelIndex.set((labelInst.label as LabelOperand).name, i);
+    }
+
+    const resolveLabelName = (name: string): string => {
+      let current = name;
+      const seen = new Set<string>();
+
+      while (!seen.has(current)) {
+        seen.add(current);
+        const index = labelIndex.get(current);
+        if (index === undefined) break;
+
+        let nextIndex = index + 1;
+        while (
+          nextIndex < instructions.length &&
+          instructions[nextIndex].kind === TACInstructionKind.Label
+        ) {
+          nextIndex += 1;
+        }
+
+        if (nextIndex >= instructions.length) break;
+        const nextInst = instructions[nextIndex];
+        if (nextInst.kind !== TACInstructionKind.UnconditionalJump) break;
+
+        const target = (nextInst as UnconditionalJumpInstruction).label;
+        if (target.kind !== TACOperandKind.Label) break;
+
+        current = (target as LabelOperand).name;
+      }
+
+      return current;
+    };
+
+    const resolved = new Map<string, string>();
+    for (const name of labelIndex.keys()) {
+      resolved.set(name, resolveLabelName(name));
+    }
+
+    const isJumpToNextLabel = (index: number, targetName: string): boolean => {
+      for (let i = index + 1; i < instructions.length; i += 1) {
+        const inst = instructions[i];
+        if (inst.kind !== TACInstructionKind.Label) return false;
+        const labelInst = inst as LabelInstruction;
+        if (labelInst.label.kind !== TACOperandKind.Label) continue;
+        if ((labelInst.label as LabelOperand).name === targetName) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const result: TACInstruction[] = [];
+    for (let i = 0; i < instructions.length; i += 1) {
+      const inst = instructions[i];
+      if (
+        inst.kind === TACInstructionKind.UnconditionalJump ||
+        inst.kind === TACInstructionKind.ConditionalJump
+      ) {
+        const label = (inst as { label: TACOperand }).label;
+        if (label.kind === TACOperandKind.Label) {
+          const labelName = (label as LabelOperand).name;
+          const resolvedName = resolved.get(labelName) ?? labelName;
+          if (isJumpToNextLabel(i, resolvedName)) {
+            continue;
+          }
+          if (resolvedName !== labelName) {
+            const resolvedLabel = createLabel(resolvedName);
+            if (inst.kind === TACInstructionKind.UnconditionalJump) {
+              result.push(new UnconditionalJumpInstruction(resolvedLabel));
+            } else {
+              const cond = (inst as ConditionalJumpInstruction).condition;
+              result.push(new ConditionalJumpInstruction(cond, resolvedLabel));
+            }
+            continue;
+          }
+        }
+      }
+      result.push(inst);
     }
 
     return result;
@@ -1028,6 +1197,18 @@ export class TACOptimizer {
       inst.kind === TACInstructionKind.UnaryOp ||
       inst.kind === TACInstructionKind.Cast
     );
+  }
+
+  private sameOperand(a: TACOperand, b: TACOperand): boolean {
+    if (a.kind !== b.kind) return false;
+    switch (a.kind) {
+      case TACOperandKind.Variable:
+        return (a as VariableOperand).name === (b as VariableOperand).name;
+      case TACOperandKind.Temporary:
+        return (a as TemporaryOperand).id === (b as TemporaryOperand).id;
+      default:
+        return false;
+    }
   }
 
   private isCopyFromTemp(inst: TACInstruction): boolean {

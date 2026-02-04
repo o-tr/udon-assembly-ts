@@ -5,6 +5,7 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CopyInstruction,
+  ReturnInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
   createConstant,
@@ -27,6 +28,7 @@ describe("optimizer passes", () => {
       new CopyInstruction(b, a),
       new CopyInstruction(c, b),
       new BinaryOpInstruction(t0, c, "+", a),
+      new ReturnInstruction(t0),
     ];
 
     const optimizer = new TACOptimizer();
@@ -45,6 +47,7 @@ describe("optimizer passes", () => {
       new AssignmentInstruction(a, createConstant(1, PrimitiveTypes.int32)),
       new AssignmentInstruction(b, createConstant(2, PrimitiveTypes.int32)),
       new BinaryOpInstruction(t0, a, "+", a),
+      new ReturnInstruction(t0),
     ];
 
     const optimizer = new TACOptimizer();
@@ -64,6 +67,7 @@ describe("optimizer passes", () => {
     const instructions = [
       new BinaryOpInstruction(t1, a, "+", b),
       new BinaryOpInstruction(t2, a, "+", b),
+      new ReturnInstruction(t2),
     ];
 
     const optimizer = new TACOptimizer();
@@ -84,6 +88,7 @@ describe("optimizer passes", () => {
         "+",
         createConstant("World", PrimitiveTypes.string),
       ),
+      new ReturnInstruction(t0),
     ];
 
     const optimizer = new TACOptimizer();
@@ -103,6 +108,7 @@ describe("optimizer passes", () => {
         "&&",
         createConstant(false, PrimitiveTypes.boolean),
       ),
+      new ReturnInstruction(t0),
     ];
 
     const optimizer = new TACOptimizer();
