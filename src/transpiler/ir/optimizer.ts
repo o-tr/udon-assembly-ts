@@ -57,6 +57,16 @@ type BasicBlock = {
 
 type ExprValue = { operandKey: string; operand: TACOperand };
 
+const bankersRound = (value: number): number => {
+  const integer = Math.floor(value);
+  const frac = value - integer;
+  if (Math.abs(frac) === 0.5) {
+    return integer % 2 === 0 ? integer : integer + 1;
+  }
+  if (frac > 0.5) return integer + 1;
+  return integer;
+};
+
 /**
  * TAC optimizer
  */
@@ -114,11 +124,11 @@ export class TACOptimizer {
     ],
     [
       "UnityEngineMathf.__Round__SystemSingle__SystemSingle",
-      { arity: 1, eval: ([a]) => Math.round(a) },
+      { arity: 1, eval: ([a]) => bankersRound(a) },
     ],
     [
       "UnityEngineMathf.__RoundToInt__SystemSingle__SystemInt32",
-      { arity: 1, eval: ([a]) => Math.round(a) },
+      { arity: 1, eval: ([a]) => bankersRound(a) },
     ],
     [
       "UnityEngineMathf.__Sin__SystemSingle__SystemSingle",
@@ -2982,20 +2992,16 @@ export class TACOptimizer {
       active.sort((a, b) => a.end - b.end);
     }
 
-    const rewriteTemp = (operand: TACOperand | undefined) => {
-      if (!operand || operand.kind !== TACOperandKind.Temporary) return;
+    const rewriteTemp = (operand: TACOperand): TACOperand => {
+      if (operand.kind !== TACOperandKind.Temporary) return operand;
       const temp = operand as TemporaryOperand;
       const mapped = oldToNew.get(temp.id);
-      if (mapped !== undefined) {
-        temp.id = mapped;
-      }
+      if (mapped === undefined || mapped === temp.id) return operand;
+      return { ...temp, id: mapped };
     };
 
     for (const inst of instructions) {
-      const used = this.getUsedOperandsForReuse(inst);
-      for (const op of used) rewriteTemp(op);
-      const defined = this.getDefinedOperandForReuse(inst);
-      rewriteTemp(defined);
+      this.rewriteOperands(inst, rewriteTemp);
     }
 
     return instructions;
@@ -3109,20 +3115,16 @@ export class TACOptimizer {
       active.sort((a, b) => a.end - b.end);
     }
 
-    const rewriteVar = (operand: TACOperand | undefined) => {
-      if (!operand || operand.kind !== TACOperandKind.Variable) return;
+    const rewriteVar = (operand: TACOperand): TACOperand => {
+      if (operand.kind !== TACOperandKind.Variable) return operand;
       const variable = operand as VariableOperand;
       const mapped = oldToNew.get(variable.name);
-      if (mapped) {
-        variable.name = mapped;
-      }
+      if (!mapped || mapped === variable.name) return operand;
+      return { ...variable, name: mapped };
     };
 
     for (const inst of instructions) {
-      const used = this.getUsedOperandsForReuse(inst);
-      for (const op of used) rewriteVar(op);
-      const defined = this.getDefinedOperandForReuse(inst);
-      rewriteVar(defined);
+      this.rewriteOperands(inst, rewriteVar);
     }
 
     return instructions;
@@ -3432,6 +3434,86 @@ export class TACOptimizer {
       }
       default:
         return [];
+    }
+  }
+
+  private rewriteOperands(
+    inst: TACInstruction,
+    rewrite: (operand: TACOperand) => TACOperand,
+  ): void {
+    switch (inst.kind) {
+      case TACInstructionKind.Assignment:
+      case TACInstructionKind.Copy:
+      case TACInstructionKind.Cast: {
+        const typed = inst as InstWithDestSrc;
+        typed.dest = rewrite(typed.dest);
+        typed.src = rewrite(typed.src);
+        return;
+      }
+      case TACInstructionKind.BinaryOp: {
+        const bin = inst as BinaryOpInstruction;
+        bin.dest = rewrite(bin.dest);
+        bin.left = rewrite(bin.left);
+        bin.right = rewrite(bin.right);
+        return;
+      }
+      case TACInstructionKind.UnaryOp: {
+        const unary = inst as UnaryOpInstruction;
+        unary.dest = rewrite(unary.dest);
+        unary.operand = rewrite(unary.operand);
+        return;
+      }
+      case TACInstructionKind.ConditionalJump: {
+        const cond = inst as ConditionalJumpInstruction;
+        cond.condition = rewrite(cond.condition);
+        return;
+      }
+      case TACInstructionKind.Call: {
+        const call = inst as CallInstruction;
+        if (call.dest) call.dest = rewrite(call.dest);
+        call.args = call.args.map(rewrite);
+        return;
+      }
+      case TACInstructionKind.MethodCall: {
+        const method = inst as MethodCallInstruction;
+        if (method.dest) method.dest = rewrite(method.dest);
+        method.object = rewrite(method.object);
+        method.args = method.args.map(rewrite);
+        return;
+      }
+      case TACInstructionKind.PropertyGet: {
+        const get = inst as PropertyGetInstruction;
+        get.dest = rewrite(get.dest);
+        get.object = rewrite(get.object);
+        return;
+      }
+      case TACInstructionKind.PropertySet: {
+        const set = inst as PropertySetInstruction;
+        set.object = rewrite(set.object);
+        set.value = rewrite(set.value);
+        return;
+      }
+      case TACInstructionKind.Return: {
+        const ret = inst as ReturnInstruction;
+        if (ret.value) ret.value = rewrite(ret.value);
+        return;
+      }
+      case TACInstructionKind.ArrayAccess: {
+        const acc = inst as ArrayAccessInstruction;
+        acc.dest = rewrite(acc.dest);
+        acc.array = rewrite(acc.array);
+        acc.index = rewrite(acc.index);
+        return;
+      }
+      case TACInstructionKind.ArrayAssignment: {
+        const assign = inst as ArrayAssignmentInstruction;
+        assign.array = rewrite(assign.array);
+        assign.index = rewrite(assign.index);
+        assign.value = rewrite(assign.value);
+        return;
+      }
+      default:
+        return;
     }
   }
 
