@@ -15,7 +15,13 @@ export type {
 } from "./SyncableTypes.js";
 export { SyncableTypeGuards } from "./SyncableTypes.js";
 // デコレーター
-export { TsOnly, UdonStatic, UdonStub, UdonTsOnly } from "./UdonDecorators.js";
+export {
+  TsOnly,
+  UdonExtern,
+  UdonStatic,
+  UdonStub,
+  UdonTsOnly,
+} from "./UdonDecorators.js";
 // Udon型定義
 export {
   // 既存の型
@@ -34,10 +40,31 @@ export {
   UdonTypeConverters,
   type UdonULong,
 } from "./UdonTypes.js";
+// System core stubs
+export {
+  Convert,
+  Int32,
+  Math,
+  String,
+  SystemArray,
+  SystemCollectionsIEnumerator,
+  Type,
+} from "./SystemTypes.js";
+// UdonSharp collections
+export {
+  UdonDictionary,
+  UdonHashSet,
+  UdonList,
+  UdonQueue,
+  UdonStack,
+} from "./UdonCollections.js";
+export { GetComponentShim } from "./UdonSharpHelpers.js";
+export { UdonBehaviour } from "./UdonBehaviour.js";
 // UnityEngine / TMPro 型スタブ
 export {
   Animator,
   AudioSource,
+  AudioClip,
   Bounds,
   BoxCollider,
   Button,
@@ -53,6 +80,7 @@ export {
   MeshFilter,
   MeshRenderer,
   Quaternion,
+  Rigidbody,
   RawImage,
   RectTransform,
   Renderer,
@@ -71,6 +99,7 @@ export {
   type VRChatNetworking,
   VRChatStubFactory,
   type VRCPickup,
+  VRCInstantiate,
   VRCPlayerApi,
   type VRCStation,
 } from "./VRChatTypes.js";

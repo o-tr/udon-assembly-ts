@@ -3,6 +3,7 @@
  */
 
 import { TACToUdonConverter } from "./codegen/tac_to_udon.js";
+import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
 import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
@@ -47,6 +48,7 @@ export class TypeScriptToUdonTranspiler {
    * Transpile TypeScript source to Udon Assembly
    */
   transpile(source: string, options: TranspilerOptions = {}): TranspilerResult {
+    buildExternRegistryFromFiles([]);
     // Phase 1: Parse TypeScript to AST
     const parser = new TypeScriptParser();
     const ast = parser.parse(source);

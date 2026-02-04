@@ -30,4 +30,16 @@ describe("Type symbols", () => {
       PrimitiveTypes.single,
     );
   });
+
+  it("maps boolean literal types", () => {
+    const mapper = new TypeMapper();
+    expect(mapper.mapTypeScriptType("true")).toBe(PrimitiveTypes.boolean);
+    expect(mapper.mapTypeScriptType("false")).toBe(PrimitiveTypes.boolean);
+    expect(mapper.mapTypeScriptType("true | false")).toBe(
+      PrimitiveTypes.boolean,
+    );
+    expect(mapper.mapTypeScriptType("true | false | null")).toBe(
+      PrimitiveTypes.boolean,
+    );
+  });
 });

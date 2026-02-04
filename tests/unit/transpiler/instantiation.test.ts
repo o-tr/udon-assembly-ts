@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
 
 describe("InstantiationShim", () => {
+  beforeAll(() => {
+    buildExternRegistryFromFiles([]);
+  });
+
   it("emits VRCInstantiate extern for Instantiate calls", () => {
     const parser = new TypeScriptParser();
     const source = `

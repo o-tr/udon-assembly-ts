@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
 
 describe("collections support", () => {
+  beforeAll(() => {
+    buildExternRegistryFromFiles([]);
+  });
+
   it("emits DataList/DataDictionary externs", () => {
     const parser = new TypeScriptParser();
     const source = `
@@ -31,13 +36,13 @@ describe("collections support", () => {
 
     expect(
       externs.some((sig) =>
-        sig.includes("VRCSDKBaseDataList.__ctor____VRCSDKBaseDataList"),
+        sig.includes("VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList"),
       ),
     ).toBe(true);
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDKBaseDataDictionary.__ctor____VRCSDKBaseDataDictionary",
+          "VRCSDK3DataDataDictionary.__ctor____VRCSDK3DataDataDictionary",
         ),
       ),
     ).toBe(true);
@@ -119,7 +124,7 @@ describe("collections support", () => {
     ).toBe(true);
     expect(
       externs.some((sig) =>
-        sig.includes("UdonSharpRuntime_List.__get_Count__SystemInt32"),
+        sig.includes("UdonSharpRuntime_List.__get_Count____SystemInt32"),
       ),
     ).toBe(true);
     expect(

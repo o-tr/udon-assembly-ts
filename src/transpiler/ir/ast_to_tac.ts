@@ -3,11 +3,10 @@
  */
 
 import { resolveExternSignature } from "../codegen/extern_signatures.js";
-import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import {
-  generateExternSignature,
-  mapTypeScriptToCSharp,
-} from "../codegen/udon_type_resolver.js";
+  computeTypeId,
+  typeMetadataRegistry,
+} from "../codegen/type_metadata_registry.js";
 import { EnumRegistry } from "../frontend/enum_registry.js";
 import type { SymbolTable } from "../frontend/symbol_table.js";
 import { isTsOnlyCallExpression } from "../frontend/ts_only.js";
@@ -1218,8 +1217,13 @@ export class ASTToTACConverter {
       }
 
       const newResult = this.newTemp(PrimitiveTypes.string);
-      const concatExtern =
-        "SystemString.__Concat__SystemString_SystemString__SystemString";
+      const concatExtern = this.requireExternSignature(
+        "String",
+        "Concat",
+        "method",
+        ["string", "string"],
+        "string",
+      );
       this.instructions.push(
         new CallInstruction(newResult, concatExtern, [result, partOperand]),
       );
@@ -1235,7 +1239,13 @@ export class ASTToTACConverter {
       ? this.typeMapper.mapTypeScriptType(node.typeHint)
       : ObjectType;
     const listResult = this.newTemp(new DataListTypeSymbol(elementType));
-    const externSig = "VRCSDKBaseDataList.__ctor____VRCSDKBaseDataList";
+    const externSig = this.requireExternSignature(
+      "DataList",
+      "ctor",
+      "method",
+      [],
+      "DataList",
+    );
     this.instructions.push(new CallInstruction(listResult, externSig, []));
 
     for (const element of node.elements) {
@@ -1272,6 +1282,7 @@ export class ASTToTACConverter {
     if (!symbol) {
       if (
         this.classMap.has(node.name) ||
+        typeMetadataRegistry.hasType(node.name) ||
         node.name === "UdonTypeConverters" ||
         node.name === "Object" ||
         node.name === "Number" ||
@@ -1483,7 +1494,13 @@ export class ASTToTACConverter {
     }
 
     const listResult = this.newTemp(ExternTypes.dataList);
-    const listCtorSig = "VRCSDKBaseDataList.__ctor____VRCSDKBaseDataList";
+    const listCtorSig = this.requireExternSignature(
+      "DataList",
+      "ctor",
+      "method",
+      [],
+      "DataList",
+    );
     this.instructions.push(new CallInstruction(listResult, listCtorSig, []));
 
     let pendingProps: ObjectLiteralPropertyNode[] = [];
@@ -1526,8 +1543,13 @@ export class ASTToTACConverter {
     properties: ObjectLiteralPropertyNode[],
   ): TACOperand {
     const dictResult = this.newTemp(ExternTypes.dataDictionary);
-    const dictCtorSig =
-      "VRCSDKBaseDataDictionary.__ctor____VRCSDKBaseDataDictionary";
+    const dictCtorSig = this.requireExternSignature(
+      "DataDictionary",
+      "ctor",
+      "method",
+      [],
+      "DataDictionary",
+    );
     this.instructions.push(new CallInstruction(dictResult, dictCtorSig, []));
 
     for (const prop of properties) {
@@ -1553,8 +1575,13 @@ export class ASTToTACConverter {
       const propAccess = node.target as PropertyAccessExpressionNode;
       const object = this.visitExpression(propAccess.object);
       if (this.isUdonBehaviourPropertyAccess(propAccess)) {
-        const externSig =
-          "VRCUdonCommonInterfacesIUdonEventReceiver.__SetProgramVariable__SystemString_SystemObject__SystemVoid";
+        const externSig = this.requireExternSignature(
+          "UdonBehaviour",
+          "SetProgramVariable",
+          "method",
+          ["string", "object"],
+          "void",
+        );
         const propName = createConstant(
           propAccess.property,
           PrimitiveTypes.string,
@@ -1659,9 +1686,13 @@ export class ASTToTACConverter {
           : calleeName;
         const collectionType = this.typeMapper.mapTypeScriptType(typeArgText);
         const collectionResult = this.newTemp(collectionType);
-        const externSig =
-          resolveExternSignature(calleeName, "ctor", "method") ??
-          `${calleeName}()`;
+        const externSig = this.requireExternSignature(
+          calleeName,
+          "ctor",
+          "method",
+          [],
+          calleeName,
+        );
         this.instructions.push(
           new CallInstruction(collectionResult, externSig, args),
         );
@@ -1669,14 +1700,25 @@ export class ASTToTACConverter {
       }
       if (node.isNew && calleeName === "DataList") {
         const listResult = this.newTemp(ExternTypes.dataList);
-        const externSig = "VRCSDKBaseDataList.__ctor____VRCSDKBaseDataList";
+        const externSig = this.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
         this.instructions.push(new CallInstruction(listResult, externSig, []));
         return listResult;
       }
       if (node.isNew && calleeName === "DataDictionary") {
         const dictResult = this.newTemp(ExternTypes.dataDictionary);
-        const externSig =
-          "VRCSDKBaseDataDictionary.__ctor____VRCSDKBaseDataDictionary";
+        const externSig = this.requireExternSignature(
+          "DataDictionary",
+          "ctor",
+          "method",
+          [],
+          "DataDictionary",
+        );
         this.instructions.push(new CallInstruction(dictResult, externSig, []));
         return dictResult;
       }
@@ -1685,7 +1727,13 @@ export class ASTToTACConverter {
           ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
           : ObjectType;
         const listResult = this.newTemp(new DataListTypeSymbol(arrayType));
-        const externSig = "VRCSDKBaseDataList.__ctor____VRCSDKBaseDataList";
+        const externSig = this.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
         this.instructions.push(new CallInstruction(listResult, externSig, []));
         for (const arg of args) {
           const token = this.wrapDataToken(arg);
@@ -1700,8 +1748,13 @@ export class ASTToTACConverter {
         args.length === 1
       ) {
         const instResult = this.newTemp(ExternTypes.gameObject);
-        const externSig =
-          "VRCInstantiate.__Instantiate__UnityEngineGameObject__UnityEngineGameObject";
+        const externSig = this.requireExternSignature(
+          "VRCInstantiate",
+          "Instantiate",
+          "method",
+          ["GameObject"],
+          "GameObject",
+        );
         this.instructions.push(
           new CallInstruction(instResult, externSig, args),
         );
@@ -1852,15 +1905,31 @@ export class ASTToTACConverter {
         switch (propAccess.property) {
           case "log":
           case "info":
-            externName = "UnityEngineDebug.__Log__SystemObject__SystemVoid";
+            externName = this.requireExternSignature(
+              "Debug",
+              "Log",
+              "method",
+              ["object"],
+              "void",
+            );
             break;
           case "error":
-            externName =
-              "UnityEngineDebug.__LogError__SystemObject__SystemVoid";
+            externName = this.requireExternSignature(
+              "Debug",
+              "LogError",
+              "method",
+              ["object"],
+              "void",
+            );
             break;
           case "warn":
-            externName =
-              "UnityEngineDebug.__LogWarning__SystemObject__SystemVoid";
+            externName = this.requireExternSignature(
+              "Debug",
+              "LogWarning",
+              "method",
+              ["object"],
+              "void",
+            );
             break;
         }
 
@@ -1899,8 +1968,13 @@ export class ASTToTACConverter {
           `0x${typeId.toString(16)}`,
           PrimitiveTypes.int64,
         );
-        const externSig =
-          "UdonSharpLibInternalGetComponentShim.__GetComponent__UnityEngineComponent_SystemInt64__UnityEngineComponent";
+        const externSig = this.requireExternSignature(
+          "GetComponentShim",
+          "GetComponent",
+          "method",
+          ["Component", "UdonLong"],
+          "Component",
+        );
         const typeResult = this.newTemp(targetTypeSymbol);
         this.instructions.push(
           new CallInstruction(typeResult, externSig, [object, typeOperand]),
@@ -1913,8 +1987,13 @@ export class ASTToTACConverter {
         args[0].kind === TACOperandKind.Constant
       ) {
         const _methodName = (args[0] as ConstantOperand).value as string;
-        const externSig =
-          "VRCUdonCommonInterfacesIUdonEventReceiver.__SendCustomEvent__SystemString__SystemVoid";
+        const externSig = this.requireExternSignature(
+          "UdonBehaviour",
+          "SendCustomEvent",
+          "method",
+          ["string"],
+          "void",
+        );
         this.instructions.push(
           new CallInstruction(undefined, externSig, [object, args[0]]),
         );
@@ -1924,8 +2003,13 @@ export class ASTToTACConverter {
         propAccess.property === "SendCustomNetworkEvent" &&
         args.length === 2
       ) {
-        const externSig =
-          "VRCUdonCommonInterfacesIUdonEventReceiver.__SendCustomNetworkEvent__VRCUdonCommonEnumsNetworkEventTarget_SystemString__SystemVoid";
+        const externSig = this.requireExternSignature(
+          "UdonBehaviour",
+          "SendCustomNetworkEvent",
+          "method",
+          ["NetworkEventTarget", "string"],
+          "void",
+        );
         this.instructions.push(
           new CallInstruction(undefined, externSig, [object, args[0], args[1]]),
         );
@@ -1950,8 +2034,13 @@ export class ASTToTACConverter {
               layout.parameterExportNames[i],
               PrimitiveTypes.string,
             );
-            const externSig =
-              "VRCUdonCommonInterfacesIUdonEventReceiver.__SetProgramVariable__SystemString_SystemObject__SystemVoid";
+            const externSig = this.requireExternSignature(
+              "UdonBehaviour",
+              "SetProgramVariable",
+              "method",
+              ["string", "object"],
+              "void",
+            );
             this.instructions.push(
               new CallInstruction(undefined, externSig, [
                 object,
@@ -1961,15 +2050,25 @@ export class ASTToTACConverter {
             );
           }
         }
-        const sendExtern =
-          "VRCUdonCommonInterfacesIUdonEventReceiver.__SendCustomEvent__SystemString__SystemVoid";
+        const sendExtern = this.requireExternSignature(
+          "UdonBehaviour",
+          "SendCustomEvent",
+          "method",
+          ["string"],
+          "void",
+        );
         this.instructions.push(
           new CallInstruction(undefined, sendExtern, [object, methodName]),
         );
 
         if (layout?.returnExportName) {
-          const getExtern =
-            "VRCUdonCommonInterfacesIUdonEventReceiver.__GetProgramVariable__SystemString__SystemObject";
+          const getExtern = this.requireExternSignature(
+            "UdonBehaviour",
+            "GetProgramVariable",
+            "method",
+            ["string"],
+            "object",
+          );
           const returnName = createConstant(
             layout.returnExportName,
             PrimitiveTypes.string,
@@ -2026,8 +2125,13 @@ export class ASTToTACConverter {
         }
       }
       if (propAccess.property === "RequestSerialization" && args.length === 0) {
-        const externSig =
-          "VRCUdonCommonInterfacesIUdonEventReceiver.__RequestSerialization__SystemVoid";
+        const externSig = this.requireExternSignature(
+          "UdonBehaviour",
+          "RequestSerialization",
+          "method",
+          [],
+          "void",
+        );
         this.instructions.push(new CallInstruction(undefined, externSig, []));
         return createConstant(0, PrimitiveTypes.void);
       }
@@ -2145,7 +2249,13 @@ export class ASTToTACConverter {
         if (args.length === 0) return null;
         const value = args[0];
         const result = this.newTemp(PrimitiveTypes.int32);
-        const externSig = "SystemInt32.__Parse__SystemString__SystemInt32";
+        const externSig = this.requireExternSignature(
+          "Int32",
+          "Parse",
+          "method",
+          ["string"],
+          "int",
+        );
         this.instructions.push(new CallInstruction(result, externSig, [value]));
         return result;
       }
@@ -2237,7 +2347,13 @@ export class ASTToTACConverter {
 
   private emitDataDictionaryEntries(target: TACOperand): TACOperand {
     const result = this.newTemp(ExternTypes.dataList);
-    const listCtorSig = "VRCSDKBaseDataList.__ctor____VRCSDKBaseDataList";
+    const listCtorSig = this.requireExternSignature(
+      "DataList",
+      "ctor",
+      "method",
+      [],
+      "DataList",
+    );
     this.instructions.push(new CallInstruction(result, listCtorSig, []));
 
     const keysList = this.newTemp(ExternTypes.dataList);
@@ -2385,8 +2501,13 @@ export class ASTToTACConverter {
       }
       if (this.isUdonBehaviourPropertyAccess(propAccess)) {
         const object = this.visitExpression(propAccess.object);
-        const externSig =
-          "VRCUdonCommonInterfacesIUdonEventReceiver.__SetProgramVariable__SystemString_SystemObject__SystemVoid";
+        const externSig = this.requireExternSignature(
+          "UdonBehaviour",
+          "SetProgramVariable",
+          "method",
+          ["string", "object"],
+          "void",
+        );
         const propName = createConstant(
           propAccess.property,
           PrimitiveTypes.string,
@@ -2545,7 +2666,13 @@ export class ASTToTACConverter {
     const context = this.tryContextStack[this.tryContextStack.length - 1];
     if (!context) {
       const value = this.visitExpression(node.expression);
-      const externSig = "UnityEngineDebug.__LogError__SystemObject__SystemVoid";
+      const externSig = this.requireExternSignature(
+        "Debug",
+        "LogError",
+        "method",
+        ["object"],
+        "void",
+      );
       this.instructions.push(
         new CallInstruction(undefined, externSig, [value]),
       );
@@ -2598,7 +2725,13 @@ export class ASTToTACConverter {
   private visitTypeofExpression(node: TypeofExpressionNode): TACOperand {
     const typeNameConst = createConstant(node.typeName, PrimitiveTypes.string);
     const result = this.newTemp(ExternTypes.systemType);
-    const externSig = "SystemType.__GetType__SystemString__SystemType";
+    const externSig = this.requireExternSignature(
+      "Type",
+      "GetType",
+      "method",
+      ["string"],
+      "Type",
+    );
     this.instructions.push(
       new CallInstruction(result, externSig, [typeNameConst]),
     );
@@ -2807,6 +2940,26 @@ export class ASTToTACConverter {
     const classNode = this.classMap.get(className);
     const prop = classNode?.properties.find((p) => p.name === property);
     return prop?.fieldChangeCallback ?? null;
+  }
+
+  private requireExternSignature(
+    typeName: string,
+    memberName: string,
+    accessType: "method" | "getter" | "setter",
+    paramTypes?: string[],
+    returnType?: string,
+  ): string {
+    const externSig = resolveExternSignature(
+      typeName,
+      memberName,
+      accessType,
+      paramTypes,
+      returnType,
+    );
+    if (!externSig) {
+      throw new Error(`Missing extern signature for ${typeName}.${memberName}`);
+    }
+    return externSig;
   }
 
   private emitOnDeserializationForFieldChangeCallbacks(
@@ -3308,12 +3461,12 @@ export class ASTToTACConverter {
       return value;
     }
     const token = this.newTemp(ExternTypes.dataToken);
-    const csharpType = mapTypeScriptToCSharp(valueType.name);
-    const externSig = generateExternSignature(
-      "VRC.SDK3.Data.DataToken",
+    const externSig = this.requireExternSignature(
+      "DataToken",
       "ctor",
-      [csharpType],
-      "VRC.SDK3.Data.DataToken",
+      "method",
+      [valueType.name],
+      "DataToken",
     );
     this.instructions.push(new CallInstruction(token, externSig, [value]));
     return token;

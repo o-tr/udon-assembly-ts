@@ -44,7 +44,26 @@ export const TS_TO_CSHARP = new Map<string, string>([
   ["DataToken", "VRC.SDK3.Data.DataToken"],
   ["Type", "System.Type"],
   ["Object", "System.Object"],
+  ["UdonByte", "System.Byte"],
+  ["UdonInt", "System.Int32"],
+  ["UdonFloat", "System.Single"],
+  ["UdonDouble", "System.Double"],
+  ["UdonLong", "System.Int64"],
+  ["UdonULong", "System.UInt64"],
 ]);
+
+const EXTERN_TYPE_ALIASES = new Map<string, string>();
+
+export function registerExternTypeAlias(
+  tsName: string,
+  csharpFullName: string,
+): void {
+  EXTERN_TYPE_ALIASES.set(tsName, csharpFullName);
+}
+
+export function clearExternTypeAliases(): void {
+  EXTERN_TYPE_ALIASES.clear();
+}
 
 export function toUdonTypeName(csharpFullName: string): string {
   return csharpFullName.replace(/[.+]/g, "");
@@ -69,10 +88,13 @@ export function mapTypeScriptToCSharp(tsType: string): string {
   const trimmed = tsType.trim();
   if (trimmed.endsWith("[]")) {
     const element = trimmed.slice(0, -2);
-    const mapped = TS_TO_CSHARP.get(element) ?? element;
+    const mapped =
+      EXTERN_TYPE_ALIASES.get(element) ?? TS_TO_CSHARP.get(element) ?? element;
     return `${mapped}[]`;
   }
-  return TS_TO_CSHARP.get(trimmed) ?? trimmed;
+  return (
+    EXTERN_TYPE_ALIASES.get(trimmed) ?? TS_TO_CSHARP.get(trimmed) ?? trimmed
+  );
 }
 
 export function generateExternSignature(
