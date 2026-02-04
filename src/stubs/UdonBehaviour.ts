@@ -19,7 +19,7 @@ export class UdonBehaviour {
     signature:
       "VRCUdonCommonInterfacesIUdonEventReceiver.__SetProgramVariable__SystemString_SystemObject__SystemVoid",
   })
-  SetProgramVariable(_name: string, _value: unknown): void {}
+  SetProgramVariable(_name: string, _value: object): void {}
 
   @UdonExtern({
     signature:

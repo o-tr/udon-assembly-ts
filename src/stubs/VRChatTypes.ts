@@ -205,9 +205,9 @@ export type VRCPickup = {
  */
 export type VRChatNetworking = {
   localPlayer: VRCPlayerApi;
-  getOwner(gameObject: unknown): VRCPlayerApi;
-  setOwner(player: VRCPlayerApi, gameObject: unknown): void;
-  isOwner(gameObject: unknown): boolean;
+  getOwner(gameObject: GameObject): VRCPlayerApi;
+  setOwner(player: VRCPlayerApi, gameObject: GameObject): void;
+  isOwner(gameObject: GameObject): boolean;
 };
 
 /**
@@ -218,13 +218,13 @@ export class Networking {
   static LocalPlayer: VRCPlayerApi | null = null;
   static IsMaster: boolean = false;
 
-  static GetOwner(_gameObject: unknown): VRCPlayerApi | null {
+  static GetOwner(_gameObject: GameObject): VRCPlayerApi | null {
     return null;
   }
 
-  static SetOwner(_player: VRCPlayerApi, _gameObject: unknown): void {}
+  static SetOwner(_player: VRCPlayerApi, _gameObject: GameObject): void {}
 
-  static IsOwner(_gameObject: unknown): boolean {
+  static IsOwner(_gameObject: GameObject): boolean {
     return false;
   }
 
