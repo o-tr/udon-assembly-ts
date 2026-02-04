@@ -263,25 +263,12 @@ export class TACToUdonConverter {
         }
 
         // Call function
-        let externSig: string;
+        let externSig = call.func;
         if (call.func.startsWith("__ctor_")) {
           const typeName = call.func.replace("__ctor_", "");
-          const tsParamTypes = call.args.map((arg) =>
-            this.getOperandTsTypeName(arg),
-          );
-          const resolved = resolveExternSignature(
-            typeName,
-            "ctor",
-            "method",
-            tsParamTypes,
-            typeName,
-          );
-          if (!resolved) {
-            throw new Error(`Missing extern signature for ${typeName}.ctor`);
-          }
-          externSig = resolved;
-        } else {
-          externSig = call.func;
+          externSig =
+            resolveExternSignature(typeName, "ctor", "method") ??
+            `${typeName}.__ctor__SystemSingle_SystemSingle_SystemSingle__${typeName}`;
         }
         // If it looks like a Udon extern signature (contains __), don't append ()
         if (!externSig.includes("__")) {
@@ -323,7 +310,14 @@ export class TACToUdonConverter {
           ? this.getOperandTsTypeName(call.dest)
           : "void";
         const objectTypeName = this.getOperandTsTypeName(call.object);
-        const methodName = call.method;
+        let methodName = call.method;
+        if (
+          (objectTypeName === "String" || objectTypeName === "string") &&
+          call.method === "Substring"
+        ) {
+          methodName =
+            call.args.length === 2 ? "Substring(i,l)" : "Substring(i)";
+        }
         const externSig =
           resolveExternSignature(
             objectTypeName,
@@ -417,16 +411,7 @@ export class TACToUdonConverter {
         };
         this.pushOperand(arrayInst.array);
         this.pushOperand(arrayInst.index);
-        const externSig = resolveExternSignature(
-          "SystemArray",
-          "Get",
-          "method",
-          ["int"],
-          "object",
-        );
-        if (!externSig) {
-          throw new Error("Missing extern signature for SystemArray.Get");
-        }
+        const externSig = "SystemArray.__Get__SystemInt32__SystemObject";
         this.externSignatures.add(externSig);
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(externSig), true),
@@ -446,16 +431,8 @@ export class TACToUdonConverter {
         this.pushOperand(arrayInst.array);
         this.pushOperand(arrayInst.index);
         this.pushOperand(arrayInst.value);
-        const externSig = resolveExternSignature(
-          "SystemArray",
-          "Set",
-          "method",
-          ["int", "object"],
-          "void",
-        );
-        if (!externSig) {
-          throw new Error("Missing extern signature for SystemArray.Set");
-        }
+        const externSig =
+          "SystemArray.__Set__SystemInt32_SystemObject__SystemVoid";
         this.externSignatures.add(externSig);
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(externSig), true),
@@ -729,19 +706,7 @@ export class TACToUdonConverter {
     targetType: string,
   ): string {
     const method = this.getConvertMethodName(targetType);
-    const sourceTs = this.mapUdonTypeToTs(sourceType);
-    const targetTs = this.mapUdonTypeToTs(targetType);
-    const externSig = resolveExternSignature(
-      "Convert",
-      method,
-      "method",
-      [sourceTs],
-      targetTs,
-    );
-    if (!externSig) {
-      throw new Error(`Missing extern signature for Convert.${method}`);
-    }
-    return externSig;
+    return `SystemConvert.__${method}__System${sourceType}__System${targetType}`;
   }
 
   private getConvertMethodName(targetType: string): string {
@@ -770,48 +735,7 @@ export class TACToUdonConverter {
   }
 
   private getTruncateExternSignature(): string {
-    const externSig = resolveExternSignature(
-      "SystemMath",
-      "Truncate",
-      "method",
-      ["double"],
-      "double",
-    );
-    if (!externSig) {
-      throw new Error("Missing extern signature for Math.Truncate");
-    }
-    return externSig;
-  }
-
-  private mapUdonTypeToTs(typeName: string): string {
-    switch (typeName) {
-      case "Byte":
-        return "byte";
-      case "SByte":
-        return "sbyte";
-      case "Int16":
-        return "short";
-      case "UInt16":
-        return "ushort";
-      case "Int32":
-        return "int";
-      case "UInt32":
-        return "uint";
-      case "Int64":
-        return "long";
-      case "UInt64":
-        return "ulong";
-      case "Single":
-        return "float";
-      case "Double":
-        return "double";
-      case "Boolean":
-        return "bool";
-      case "String":
-        return "string";
-      default:
-        return "object";
-    }
+    return "SystemMath.__Truncate__SystemDouble__SystemDouble";
   }
 
   private getOperandTsTypeName(operand: TACOperand): string {

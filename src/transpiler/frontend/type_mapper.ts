@@ -1,7 +1,6 @@
 import type { EnumRegistry } from "./enum_registry.js";
 import {
   ArrayTypeSymbol,
-  ClassTypeSymbol,
   CollectionTypeSymbol,
   ExternTypes,
   ObjectType,
@@ -43,10 +42,6 @@ export class TypeMapper {
       return PrimitiveTypes.string;
     }
 
-    if (trimmed === "true" || trimmed === "false") {
-      return PrimitiveTypes.boolean;
-    }
-
     if (/^"[^"]*"$/.test(trimmed) || /^'[^']*'$/.test(trimmed)) {
       return PrimitiveTypes.string;
     }
@@ -58,12 +53,6 @@ export class TypeMapper {
         .filter((part) => part !== "null" && part !== "undefined");
       if (parts.length === 1) {
         return this.mapTypeScriptType(parts[0]);
-      }
-      if (
-        parts.length > 0 &&
-        parts.every((part) => part === "true" || part === "false")
-      ) {
-        return PrimitiveTypes.boolean;
       }
     }
 
@@ -246,7 +235,7 @@ export class TypeMapper {
         return ExternTypes.systemType;
       default:
         if (this.isLikelyUserDefinedType(trimmed)) {
-          return new ClassTypeSymbol(trimmed, UdonType.Object);
+          return ObjectType;
         }
         if (
           !warnedTypes.has(trimmed) &&

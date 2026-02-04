@@ -4,11 +4,6 @@
 
 export const UdonStatic: ClassDecorator = () => undefined;
 export const UdonExport: MethodDecorator = () => undefined;
-export function UdonExtern(
-  _options?: string | { name?: string; signature?: string },
-): MethodDecorator & PropertyDecorator {
-  return () => undefined;
-}
 // Transpiler strips TsOnly calls from UASM; TS runtime executes the callback.
 export function TsOnly(action: () => void): void {
   action();

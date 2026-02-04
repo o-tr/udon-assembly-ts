@@ -2,8 +2,7 @@
  * GetComponent<T> shim tests
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { describe, expect, it } from "vitest";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
@@ -12,10 +11,6 @@ const GET_COMPONENT_EXTERN =
   "UdonSharpLibInternalGetComponentShim.__GetComponent__UnityEngineComponent_SystemInt64__UnityEngineComponent";
 
 describe("GetComponent<T>", () => {
-  beforeAll(() => {
-    buildExternRegistryFromFiles([]);
-  });
-
   it("should emit GetComponent extern signature", () => {
     const parser = new TypeScriptParser();
     const source = `

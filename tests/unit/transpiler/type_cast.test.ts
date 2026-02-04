@@ -2,17 +2,12 @@
  * Type cast (as) support tests
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { describe, expect, it } from "vitest";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
 
 describe("type casts", () => {
-  beforeAll(() => {
-    buildExternRegistryFromFiles([]);
-  });
-
   it("should preserve type info for method calls after cast", () => {
     const parser = new TypeScriptParser();
     const source = `
@@ -39,7 +34,7 @@ describe("type casts", () => {
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDKBaseVRCPlayerApi.__GetPosition____UnityEngineVector3",
+          "VRCSDKBaseVRCPlayerApi.__GetPosition__UnityEngineVector3",
         ),
       ),
     ).toBe(true);

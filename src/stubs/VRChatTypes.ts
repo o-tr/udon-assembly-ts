@@ -20,11 +20,8 @@
  * int playerId = localPlayer.playerId;
  * ```
  */
-import { UdonStub } from "./UdonDecorators.js";
 import { type UdonInt, UdonTypeConverters } from "./UdonTypes.js";
-import type { GameObject, Quaternion, Vector3 } from "./UnityTypes.js";
 
-@UdonStub("VRC.SDKBase.VRCPlayerApi")
 export class VRCPlayerApi {
   /**
    * 接続中プレイヤー一覧（スタブ用）
@@ -35,8 +32,8 @@ export class VRCPlayerApi {
   /**
    * 接続中プレイヤー数を取得
    */
-  static GetPlayerCount(): UdonInt {
-    return VRCPlayerApi.players.length as UdonInt;
+  static GetPlayerCount(): number {
+    return VRCPlayerApi.players.length;
   }
 
   /**
@@ -44,18 +41,18 @@ export class VRCPlayerApi {
    * @param buffer - プレイヤー格納先配列
    * @returns 取得件数
    */
-  static GetPlayers(buffer: VRCPlayerApi[]): UdonInt {
+  static GetPlayers(buffer: VRCPlayerApi[]): number {
     const count = Math.min(buffer.length, VRCPlayerApi.players.length);
     for (let i = 0; i < count; i += 1) {
       buffer[i] = VRCPlayerApi.players[i];
     }
-    return count as UdonInt;
+    return count;
   }
 
   /**
    * プレイヤーIDから取得
    */
-  static GetPlayerById(playerId: UdonInt): VRCPlayerApi | null {
+  static GetPlayerById(playerId: number): VRCPlayerApi | null {
     for (const player of VRCPlayerApi.players) {
       if (player.playerId === playerId) {
         return player;
@@ -86,33 +83,6 @@ export class VRCPlayerApi {
 
   /** プレイヤーがワールド内に存在するかどうか */
   isValid: boolean;
-
-  /** プレイヤーの位置を取得 */
-  GetPosition(): Vector3 {
-    return null as unknown as Vector3;
-  }
-
-  TeleportTo(_position: Vector3, _rotation: Quaternion): void {}
-
-  EnablePickup(_enable: boolean): void {}
-
-  SetVelocity(_velocity: Vector3): void {}
-
-  GetBonePosition(_bone: unknown): Vector3 {
-    return null as unknown as Vector3;
-  }
-
-  GetBoneRotation(_bone: unknown): Quaternion {
-    return null as unknown as Quaternion;
-  }
-
-  GetTrackingData(_type: unknown): unknown {
-    return null as unknown;
-  }
-
-  IsUserInVR(): boolean {
-    return false;
-  }
 
   constructor(
     playerId: UdonInt,
@@ -201,10 +171,8 @@ export type VRChatNetworking = {
 /**
  * UdonSharp Networking スタブ
  */
-@UdonStub("VRC.SDKBase.Networking")
 export class Networking {
   static LocalPlayer: VRCPlayerApi | null = null;
-  static IsMaster: boolean = false;
 
   static GetOwner(_gameObject: unknown): VRCPlayerApi | null {
     return null;
@@ -218,13 +186,6 @@ export class Networking {
 
   static GetServerTimeInMilliseconds(): number {
     return Date.now();
-  }
-}
-
-@UdonStub("VRC.SDKBase.VRCInstantiate")
-export class VRCInstantiate {
-  static Instantiate(_obj: GameObject): GameObject {
-    return null as unknown as GameObject;
   }
 }
 

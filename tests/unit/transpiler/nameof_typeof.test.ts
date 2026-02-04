@@ -1,5 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { describe, expect, it } from "vitest";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
@@ -8,10 +7,6 @@ const stringify = (tac: { toString(): string }[]) =>
   tac.map((inst) => inst.toString()).join("\n");
 
 describe("nameof/typeof", () => {
-  beforeAll(() => {
-    buildExternRegistryFromFiles([]);
-  });
-
   it("lowers nameof to string literal", () => {
     const parser = new TypeScriptParser();
     const source = `

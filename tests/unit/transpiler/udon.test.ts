@@ -2,8 +2,7 @@
  * Unit tests for Udon code generation
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { describe, expect, it } from "vitest";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
 import { UdonAssembler } from "../../../src/transpiler/codegen/udon_assembler";
 import { UdonInstructionKind } from "../../../src/transpiler/codegen/udon_instruction";
@@ -11,10 +10,6 @@ import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
 
 describe("Udon Code Generation", () => {
-  beforeAll(() => {
-    buildExternRegistryFromFiles([]);
-  });
-
   it("should generate Udon instructions for variable assignment", () => {
     const parser = new TypeScriptParser();
     const source = "let x: number = 10;";

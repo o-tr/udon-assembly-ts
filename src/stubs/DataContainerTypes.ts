@@ -5,32 +5,19 @@
  * コンパイル用スタブ。
  */
 import { UdonStub } from "./UdonDecorators.js";
-import type { UdonInt } from "./UdonTypes.js";
 
 @UdonStub("VRC.SDK3.Data.DataList")
 export class DataList {
   // Minimal surface for transpilation/type-checking.
-  constructor() {}
-
-  Count!: UdonInt;
+  Count!: number;
   [index: number]: DataToken;
 
-  Add(_value: DataToken): void {}
-  get_Item(_index: UdonInt): DataToken {
-    return new DataToken();
-  }
-  set_Item(_index: UdonInt, _value: DataToken): void {}
-  Remove(_value: DataToken): boolean {
-    return false;
-  }
-  RemoveAt(_index: UdonInt): void {}
-  Insert(_index: UdonInt, _value: DataToken): void {}
+  Add(_value: unknown): void {}
+  RemoveAt(_index: number): void {}
+  Insert(_index: number, _value: unknown): void {}
   Sort(): void {}
-  IndexOf(_value: DataToken): UdonInt {
-    return 0 as UdonInt;
-  }
-  TryGetValue(_index: UdonInt, _value: DataToken): boolean {
-    return false;
+  IndexOf(_value: unknown): number {
+    return -1;
   }
   // Allow `for..of` in TypeScript sources.
   [Symbol.iterator](): Iterator<DataToken> {
@@ -54,13 +41,6 @@ export class DataToken {
   IsNull!: boolean;
   TokenType!: number;
 
-  constructor();
-  constructor(_value: number);
-  constructor(_value: string);
-  constructor(_value: boolean);
-  constructor(_value: DataList);
-  constructor(_value: DataDictionary);
-  constructor(_value: object);
   // biome-ignore lint/complexity/noUselessConstructor: value-accepting stub constructor for transpiled `new DataToken(x)`
   constructor(_value?: unknown) {}
 }
@@ -72,22 +52,13 @@ export class DataToken {
  */
 @UdonStub("VRC.SDK3.Data.DataDictionary")
 export class DataDictionary {
-  constructor() {}
+  Count!: number;
+  [key: string]: DataToken | number | ((...args: unknown[]) => unknown);
 
-  Count!: UdonInt;
-  [key: string]: any;
-
-  SetValue(_key: DataToken, _value: DataToken): void {}
-  GetValue(_key: DataToken): DataToken {
-    return new DataToken();
-  }
-  TryGetValue(_key: DataToken, _value: DataToken): boolean {
+  ContainsKey(_key: unknown): boolean {
     return false;
   }
-  ContainsKey(_key: DataToken): boolean {
-    return false;
-  }
-  Remove(_key: DataToken): boolean {
+  Remove(_key: unknown): boolean {
     return false;
   }
   GetKeys(): DataList {

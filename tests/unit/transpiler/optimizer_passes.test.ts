@@ -5,10 +5,13 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CopyInstruction,
+  LabelInstruction,
   ReturnInstruction,
+  UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
   createConstant,
+  createLabel,
   createTemporary,
   createVariable,
 } from "../../../src/transpiler/ir/tac_operand";
@@ -117,5 +120,64 @@ describe("optimizer passes", () => {
 
     expect(text).toContain("t0 = false");
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("eliminates no-op copies", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const instructions = [
+      new AssignmentInstruction(a, a),
+      new ReturnInstruction(a),
+    ];
+
+    const optimizer = new TACOptimizer();
+    const optimized = optimizer.optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("a = a");
+    expect(
+      optimized.filter(
+        (inst) =>
+          inst.kind === "Assignment" || inst.kind === "Copy",
+      ).length,
+    ).toBe(0);
+  });
+
+  it("removes unused temporary computations", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "+", a),
+      new ReturnInstruction(a),
+    ];
+
+    const optimizer = new TACOptimizer();
+    const optimized = optimizer.optimize(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("threads and removes redundant jumps", () => {
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const l2 = createLabel("L2");
+    const lX = createLabel("LX");
+
+    const instructions = [
+      new LabelInstruction(l0),
+      new UnconditionalJumpInstruction(l1),
+      new LabelInstruction(lX),
+      new ReturnInstruction(),
+      new LabelInstruction(l1),
+      new UnconditionalJumpInstruction(l2),
+      new LabelInstruction(l2),
+      new ReturnInstruction(),
+    ];
+
+    const optimizer = new TACOptimizer();
+    const optimized = optimizer.optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L1");
+    expect(text).toContain("goto L2");
   });
 });
