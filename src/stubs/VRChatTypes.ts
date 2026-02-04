@@ -20,8 +20,23 @@
  * int playerId = localPlayer.playerId;
  * ```
  */
+import { UdonStub } from "./UdonDecorators.js";
 import { type UdonInt, UdonTypeConverters } from "./UdonTypes.js";
+import type { GameObject, Quaternion, Vector3 } from "./UnityTypes.js";
 
+@UdonStub("UnityEngine.HumanBodyBones")
+export class HumanBodyBones {}
+
+@UdonStub("VRC.SDKBase.VRCPlayerApi+TrackingDataType")
+export class TrackingDataType {}
+
+@UdonStub("VRC.SDKBase.VRCPlayerApi+TrackingData")
+export class TrackingData {
+  position: Vector3 = null as unknown as Vector3;
+  rotation: Quaternion = null as unknown as Quaternion;
+}
+
+@UdonStub("VRC.SDKBase.VRCPlayerApi")
 export class VRCPlayerApi {
   /**
    * 接続中プレイヤー一覧（スタブ用）
@@ -32,8 +47,8 @@ export class VRCPlayerApi {
   /**
    * 接続中プレイヤー数を取得
    */
-  static GetPlayerCount(): number {
-    return VRCPlayerApi.players.length;
+  static GetPlayerCount(): UdonInt {
+    return VRCPlayerApi.players.length as UdonInt;
   }
 
   /**
@@ -41,18 +56,18 @@ export class VRCPlayerApi {
    * @param buffer - プレイヤー格納先配列
    * @returns 取得件数
    */
-  static GetPlayers(buffer: VRCPlayerApi[]): number {
+  static GetPlayers(buffer: VRCPlayerApi[]): UdonInt {
     const count = Math.min(buffer.length, VRCPlayerApi.players.length);
     for (let i = 0; i < count; i += 1) {
       buffer[i] = VRCPlayerApi.players[i];
     }
-    return count;
+    return count as UdonInt;
   }
 
   /**
    * プレイヤーIDから取得
    */
-  static GetPlayerById(playerId: number): VRCPlayerApi | null {
+  static GetPlayerById(playerId: UdonInt): VRCPlayerApi | null {
     for (const player of VRCPlayerApi.players) {
       if (player.playerId === playerId) {
         return player;
@@ -83,6 +98,33 @@ export class VRCPlayerApi {
 
   /** プレイヤーがワールド内に存在するかどうか */
   isValid: boolean;
+
+  /** プレイヤーの位置を取得 */
+  GetPosition(): Vector3 {
+    return null as unknown as Vector3;
+  }
+
+  TeleportTo(_position: Vector3, _rotation: Quaternion): void {}
+
+  EnablePickup(_enable: boolean): void {}
+
+  SetVelocity(_velocity: Vector3): void {}
+
+  GetBonePosition(_bone: HumanBodyBones): Vector3 {
+    return null as unknown as Vector3;
+  }
+
+  GetBoneRotation(_bone: HumanBodyBones): Quaternion {
+    return null as unknown as Quaternion;
+  }
+
+  GetTrackingData(_type: TrackingDataType): TrackingData {
+    return new TrackingData();
+  }
+
+  IsUserInVR(): boolean {
+    return false;
+  }
 
   constructor(
     playerId: UdonInt,
@@ -163,29 +205,38 @@ export type VRCPickup = {
  */
 export type VRChatNetworking = {
   localPlayer: VRCPlayerApi;
-  getOwner(gameObject: unknown): VRCPlayerApi;
-  setOwner(player: VRCPlayerApi, gameObject: unknown): void;
-  isOwner(gameObject: unknown): boolean;
+  getOwner(gameObject: GameObject): VRCPlayerApi;
+  setOwner(player: VRCPlayerApi, gameObject: GameObject): void;
+  isOwner(gameObject: GameObject): boolean;
 };
 
 /**
  * UdonSharp Networking スタブ
  */
+@UdonStub("VRC.SDKBase.Networking")
 export class Networking {
   static LocalPlayer: VRCPlayerApi | null = null;
+  static IsMaster: boolean = false;
 
-  static GetOwner(_gameObject: unknown): VRCPlayerApi | null {
+  static GetOwner(_gameObject: GameObject): VRCPlayerApi | null {
     return null;
   }
 
-  static SetOwner(_player: VRCPlayerApi, _gameObject: unknown): void {}
+  static SetOwner(_player: VRCPlayerApi, _gameObject: GameObject): void {}
 
-  static IsOwner(_gameObject: unknown): boolean {
+  static IsOwner(_gameObject: GameObject): boolean {
     return false;
   }
 
   static GetServerTimeInMilliseconds(): number {
     return Date.now();
+  }
+}
+
+@UdonStub("VRC.SDKBase.VRCInstantiate")
+export class VRCInstantiate {
+  static Instantiate(_obj: GameObject): GameObject {
+    return null as unknown as GameObject;
   }
 }
 

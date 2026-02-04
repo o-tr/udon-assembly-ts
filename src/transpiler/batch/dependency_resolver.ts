@@ -11,6 +11,11 @@ export type DependencyGraph = Map<string, Set<string>>;
 export class DependencyResolver {
   private graph: DependencyGraph = new Map();
   private visiting: Set<string> = new Set();
+  private compilerOptions: ts.CompilerOptions;
+
+  constructor(private projectRoot: string = process.cwd()) {
+    this.compilerOptions = this.loadCompilerOptions(projectRoot);
+  }
 
   buildGraph(entryPointPath: string): DependencyGraph {
     this.graph = new Map();
@@ -61,9 +66,8 @@ export class DependencyResolver {
     for (const stmt of sourceFile.statements) {
       if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
       const moduleText = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
-      if (!moduleText.startsWith(".")) continue;
       const resolved = this.resolveModule(filePath, moduleText);
-      if (resolved && this.isTranspilableSource(resolved)) {
+      if (resolved && this.isResolvableSource(resolved)) {
         deps.add(resolved);
         this.visitFile(resolved);
       }
@@ -72,6 +76,33 @@ export class DependencyResolver {
   }
 
   private resolveModule(fromFile: string, modulePath: string): string | null {
+    if (!modulePath.startsWith(".")) {
+      const resolved = ts.resolveModuleName(
+        modulePath,
+        fromFile,
+        this.compilerOptions,
+        ts.sys,
+      );
+      let resolvedFile = resolved.resolvedModule?.resolvedFileName;
+      if (resolvedFile) {
+        if (resolvedFile.endsWith(".d.ts")) {
+          const tsCandidate = resolvedFile.replace(/\.d\.ts$/, ".ts");
+          const tsxCandidate = resolvedFile.replace(/\.d\.ts$/, ".tsx");
+          if (fs.existsSync(tsCandidate)) {
+            resolvedFile = tsCandidate;
+          } else if (fs.existsSync(tsxCandidate)) {
+            resolvedFile = tsxCandidate;
+          }
+        }
+        try {
+          return fs.realpathSync(resolvedFile);
+        } catch {
+          return resolvedFile;
+        }
+      }
+      return null;
+    }
+
     const baseDir = path.dirname(fromFile);
     const resolvedBase = path.resolve(baseDir, modulePath);
 
@@ -101,8 +132,38 @@ export class DependencyResolver {
     return null;
   }
 
-  private isTranspilableSource(filePath: string): boolean {
-    if (filePath.endsWith(".d.ts")) return false;
-    return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+  private isResolvableSource(filePath: string): boolean {
+    return (
+      filePath.endsWith(".ts") ||
+      filePath.endsWith(".tsx") ||
+      filePath.endsWith(".d.ts")
+    );
+  }
+
+  private loadCompilerOptions(searchFrom: string): ts.CompilerOptions {
+    const configPath = ts.findConfigFile(
+      searchFrom,
+      ts.sys.fileExists,
+      "tsconfig.json",
+    );
+    if (!configPath) {
+      return {
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        target: ts.ScriptTarget.ES2020,
+      };
+    }
+    const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (configFile.error) {
+      return {
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        target: ts.ScriptTarget.ES2020,
+      };
+    }
+    const parsed = ts.parseJsonConfigFileContent(
+      configFile.config,
+      ts.sys,
+      path.dirname(configPath),
+    );
+    return parsed.options;
   }
 }

@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { resolveExternSignature } from "../../../src/transpiler/codegen/extern_signatures";
 
 describe("type metadata registry", () => {
+  beforeAll(() => {
+    buildExternRegistryFromFiles([]);
+  });
+
   it("resolves Material.SetColor extern", () => {
     const sig = resolveExternSignature(
       "Material",
@@ -38,6 +43,22 @@ describe("type metadata registry", () => {
     );
     expect(sig).toBe(
       "VRCSDKBaseVRCPlayerApi.__TeleportTo__UnityEngineVector3_UnityEngineQuaternion__SystemVoid",
+    );
+  });
+
+  it("resolves VRCPlayerApi.GetPlayerCount extern", () => {
+    const sig = resolveExternSignature(
+      "VRCPlayerApi",
+      "GetPlayerCount",
+      "method",
+    );
+    expect(sig).toBe("VRCSDKBaseVRCPlayerApi.__GetPlayerCount____SystemInt32");
+  });
+
+  it("resolves VRCPlayerApi.GetPlayers extern", () => {
+    const sig = resolveExternSignature("VRCPlayerApi", "GetPlayers", "method");
+    expect(sig).toBe(
+      "VRCSDKBaseVRCPlayerApi.__GetPlayers__VRCSDKBaseVRCPlayerApiArray__SystemInt32",
     );
   });
 });

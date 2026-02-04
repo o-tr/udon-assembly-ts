@@ -23,6 +23,10 @@ export class GameObject extends UnityObject {
   activeSelf: boolean = true;
   transform: Transform = null as unknown as Transform;
 
+  static Find(_name: string): GameObject {
+    return null as unknown as GameObject;
+  }
+
   SetActive(_value: boolean): void {}
 
   GetComponent<_T>(): _T {
@@ -36,11 +40,20 @@ export class GameObject extends UnityObject {
 
 @UdonStub("UnityEngine.Transform")
 export class Transform extends Component {
+  position: Vector3 = new Vector3(0, 0, 0);
+  rotation: Quaternion = new Quaternion(0, 0, 0, 1);
   localPosition: Vector3 = new Vector3(0, 0, 0);
   localEulerAngles: Vector3 = new Vector3(0, 0, 0);
+  localRotation: Quaternion = new Quaternion(0, 0, 0, 1);
   localScale: Vector3 = new Vector3(1, 1, 1);
+  parent: Transform = null as unknown as Transform;
+  childCount: UdonInt = 0 as UdonInt;
 
   SetParent(_parent: Transform): void {}
+
+  GetChild(_index: UdonInt): Transform {
+    return null as unknown as Transform;
+  }
 }
 
 @UdonStub("UnityEngine.Vector3")
@@ -48,6 +61,8 @@ export class Vector3 {
   x: UdonFloat;
   y: UdonFloat;
   z: UdonFloat;
+  magnitude: UdonFloat = 0 as UdonFloat;
+  normalized: Vector3 = new Vector3(0, 0, 0);
 
   constructor(
     x: UdonFloat | number,
@@ -58,12 +73,44 @@ export class Vector3 {
     this.y = y as UdonFloat;
     this.z = z as UdonFloat;
   }
+
+  static zero: Vector3 = new Vector3(0, 0, 0);
+  static one: Vector3 = new Vector3(1, 1, 1);
+  static up: Vector3 = new Vector3(0, 1, 0);
+  static forward: Vector3 = new Vector3(0, 0, 1);
+
+  static Distance(_a: Vector3, _b: Vector3): UdonFloat {
+    return 0 as UdonFloat;
+  }
+
+  static Lerp(_a: Vector3, _b: Vector3, _t: UdonFloat | number): Vector3 {
+    return new Vector3(0, 0, 0);
+  }
+
+  static Cross(_a: Vector3, _b: Vector3): Vector3 {
+    return new Vector3(0, 0, 0);
+  }
+
+  static Dot(_a: Vector3, _b: Vector3): UdonFloat {
+    return 0 as UdonFloat;
+  }
+
+  static Angle(_a: Vector3, _b: Vector3): UdonFloat {
+    return 0 as UdonFloat;
+  }
 }
 
 @UdonStub("UnityEngine.Material")
 export class Material extends UnityObject {
   SetTextureOffset(_name: string, _value: Vector3): void {}
   SetTextureScale(_name: string, _value: Vector3): void {}
+  SetColor(_name: string, _value: Color): void {}
+  SetFloat(_name: string, _value: UdonFloat | number): void {}
+  GetColor(_name: string): Color {
+    return new Color(0, 0, 0, 1);
+  }
+
+  color: Color = new Color(0, 0, 0, 1);
 }
 
 @UdonStub("UnityEngine.Renderer")
@@ -93,7 +140,52 @@ export class Mathf {
   static Abs(_value: UdonFloat): UdonFloat {
     return 0 as UdonFloat;
   }
+  static Ceil(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static CeilToInt(_value: UdonFloat): UdonInt {
+    return 0 as UdonInt;
+  }
   static Clamp(_value: UdonFloat, _min: UdonFloat, _max: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Clamp01(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Floor(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static FloorToInt(_value: UdonFloat): UdonInt {
+    return 0 as UdonInt;
+  }
+  static Lerp(_a: UdonFloat, _b: UdonFloat, _t: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Max(_a: UdonFloat, _b: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Min(_a: UdonFloat, _b: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Pow(_a: UdonFloat, _b: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Round(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static RoundToInt(_value: UdonFloat): UdonInt {
+    return 0 as UdonInt;
+  }
+  static Sin(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Cos(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Sqrt(_value: UdonFloat): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  static Tan(_value: UdonFloat): UdonFloat {
     return 0 as UdonFloat;
   }
 }
@@ -136,19 +228,42 @@ export class Quaternion {
     this.z = z as UdonFloat;
     this.w = w as UdonFloat;
   }
+
+  static identity: Quaternion = new Quaternion(0, 0, 0, 1);
+
+  static Euler(
+    _x: UdonFloat | number,
+    _y: UdonFloat | number,
+    _z: UdonFloat | number,
+  ): Quaternion {
+    return new Quaternion(0, 0, 0, 1);
+  }
+
+  static Lerp(
+    _a: Quaternion,
+    _b: Quaternion,
+    _t: UdonFloat | number,
+  ): Quaternion {
+    return new Quaternion(0, 0, 0, 1);
+  }
 }
 
 @UdonStub("UnityEngine.Debug")
 export class Debug {
-  static Log(_message: string): void {}
-  static LogWarning(_message: string): void {}
-  static LogError(_message: string): void {}
+  static Log(_message: object): void {}
+  static LogWarning(_message: object): void {}
+  static LogError(_message: object): void {}
 }
 
 @UdonStub("UnityEngine.BoxCollider")
 export class BoxCollider extends Component {
   size: Vector3 = new Vector3(1, 1, 1);
   center: Vector3 = new Vector3(0, 0, 0);
+}
+
+@UdonStub("UnityEngine.Rigidbody")
+export class Rigidbody extends Component {
+  AddForce(_force: Vector3): void {}
 }
 
 @UdonStub("UnityEngine.MeshRenderer")
@@ -216,8 +331,14 @@ export class Bounds {
 @UdonStub("UnityEngine.AudioSource")
 export class AudioSource extends Component {
   volume: UdonFloat = 1 as UdonFloat;
+  isPlaying: boolean = false;
   Play(): void {}
+  Stop(): void {}
+  PlayOneShot(_clip: AudioClip): void {}
 }
+
+@UdonStub("UnityEngine.AudioClip")
+export class AudioClip extends UnityObject {}
 
 @UdonStub("UnityEngine.Animator")
 export class Animator extends Component {
@@ -225,4 +346,13 @@ export class Animator extends Component {
   SetBool(_name: string, _value: boolean): void {}
   SetInteger(_name: string, _value: UdonInt): void {}
   SetTrigger(_name: string): void {}
+  GetBool(_name: string): boolean {
+    return false;
+  }
+  GetFloat(_name: string): UdonFloat {
+    return 0 as UdonFloat;
+  }
+  GetInteger(_name: string): UdonInt {
+    return 0 as UdonInt;
+  }
 }

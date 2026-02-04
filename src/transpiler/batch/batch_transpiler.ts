@@ -7,6 +7,7 @@ import path from "node:path";
 import { TACToUdonConverter } from "../codegen/tac_to_udon.js";
 import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
+import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { ErrorCollector } from "../errors/error_collector.js";
 import { AggregateTranspileError } from "../errors/transpile_errors.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
@@ -37,6 +38,11 @@ import {
   discoverEntryFilesUsingTS,
   discoverTypeScriptFiles,
 } from "./file_discovery.js";
+
+function isTranspilableSource(filePath: string): boolean {
+  if (filePath.endsWith(".d.ts")) return false;
+  return filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+}
 
 export interface BatchTranspilerOptions {
   sourceDir: string;
@@ -103,6 +109,8 @@ export class BatchTranspiler {
       entryFiles.length > 0 && reachable.size > 0
         ? Array.from(reachable)
         : files;
+
+    buildExternRegistryFromFiles(cacheFiles);
     const changedFiles = this.getChangedFiles(cacheFiles, cache);
     const entryFilesToCompile = new Set<string>(entryFiles);
     if (cache) {
@@ -132,8 +140,9 @@ export class BatchTranspiler {
       }
     } else {
       const reachableFiles = reachable.size > 0 ? Array.from(reachable) : files;
+      const transpilableFiles = reachableFiles.filter(isTranspilableSource);
       // Register only reachable files
-      for (const filePath of reachableFiles) {
+      for (const filePath of transpilableFiles) {
         try {
           const source = fs.readFileSync(filePath, "utf8");
           const program = parser.parse(source, filePath);
