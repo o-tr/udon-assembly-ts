@@ -61,7 +61,7 @@ const bankersRound = (value: number): number => {
   const integer = Math.floor(value);
   const frac = value - integer;
   if (Math.abs(frac) === 0.5) {
-    return integer % 2 === 0 ? integer : integer + 1;
+    return integer % 2 === 0 ? integer : Math.ceil(value);
   }
   if (frac > 0.5) return integer + 1;
   return integer;
@@ -3725,7 +3725,7 @@ export class TACOptimizer {
     }
 
     const result = evaluator.eval(args);
-    if (!Number.isFinite(result) || Number.isNaN(result)) return null;
+    if (!Number.isFinite(result)) return null;
 
     const destType = this.getOperandType(inst.dest);
     const casted = this.evaluateCastValue(result, destType);
