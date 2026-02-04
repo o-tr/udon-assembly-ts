@@ -108,7 +108,13 @@ export class TACOptimizer {
     ],
     [
       "UnityEngineMathf.__Lerp__SystemSingle_SystemSingle_SystemSingle__SystemSingle",
-      { arity: 3, eval: ([a, b, t]) => a + (b - a) * t },
+      {
+        arity: 3,
+        eval: ([a, b, t]) => {
+          const clamped = Math.min(Math.max(t, 0), 1);
+          return a + (b - a) * clamped;
+        },
+      },
     ],
     [
       "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle",
@@ -850,6 +856,17 @@ export class TACOptimizer {
         }
       }
 
+      const loopFirstUse = new Map<string, number>();
+      for (const index of loopIndices) {
+        const inst = instructions[index];
+        for (const op of this.getUsedOperandsForReuse(inst)) {
+          const key = this.livenessKey(op);
+          if (key && !loopFirstUse.has(key)) {
+            loopFirstUse.set(key, index);
+          }
+        }
+      }
+
       const usedOutside = new Set<string>();
       for (let i = 0; i < instructions.length; i++) {
         if (loopIndexSet.has(i)) continue;
@@ -926,6 +943,8 @@ export class TACOptimizer {
           if (!destKey) continue;
           if ((defCounts.get(destKey) ?? 0) !== 1) continue;
           if (usedOutside.has(destKey)) continue;
+          const firstUse = loopFirstUse.get(destKey);
+          if (firstUse !== undefined && firstUse < index) continue;
           const updateBlockId = indexToBlock.get(update.index);
           const multiplyBlockId = indexToBlock.get(index);
           if (updateBlockId === undefined || multiplyBlockId === undefined) {
