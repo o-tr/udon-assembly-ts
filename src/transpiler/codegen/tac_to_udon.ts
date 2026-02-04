@@ -820,7 +820,7 @@ export class TACToUdonConverter {
 
   private getTruncateExternSignature(): string {
     const externSig = resolveExternSignature(
-      "Math",
+      "SystemMath",
       "Truncate",
       "method",
       ["double"],

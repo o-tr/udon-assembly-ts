@@ -1218,7 +1218,7 @@ export class ASTToTACConverter {
 
       const newResult = this.newTemp(PrimitiveTypes.string);
       const concatExtern = this.requireExternSignature(
-        "String",
+        "SystemString",
         "Concat",
         "method",
         ["string", "string"],
