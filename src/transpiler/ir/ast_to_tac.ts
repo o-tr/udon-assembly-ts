@@ -2133,7 +2133,9 @@ export class ASTToTACConverter {
           [],
           "void",
         );
-        this.instructions.push(new CallInstruction(undefined, externSig, []));
+        this.instructions.push(
+          new CallInstruction(undefined, externSig, [object]),
+        );
         return createConstant(0, PrimitiveTypes.void);
       }
       this.instructions.push(
