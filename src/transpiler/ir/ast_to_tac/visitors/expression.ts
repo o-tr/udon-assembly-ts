@@ -340,11 +340,7 @@ export function visitBinaryExpression(
   // Attempt to detect chained string concatenation (a + b + c ...)
   if (node.operator === "+") {
     const chain = flattenStringConcatChain(this, node);
-    if (
-      chain &&
-      this.useStringBuilder &&
-      chain.length >= this.stringBuilderThreshold
-    ) {
+    if (chain && this.useStringBuilder) {
       const partsOperands: TACOperand[] = [];
       for (const partNode of chain) {
         let partOperand: TACOperand;
@@ -364,12 +360,7 @@ export function visitBinaryExpression(
           } else {
             partOperand = this.newTemp(PrimitiveTypes.string);
             this.instructions.push(
-              new MethodCallInstruction(
-                partOperand,
-                exprResult,
-                "ToString",
-                [],
-              ),
+              new MethodCallInstruction(partOperand, exprResult, "ToString", []),
             );
           }
         }
@@ -378,7 +369,27 @@ export function visitBinaryExpression(
       if (partsOperands.length === 0) {
         return createConstant("", PrimitiveTypes.string);
       }
-      return generateStringBuilderConcat(this, partsOperands);
+      if (partsOperands.length >= this.stringBuilderThreshold) {
+        return generateStringBuilderConcat(this, partsOperands);
+      }
+      // Below threshold: build a String.Concat chain directly to avoid re-visiting
+      let resultOperand: TACOperand = partsOperands[0];
+      for (let i = 1; i < partsOperands.length; i += 1) {
+        const partOperand = partsOperands[i];
+        const newResult = this.newTemp(PrimitiveTypes.string);
+        const concatExtern = this.requireExternSignature(
+          "System.String",
+          "Concat",
+          "method",
+          ["string", "string"],
+          "System.String",
+        );
+        this.instructions.push(
+          new CallInstruction(newResult, concatExtern, [resultOperand, partOperand]),
+        );
+        resultOperand = newResult;
+      }
+      return resultOperand;
     }
   }
   const left = this.visitExpression(node.left);
