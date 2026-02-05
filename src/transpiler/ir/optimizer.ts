@@ -108,7 +108,13 @@ export class TACOptimizer {
     ],
     [
       "UnityEngineMathf.__Lerp__SystemSingle_SystemSingle_SystemSingle__SystemSingle",
-      { arity: 3, eval: ([a, b, t]) => a + (b - a) * t },
+      {
+        arity: 3,
+        eval: ([a, b, t]) => {
+          const clamped = Math.min(Math.max(t, 0), 1);
+          return a + (b - a) * clamped;
+        },
+      },
     ],
     [
       "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle",
@@ -684,6 +690,14 @@ export class TACOptimizer {
     const loops = this.collectLoops(cfg);
     if (loops.length === 0) return instructions;
 
+    const dom = this.computeDominators(cfg);
+    const indexToBlock = new Map<number, number>();
+    for (const block of cfg.blocks) {
+      for (let i = block.start; i <= block.end; i++) {
+        indexToBlock.set(i, block.id);
+      }
+    }
+
     const hoistMap = new Map<number, TACInstruction[]>();
     const hoistIndices = new Set<number>();
 
@@ -741,6 +755,17 @@ export class TACOptimizer {
         if (usedOutside.has(defKey)) continue;
         if ((useBeforeDef.get(defKey) ?? index) < index) continue;
 
+        const defBlockId = indexToBlock.get(index);
+        if (defBlockId === undefined) continue;
+        let dominatesLoop = true;
+        for (const blockId of loopBlocks) {
+          if (!(dom.get(blockId)?.has(defBlockId) ?? false)) {
+            dominatesLoop = false;
+            break;
+          }
+        }
+        if (!dominatesLoop) continue;
+
         const operands = this.getUsedOperandsForReuse(inst);
         const allInvariant = operands.every((op) => {
           const key = this.livenessKey(op);
@@ -794,6 +819,14 @@ export class TACOptimizer {
     const loops = this.collectLoops(cfg);
     if (loops.length === 0) return instructions;
 
+    const dom = this.computeDominators(cfg);
+    const indexToBlock = new Map<number, number>();
+    for (const block of cfg.blocks) {
+      for (let i = block.start; i <= block.end; i++) {
+        indexToBlock.set(i, block.id);
+      }
+    }
+
     const replacements = new Map<number, TACInstruction>();
     const inserts = new Map<number, TACInstruction[]>();
     const handled = new Set<string>();
@@ -820,6 +853,17 @@ export class TACOptimizer {
         const defKey = this.livenessKey(defOp);
         if (defKey) {
           defCounts.set(defKey, (defCounts.get(defKey) ?? 0) + 1);
+        }
+      }
+
+      const loopFirstUse = new Map<string, number>();
+      for (const index of loopIndices) {
+        const inst = instructions[index];
+        for (const op of this.getUsedOperandsForReuse(inst)) {
+          const key = this.livenessKey(op);
+          if (key && !loopFirstUse.has(key)) {
+            loopFirstUse.set(key, index);
+          }
         }
       }
 
@@ -855,6 +899,7 @@ export class TACOptimizer {
         const key = this.livenessKey(bin.dest);
         if (!key) continue;
         if (updates.has(key)) continue;
+        if ((defCounts.get(key) ?? 0) !== 1) continue;
         updates.set(key, {
           index,
           delta: rightConst.value,
@@ -898,6 +943,19 @@ export class TACOptimizer {
           if (!destKey) continue;
           if ((defCounts.get(destKey) ?? 0) !== 1) continue;
           if (usedOutside.has(destKey)) continue;
+          const firstUse = loopFirstUse.get(destKey);
+          if (firstUse !== undefined && firstUse < index) continue;
+          const updateBlockId = indexToBlock.get(update.index);
+          const multiplyBlockId = indexToBlock.get(index);
+          if (updateBlockId === undefined || multiplyBlockId === undefined) {
+            continue;
+          }
+          if (
+            updateBlockId !== multiplyBlockId &&
+            !(dom.get(multiplyBlockId)?.has(updateBlockId) ?? false)
+          ) {
+            continue;
+          }
           multiplyCandidate = {
             index,
             dest: bin.dest,
@@ -1042,6 +1100,33 @@ export class TACOptimizer {
         }
       }
       return next;
+    }
+
+    if (inst.kind === TACInstructionKind.PropertySet) {
+      const set = inst as PropertySetInstruction;
+      if (set.object.kind === TACOperandKind.Variable) {
+        next.delete((set.object as VariableOperand).name);
+      }
+      return next;
+    }
+
+    if (inst.kind === TACInstructionKind.ArrayAssignment) {
+      const assign = inst as ArrayAssignmentInstruction;
+      if (assign.array.kind === TACOperandKind.Variable) {
+        next.delete((assign.array as VariableOperand).name);
+      }
+      return next;
+    }
+
+    if (inst.kind === TACInstructionKind.MethodCall) {
+      const call = inst as MethodCallInstruction;
+      if (
+        call.object.kind === TACOperandKind.Variable &&
+        this.isCopyOnWriteCandidateType(this.getOperandType(call.object))
+      ) {
+        next.delete((call.object as VariableOperand).name);
+      }
+      // fall through to clear any defined variable via getDefinedOperandForReuse
     }
 
     const defined = this.getDefinedOperandForReuse(inst);
@@ -1436,8 +1521,8 @@ export class TACOptimizer {
     operandKey: string,
   ): void {
     const needle = `|${operandKey}|`;
-    for (const key of Array.from(map.keys())) {
-      if (key.includes(needle)) {
+    for (const [key, value] of Array.from(map.entries())) {
+      if (key.includes(needle) || value.operandKey === operandKey) {
         map.delete(key);
       }
     }
@@ -1632,6 +1717,38 @@ export class TACOptimizer {
       const defined = this.getDefinedOperandForReuse(inst);
       recordTemp(defined);
     }
+
+    const cfg = this.buildCFG(instructions);
+    if (cfg.blocks.length === 0) return instructions;
+    const blocksInOrder = Array.from(cfg.blocks).sort(
+      (a, b) => a.start - b.start,
+    );
+    const isStraightLine = blocksInOrder.every((block, index) => {
+      if (index === 0) {
+        if (block.preds.length !== 0) return false;
+      } else {
+        const prev = blocksInOrder[index - 1];
+        if (
+          block.preds.length !== 1 ||
+          block.preds[0] !== prev.id
+        ) {
+          return false;
+        }
+      }
+      if (index === blocksInOrder.length - 1) {
+        if (block.succs.length !== 0) return false;
+      } else {
+        const next = blocksInOrder[index + 1];
+        if (
+          block.succs.length !== 1 ||
+          block.succs[0] !== next.id
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (!isStraightLine) return instructions;
 
     let nextTempId = maxTempId + 1;
     const aliasMap = new Map<number, TemporaryOperand>();
