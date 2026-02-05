@@ -4,6 +4,7 @@ import {
   ClassTypeSymbol,
   CollectionTypeSymbol,
   ExternTypes,
+  GenericTypeParameterSymbol,
   ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
@@ -38,6 +39,10 @@ export class TypeMapper {
     }
     const alias = this.typeAliases.get(trimmed);
     if (alias) return alias;
+
+    if (this.isGenericTypeParameterName(trimmed)) {
+      return new GenericTypeParameterSymbol(trimmed);
+    }
 
     if (this.isStringLiteralUnionType(trimmed)) {
       return PrimitiveTypes.string;
@@ -264,6 +269,14 @@ export class TypeMapper {
 
   private isLikelyUserDefinedType(typeText: string): boolean {
     return /^[A-Z]\w*$/.test(typeText);
+  }
+
+  private isGenericTypeParameterName(typeText: string): boolean {
+    const normalized = typeText.startsWith("_")
+      ? typeText.slice(1)
+      : typeText;
+    if (normalized === "T") return true;
+    return /^T[A-Z0-9]\w*$/.test(normalized);
   }
 
   private isComplexTypeExpression(typeText: string): boolean {
