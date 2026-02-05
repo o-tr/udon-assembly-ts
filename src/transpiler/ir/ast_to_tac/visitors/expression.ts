@@ -504,17 +504,6 @@ export function visitArrayLiteralExpression(
           }
         }
       }
-      if (
-        !isDataList &&
-        !isArray &&
-        element.value.kind === ASTNodeKind.PropertyAccessExpression
-      ) {
-        const access = element.value as PropertyAccessExpressionNode;
-        if (access.property === "tiles" || access.property === "hand") {
-          spreadType = new ArrayTypeSymbol(ObjectType);
-          isArray = true;
-        }
-      }
       if (!isDataList && !isArray) {
         let sourceHint = String(element.value.kind);
         if (element.value.kind === ASTNodeKind.Identifier) {
