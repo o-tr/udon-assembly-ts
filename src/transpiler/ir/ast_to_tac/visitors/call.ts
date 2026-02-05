@@ -290,11 +290,15 @@ export function visitCallExpression(
       if (externSig) {
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
         if (returnType === PrimitiveTypes.void) {
-          this.instructions.push(new CallInstruction(undefined, externSig, args));
+          this.instructions.push(
+            new CallInstruction(undefined, externSig, args),
+          );
           return createConstant(0, PrimitiveTypes.void);
         }
         const callResult = this.newTemp(returnType);
-        this.instructions.push(new CallInstruction(callResult, externSig, args));
+        this.instructions.push(
+          new CallInstruction(callResult, externSig, args),
+        );
         return callResult;
       }
     }
@@ -684,9 +688,35 @@ export function visitNumberStaticCall(
     case "isFinite": {
       if (args.length !== 1) return null;
       const value = args[0];
+      const notNaN = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(notNaN, value, "==", value),
+      );
+      const notPosInf = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          notPosInf,
+          value,
+          "!=",
+          createConstant(Infinity, PrimitiveTypes.single),
+        ),
+      );
+      const notNegInf = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          notNegInf,
+          value,
+          "!=",
+          createConstant(-Infinity, PrimitiveTypes.single),
+        ),
+      );
+      const temp = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(temp, notNaN, "&&", notPosInf),
+      );
       const result = this.newTemp(PrimitiveTypes.boolean);
       this.instructions.push(
-        new BinaryOpInstruction(result, value, "==", value),
+        new BinaryOpInstruction(result, temp, "&&", notNegInf),
       );
       return result;
     }

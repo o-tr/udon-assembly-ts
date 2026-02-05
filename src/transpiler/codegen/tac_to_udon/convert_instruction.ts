@@ -1,4 +1,6 @@
 import {
+  type ArrayAccessInstruction as TACArrayAccessInstruction,
+  type ArrayAssignmentInstruction as TACArrayAssignmentInstruction,
   type AssignmentInstruction as TACAssignmentInstruction,
   type BinaryOpInstruction as TACBinaryOpInstruction,
   type CallInstruction as TACCallInstruction,
@@ -18,7 +20,6 @@ import {
 import type {
   ConstantOperand,
   LabelOperand,
-  TACOperand,
   TemporaryOperand,
   VariableOperand,
 } from "../../ir/tac_operand.js";
@@ -38,6 +39,12 @@ export function convertInstruction(
   this: TACToUdonConverter,
   inst: TACInstruction,
 ): void {
+  const isUdonExternSignature = (signature: string): boolean => {
+    return /^[A-Za-z0-9._]+\.__[A-Za-z0-9_]+__(?:[A-Za-z0-9_]+)?__[A-Za-z0-9_]+$/.test(
+      signature,
+    );
+  };
+
   switch (inst.kind) {
     case TACInstructionKind.Assignment: // fallthrough
     case TACInstructionKind.Copy: {
@@ -59,11 +66,8 @@ export function convertInstruction(
         | VariableOperand
         | ConstantOperand
         | TemporaryOperand;
-      const leftType = leftOp.type;
-      const externSig = this.getExternForBinaryOp(
-        binInst.operator,
-        leftType.udonType,
-      );
+      const leftType = leftOp.type?.udonType ?? "Single";
+      const externSig = this.getExternForBinaryOp(binInst.operator, leftType);
       this.externSignatures.add(externSig);
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),
@@ -218,10 +222,12 @@ export function convertInstruction(
       } else {
         externSig = call.func;
       }
-      // If it looks like a Udon extern signature (contains __), don't append ()
-      if (!externSig.includes("__")) {
-        externSig =
-          resolveExternSignature(call.func, "", "method") ?? `${call.func}()`;
+      if (!isUdonExternSignature(externSig)) {
+        const resolved = resolveExternSignature(call.func, "", "method");
+        if (!resolved) {
+          throw new Error(`Missing extern signature for ${call.func}`);
+        }
+        externSig = resolved;
       }
       this.externSignatures.add(externSig);
       this.instructions.push(
@@ -345,11 +351,7 @@ export function convertInstruction(
     }
 
     case TACInstructionKind.ArrayAccess: {
-      const arrayInst = inst as unknown as {
-        dest: TACOperand;
-        array: TACOperand;
-        index: TACOperand;
-      };
+      const arrayInst = inst as TACArrayAccessInstruction;
       this.pushOperand(arrayInst.array);
       this.pushOperand(arrayInst.index);
       const externSig = resolveExternSignature(
@@ -373,11 +375,7 @@ export function convertInstruction(
     }
 
     case TACInstructionKind.ArrayAssignment: {
-      const arrayInst = inst as unknown as {
-        array: TACOperand;
-        index: TACOperand;
-        value: TACOperand;
-      };
+      const arrayInst = inst as TACArrayAssignmentInstruction;
       this.pushOperand(arrayInst.array);
       this.pushOperand(arrayInst.index);
       this.pushOperand(arrayInst.value);
@@ -411,6 +409,11 @@ export function convertInstruction(
       // Jump to exit address directly (0xFFFFFFFC)
       this.instructions.push(new JumpInstruction("0xFFFFFFFC"));
       break;
+    }
+
+    default: {
+      const _exhaustive: never = inst.kind as never;
+      throw new Error(`Unhandled TACInstructionKind: ${_exhaustive}`);
     }
   }
 }
