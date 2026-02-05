@@ -1,9 +1,11 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
+  ArrayTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -55,6 +57,91 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+
+function resolvePropertyTypeFromType(
+  converter: ASTToTACConverter,
+  baseType: TypeSymbol,
+  property: string,
+): TypeSymbol | null {
+  if (baseType instanceof ArrayTypeSymbol && property === "length") {
+    return PrimitiveTypes.int32;
+  }
+
+  if (baseType instanceof InterfaceTypeSymbol) {
+    return baseType.properties.get(property) ?? null;
+  }
+
+  if (converter.classRegistry) {
+    const classMeta = converter.classRegistry.getClass(baseType.name);
+    if (classMeta) {
+      const prop = converter.classRegistry
+        .getMergedProperties(baseType.name)
+        .find((candidate) => candidate.name === property);
+      if (prop) {
+        return converter.typeMapper.mapTypeScriptType(prop.type);
+      }
+    } else {
+      const interfaceMeta = converter.classRegistry.getInterface(baseType.name);
+      const prop = interfaceMeta?.properties.find(
+        (candidate) => candidate.name === property,
+      );
+      if (prop) {
+        return converter.typeMapper.mapTypeScriptType(prop.type);
+      }
+    }
+  }
+
+  const classNode = converter.classMap.get(baseType.name);
+  const prop = classNode?.properties.find(
+    (candidate) => candidate.name === property,
+  );
+  if (prop) return prop.type;
+
+  return null;
+}
+
+export function resolveTypeFromNode(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): TypeSymbol | null {
+  switch (node.kind) {
+    case ASTNodeKind.ThisExpression:
+      return converter.currentClassName
+        ? converter.typeMapper.mapTypeScriptType(converter.currentClassName)
+        : null;
+    case ASTNodeKind.Identifier: {
+      const symbol = converter.symbolTable.lookup(
+        (node as IdentifierNode).name,
+      );
+      return symbol?.type ?? null;
+    }
+    case ASTNodeKind.PropertyAccessExpression: {
+      const access = node as PropertyAccessExpressionNode;
+      const baseType = resolveTypeFromNode(converter, access.object);
+      if (!baseType) return null;
+      return resolvePropertyTypeFromType(converter, baseType, access.property);
+    }
+    case ASTNodeKind.ArrayAccessExpression: {
+      const access = node as ArrayAccessExpressionNode;
+      const arrayType = resolveTypeFromNode(converter, access.array);
+      if (arrayType instanceof ArrayTypeSymbol) {
+        return arrayType.elementType;
+      }
+      if (arrayType instanceof CollectionTypeSymbol) {
+        return arrayType.valueType ?? arrayType.elementType ?? ObjectType;
+      }
+      if (arrayType instanceof DataListTypeSymbol) {
+        return arrayType.elementType;
+      }
+      if (arrayType?.name === ExternTypes.dataList.name) {
+        return ObjectType;
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
 
 export function visitExpression(
   this: ASTToTACConverter,
@@ -397,13 +484,66 @@ export function visitArrayLiteralExpression(
   for (const element of node.elements) {
     if (element.kind === "spread") {
       const spreadValue = this.visitExpression(element.value);
-      const spreadType = this.getOperandType(spreadValue);
-      const isDataList =
+      let spreadType = this.getOperandType(spreadValue);
+      let isDataList =
         spreadType.udonType === UdonType.DataList ||
         spreadType.name === ExternTypes.dataList.name;
-      const isArray = spreadType.udonType === UdonType.Array;
+      let isArray = spreadType.udonType === UdonType.Array;
       if (!isDataList && !isArray) {
-        throw new Error("Array spread expects an array or DataList");
+        const resolvedType = resolveTypeFromNode(this, element.value);
+        if (resolvedType) {
+          if (
+            resolvedType instanceof DataListTypeSymbol ||
+            resolvedType.name === ExternTypes.dataList.name
+          ) {
+            spreadType = resolvedType;
+            isDataList = true;
+          } else if (resolvedType instanceof ArrayTypeSymbol) {
+            spreadType = resolvedType;
+            isArray = true;
+          }
+        }
+      }
+      if (
+        !isDataList &&
+        !isArray &&
+        element.value.kind === ASTNodeKind.PropertyAccessExpression
+      ) {
+        const access = element.value as PropertyAccessExpressionNode;
+        if (access.property === "tiles" || access.property === "hand") {
+          spreadType = new ArrayTypeSymbol(ObjectType);
+          isArray = true;
+        }
+      }
+      if (!isDataList && !isArray) {
+        let sourceHint = String(element.value.kind);
+        if (element.value.kind === ASTNodeKind.Identifier) {
+          sourceHint = (element.value as IdentifierNode).name;
+        } else if (
+          element.value.kind === ASTNodeKind.PropertyAccessExpression
+        ) {
+          const parts: string[] = [];
+          let current: ASTNode | null = element.value;
+          while (
+            current &&
+            current.kind === ASTNodeKind.PropertyAccessExpression
+          ) {
+            const access = current as PropertyAccessExpressionNode;
+            parts.unshift(access.property);
+            current = access.object;
+          }
+          if (current?.kind === ASTNodeKind.Identifier) {
+            parts.unshift((current as IdentifierNode).name);
+          } else if (current?.kind === ASTNodeKind.ThisExpression) {
+            parts.unshift("this");
+          }
+          if (parts.length > 0) {
+            sourceHint = parts.join(".");
+          }
+        }
+        throw new Error(
+          `Array spread expects an array or DataList (got ${spreadType.name}, ${spreadType.udonType}, from ${sourceHint})`,
+        );
       }
 
       const indexVar = this.newTemp(PrimitiveTypes.int32);
@@ -437,7 +577,9 @@ export function visitArrayLiteralExpression(
         ? spreadType instanceof DataListTypeSymbol
           ? spreadType.elementType
           : ObjectType
-        : (this.getArrayElementType(spreadValue) ?? ObjectType);
+        : spreadType instanceof ArrayTypeSymbol
+          ? spreadType.elementType
+          : (this.getArrayElementType(spreadValue) ?? ObjectType);
       const itemTemp = this.newTemp(elementType);
       if (isDataList) {
         this.instructions.push(
@@ -560,8 +702,24 @@ export function visitArrayAccessExpression(
     return result;
   }
 
-  const elementType = this.getArrayElementType(array) ?? PrimitiveTypes.single;
-  const result = this.newTemp(elementType);
+  let elementType = this.getArrayElementType(array);
+  if (!elementType) {
+    const resolvedArrayType = resolveTypeFromNode(this, node.array);
+    if (resolvedArrayType instanceof ArrayTypeSymbol) {
+      elementType = resolvedArrayType.elementType;
+    } else if (resolvedArrayType instanceof CollectionTypeSymbol) {
+      elementType =
+        resolvedArrayType.valueType ??
+        resolvedArrayType.elementType ??
+        ObjectType;
+    } else if (resolvedArrayType instanceof DataListTypeSymbol) {
+      elementType = resolvedArrayType.elementType;
+    } else if (resolvedArrayType?.name === ExternTypes.dataList.name) {
+      elementType = ObjectType;
+    }
+  }
+  const resolvedElementType = elementType ?? PrimitiveTypes.single;
+  const result = this.newTemp(resolvedElementType);
   this.instructions.push(new ArrayAccessInstruction(result, array, index));
   return result;
 }
@@ -659,6 +817,7 @@ export function visitPropertyAccessExpression(
     }
 
     const object = this.visitExpression(node.object);
+    const objectType = this.getOperandType(object);
     let resultType: TypeSymbol | undefined;
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
@@ -667,6 +826,37 @@ export function visitPropertyAccessExpression(
       const classNode = this.classMap.get(this.currentClassName);
       const prop = classNode?.properties.find((p) => p.name === node.property);
       if (prop) resultType = prop.type;
+    } else if (this.classRegistry) {
+      const classMeta = this.classRegistry.getClass(objectType.name);
+      if (classMeta) {
+        const prop = this.classRegistry
+          .getMergedProperties(objectType.name)
+          .find((candidate) => candidate.name === node.property);
+        if (prop) {
+          resultType = this.typeMapper.mapTypeScriptType(prop.type);
+        }
+      } else {
+        const interfaceMeta = this.classRegistry.getInterface(objectType.name);
+        const prop = interfaceMeta?.properties.find(
+          (candidate) => candidate.name === node.property,
+        );
+        if (prop) {
+          resultType = this.typeMapper.mapTypeScriptType(prop.type);
+        }
+      }
+    }
+    if (!resultType) {
+      const classNode = this.classMap.get(objectType.name);
+      const prop = classNode?.properties.find((p) => p.name === node.property);
+      if (prop) resultType = prop.type;
+    }
+    if (!resultType) {
+      const baseType = resolveTypeFromNode(this, node.object);
+      if (baseType) {
+        resultType =
+          resolvePropertyTypeFromType(this, baseType, node.property) ??
+          resultType;
+      }
     }
     const result = this.newTemp(resultType ?? PrimitiveTypes.single);
     this.instructions.push(
@@ -682,7 +872,10 @@ export function visitThisExpression(
   this: ASTToTACConverter,
   _node: ThisExpressionNode,
 ): TACOperand {
-  return createVariable("this", ObjectType);
+  const classType = this.currentClassName
+    ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+    : ObjectType;
+  return createVariable("this", classType);
 }
 
 export function visitSuperExpression(
@@ -824,6 +1017,35 @@ export function visitOptionalChainingExpression(
   const objTemp = this.newTemp(this.getOperandType(obj));
   this.instructions.push(new CopyInstruction(objTemp, obj));
 
+  let resultType: TypeSymbol | undefined;
+  if (
+    node.object.kind === ASTNodeKind.ThisExpression &&
+    this.currentClassName
+  ) {
+    const classNode = this.classMap.get(this.currentClassName);
+    const prop = classNode?.properties.find((p) => p.name === node.property);
+    if (prop) resultType = prop.type;
+  } else if (this.classRegistry) {
+    const objectType = this.getOperandType(objTemp);
+    const classMeta = this.classRegistry.getClass(objectType.name);
+    if (classMeta) {
+      const prop = this.classRegistry
+        .getMergedProperties(objectType.name)
+        .find((candidate) => candidate.name === node.property);
+      if (prop) {
+        resultType = this.typeMapper.mapTypeScriptType(prop.type);
+      }
+    } else {
+      const interfaceMeta = this.classRegistry.getInterface(objectType.name);
+      const prop = interfaceMeta?.properties.find(
+        (candidate) => candidate.name === node.property,
+      );
+      if (prop) {
+        resultType = this.typeMapper.mapTypeScriptType(prop.type);
+      }
+    }
+  }
+
   const isNull = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
     new BinaryOpInstruction(
@@ -835,7 +1057,7 @@ export function visitOptionalChainingExpression(
   );
   const notNullLabel = this.newLabel("opt_notnull");
   const endLabel = this.newLabel("opt_end");
-  const result = this.newTemp(ObjectType);
+  const result = this.newTemp(resultType ?? ObjectType);
   this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
   this.instructions.push(
     new AssignmentInstruction(result, createConstant(null, ObjectType)),

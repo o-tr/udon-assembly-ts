@@ -13,23 +13,24 @@
     "url": "https://github.com/o-tr/udon-assembly-ts.git"
   },
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./src/index.ts",
       "import": "./dist/index.js"
     },
     "./stubs": {
-      "types": "./dist/stubs/index.d.ts",
+      "types": "./src/stubs/index.ts",
       "import": "./dist/stubs/index.js"
     },
     "./stubs/*": {
-      "types": "./dist/stubs/*.d.ts",
+      "types": "./src/stubs/*.ts",
       "import": "./dist/stubs/*.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
     "build": "tsup",

@@ -1,6 +1,7 @@
 import * as ts from "typescript";
 import {
   ArrayTypeSymbol,
+  InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
@@ -179,6 +180,8 @@ export function visitVariableStatement(
     const initExpr = declaration.initializer;
     const tempType = this.inferType(initExpr);
     this.symbolTable.addSymbol(tempName, tempType, false, true);
+    const tempInterfaceType =
+      tempType instanceof InterfaceTypeSymbol ? tempType : null;
 
     const tempDecl: VariableDeclarationNode = {
       kind: ASTNodeKind.VariableDeclaration,
@@ -195,8 +198,11 @@ export function visitVariableStatement(
       const propName = element.propertyName
         ? element.propertyName.getText()
         : varName;
+      const propType = tempInterfaceType
+        ? (tempInterfaceType.properties.get(propName) ?? ObjectType)
+        : ObjectType;
       if (!this.symbolTable.hasInCurrentScope(varName)) {
-        this.symbolTable.addSymbol(varName, ObjectType, false, isConst);
+        this.symbolTable.addSymbol(varName, propType, false, isConst);
       }
       const propertyAccess: PropertyAccessExpressionNode = {
         kind: ASTNodeKind.PropertyAccessExpression,
@@ -209,7 +215,7 @@ export function visitVariableStatement(
       statements.push({
         kind: ASTNodeKind.VariableDeclaration,
         name: varName,
-        type: ObjectType,
+        type: propType,
         isConst,
         initializer: propertyAccess,
       } as VariableDeclarationNode);
@@ -264,14 +270,19 @@ export function visitTypeAliasDeclaration(
   node: ts.TypeAliasDeclaration,
 ): InterfaceDeclarationNode | undefined {
   const name = node.name.getText();
-  const mapped = this.mapTypeWithGenerics(node.type.getText(), node.type);
-  this.typeMapper.registerTypeAlias(name, mapped);
   if (!ts.isTypeLiteralNode(node.type)) {
+    const mapped = this.mapTypeWithGenerics(node.type.getText(), node.type);
+    this.typeMapper.registerTypeAlias(name, mapped);
     return undefined;
   }
 
   const properties: InterfaceDeclarationNode["properties"] = [];
   const methods: InterfaceDeclarationNode["methods"] = [];
+  const propertyMap = new Map<string, TypeSymbol>();
+  const methodMap = new Map<
+    string,
+    { params: TypeSymbol[]; returnType: TypeSymbol }
+  >();
 
   for (const member of node.type.members) {
     if (ts.isPropertySignature(member)) {
@@ -280,6 +291,7 @@ export function visitTypeAliasDeclaration(
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("object");
       properties.push({ name: propName, type: propType });
+      propertyMap.set(propName, propType);
     } else if (ts.isMethodSignature(member)) {
       const methodName = member.name.getText();
       const parameters = member.parameters.map((param) => ({
@@ -292,8 +304,17 @@ export function visitTypeAliasDeclaration(
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("void");
       methods.push({ name: methodName, parameters, returnType });
+      methodMap.set(methodName, {
+        params: parameters.map((param) => param.type),
+        returnType,
+      });
     }
   }
+
+  this.typeMapper.registerTypeAlias(
+    name,
+    new InterfaceTypeSymbol(name, methodMap, propertyMap),
+  );
 
   return {
     kind: ASTNodeKind.InterfaceDeclaration,

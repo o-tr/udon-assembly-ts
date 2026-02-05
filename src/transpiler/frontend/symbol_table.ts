@@ -85,6 +85,16 @@ export class SymbolTable {
   }
 
   /**
+   * Update a symbol's type in the current scope if it exists.
+   */
+  updateTypeInCurrentScope(name: string, type: TypeSymbol): void {
+    const scope = this.scopes[this.currentScope];
+    const symbol = scope.get(name);
+    if (!symbol) return;
+    scope.set(name, { ...symbol, type });
+  }
+
+  /**
    * Get all symbols in current scope
    */
   getCurrentScopeSymbols(): SymbolInfo[] {
