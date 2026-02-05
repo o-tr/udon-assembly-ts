@@ -61,7 +61,14 @@ export class StringBuilder {
   Append(_value: UdonDouble): StringBuilder;
   Append(_value: boolean): StringBuilder;
   Append(
-    _value: SystemString | string | number | UdonInt | UdonFloat | UdonDouble | boolean,
+    _value:
+      | SystemString
+      | string
+      | number
+      | UdonInt
+      | UdonFloat
+      | UdonDouble
+      | boolean,
   ): StringBuilder {
     return this;
   }
