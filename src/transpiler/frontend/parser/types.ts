@@ -5,6 +5,7 @@ import {
   CollectionTypeSymbol,
   ExternTypes,
   GenericTypeParameterSymbol,
+  InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../type_symbols.js";
@@ -32,6 +33,34 @@ export function mapTypeWithGenerics(
       ts.isIntersectionTypeNode(node))
   ) {
     return ObjectType;
+  }
+
+  if (node && ts.isArrayTypeNode(node)) {
+    let current: ts.TypeNode = node;
+    let dimensions = 0;
+    while (ts.isArrayTypeNode(current)) {
+      dimensions += 1;
+      current = current.elementType;
+    }
+    const elementType = this.mapTypeWithGenerics(current.getText(), current);
+    return new ArrayTypeSymbol(elementType, dimensions);
+  }
+
+  if (node && ts.isTypeOperatorNode(node)) {
+    if (node.operator === ts.SyntaxKind.ReadonlyKeyword) {
+      return this.mapTypeWithGenerics(node.type.getText(), node.type);
+    }
+  }
+
+  if (node && ts.isTypeReferenceNode(node)) {
+    const refName = node.typeName.getText();
+    if (refName === "Array" || refName === "ReadonlyArray") {
+      const arg = node.typeArguments?.[0];
+      const elementType = arg
+        ? this.mapTypeWithGenerics(arg.getText(), arg)
+        : ObjectType;
+      return new ArrayTypeSymbol(elementType);
+    }
   }
 
   if (node && ts.isTupleTypeNode(node)) {
@@ -189,6 +218,42 @@ export function inferType(
         return this.inferType(asExpr.expression);
       }
       return this.mapTypeWithGenerics(asExpr.type.getText(), asExpr.type);
+    }
+    case ts.SyntaxKind.Identifier: {
+      const identifier = node as ts.Identifier;
+      const symbol = this.symbolTable.lookup(identifier.text);
+      return symbol?.type ?? ObjectType;
+    }
+    case ts.SyntaxKind.PropertyAccessExpression: {
+      const access = node as ts.PropertyAccessExpression;
+      let baseType: TypeSymbol | null = null;
+      if (ts.isIdentifier(access.expression)) {
+        const symbol = this.symbolTable.lookup(access.expression.text);
+        baseType = symbol?.type ?? null;
+      } else if (ts.isPropertyAccessExpression(access.expression)) {
+        baseType = this.inferType(access.expression);
+      }
+      if (baseType instanceof InterfaceTypeSymbol) {
+        return baseType.properties.get(access.name.getText()) ?? ObjectType;
+      }
+      return ObjectType;
+    }
+    case ts.SyntaxKind.ElementAccessExpression: {
+      const access = node as ts.ElementAccessExpression;
+      if (ts.isIdentifier(access.expression)) {
+        const symbol = this.symbolTable.lookup(access.expression.text);
+        const type = symbol?.type;
+        if (type instanceof ArrayTypeSymbol) {
+          return type.elementType;
+        }
+      }
+      if (ts.isPropertyAccessExpression(access.expression)) {
+        const propertyType = this.inferType(access.expression);
+        if (propertyType instanceof ArrayTypeSymbol) {
+          return propertyType.elementType;
+        }
+      }
+      return this.typeMapper.mapTypeScriptType("object");
     }
     default:
       return this.typeMapper.mapTypeScriptType("number"); // Default fallback

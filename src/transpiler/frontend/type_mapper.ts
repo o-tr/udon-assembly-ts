@@ -80,7 +80,11 @@ export class TypeMapper {
         base = base.slice(0, -2).trim();
         dimensions += 1;
       }
-      return new ArrayTypeSymbol(this.mapTypeScriptType(base), dimensions);
+      let elementType: TypeSymbol = this.mapTypeScriptType(base);
+      for (let i = 0; i < dimensions; i += 1) {
+        elementType = new ArrayTypeSymbol(elementType);
+      }
+      return elementType;
     }
 
     const genericMatch = this.parseGenericType(trimmed);

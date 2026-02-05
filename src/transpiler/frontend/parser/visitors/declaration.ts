@@ -2,7 +2,7 @@ import * as ts from "typescript";
 import type { EnumKind } from "../../enum_registry.js";
 import {
   ClassTypeSymbol,
-  ObjectType,
+  InterfaceTypeSymbol,
   type TypeSymbol,
 } from "../../type_symbols.js";
 import {
@@ -126,11 +126,50 @@ export function visitClassDeclaration(
           isStatic: false,
         });
       }
-    } else if (
-      ts.isGetAccessorDeclaration(member) ||
-      ts.isSetAccessorDeclaration(member) ||
-      ts.isIndexSignatureDeclaration(member)
-    ) {
+    } else if (ts.isGetAccessorDeclaration(member)) {
+      const propName = member.name.getText();
+      if (properties.some((prop) => prop.name === propName)) continue;
+      const propType = member.type
+        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
+        : this.mapTypeWithGenerics("object");
+      const isStatic = !!member.modifiers?.some(
+        (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
+      );
+      const isPublic = !!(
+        member.modifiers?.some(
+          (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
+        ) ?? true
+      );
+      properties.push({
+        kind: ASTNodeKind.PropertyDeclaration,
+        name: propName,
+        type: propType,
+        isPublic,
+        isStatic,
+      });
+    } else if (ts.isSetAccessorDeclaration(member)) {
+      const propName = member.name.getText();
+      if (properties.some((prop) => prop.name === propName)) continue;
+      const param = member.parameters[0];
+      const propType = param?.type
+        ? this.mapTypeWithGenerics(param.type.getText(), param.type)
+        : this.mapTypeWithGenerics("object");
+      const isStatic = !!member.modifiers?.some(
+        (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
+      );
+      const isPublic = !!(
+        member.modifiers?.some(
+          (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
+        ) ?? true
+      );
+      properties.push({
+        kind: ASTNodeKind.PropertyDeclaration,
+        name: propName,
+        type: propType,
+        isPublic,
+        isStatic,
+      });
+    } else if (ts.isIndexSignatureDeclaration(member)) {
     } else {
       this.reportUnsupportedNode(
         member,
@@ -163,10 +202,13 @@ export function visitInterfaceDeclaration(
   node: ts.InterfaceDeclaration,
 ): InterfaceDeclarationNode {
   const name = node.name.text;
-  this.typeMapper.registerTypeAlias(name, ObjectType);
   const properties: InterfaceDeclarationNode["properties"] = [];
   const methods: InterfaceDeclarationNode["methods"] = [];
-
+  const propertyMap = new Map<string, TypeSymbol>();
+  const methodMap = new Map<
+    string,
+    { params: TypeSymbol[]; returnType: TypeSymbol }
+  >();
   for (const member of node.members) {
     if (ts.isPropertySignature(member)) {
       const propName = member.name.getText();
@@ -174,6 +216,7 @@ export function visitInterfaceDeclaration(
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("object");
       properties.push({ name: propName, type: propType });
+      propertyMap.set(propName, propType);
     } else if (ts.isMethodSignature(member)) {
       const methodName = member.name.getText();
       const parameters = member.parameters.map((param) => ({
@@ -186,8 +229,17 @@ export function visitInterfaceDeclaration(
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("void");
       methods.push({ name: methodName, parameters, returnType });
+      methodMap.set(methodName, {
+        params: parameters.map((param) => param.type),
+        returnType,
+      });
     }
   }
+
+  this.typeMapper.registerTypeAlias(
+    name,
+    new InterfaceTypeSymbol(name, methodMap, propertyMap),
+  );
 
   return {
     kind: ASTNodeKind.InterfaceDeclaration,

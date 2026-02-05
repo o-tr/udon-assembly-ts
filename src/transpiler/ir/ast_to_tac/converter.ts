@@ -2,6 +2,7 @@
  * Convert AST to TAC (Three-Address Code)
  */
 
+import type { ClassRegistry } from "../../frontend/class_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
 import { TypeMapper } from "../../frontend/type_mapper.js";
@@ -177,6 +178,7 @@ export class ASTToTACConverter {
   inlineStaticMethodStack: Set<string> = new Set();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
+  classRegistry: ClassRegistry | null;
   currentParamExportMap: Map<string, string> = new Map();
   currentMethodLayout: UdonBehaviourMethodLayout | null = null;
   inSerializeFieldInitializer = false;
@@ -186,12 +188,14 @@ export class ASTToTACConverter {
     enumRegistry?: EnumRegistry,
     udonBehaviourClasses?: Set<string>,
     udonBehaviourLayouts?: UdonBehaviourLayouts,
+    classRegistry?: ClassRegistry,
   ) {
     this.symbolTable = symbolTable;
     this.enumRegistry = enumRegistry ?? new EnumRegistry();
     this.typeMapper = new TypeMapper(this.enumRegistry);
     this.udonBehaviourClasses = udonBehaviourClasses ?? new Set();
     this.udonBehaviourLayouts = udonBehaviourLayouts ?? new Map();
+    this.classRegistry = classRegistry ?? null;
   }
 
   /**

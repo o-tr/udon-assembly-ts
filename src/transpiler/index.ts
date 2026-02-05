@@ -52,6 +52,11 @@ export class TypeScriptToUdonTranspiler {
     // Phase 1: Parse TypeScript to AST
     const parser = new TypeScriptParser();
     const ast = parser.parse(source);
+    const registry = new ClassRegistry();
+    registry.registerFromProgram(
+      ast,
+      TypeScriptToUdonTranspiler.INLINE_SOURCE_ID,
+    );
     const symbolTable = parser.getSymbolTable();
     const udonBehaviourClasses = new Set(
       ast.statements
@@ -95,6 +100,7 @@ export class TypeScriptToUdonTranspiler {
       parser.getEnumRegistry(),
       udonBehaviourClasses,
       udonBehaviourLayouts,
+      registry,
     );
     let tacInstructions = tacConverter.convert(ast);
 

@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  DataListTypeSymbol,
   ExternTypes,
   ObjectType,
   PrimitiveTypes,
@@ -46,6 +47,7 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { resolveTypeFromNode } from "./expression.js";
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
@@ -111,14 +113,39 @@ export function visitVariableDeclaration(
   this: ASTToTACConverter,
   node: VariableDeclarationNode,
 ): void {
-  const dest = createVariable(node.name, node.type, { isLocal: true });
-
-  if (!this.symbolTable.hasInCurrentScope(node.name)) {
-    this.symbolTable.addSymbol(node.name, node.type, false, node.isConst);
-  }
+  const isObjectTypeSymbol = (type: TypeSymbol): boolean =>
+    type.name === ObjectType.name && type.udonType === ObjectType.udonType;
+  let destType: TypeSymbol = node.type;
+  let src: TACOperand | null = null;
 
   if (node.initializer) {
-    const src = this.visitExpression(node.initializer);
+    src = this.visitExpression(node.initializer);
+    if (
+      isObjectTypeSymbol(destType) ||
+      (destType.name === PrimitiveTypes.single.name &&
+        destType.udonType === PrimitiveTypes.single.udonType)
+    ) {
+      const inferredType = this.getOperandType(src);
+      if (!isObjectTypeSymbol(inferredType)) {
+        destType = inferredType;
+      } else {
+        const resolvedType = resolveTypeFromNode(this, node.initializer);
+        if (resolvedType && !isObjectTypeSymbol(resolvedType)) {
+          destType = resolvedType;
+        }
+      }
+    }
+  }
+
+  const dest = createVariable(node.name, destType, { isLocal: true });
+
+  if (!this.symbolTable.hasInCurrentScope(node.name)) {
+    this.symbolTable.addSymbol(node.name, destType, false, node.isConst);
+  } else {
+    this.symbolTable.updateTypeInCurrentScope(node.name, destType);
+  }
+
+  if (src) {
     this.instructions.push(new AssignmentInstruction(dest, src));
     this.maybeTrackInlineInstanceAssignment(dest, src);
   }
@@ -221,6 +248,15 @@ export function visitForOfStatement(
   node: ForOfStatementNode,
 ): void {
   const iterableOperand = this.visitExpression(node.iterable);
+  const inferredIterableType = resolveTypeFromNode(this, node.iterable);
+  const inferredElementType =
+    inferredIterableType instanceof ArrayTypeSymbol
+      ? inferredIterableType.elementType
+      : inferredIterableType instanceof DataListTypeSymbol
+        ? inferredIterableType.elementType
+        : inferredIterableType?.name === ExternTypes.dataList.name
+          ? ObjectType
+          : null;
   const indexVar = this.newTemp(PrimitiveTypes.int32);
   const lengthVar = this.newTemp(PrimitiveTypes.int32);
 
@@ -231,6 +267,7 @@ export function visitForOfStatement(
     : isObjectDestructured
       ? ObjectType
       : (this.getArrayElementType(iterableOperand) ??
+        inferredElementType ??
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
           : PrimitiveTypes.single));

@@ -255,6 +255,7 @@ export class BatchTranspiler {
         parser.getEnumRegistry(),
         udonBehaviourClasses,
         udonBehaviourLayouts,
+        registry,
       );
       let tacInstructions = tacConverter.convert(methodProgram);
 
@@ -485,6 +486,7 @@ export class BatchTranspiler {
       parser.getEnumRegistry(),
       udonBehaviourClasses,
       udonBehaviourLayouts,
+      registry,
     );
     let tacInstructions = tacConverter.convert(methodProgram);
 

@@ -3,6 +3,7 @@ import { computeTypeId } from "../../../codegen/type_metadata_registry.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
+  ArrayTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   ObjectType,
@@ -420,7 +421,10 @@ export function visitCallExpression(
       return createConstant(0, PrimitiveTypes.void);
     }
     const objectType = this.getOperandType(object);
-    if (this.isUdonBehaviourType(objectType)) {
+    if (
+      this.isUdonBehaviourType(objectType) &&
+      propAccess.object.kind !== ASTNodeKind.ThisExpression
+    ) {
       const layout = this.getUdonBehaviourLayout(objectType.name)?.get(
         propAccess.property,
       );
@@ -530,6 +534,69 @@ export function visitCallExpression(
         return dictResult;
       }
     }
+    if (objectType.udonType === UdonType.Array) {
+      const arrayReturn =
+        objectType instanceof ArrayTypeSymbol
+          ? objectType
+          : new ArrayTypeSymbol(ObjectType);
+      switch (propAccess.property) {
+        case "slice":
+        case "concat":
+        case "filter":
+        case "reverse":
+        case "sort": {
+          const result = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(
+              result,
+              object,
+              propAccess.property,
+              args,
+            ),
+          );
+          return result;
+        }
+        case "map": {
+          const result = this.newTemp(new ArrayTypeSymbol(ObjectType));
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "map", args),
+          );
+          return result;
+        }
+        case "find": {
+          const elementType =
+            objectType instanceof ArrayTypeSymbol
+              ? objectType.elementType
+              : ObjectType;
+          const result = this.newTemp(elementType);
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "find", args),
+          );
+          return result;
+        }
+        case "indexOf": {
+          const result = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "indexOf", args),
+          );
+          return result;
+        }
+        case "includes": {
+          const result = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "includes", args),
+          );
+          return result;
+        }
+        case "join": {
+          const result = this.newTemp(PrimitiveTypes.string);
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "join", args),
+          );
+          return result;
+        }
+      }
+    }
     if (propAccess.property === "RequestSerialization" && args.length === 0) {
       const externSig = this.requireExternSignature(
         "UdonBehaviour",
@@ -543,7 +610,39 @@ export function visitCallExpression(
       );
       return createConstant(0, PrimitiveTypes.void);
     }
-    const callResult = defaultResult();
+    let resolvedReturnType: TypeSymbol | null = null;
+    if (this.classRegistry) {
+      const classMeta = this.classRegistry.getClass(objectType.name);
+      if (classMeta) {
+        const method = this.classRegistry
+          .getMergedMethods(objectType.name)
+          .find((candidate) => candidate.name === propAccess.property);
+        if (method) {
+          resolvedReturnType = this.typeMapper.mapTypeScriptType(
+            method.returnType,
+          );
+        }
+      } else {
+        const interfaceMeta = this.classRegistry.getInterface(objectType.name);
+        const method = interfaceMeta?.methods.find(
+          (candidate) => candidate.name === propAccess.property,
+        );
+        if (method) {
+          resolvedReturnType = this.typeMapper.mapTypeScriptType(
+            method.returnType,
+          );
+        }
+      }
+    }
+
+    if (resolvedReturnType === PrimitiveTypes.void) {
+      this.instructions.push(
+        new MethodCallInstruction(undefined, object, propAccess.property, args),
+      );
+      return createConstant(0, PrimitiveTypes.void);
+    }
+
+    const callResult = this.newTemp(resolvedReturnType ?? ObjectType);
     this.instructions.push(
       new MethodCallInstruction(callResult, object, propAccess.property, args),
     );
