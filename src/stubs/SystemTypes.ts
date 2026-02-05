@@ -53,10 +53,11 @@ export class SystemString {
 
 @UdonStub("System.Text.StringBuilder")
 export class StringBuilder {
+  Append(_value: SystemString): StringBuilder;
   Append(_value: string): StringBuilder;
   Append(_value: number): StringBuilder;
   Append(_value: boolean): StringBuilder;
-  Append(_value: string | number | boolean): StringBuilder {
+  Append(_value: SystemString | string | number | boolean): StringBuilder {
     return this;
   }
 

@@ -106,7 +106,7 @@ export const trySimplifyBinaryOp = (
       return new AssignmentInstruction(inst.dest, left);
     }
     const powerOfTwo = getPowerOfTwoValue(right);
-    if (powerOfTwo !== null && isIntegerType(destUdonType)) {
+    if (powerOfTwo !== null && isUnsignedIntegerType(destUdonType)) {
       const shiftAmount = Math.log2(powerOfTwo);
       return new BinaryOpInstruction(
         inst.dest,
@@ -119,7 +119,7 @@ export const trySimplifyBinaryOp = (
 
   if (inst.operator === "%") {
     const powerOfTwo = getPowerOfTwoValue(right);
-    if (powerOfTwo !== null && isIntegerType(destUdonType)) {
+    if (powerOfTwo !== null && isUnsignedIntegerType(destUdonType)) {
       const mask = powerOfTwo - 1;
       return new BinaryOpInstruction(
         inst.dest,
@@ -260,4 +260,13 @@ const isFloatingPointType = (udonType: UdonType): boolean => {
 
 const isIntegerType = (udonType: UdonType): boolean => {
   return isIntegerUdonType(udonType);
+};
+
+const isUnsignedIntegerType = (udonType: UdonType): boolean => {
+  return (
+    udonType === UdonType.Byte ||
+    udonType === UdonType.UInt16 ||
+    udonType === UdonType.UInt32 ||
+    udonType === UdonType.UInt64
+  );
 };

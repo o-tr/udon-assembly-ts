@@ -345,22 +345,22 @@ describe("optimizer passes", () => {
   });
 
   it("simplifies division and modulo by power of two", () => {
-    const x = createVariable("x", PrimitiveTypes.int32);
-    const t0 = createTemporary(0, PrimitiveTypes.int32);
-    const t1 = createTemporary(1, PrimitiveTypes.int32);
-    const t2 = createTemporary(2, PrimitiveTypes.int32);
+    const x = createVariable("x", PrimitiveTypes.uint32);
+    const t0 = createTemporary(0, PrimitiveTypes.uint32);
+    const t1 = createTemporary(1, PrimitiveTypes.uint32);
+    const t2 = createTemporary(2, PrimitiveTypes.uint32);
     const instructions = [
       new BinaryOpInstruction(
         t0,
         x,
         "/",
-        createConstant(8, PrimitiveTypes.int32),
+        createConstant(8, PrimitiveTypes.uint32),
       ),
       new BinaryOpInstruction(
         t1,
         x,
         "%",
-        createConstant(8, PrimitiveTypes.int32),
+        createConstant(8, PrimitiveTypes.uint32),
       ),
       new BinaryOpInstruction(t2, t0, "+", t1),
       new ReturnInstruction(t2),
