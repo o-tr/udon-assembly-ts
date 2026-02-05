@@ -34,6 +34,7 @@ import {
   rewriteOperands,
   rewriteProducerDest,
 } from "../utils/instructions.js";
+import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { sameUdonType } from "../utils/operands.js";
 import { getOperandType } from "./constant_folding.js";
 
@@ -441,13 +442,20 @@ export const eliminateSingleUseTemporaries = (
       const inst = blockInstructions[i];
       const next = blockInstructions[i + 1];
 
-      if (
-        next &&
-        (isPureProducer(inst) ||
-          inst.kind === TACInstructionKind.Call ||
-          inst.kind === TACInstructionKind.MethodCall) &&
-        isCopyFromTemp(next)
-      ) {
+      if (next && isCopyFromTemp(next)) {
+        // Only allow forwarding when the producer is pure. For calls we
+        // restrict to known pure externs; method calls are considered
+        // impure by default and are not allowed here.
+        const isAllowedProducer =
+          isPureProducer(inst) ||
+          (inst.kind === TACInstructionKind.Call &&
+            pureExternEvaluators.has((inst as unknown as CallInstruction).func));
+
+        if (!isAllowedProducer) {
+          result.push(inst);
+          continue;
+        }
+
         const destTemp = (inst as unknown as InstWithDest).dest;
         if (
           destTemp &&
@@ -462,7 +470,14 @@ export const eliminateSingleUseTemporaries = (
 
           if (tempId === nextTempId && tempUseCounts.get(tempId) === 1) {
             const nextDest = (next as unknown as InstWithDestSrc).dest;
-            if (sameUdonType(destTemp, nextDest)) {
+            // Only forward into plain local variables; avoid rewriting into
+            // properties/array elements which could change observable
+            // behavior for impure calls.
+            if (
+              nextDest.kind === TACOperandKind.Variable &&
+              isEligibleLocalVariable(nextDest as VariableOperand) &&
+              sameUdonType(destTemp, nextDest)
+            ) {
               const rewritten = rewriteProducerDest(inst, nextDest);
               result.push(rewritten);
               i += 1;

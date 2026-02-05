@@ -30,12 +30,13 @@ export const optimizeTailCalls = (
         const ret = blockInst[i + 1] as ReturnInstruction;
         const call = inst as CallInstruction | MethodCallInstruction;
         if (call.dest && ret.value && sameOperand(ret.value, call.dest)) {
-          // Mark as tail call, remove the return
+          // Mark as tail call but preserve the destination and the return
+          // so that return-value semantics are unchanged. Lowering to a
+          // jump is unsafe at Udon codegen level; keep the IR hint only.
           call.isTailCall = true;
-          // Drop destination so codegen knows not to expect a result
-          call.dest = undefined;
+          // Push the call through unchanged, and let the following Return
+          // still handle returning the value.
           result.push(call as unknown as TACInstruction);
-          i += 1; // skip the return
           continue;
         }
       }

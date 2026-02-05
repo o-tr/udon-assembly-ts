@@ -231,18 +231,17 @@ export function convertInstruction(
       }
       this.externSignatures.add(externSig);
       const externSymbol = this.getExternSymbol(externSig);
-      if (call.isTailCall) {
-        // For tail calls, jump directly to the target after pushing args
-        this.instructions.push(new JumpInstruction(externSymbol));
-      } else {
-        this.instructions.push(new ExternInstruction(externSymbol, true));
+      // Emit a normal extern call. Tail-call optimization is currently
+      // only an IR-level hint; mapping it to a raw `JUMP` is incorrect
+      // for Udon's calling convention and may produce invalid control
+      // flow. Preserve normal call/return semantics here.
+      this.instructions.push(new ExternInstruction(externSymbol, true));
 
-        // Store result if needed
-        if (call.dest) {
-          const destAddr = this.getOperandAddress(call.dest);
-          this.instructions.push(new PushInstruction(destAddr));
-          this.instructions.push(new CopyInstruction());
-        }
+      // Store result if needed
+      if (call.dest) {
+        const destAddr = this.getOperandAddress(call.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+        this.instructions.push(new CopyInstruction());
       }
       break;
     }
@@ -279,16 +278,14 @@ export function convertInstruction(
         ) ?? createUdonExternSignature(methodName, paramTypes, returnType);
       this.externSignatures.add(externSig);
       const externSymbol = this.getExternSymbol(externSig);
-      if (call.isTailCall) {
-        this.instructions.push(new JumpInstruction(externSymbol));
-      } else {
-        this.instructions.push(new ExternInstruction(externSymbol, true));
+      // Emit a normal method call. As above, do not lower IR `isTailCall`
+      // to a raw `JUMP` here; that is unsafe for Udon control flow.
+      this.instructions.push(new ExternInstruction(externSymbol, true));
 
-        if (call.dest) {
-          const destAddr = this.getOperandAddress(call.dest);
-          this.instructions.push(new PushInstruction(destAddr));
-          this.instructions.push(new CopyInstruction());
-        }
+      if (call.dest) {
+        const destAddr = this.getOperandAddress(call.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+        this.instructions.push(new CopyInstruction());
       }
       break;
     }

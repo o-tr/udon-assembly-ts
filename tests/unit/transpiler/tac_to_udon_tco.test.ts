@@ -17,7 +17,9 @@ describe("TAC->Udon TCO generation", () => {
     const conv = new TACToUdonConverter();
     const udon = conv.convert([call]);
 
-    const hasJump = udon.some((inst) => inst.kind === UdonInstructionKind.Jump);
-    expect(hasJump).toBe(true);
+    // Codegen should emit a normal extern call rather than a raw JUMP
+    // for tail-call IR hints; ensure an EXTERN instruction is present.
+    const hasExtern = udon.some((inst) => inst.kind === UdonInstructionKind.Extern);
+    expect(hasExtern).toBe(true);
   });
 });
