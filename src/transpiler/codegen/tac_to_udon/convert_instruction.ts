@@ -230,15 +230,19 @@ export function convertInstruction(
         externSig = resolved;
       }
       this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
+      const externSymbol = this.getExternSymbol(externSig);
+      if (call.isTailCall) {
+        // For tail calls, jump directly to the target after pushing args
+        this.instructions.push(new JumpInstruction(externSymbol));
+      } else {
+        this.instructions.push(new ExternInstruction(externSymbol, true));
 
-      // Store result if needed
-      if (call.dest) {
-        const destAddr = this.getOperandAddress(call.dest);
-        this.instructions.push(new PushInstruction(destAddr));
-        this.instructions.push(new CopyInstruction());
+        // Store result if needed
+        if (call.dest) {
+          const destAddr = this.getOperandAddress(call.dest);
+          this.instructions.push(new PushInstruction(destAddr));
+          this.instructions.push(new CopyInstruction());
+        }
       }
       break;
     }
@@ -274,14 +278,17 @@ export function convertInstruction(
           tsReturnType,
         ) ?? createUdonExternSignature(methodName, paramTypes, returnType);
       this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
+      const externSymbol = this.getExternSymbol(externSig);
+      if (call.isTailCall) {
+        this.instructions.push(new JumpInstruction(externSymbol));
+      } else {
+        this.instructions.push(new ExternInstruction(externSymbol, true));
 
-      if (call.dest) {
-        const destAddr = this.getOperandAddress(call.dest);
-        this.instructions.push(new PushInstruction(destAddr));
-        this.instructions.push(new CopyInstruction());
+        if (call.dest) {
+          const destAddr = this.getOperandAddress(call.dest);
+          this.instructions.push(new PushInstruction(destAddr));
+          this.instructions.push(new CopyInstruction());
+        }
       }
       break;
     }
