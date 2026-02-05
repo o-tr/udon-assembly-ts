@@ -34,7 +34,11 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --hideSkippedTests"
+    "test": "vitest run --hideSkippedTests",
+    "format": "biome format",
+    "format:fix": "biome format --write",
+    "lint": "biome check",
+    "lint:fix": "biome check --write --unsafe"
   },
   "engines": {
     "node": ">=18"
@@ -44,6 +48,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.10.9",
+    "@biomejs/biome": "^2.3.14",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "vitest": "^4.0.18"
