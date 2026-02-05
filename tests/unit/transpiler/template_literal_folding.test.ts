@@ -36,7 +36,7 @@ describe("template literal folding", () => {
     expect(text).toContain('"Hello 1 true"');
   });
 
-  it("uses StringBuilder for multi-part templates", () => {
+  it("uses String.Concat for small multi-part templates", () => {
     const source = `
       class Demo {
         Start(): void {
@@ -56,8 +56,9 @@ describe("template literal folding", () => {
     const tac = converter.convert(ast);
     const text = tac.map((inst) => inst.toString()).join("\n");
 
-    expect(text).toContain("SystemTextStringBuilder.__ctor__");
-    expect(text).toContain(".Append(");
-    expect(text).toContain(".ToString()");
+    expect(text).not.toContain("SystemTextStringBuilder.__ctor__");
+    expect(text).toContain(
+      "SystemString.__Concat__SystemString_SystemString__SystemString",
+    );
   });
 });

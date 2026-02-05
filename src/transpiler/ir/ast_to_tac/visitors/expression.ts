@@ -143,6 +143,60 @@ export function resolveTypeFromNode(
   }
 }
 
+function flattenStringConcatChain(
+  converter: ASTToTACConverter,
+  node: BinaryExpressionNode,
+): ASTNode[] | null {
+  if (node.operator !== "+") return null;
+  const parts: ASTNode[] = [];
+
+  const recurse = (n: ASTNode): boolean => {
+    if (n.kind === ASTNodeKind.BinaryExpression) {
+      const bn = n as BinaryExpressionNode;
+      if (bn.operator !== "+") return false;
+      const lType = resolveTypeFromNode(converter, bn.left);
+      const rType = resolveTypeFromNode(converter, bn.right);
+      const lIsString = lType?.udonType === UdonType.String;
+      const rIsString = rType?.udonType === UdonType.String;
+      if (!lIsString && !rIsString) return false;
+      if (!recurse(bn.left)) return false;
+      if (!recurse(bn.right)) return false;
+      return true;
+    }
+    parts.push(n);
+    return true;
+  };
+
+  if (!recurse(node)) return null;
+  return parts;
+}
+
+function generateStringBuilderConcat(
+  converter: ASTToTACConverter,
+  parts: TACOperand[],
+): TACOperand {
+  const builderType = converter.typeMapper.mapTypeScriptType("StringBuilder");
+  const builder = converter.newTemp(builderType);
+  const ctorSig = converter.requireExternSignature(
+    "System.Text.StringBuilder",
+    "ctor",
+    "method",
+    [],
+    "System.Text.StringBuilder",
+  );
+  converter.instructions.push(new CallInstruction(builder, ctorSig, []));
+  for (const partOperand of parts) {
+    converter.instructions.push(
+      new MethodCallInstruction(undefined, builder, "Append", [partOperand]),
+    );
+  }
+  const result = converter.newTemp(PrimitiveTypes.string);
+  converter.instructions.push(
+    new MethodCallInstruction(result, builder, "ToString", []),
+  );
+  return result;
+}
+
 export function visitExpression(
   this: ASTToTACConverter,
   node: ASTNode,
@@ -282,6 +336,69 @@ export function visitBinaryExpression(
   }
   if (node.operator === "||") {
     return this.visitShortCircuitOr(node);
+  }
+  // Attempt to detect chained string concatenation (a + b + c ...)
+  if (node.operator === "+") {
+    const chain = flattenStringConcatChain(this, node);
+    if (chain && this.useStringBuilder) {
+      const partsOperands: TACOperand[] = [];
+      for (const partNode of chain) {
+        let partOperand: TACOperand;
+        if (
+          partNode.kind === ASTNodeKind.Literal &&
+          (partNode as LiteralNode).type.udonType === UdonType.String
+        ) {
+          const lit = partNode as LiteralNode;
+          const litVal = lit.value ?? "";
+          if (String(litVal).length === 0) continue;
+          partOperand = createConstant(String(litVal), PrimitiveTypes.string);
+        } else {
+          const exprResult = this.visitExpression(partNode);
+          const exprType = this.getOperandType(exprResult);
+          if (exprType.udonType === UdonType.String) {
+            partOperand = exprResult;
+          } else {
+            partOperand = this.newTemp(PrimitiveTypes.string);
+            this.instructions.push(
+              new MethodCallInstruction(
+                partOperand,
+                exprResult,
+                "ToString",
+                [],
+              ),
+            );
+          }
+        }
+        partsOperands.push(partOperand);
+      }
+      if (partsOperands.length === 0) {
+        return createConstant("", PrimitiveTypes.string);
+      }
+      if (partsOperands.length >= this.stringBuilderThreshold) {
+        return generateStringBuilderConcat(this, partsOperands);
+      }
+      // Below threshold: build a String.Concat chain directly to avoid re-visiting
+      let resultOperand: TACOperand = partsOperands[0];
+      for (let i = 1; i < partsOperands.length; i += 1) {
+        const partOperand = partsOperands[i];
+        const newResult = this.newTemp(PrimitiveTypes.string);
+        const concatExtern = this.requireExternSignature(
+          "System.String",
+          "Concat",
+          "method",
+          ["string", "string"],
+          "System.String",
+        );
+        this.instructions.push(
+          new CallInstruction(newResult, concatExtern, [
+            resultOperand,
+            partOperand,
+          ]),
+        );
+        resultOperand = newResult;
+      }
+      return resultOperand;
+    }
   }
   const left = this.visitExpression(node.left);
   const right = this.visitExpression(node.right);
@@ -449,7 +566,7 @@ export function visitTemplateExpression(
     return createConstant("", PrimitiveTypes.string);
   }
 
-  if (this.useStringBuilder && parts.length >= 3) {
+  if (this.useStringBuilder && parts.length >= this.stringBuilderThreshold) {
     const builderType = this.typeMapper.mapTypeScriptType("StringBuilder");
     const builder = this.newTemp(builderType);
     const ctorSig = this.requireExternSignature(
