@@ -21,6 +21,9 @@ export const doubleNegationElimination = (
 
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
+    if (inst.kind === TACInstructionKind.Label) {
+      lastDefinition.clear();
+    }
     if (inst.kind === TACInstructionKind.UnaryOp) {
       const outer = inst as UnaryOpInstruction;
       if (

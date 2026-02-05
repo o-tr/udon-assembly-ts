@@ -30,6 +30,9 @@ export const negatedComparisonFusion = (
 
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
+    if (inst.kind === TACInstructionKind.Label) {
+      lastDefinition.clear();
+    }
     if (inst.kind === TACInstructionKind.UnaryOp) {
       const un = inst as UnaryOpInstruction;
       if (un.operator === "!" && un.operand.kind === TACOperandKind.Temporary) {

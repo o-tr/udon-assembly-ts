@@ -370,6 +370,13 @@ const invalidateExpressionsForSideEffect = (
       }
     }
   }
+  if (inst.kind === TACInstructionKind.PropertySet) {
+    for (const key of Array.from(map.keys())) {
+      if (key.startsWith("propget|")) {
+        map.delete(key);
+      }
+    }
+  }
   const usedOperands = getUsedOperandsForReuse(inst);
   for (const operand of usedOperands) {
     const key = gvnOperandKey(operand);
