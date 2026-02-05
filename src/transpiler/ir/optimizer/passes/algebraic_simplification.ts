@@ -1,3 +1,4 @@
+import { UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
   type BinaryOpInstruction,
@@ -6,7 +7,6 @@ import {
   TACInstructionKind,
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
-import { UdonType } from "../../../frontend/types.js";
 import {
   type ConstantOperand,
   createConstant,

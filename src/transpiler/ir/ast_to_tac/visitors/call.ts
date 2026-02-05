@@ -721,7 +721,7 @@ export function visitArrayStaticCall(
   switch (methodName) {
     case "from":
       return args.length >= 1 ? args[0] : null;
-    case "isArray":
+    case "isArray": {
       if (args.length !== 1) return null;
       const target = args[0];
       const targetType = this.getOperandType(target);
@@ -741,6 +741,7 @@ export function visitArrayStaticCall(
       const result = this.newTemp(PrimitiveTypes.boolean);
       this.instructions.push(new CallInstruction(result, externSig, [target]));
       return result;
+    }
     default:
       return null;
   }
