@@ -42,10 +42,7 @@ export function mapTypeWithGenerics(
       dimensions += 1;
       current = current.elementType;
     }
-    const elementType = this.mapTypeWithGenerics(
-      current.getText(),
-      current,
-    );
+    const elementType = this.mapTypeWithGenerics(current.getText(), current);
     return new ArrayTypeSymbol(elementType, dimensions);
   }
 
