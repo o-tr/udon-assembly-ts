@@ -362,7 +362,12 @@ export function visitBinaryExpression(
             } else {
               partOperand = this.newTemp(PrimitiveTypes.string);
               this.instructions.push(
-                new MethodCallInstruction(partOperand, exprResult, "ToString", []),
+                new MethodCallInstruction(
+                  partOperand,
+                  exprResult,
+                  "ToString",
+                  [],
+                ),
               );
             }
           }
@@ -374,7 +379,12 @@ export function visitBinaryExpression(
           } else {
             partOperand = this.newTemp(PrimitiveTypes.string);
             this.instructions.push(
-              new MethodCallInstruction(partOperand, exprResult, "ToString", []),
+              new MethodCallInstruction(
+                partOperand,
+                exprResult,
+                "ToString",
+                [],
+              ),
             );
           }
         }
