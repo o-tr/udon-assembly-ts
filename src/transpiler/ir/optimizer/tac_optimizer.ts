@@ -12,6 +12,7 @@ import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
 import { performLICM } from "./passes/licm.js";
+import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
 import {
   copyOnWriteTemporaries,
@@ -28,46 +29,63 @@ export class TACOptimizer {
    * Apply all optimization passes
    */
   optimize(instructions: TACInstruction[]): TACInstruction[] {
+    const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
-    // Apply constant folding
-    optimized = constantFolding(optimized);
+    const runAnalysisPasses = (current: TACInstruction[]): TACInstruction[] => {
+      let next = current;
 
-    // Apply SCCP and prune unreachable blocks
-    optimized = sccpAndPrune(optimized);
+      // Apply constant folding
+      next = constantFolding(next);
 
-    // Apply boolean simplifications
-    optimized = booleanSimplification(optimized);
+      // Apply SCCP and prune unreachable blocks
+      next = sccpAndPrune(next);
 
-    // Apply algebraic simplifications and redundant cast removal
-    optimized = algebraicSimplification(optimized);
+      // Apply boolean simplifications
+      next = booleanSimplification(next);
 
-    // Apply global value numbering / CSE across blocks
-    optimized = globalValueNumbering(optimized);
+      // Apply algebraic simplifications and redundant cast removal
+      next = algebraicSimplification(next);
 
-    // Eliminate single-use temporaries inside basic blocks
-    optimized = eliminateSingleUseTemporaries(optimized);
+      // Reassociate partially-constant binary operations
+      next = reassociate(next);
 
-    // Remove no-op copies/assignments
-    optimized = eliminateNoopCopies(optimized);
+      // Apply global value numbering / CSE across blocks
+      next = globalValueNumbering(next);
 
-    // Remove dead stores using CFG liveness
-    optimized = eliminateDeadStoresCFG(optimized);
+      // Eliminate single-use temporaries inside basic blocks
+      next = eliminateSingleUseTemporaries(next);
 
-    // Apply dead code elimination
-    optimized = deadCodeElimination(optimized);
+      // Remove no-op copies/assignments
+      next = eliminateNoopCopies(next);
 
-    // Remove redundant jumps and thread jump chains
-    optimized = simplifyJumps(optimized);
+      // Remove dead stores using CFG liveness
+      next = eliminateDeadStoresCFG(next);
 
-    // Hoist loop-invariant code
-    optimized = performLICM(optimized);
+      // Apply dead code elimination
+      next = deadCodeElimination(next);
 
-    // Optimize simple induction variables
-    optimized = optimizeInductionVariables(optimized);
+      // Remove redundant jumps and thread jump chains
+      next = simplifyJumps(next);
 
-    // Remove unused temporary computations
-    optimized = eliminateDeadTemporaries(optimized);
+      // Hoist loop-invariant code
+      next = performLICM(next);
+
+      // Optimize simple induction variables
+      next = optimizeInductionVariables(next);
+
+      // Remove unused temporary computations
+      next = eliminateDeadTemporaries(next);
+
+      return next;
+    };
+
+    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+      const before = optimized.map((inst) => inst.toString()).join("\n");
+      optimized = runAnalysisPasses(optimized);
+      const after = optimized.map((inst) => inst.toString()).join("\n");
+      if (before === after) break;
+    }
 
     // Apply copy-on-write temporary reuse to reduce heap usage
     optimized = copyOnWriteTemporaries(optimized);

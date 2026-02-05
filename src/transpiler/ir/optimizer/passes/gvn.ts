@@ -1,8 +1,10 @@
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
   type BinaryOpInstruction,
+  type CallInstruction,
   type CastInstruction,
   CopyInstruction,
+  type PropertyGetInstruction,
   TACInstructionKind,
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
@@ -18,6 +20,7 @@ import {
   getUsedOperandsForReuse,
 } from "../utils/instructions.js";
 import { operandKey, sameUdonType } from "../utils/operands.js";
+import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { getOperandType } from "./constant_folding.js";
 
 type ExprValue = { operandKey: string; operand: TACOperand };
@@ -133,6 +136,48 @@ export const globalValueNumbering = (
         continue;
       }
 
+      if (inst.kind === TACInstructionKind.PropertyGet) {
+        const getInst = inst as PropertyGetInstruction;
+        const exprKey = propertyGetExprKey(getInst);
+        const existing = working.get(exprKey);
+        if (
+          existing &&
+          existing.operandKey !== operandKey(getInst.dest) &&
+          sameUdonType(existing.operand, getInst.dest)
+        ) {
+          inst = new CopyInstruction(getInst.dest, existing.operand);
+        }
+        result.push(inst);
+        working.set(exprKey, {
+          operandKey: operandKey(getInst.dest),
+          operand: getInst.dest,
+        });
+        continue;
+      }
+
+      if (inst.kind === TACInstructionKind.Call) {
+        const callInst = inst as CallInstruction;
+        const exprKey = pureCallExprKey(callInst);
+        if (exprKey && callInst.dest) {
+          const existing = working.get(exprKey);
+          if (
+            existing &&
+            existing.operandKey !== operandKey(callInst.dest) &&
+            sameUdonType(existing.operand, callInst.dest)
+          ) {
+            const copy = new CopyInstruction(callInst.dest, existing.operand);
+            result.push(copy);
+            continue;
+          }
+          result.push(inst);
+          working.set(exprKey, {
+            operandKey: operandKey(callInst.dest),
+            operand: callInst.dest,
+          });
+          continue;
+        }
+      }
+
       result.push(inst);
     }
   }
@@ -216,13 +261,36 @@ const simulateExpressionMap = (
         operand: castInst.dest,
       });
     }
+
+    if (inst.kind === TACInstructionKind.PropertyGet) {
+      const getInst = inst as PropertyGetInstruction;
+      const exprKey = propertyGetExprKey(getInst);
+      working.set(exprKey, {
+        operandKey: operandKey(getInst.dest),
+        operand: getInst.dest,
+      });
+    }
+
+    if (inst.kind === TACInstructionKind.Call) {
+      const callInst = inst as CallInstruction;
+      const exprKey = pureCallExprKey(callInst);
+      if (exprKey && callInst.dest) {
+        working.set(exprKey, {
+          operandKey: operandKey(callInst.dest),
+          operand: callInst.dest,
+        });
+      }
+    }
   }
   return working;
 };
 
 const isSideEffectBarrier = (inst: TACInstruction): boolean => {
   switch (inst.kind) {
-    case TACInstructionKind.Call:
+    case TACInstructionKind.Call: {
+      const callInst = inst as CallInstruction;
+      return !pureExternEvaluators.has(callInst.func);
+    }
     case TACInstructionKind.MethodCall:
     case TACInstructionKind.PropertySet:
     case TACInstructionKind.ArrayAssignment:
@@ -236,6 +304,13 @@ const invalidateExpressionsForSideEffect = (
   inst: TACInstruction,
   map: Map<string, ExprValue>,
 ): void => {
+  if (inst.kind === TACInstructionKind.Call) {
+    for (const key of Array.from(map.keys())) {
+      if (key.startsWith("propget|")) {
+        map.delete(key);
+      }
+    }
+  }
   const usedOperands = getUsedOperandsForReuse(inst);
   for (const operand of usedOperands) {
     const key = gvnOperandKey(operand);
@@ -306,4 +381,18 @@ const castExprKey = (inst: CastInstruction): string => {
   const typeKey = getOperandType(inst.dest).udonType;
   const operandKeyValue = operandKey(inst.src);
   return `cast|${operandKeyValue}|${typeKey}|`;
+};
+
+const propertyGetExprKey = (inst: PropertyGetInstruction): string => {
+  const typeKey = getOperandType(inst.dest).udonType;
+  const objectKey = operandKey(inst.object);
+  return `propget|${objectKey}|${inst.property}|${typeKey}|`;
+};
+
+const pureCallExprKey = (inst: CallInstruction): string | null => {
+  if (!inst.dest) return null;
+  if (!pureExternEvaluators.has(inst.func)) return null;
+  const typeKey = getOperandType(inst.dest).udonType;
+  const argKeys = inst.args.map((arg) => operandKey(arg)).join("|");
+  return `purecall|${inst.func}|${argKeys}|${typeKey}|`;
 };

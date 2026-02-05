@@ -13,7 +13,8 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
-import { getOperandType } from "./constant_folding.js";
+import { operandKey } from "../utils/operands.js";
+import { getOperandType, isIntegerUdonType } from "./constant_folding.js";
 
 export const algebraicSimplification = (
   instructions: TACInstruction[],
@@ -56,6 +57,9 @@ export const trySimplifyBinaryOp = (
 ): TACInstruction | null => {
   const left = inst.left;
   const right = inst.right;
+  const destUdonType = getOperandType(inst.dest).udonType;
+  const leftKey = operandKey(left);
+  const rightKey = operandKey(right);
 
   if (inst.operator === "+") {
     if (isZeroConstant(right)) {
@@ -70,6 +74,12 @@ export const trySimplifyBinaryOp = (
     if (isZeroConstant(right)) {
       return new AssignmentInstruction(inst.dest, left);
     }
+    if (leftKey === rightKey && isIntegerType(destUdonType)) {
+      return new AssignmentInstruction(
+        inst.dest,
+        createConstant(0, getOperandType(inst.dest)),
+      );
+    }
   }
 
   if (inst.operator === "*") {
@@ -79,7 +89,6 @@ export const trySimplifyBinaryOp = (
     if (isOneConstant(left)) {
       return new AssignmentInstruction(inst.dest, right);
     }
-    const destUdonType = getOperandType(inst.dest).udonType;
     if (
       (isZeroConstant(right) || isZeroConstant(left)) &&
       !isFloatingPointType(destUdonType)
@@ -93,6 +102,54 @@ export const trySimplifyBinaryOp = (
 
   if (inst.operator === "/") {
     if (isOneConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  if (inst.operator === "&" && isIntegerType(destUdonType)) {
+    if (isZeroConstant(right) || isZeroConstant(left)) {
+      return new AssignmentInstruction(
+        inst.dest,
+        createConstant(0, getOperandType(inst.dest)),
+      );
+    }
+    if (leftKey === rightKey) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  if (inst.operator === "|" && isIntegerType(destUdonType)) {
+    if (isZeroConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+    if (isZeroConstant(left)) {
+      return new AssignmentInstruction(inst.dest, right);
+    }
+    if (leftKey === rightKey) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  if (inst.operator === "^" && isIntegerType(destUdonType)) {
+    if (isZeroConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+    if (isZeroConstant(left)) {
+      return new AssignmentInstruction(inst.dest, right);
+    }
+    if (leftKey === rightKey) {
+      return new AssignmentInstruction(
+        inst.dest,
+        createConstant(0, getOperandType(inst.dest)),
+      );
+    }
+  }
+
+  if (
+    (inst.operator === "<<" || inst.operator === ">>") &&
+    isIntegerType(destUdonType)
+  ) {
+    if (isZeroConstant(right)) {
       return new AssignmentInstruction(inst.dest, left);
     }
   }
@@ -138,4 +195,8 @@ export const isOneConstant = (operand: TACOperand): boolean => {
 
 const isFloatingPointType = (udonType: UdonType): boolean => {
   return udonType === UdonType.Single || udonType === UdonType.Double;
+};
+
+const isIntegerType = (udonType: UdonType): boolean => {
+  return isIntegerUdonType(udonType);
 };
