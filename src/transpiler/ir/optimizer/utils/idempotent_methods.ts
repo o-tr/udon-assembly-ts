@@ -1,7 +1,8 @@
 export const idempotentMethods = new Set<string>([
   "UnityEngineComponent.__get_transform__UnityEngineTransform",
   "UnityEngineComponent.__get_gameObject__UnityEngineGameObject",
-  "UnityEngineGameObject.__get_transform__UnityEngineTransform",
+  // Note: `transform` access can change if GameObject is destroyed/replaced,
+  // so we do not consider it idempotent to avoid stale CSE.
   "UnityEngineVector3.__get_zero__UnityEngineVector3",
   "UnityEngineVector3.__get_one__UnityEngineVector3",
   "UnityEngineVector3.__get_up__UnityEngineVector3",
