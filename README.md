@@ -74,6 +74,11 @@ src/
 pnpm test
 ```
 
+## References
+
+- https://github.com/vrchat-community/creator-docs
+- https://github.com/MerlinVR/UdonSharp
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

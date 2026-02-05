@@ -1,0 +1,6 @@
+[submodule "external/vrchat-creator-docs"]
+	path = external/vrchat-creator-docs
+	url = https://github.com/vrchat-community/creator-docs
+[submodule "external/merlinvr-udonsharp"]
+	path = external/merlinvr-udonsharp
+	url = https://github.com/MerlinVR/UdonSharp
