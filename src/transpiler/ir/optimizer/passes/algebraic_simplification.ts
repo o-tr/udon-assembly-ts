@@ -1,3 +1,4 @@
+import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
@@ -151,6 +152,32 @@ export const trySimplifyBinaryOp = (
   ) {
     if (isZeroConstant(right)) {
       return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  if (inst.operator === "&&" || inst.operator === "||") {
+    if (leftKey === rightKey) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  if (inst.operator === "==" && leftKey === rightKey) {
+    const leftType = getOperandType(left).udonType;
+    if (isIntegerType(leftType)) {
+      return new AssignmentInstruction(
+        inst.dest,
+        createConstant(true, PrimitiveTypes.boolean),
+      );
+    }
+  }
+
+  if (inst.operator === "!=" && leftKey === rightKey) {
+    const leftType = getOperandType(left).udonType;
+    if (isIntegerType(leftType)) {
+      return new AssignmentInstruction(
+        inst.dest,
+        createConstant(false, PrimitiveTypes.boolean),
+      );
     }
   }
 
