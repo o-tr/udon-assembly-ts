@@ -13,7 +13,10 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import { getDefinedOperandForReuse } from "../utils/instructions.js";
+import {
+  getDefinedOperandForReuse,
+  getUsedOperandsForReuse,
+} from "../utils/instructions.js";
 import { operandKey, sameUdonType } from "../utils/operands.js";
 import { getOperandType } from "./constant_folding.js";
 
@@ -70,7 +73,7 @@ export const globalValueNumbering = (
         killExpressionsUsingOperand(working, defKey);
       }
       if (isSideEffectBarrier(inst)) {
-        working.clear();
+        invalidateExpressionsForSideEffect(inst, working);
       }
 
       if (inst.kind === TACInstructionKind.BinaryOp) {
@@ -184,7 +187,7 @@ const simulateExpressionMap = (
       killExpressionsUsingOperand(working, defKey);
     }
     if (isSideEffectBarrier(inst)) {
-      working.clear();
+      invalidateExpressionsForSideEffect(inst, working);
     }
 
     if (inst.kind === TACInstructionKind.BinaryOp) {
@@ -226,6 +229,18 @@ const isSideEffectBarrier = (inst: TACInstruction): boolean => {
       return true;
     default:
       return false;
+  }
+};
+
+const invalidateExpressionsForSideEffect = (
+  inst: TACInstruction,
+  map: Map<string, ExprValue>,
+): void => {
+  const usedOperands = getUsedOperandsForReuse(inst);
+  for (const operand of usedOperands) {
+    const key = gvnOperandKey(operand);
+    if (!key) continue;
+    killExpressionsUsingOperand(map, key);
   }
 };
 
