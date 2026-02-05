@@ -36,11 +36,17 @@ export function mapTypeWithGenerics(
   }
 
   if (node && ts.isArrayTypeNode(node)) {
+    let current: ts.TypeNode = node;
+    let dimensions = 0;
+    while (ts.isArrayTypeNode(current)) {
+      dimensions += 1;
+      current = current.elementType;
+    }
     const elementType = this.mapTypeWithGenerics(
-      node.elementType.getText(),
-      node.elementType,
+      current.getText(),
+      current,
     );
-    return new ArrayTypeSymbol(elementType);
+    return new ArrayTypeSymbol(elementType, dimensions);
   }
 
   if (node && ts.isTypeOperatorNode(node)) {
@@ -85,11 +91,8 @@ export function mapTypeWithGenerics(
       base = base.slice(0, -2).trim();
       dimensions += 1;
     }
-    let elementType: TypeSymbol = this.mapTypeWithGenerics(base);
-    for (let i = 0; i < dimensions; i += 1) {
-      elementType = new ArrayTypeSymbol(elementType);
-    }
-    return elementType;
+    const elementType: TypeSymbol = this.mapTypeWithGenerics(base);
+    return new ArrayTypeSymbol(elementType, dimensions);
   }
 
   const genericMatch = this.parseGenericType(trimmed);

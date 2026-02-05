@@ -505,31 +505,10 @@ export function visitArrayLiteralExpression(
         }
       }
       if (!isDataList && !isArray) {
-        let sourceHint = String(element.value.kind);
-        if (element.value.kind === ASTNodeKind.Identifier) {
-          sourceHint = (element.value as IdentifierNode).name;
-        } else if (
-          element.value.kind === ASTNodeKind.PropertyAccessExpression
-        ) {
-          const parts: string[] = [];
-          let current: ASTNode | null = element.value;
-          while (
-            current &&
-            current.kind === ASTNodeKind.PropertyAccessExpression
-          ) {
-            const access = current as PropertyAccessExpressionNode;
-            parts.unshift(access.property);
-            current = access.object;
-          }
-          if (current?.kind === ASTNodeKind.Identifier) {
-            parts.unshift((current as IdentifierNode).name);
-          } else if (current?.kind === ASTNodeKind.ThisExpression) {
-            parts.unshift("this");
-          }
-          if (parts.length > 0) {
-            sourceHint = parts.join(".");
-          }
-        }
+        const sourceHint =
+          element.value.kind === ASTNodeKind.Identifier
+            ? (element.value as IdentifierNode).name
+            : String(element.value.kind);
         throw new Error(
           `Array spread expects an array or DataList (got ${spreadType.name}, ${spreadType.udonType}, from ${sourceHint})`,
         );

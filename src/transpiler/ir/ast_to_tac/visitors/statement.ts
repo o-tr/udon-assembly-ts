@@ -113,22 +113,24 @@ export function visitVariableDeclaration(
   this: ASTToTACConverter,
   node: VariableDeclarationNode,
 ): void {
+  const isObjectTypeSymbol = (type: TypeSymbol): boolean =>
+    type.name === ObjectType.name && type.udonType === ObjectType.udonType;
   let destType: TypeSymbol = node.type;
   let src: TACOperand | null = null;
 
   if (node.initializer) {
     src = this.visitExpression(node.initializer);
     if (
-      destType === ObjectType ||
+      isObjectTypeSymbol(destType) ||
       (destType.name === PrimitiveTypes.single.name &&
         destType.udonType === PrimitiveTypes.single.udonType)
     ) {
       const inferredType = this.getOperandType(src);
-      if (inferredType !== ObjectType) {
+      if (!isObjectTypeSymbol(inferredType)) {
         destType = inferredType;
       } else {
         const resolvedType = resolveTypeFromNode(this, node.initializer);
-        if (resolvedType && resolvedType !== ObjectType) {
+        if (resolvedType && !isObjectTypeSymbol(resolvedType)) {
           destType = resolvedType;
         }
       }
