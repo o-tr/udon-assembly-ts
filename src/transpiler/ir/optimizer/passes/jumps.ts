@@ -247,9 +247,11 @@ export const resolveReachableSuccs = (
       ? isTruthyConstant(conditionConst.value)
       : null;
     if (truthy === true) {
+      // ifFalse true => fallthrough only.
       return fallthrough !== undefined ? [fallthrough] : [];
     }
     if (truthy === false) {
+      // ifFalse false => jump target only.
       return target !== undefined ? [target] : [];
     }
     const succs: number[] = [];
