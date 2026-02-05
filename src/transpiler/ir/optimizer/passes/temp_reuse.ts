@@ -202,6 +202,7 @@ export const copyOnWriteTemporaries = (
           call.dest,
           call.func,
           args,
+          (call as CallInstruction).isTailCall ?? false,
         );
       }
     }
@@ -219,6 +220,7 @@ export const copyOnWriteTemporaries = (
           object,
           call.method,
           args,
+          (call as MethodCallInstruction).isTailCall ?? false,
         );
       }
     }
@@ -448,6 +450,7 @@ export const eliminateSingleUseTemporaries = (
       ) {
         const destTemp = (inst as unknown as InstWithDest).dest;
         if (
+          destTemp &&
           destTemp.kind === TACOperandKind.Temporary &&
           (next as unknown as InstWithDestSrc).src.kind ===
             TACOperandKind.Temporary

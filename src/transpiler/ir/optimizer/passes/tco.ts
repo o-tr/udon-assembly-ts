@@ -6,6 +6,7 @@ import {
   TACInstructionKind,
 } from "../../tac_instruction.js";
 import { buildCFG } from "../analysis/cfg.js";
+import { sameOperand } from "../utils/operands.js";
 
 export const optimizeTailCalls = (
   instructions: TACInstruction[],
@@ -28,7 +29,7 @@ export const optimizeTailCalls = (
       ) {
         const ret = blockInst[i + 1] as ReturnInstruction;
         const call = inst as CallInstruction | MethodCallInstruction;
-        if (call.dest && ret.value && ret.value === call.dest) {
+        if (call.dest && ret.value && sameOperand(ret.value, call.dest)) {
           // Mark as tail call, remove the return
           call.isTailCall = true;
           // Drop destination so codegen knows not to expect a result
