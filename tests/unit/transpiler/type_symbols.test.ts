@@ -3,6 +3,7 @@ import { TypeMapper } from "../../../src/transpiler/frontend/type_mapper";
 import {
   ArrayTypeSymbol,
   ExternTypes,
+  GenericTypeParameterSymbol,
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
 
@@ -41,5 +42,14 @@ describe("Type symbols", () => {
     expect(mapper.mapTypeScriptType("true | false | null")).toBe(
       PrimitiveTypes.boolean,
     );
+  });
+
+  it("maps generic placeholder types", () => {
+    const mapper = new TypeMapper();
+    const generic = mapper.mapTypeScriptType("_T");
+    expect(generic).toBeInstanceOf(GenericTypeParameterSymbol);
+    expect(generic.name).toBe("T");
+    expect(mapper.mapTypeScriptType("T").name).toBe("T");
+    expect(mapper.mapTypeScriptType("_TKey").name).toBe("TKey");
   });
 });
