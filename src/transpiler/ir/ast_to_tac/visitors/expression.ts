@@ -360,7 +360,12 @@ export function visitBinaryExpression(
           } else {
             partOperand = this.newTemp(PrimitiveTypes.string);
             this.instructions.push(
-              new MethodCallInstruction(partOperand, exprResult, "ToString", []),
+              new MethodCallInstruction(
+                partOperand,
+                exprResult,
+                "ToString",
+                [],
+              ),
             );
           }
         }
@@ -385,7 +390,10 @@ export function visitBinaryExpression(
           "System.String",
         );
         this.instructions.push(
-          new CallInstruction(newResult, concatExtern, [resultOperand, partOperand]),
+          new CallInstruction(newResult, concatExtern, [
+            resultOperand,
+            partOperand,
+          ]),
         );
         resultOperand = newResult;
       }
