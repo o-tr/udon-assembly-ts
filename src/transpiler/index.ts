@@ -29,6 +29,7 @@ import { buildUdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
 export interface TranspilerOptions {
   optimize?: boolean;
   reflect?: boolean;
+  useStringBuilder?: boolean;
 }
 
 /**
@@ -101,6 +102,7 @@ export class TypeScriptToUdonTranspiler {
       udonBehaviourClasses,
       udonBehaviourLayouts,
       registry,
+      { useStringBuilder: options.useStringBuilder },
     );
     let tacInstructions = tacConverter.convert(ast);
 

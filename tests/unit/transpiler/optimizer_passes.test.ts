@@ -261,6 +261,68 @@ describe("optimizer passes", () => {
     expect(text).not.toContain("call");
   });
 
+  it("folds additional Mathf extern calls", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const instructions = [
+      new CallInstruction(
+        t0,
+        "UnityEngineMathf.__Atan2__SystemSingle_SystemSingle__SystemSingle",
+        [
+          createConstant(1, PrimitiveTypes.single),
+          createConstant(1, PrimitiveTypes.single),
+        ],
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("UnityEngineMathf.__Atan2");
+    expect(text).toContain("t0 =");
+  });
+
+  it("folds String.Concat with constants", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+    const instructions = [
+      new CallInstruction(
+        t0,
+        "SystemString.__Concat__SystemString_SystemString__SystemString",
+        [
+          createConstant("Hello ", PrimitiveTypes.string),
+          createConstant("World", PrimitiveTypes.string),
+        ],
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain('t0 = "Hello World"');
+    expect(text).not.toContain("call");
+  });
+
+  it("folds Vector3.Dot with constant vectors", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const v1 = createConstant({ x: 1, y: 0, z: 0 }, ExternTypes.vector3);
+    const v2 = createConstant({ x: 1, y: 2, z: 3 }, ExternTypes.vector3);
+    const instructions = [
+      new CallInstruction(
+        t0,
+        "UnityEngineVector3.__Dot__UnityEngineVector3_UnityEngineVector3__SystemSingle",
+        [v1, v2],
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = 1");
+    expect(text).not.toContain("call");
+  });
+
   it("reuses expressions across basic blocks", () => {
     const a = createVariable("a", PrimitiveTypes.int32);
     const b = createVariable("b", PrimitiveTypes.int32);
@@ -280,6 +342,35 @@ describe("optimizer passes", () => {
     const optimized = optimizer.optimize(instructions);
 
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
+  });
+
+  it("simplifies division and modulo by power of two", () => {
+    const x = createVariable("x", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const t2 = createTemporary(2, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        x,
+        "/",
+        createConstant(8, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        x,
+        "%",
+        createConstant(8, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(t2, t0, "+", t1),
+      new ReturnInstruction(t2),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("x >> 3");
+    expect(text).toContain("x & 7");
   });
 
   it("hoists loop-invariant computations", () => {
@@ -655,6 +746,28 @@ describe("optimizer passes", () => {
         t1,
         "UnityEngineMathf.__Sqrt__SystemSingle__SystemSingle",
         [x],
+      ),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(1);
+  });
+
+  it("eliminates redundant idempotent extern calls", () => {
+    const t0 = createTemporary(0, ExternTypes.vector3);
+    const t1 = createTemporary(1, ExternTypes.vector3);
+    const instructions = [
+      new CallInstruction(
+        t0,
+        "UnityEngineVector3.__get_zero__UnityEngineVector3",
+        [],
+      ),
+      new CallInstruction(
+        t1,
+        "UnityEngineVector3.__get_zero__UnityEngineVector3",
+        [],
       ),
       new ReturnInstruction(t1),
     ];

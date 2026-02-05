@@ -2,7 +2,7 @@ import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
-  type BinaryOpInstruction,
+  BinaryOpInstruction,
   type CastInstruction,
   type TACInstruction,
   TACInstructionKind,
@@ -104,6 +104,29 @@ export const trySimplifyBinaryOp = (
   if (inst.operator === "/") {
     if (isOneConstant(right)) {
       return new AssignmentInstruction(inst.dest, left);
+    }
+    const powerOfTwo = getPowerOfTwoValue(right);
+    if (powerOfTwo !== null && isIntegerType(destUdonType)) {
+      const shiftAmount = Math.log2(powerOfTwo);
+      return new BinaryOpInstruction(
+        inst.dest,
+        left,
+        ">>",
+        createConstant(shiftAmount, PrimitiveTypes.int32),
+      );
+    }
+  }
+
+  if (inst.operator === "%") {
+    const powerOfTwo = getPowerOfTwoValue(right);
+    if (powerOfTwo !== null && isIntegerType(destUdonType)) {
+      const mask = powerOfTwo - 1;
+      return new BinaryOpInstruction(
+        inst.dest,
+        left,
+        "&",
+        createConstant(mask, getOperandType(inst.dest)),
+      );
     }
   }
 
@@ -218,6 +241,17 @@ export const isOneConstant = (operand: TACOperand): boolean => {
     typeof (operand as ConstantOperand).value === "number" &&
     (operand as ConstantOperand).value === 1
   );
+};
+
+const getPowerOfTwoValue = (operand: TACOperand): number | null => {
+  if (operand.kind !== TACOperandKind.Constant) return null;
+  const value = (operand as ConstantOperand).value;
+  if (typeof value !== "number") return null;
+  if (!Number.isFinite(value)) return null;
+  if (!Number.isInteger(value)) return null;
+  if (value <= 0) return null;
+  if ((value & (value - 1)) !== 0) return null;
+  return value;
 };
 
 const isFloatingPointType = (udonType: UdonType): boolean => {

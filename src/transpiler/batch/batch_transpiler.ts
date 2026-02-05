@@ -49,6 +49,7 @@ export interface BatchTranspilerOptions {
   outputDir: string;
   optimize?: boolean;
   reflect?: boolean;
+  useStringBuilder?: boolean;
   verbose?: boolean;
   excludeDirs?: string[];
 }
@@ -256,6 +257,7 @@ export class BatchTranspiler {
         udonBehaviourClasses,
         udonBehaviourLayouts,
         registry,
+        { useStringBuilder: options.useStringBuilder },
       );
       let tacInstructions = tacConverter.convert(methodProgram);
 
@@ -314,6 +316,7 @@ export class BatchTranspiler {
           udonBehaviourClasses,
           options.optimize,
           options.reflect,
+          options.useStringBuilder,
           methodUsage,
         );
       }
@@ -401,6 +404,7 @@ export class BatchTranspiler {
     udonBehaviourClasses: Set<string>,
     optimize?: boolean,
     reflect?: boolean,
+    useStringBuilder?: boolean,
     methodUsage?: Map<string, Set<string>> | null,
   ): Map<string, number> {
     const results = new Map<string, number>();
@@ -418,6 +422,7 @@ export class BatchTranspiler {
             udonBehaviourClasses,
             optimize,
             reflect,
+            useStringBuilder,
             methodUsage ?? null,
           ),
         );
@@ -439,6 +444,7 @@ export class BatchTranspiler {
     udonBehaviourClasses: Set<string>,
     optimize?: boolean,
     reflect?: boolean,
+    useStringBuilder?: boolean,
     methodUsage: Map<string, Set<string>> | null = null,
   ): number {
     const mergedMethods = registry.getMergedMethods(entryPointName);
@@ -487,6 +493,7 @@ export class BatchTranspiler {
       udonBehaviourClasses,
       udonBehaviourLayouts,
       registry,
+      { useStringBuilder },
     );
     let tacInstructions = tacConverter.convert(methodProgram);
 

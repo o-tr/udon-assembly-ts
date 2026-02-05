@@ -35,4 +35,29 @@ describe("template literal folding", () => {
     const text = tac.map((inst) => inst.toString()).join("\n");
     expect(text).toContain('"Hello 1 true"');
   });
+
+  it("uses StringBuilder for multi-part templates", () => {
+    const source = `
+      class Demo {
+        Start(): void {
+          const name: string = "Player";
+          const score: int = 42;
+          let msg: string = \`Player ${"${"}name${"}"} scored ${"${"}score${"}"} points\`;
+        }
+      }
+    `;
+
+    const parser = new TypeScriptParser();
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+    const text = tac.map((inst) => inst.toString()).join("\n");
+
+    expect(text).toContain("SystemTextStringBuilder.__ctor__");
+    expect(text).toContain(".Append(");
+    expect(text).toContain(".ToString()");
+  });
 });

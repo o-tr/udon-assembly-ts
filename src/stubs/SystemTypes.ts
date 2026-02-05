@@ -51,6 +51,27 @@ export class SystemString {
   }
 }
 
+@UdonStub("System.Text.StringBuilder")
+export class StringBuilder {
+  Append(_value: string): StringBuilder;
+  Append(_value: number): StringBuilder;
+  Append(_value: boolean): StringBuilder;
+  Append(_value: string | number | boolean): StringBuilder {
+    return this;
+  }
+
+  ToString(): string {
+    return "";
+  }
+
+  @UdonExtern("Length")
+  length: UdonInt = 0 as UdonInt;
+
+  Clear(): StringBuilder {
+    return this;
+  }
+}
+
 @UdonStub("System.Int32")
 export class Int32 {
   static Parse(_value: string): UdonInt {

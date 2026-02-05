@@ -422,7 +422,7 @@ export function visitTemplateExpression(
   if (folded) {
     return folded;
   }
-  let result: TACOperand | null = null;
+  const parts: TACOperand[] = [];
   for (const part of mergedParts) {
     let partOperand: TACOperand;
     if (part.kind === "text") {
@@ -442,26 +442,53 @@ export function visitTemplateExpression(
         );
       }
     }
+    parts.push(partOperand);
+  }
 
-    if (!result) {
-      result = partOperand;
-      continue;
+  if (parts.length === 0) {
+    return createConstant("", PrimitiveTypes.string);
+  }
+
+  if (this.useStringBuilder && parts.length >= 3) {
+    const builderType = this.typeMapper.mapTypeScriptType("StringBuilder");
+    const builder = this.newTemp(builderType);
+    const ctorSig = this.requireExternSignature(
+      "System.Text.StringBuilder",
+      "ctor",
+      "method",
+      [],
+      "System.Text.StringBuilder",
+    );
+    this.instructions.push(new CallInstruction(builder, ctorSig, []));
+    for (const partOperand of parts) {
+      this.instructions.push(
+        new MethodCallInstruction(undefined, builder, "Append", [partOperand]),
+      );
     }
+    const result = this.newTemp(PrimitiveTypes.string);
+    this.instructions.push(
+      new MethodCallInstruction(result, builder, "ToString", []),
+    );
+    return result;
+  }
 
+  let result: TACOperand = parts[0];
+  for (let i = 1; i < parts.length; i += 1) {
+    const partOperand = parts[i];
     const newResult = this.newTemp(PrimitiveTypes.string);
     const concatExtern = this.requireExternSignature(
-      "SystemString",
+      "System.String",
       "Concat",
       "method",
       ["string", "string"],
-      "string",
+      "System.String",
     );
     this.instructions.push(
       new CallInstruction(newResult, concatExtern, [result, partOperand]),
     );
     result = newResult;
   }
-  return result ?? createConstant("", PrimitiveTypes.string);
+  return result;
 }
 
 export function visitArrayLiteralExpression(

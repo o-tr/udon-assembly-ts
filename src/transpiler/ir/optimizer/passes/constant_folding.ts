@@ -16,7 +16,10 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
-import { pureExternEvaluators } from "../utils/pure_extern.js";
+import {
+  type PureExternValue,
+  pureExternEvaluators,
+} from "../utils/pure_extern.js";
 
 /**
  * Constant folding optimization
@@ -196,21 +199,42 @@ export const tryFoldPureExternCall = (
   if (!evaluator) return null;
   if (inst.args.length !== evaluator.arity) return null;
 
-  const args: number[] = [];
+  const args: PureExternValue[] = [];
   for (const arg of inst.args) {
     if (arg.kind !== TACOperandKind.Constant) return null;
     const constArg = arg as ConstantOperand;
-    if (typeof constArg.value !== "number") return null;
-    if (!Number.isFinite(constArg.value)) return null;
-    args.push(constArg.value);
+    if (constArg.value === null) return null;
+    if (typeof constArg.value === "number") {
+      if (!Number.isFinite(constArg.value)) return null;
+      args.push(constArg.value);
+      continue;
+    }
+    if (typeof constArg.value === "string") {
+      args.push(constArg.value);
+      continue;
+    }
+    if (typeof constArg.value === "object" && !Array.isArray(constArg.value)) {
+      const value = constArg.value as Record<string, number>;
+      if (
+        typeof value.x === "number" &&
+        typeof value.y === "number" &&
+        typeof value.z === "number"
+      ) {
+        args.push(value as PureExternValue);
+        continue;
+      }
+    }
+    return null;
   }
 
   const result = evaluator.eval(args);
-  if (!Number.isFinite(result)) return null;
+  if (result === null) return null;
+  if (typeof result === "number" && !Number.isFinite(result)) return null;
 
   const destType = getOperandType(inst.dest);
   const casted = evaluateCastValue(result, destType);
-  if (casted === null || typeof casted !== "number") return null;
+  if (casted === null) return null;
+  if (typeof casted === "number" && !Number.isFinite(casted)) return null;
 
   return new AssignmentInstruction(inst.dest, createConstant(casted, destType));
 };
