@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
-import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
+import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction";
 
 describe("short-circuit evaluation", () => {

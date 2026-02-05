@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { ClassRegistry } from "../../../src/transpiler/frontend/class_registry";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
+import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 
 describe("ClassRegistry", () => {
   it("should register entry points via decorators", () => {

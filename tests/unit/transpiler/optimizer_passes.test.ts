@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
-import { TACOptimizer } from "../../../src/transpiler/ir/optimizer";
+import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,

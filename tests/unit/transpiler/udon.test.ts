@@ -4,11 +4,11 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
-import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
+import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "../../../src/transpiler/codegen/udon_assembler";
 import { UdonInstructionKind } from "../../../src/transpiler/codegen/udon_instruction";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
-import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac";
+import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 
 describe("Udon Code Generation", () => {
   beforeAll(() => {

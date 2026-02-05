@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
+import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 import { GenericTypeParameterSymbol } from "../../../src/transpiler/frontend/type_symbols";
 import {
   ASTNodeKind,
