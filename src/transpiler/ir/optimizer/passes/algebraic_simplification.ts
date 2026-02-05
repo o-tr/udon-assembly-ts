@@ -249,8 +249,10 @@ const getPowerOfTwoValue = (operand: TACOperand): number | null => {
   if (typeof value !== "number") return null;
   if (!Number.isFinite(value)) return null;
   if (!Number.isInteger(value)) return null;
+  if (!Number.isSafeInteger(value)) return null;
   if (value <= 0) return null;
-  if ((value & (value - 1)) !== 0) return null;
+  const exponent = Math.log2(value);
+  if (!Number.isInteger(exponent)) return null;
   return value;
 };
 

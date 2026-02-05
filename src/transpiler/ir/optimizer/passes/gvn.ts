@@ -162,12 +162,7 @@ export const globalValueNumbering = (
       if (inst.kind === TACInstructionKind.PropertySet) {
         const setInst = inst as PropertySetInstruction;
         result.push(inst);
-        const valueType = getOperandType(setInst.value);
-        const exprKey = `propget|${operandKey(setInst.object)}|${setInst.property}|${valueType.udonType}|`;
-        working.set(exprKey, {
-          operandKey: operandKey(setInst.value),
-          operand: setInst.value,
-        });
+        updatePropertySetCache(working, setInst);
         continue;
       }
 
@@ -308,12 +303,7 @@ const simulateExpressionMap = (
 
     if (inst.kind === TACInstructionKind.PropertySet) {
       const setInst = inst as PropertySetInstruction;
-      const valueType = getOperandType(setInst.value);
-      const exprKey = `propget|${operandKey(setInst.object)}|${setInst.property}|${valueType.udonType}|`;
-      working.set(exprKey, {
-        operandKey: operandKey(setInst.value),
-        operand: setInst.value,
-      });
+      updatePropertySetCache(working, setInst);
     }
 
     if (inst.kind === TACInstructionKind.ArrayAccess) {
@@ -469,6 +459,52 @@ const propertyGetExprKey = (inst: PropertyGetInstruction): string => {
   const prefix =
     signature && isIdempotentMethod(signature) ? "propget_idem" : "propget";
   return `${prefix}|${objectKey}|${inst.property}|${typeKey}|`;
+};
+
+const propertySetExprKey = (inst: PropertySetInstruction): string => {
+  const valueType = getOperandType(inst.value);
+  const typeKey = valueType.udonType;
+  const objectKey = operandKey(inst.object);
+  const objectTypeName = getOperandType(inst.object).name;
+  const signature = resolveExternSignature(
+    objectTypeName,
+    inst.property,
+    "getter",
+    [],
+    valueType.name,
+  );
+  const prefix =
+    signature && isIdempotentMethod(signature) ? "propget_idem" : "propget";
+  return `${prefix}|${objectKey}|${inst.property}|${typeKey}|`;
+};
+
+const updatePropertySetCache = (
+  map: Map<string, ExprValue>,
+  inst: PropertySetInstruction,
+): void => {
+  const objectKey = operandKey(inst.object);
+  let updated = false;
+  for (const key of Array.from(map.keys())) {
+    if (!key.startsWith("propget|") && !key.startsWith("propget_idem|")) {
+      continue;
+    }
+    if (!key.includes(`|${objectKey}|${inst.property}|`)) {
+      continue;
+    }
+    map.set(key, {
+      operandKey: operandKey(inst.value),
+      operand: inst.value,
+    });
+    updated = true;
+  }
+
+  if (!updated) {
+    const exprKey = propertySetExprKey(inst);
+    map.set(exprKey, {
+      operandKey: operandKey(inst.value),
+      operand: inst.value,
+    });
+  }
 };
 
 const arrayAccessExprKey = (inst: ArrayAccessInstruction): string => {

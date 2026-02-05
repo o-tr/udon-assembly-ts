@@ -56,8 +56,13 @@ export class StringBuilder {
   Append(_value: SystemString): StringBuilder;
   Append(_value: string): StringBuilder;
   Append(_value: number): StringBuilder;
+  Append(_value: UdonInt): StringBuilder;
+  Append(_value: UdonFloat): StringBuilder;
+  Append(_value: UdonDouble): StringBuilder;
   Append(_value: boolean): StringBuilder;
-  Append(_value: SystemString | string | number | boolean): StringBuilder {
+  Append(
+    _value: SystemString | string | number | UdonInt | UdonFloat | UdonDouble | boolean,
+  ): StringBuilder {
     return this;
   }
 
