@@ -19,7 +19,9 @@ describe("TAC->Udon TCO generation", () => {
 
     // Codegen should emit a normal extern call rather than a raw JUMP
     // for tail-call IR hints; ensure an EXTERN instruction is present.
-    const hasExtern = udon.some((inst) => inst.kind === UdonInstructionKind.Extern);
+    const hasExtern = udon.some(
+      (inst) => inst.kind === UdonInstructionKind.Extern,
+    );
     expect(hasExtern).toBe(true);
   });
 });

@@ -34,8 +34,8 @@ import {
   rewriteOperands,
   rewriteProducerDest,
 } from "../utils/instructions.js";
-import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { sameUdonType } from "../utils/operands.js";
+import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { getOperandType } from "./constant_folding.js";
 
 export const copyOnWriteTemporaries = (
@@ -449,7 +449,9 @@ export const eliminateSingleUseTemporaries = (
         const isAllowedProducer =
           isPureProducer(inst) ||
           (inst.kind === TACInstructionKind.Call &&
-            pureExternEvaluators.has((inst as unknown as CallInstruction).func));
+            pureExternEvaluators.has(
+              (inst as unknown as CallInstruction).func,
+            ));
 
         if (!isAllowedProducer) {
           result.push(inst);
