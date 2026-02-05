@@ -46,7 +46,7 @@ export function visitCallExpression(
   }
 
   const args = node.arguments.map((arg) => this.visitExpression(arg));
-  const result = this.newTemp(PrimitiveTypes.single);
+  const defaultResult = () => this.newTemp(ObjectType);
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
     if (calleeName === "Error") {
@@ -159,11 +159,14 @@ export function visitCallExpression(
     }
     if (node.isNew && (calleeName === "Vector3" || calleeName === "Color")) {
       const externSig = `__ctor_${calleeName}`;
-      this.instructions.push(new CallInstruction(result, externSig, args));
-      return result;
+      const ctorType = this.typeMapper.mapTypeScriptType(calleeName);
+      const ctorResult = this.newTemp(ctorType);
+      this.instructions.push(new CallInstruction(ctorResult, externSig, args));
+      return ctorResult;
     }
-    this.instructions.push(new CallInstruction(result, calleeName, args));
-    return result;
+    const callResult = defaultResult();
+    this.instructions.push(new CallInstruction(callResult, calleeName, args));
+    return callResult;
   }
 
   if (callee.kind === ASTNodeKind.PropertyAccessExpression) {
@@ -285,8 +288,11 @@ export function visitCallExpression(
         "method",
       );
       if (externSig) {
-        this.instructions.push(new CallInstruction(result, externSig, args));
-        return result;
+        const callResult = defaultResult();
+        this.instructions.push(
+          new CallInstruction(callResult, externSig, args),
+        );
+        return callResult;
       }
     }
 
@@ -483,10 +489,11 @@ export function visitCallExpression(
       }
       if (propAccess.property === "Remove" && args.length === 1) {
         const token = this.wrapDataToken(args[0]);
+        const removeResult = this.newTemp(PrimitiveTypes.boolean);
         this.instructions.push(
-          new MethodCallInstruction(result, object, "Remove", [token]),
+          new MethodCallInstruction(removeResult, object, "Remove", [token]),
         );
-        return result;
+        return removeResult;
       }
     }
     if (objectType.name === ExternTypes.dataDictionary.name) {
@@ -507,12 +514,13 @@ export function visitCallExpression(
         args.length === 1
       ) {
         const keyToken = this.wrapDataToken(args[0]);
+        const dictResult = this.newTemp(PrimitiveTypes.boolean);
         this.instructions.push(
-          new MethodCallInstruction(result, object, propAccess.property, [
+          new MethodCallInstruction(dictResult, object, propAccess.property, [
             keyToken,
           ]),
         );
-        return result;
+        return dictResult;
       }
     }
     if (propAccess.property === "RequestSerialization" && args.length === 0) {
@@ -528,10 +536,11 @@ export function visitCallExpression(
       );
       return createConstant(0, PrimitiveTypes.void);
     }
+    const callResult = defaultResult();
     this.instructions.push(
-      new MethodCallInstruction(result, object, propAccess.property, args),
+      new MethodCallInstruction(callResult, object, propAccess.property, args),
     );
-    return result;
+    return callResult;
   }
 
   if (callee.kind === ASTNodeKind.OptionalChainingExpression) {

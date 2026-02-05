@@ -213,7 +213,9 @@ export const performLICM = (
       const inst = instructions[index];
       for (const op of getUsedOperandsForReuse(inst)) {
         const key = livenessKey(op);
-        if (key && !useBeforeDef.has(key)) {
+        if (!key) continue;
+        const existing = useBeforeDef.get(key);
+        if (existing === undefined || index < existing) {
           useBeforeDef.set(key, index);
         }
       }

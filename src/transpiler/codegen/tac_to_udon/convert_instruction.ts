@@ -88,6 +88,16 @@ export function convertInstruction(
       // operandOp might be a LabelOperand in theory if TAC is broken, but safe to assume it has type if valid
       // Actually, let's correspond to the fix I made earlier exactly
       const operandType = operandOp.type?.udonType ?? "Single";
+      if (unInst.operator === "!" && operandType !== "Boolean") {
+        const coerceSig = this.getConvertExternSignature(
+          operandType,
+          "Boolean",
+        );
+        this.externSignatures.add(coerceSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(coerceSig), true),
+        );
+      }
       const externSig = this.getExternForUnaryOp(unInst.operator, operandType);
       this.externSignatures.add(externSig);
       this.instructions.push(
