@@ -348,29 +348,14 @@ export function visitBinaryExpression(
       const partsOperands: TACOperand[] = [];
       for (const partNode of chain) {
         let partOperand: TACOperand;
-        if (partNode.kind === ASTNodeKind.Literal) {
+        if (
+          partNode.kind === ASTNodeKind.Literal &&
+          (partNode as LiteralNode).type.udonType === UdonType.String
+        ) {
           const lit = partNode as LiteralNode;
-          if (lit.type.udonType === UdonType.String) {
-            const litVal = lit.value ?? "";
-            if (String(litVal).length === 0) continue;
-            partOperand = createConstant(String(litVal), PrimitiveTypes.string);
-          } else {
-            const exprResult = this.visitExpression(partNode);
-            const exprType = this.getOperandType(exprResult);
-            if (exprType.udonType === UdonType.String) {
-              partOperand = exprResult;
-            } else {
-              partOperand = this.newTemp(PrimitiveTypes.string);
-              this.instructions.push(
-                new MethodCallInstruction(
-                  partOperand,
-                  exprResult,
-                  "ToString",
-                  [],
-                ),
-              );
-            }
-          }
+          const litVal = lit.value ?? "";
+          if (String(litVal).length === 0) continue;
+          partOperand = createConstant(String(litVal), PrimitiveTypes.string);
         } else {
           const exprResult = this.visitExpression(partNode);
           const exprType = this.getOperandType(exprResult);
@@ -379,12 +364,7 @@ export function visitBinaryExpression(
           } else {
             partOperand = this.newTemp(PrimitiveTypes.string);
             this.instructions.push(
-              new MethodCallInstruction(
-                partOperand,
-                exprResult,
-                "ToString",
-                [],
-              ),
+              new MethodCallInstruction(partOperand, exprResult, "ToString", []),
             );
           }
         }
