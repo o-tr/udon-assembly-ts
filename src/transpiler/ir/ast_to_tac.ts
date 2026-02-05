@@ -444,9 +444,7 @@ export class ASTToTACConverter {
 
     // Condition
     const condition = this.visitExpression(node.condition);
-    this.instructions.push(
-      new ConditionalJumpInstruction(condition, endLabel),
-    );
+    this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
 
     // Body
     this.loopContextStack.push({
@@ -683,9 +681,7 @@ export class ASTToTACConverter {
 
     this.instructions.push(new LabelInstruction(conditionLabel));
     const condition = this.visitExpression(node.condition);
-    this.instructions.push(
-      new ConditionalJumpInstruction(condition, endLabel),
-    );
+    this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
     this.instructions.push(new UnconditionalJumpInstruction(startLabel));
     this.instructions.push(new LabelInstruction(endLabel));
   }

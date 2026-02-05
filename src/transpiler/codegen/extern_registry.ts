@@ -233,9 +233,7 @@ function getMemberName(
   return raw || null;
 }
 
-function getExternOverride(
-  decorators: DecoratorInfo[],
-): ExternOverride | null {
+function getExternOverride(decorators: DecoratorInfo[]): ExternOverride | null {
   const udonExtern = decorators.find((dec) => dec.name === "UdonExtern");
   if (!udonExtern) return null;
   const arg = udonExtern.args[0];
@@ -260,7 +258,7 @@ function getDecorators(
   node: ts.Node,
   sourceFile: ts.SourceFile,
 ): DecoratorInfo[] {
-  const raw = ts.canHaveDecorators(node) ? ts.getDecorators(node) ?? [] : [];
+  const raw = ts.canHaveDecorators(node) ? (ts.getDecorators(node) ?? []) : [];
   return raw.map((decorator) => {
     const expression = decorator.expression;
     if (ts.isCallExpression(expression)) {
@@ -273,12 +271,16 @@ function getDecorators(
           const result: Record<string, string> = {};
           for (const prop of arg.properties) {
             if (!ts.isPropertyAssignment(prop)) continue;
-            const key = prop.name.getText(sourceFile).replace(/^['"]|['"]$/g, "");
+            const key = prop.name
+              .getText(sourceFile)
+              .replace(/^['"]|['"]$/g, "");
             const value = prop.initializer;
             if (ts.isStringLiteral(value)) {
               result[key] = value.text;
             } else {
-              result[key] = value.getText(sourceFile).replace(/^['"]|['"]$/g, "");
+              result[key] = value
+                .getText(sourceFile)
+                .replace(/^['"]|['"]$/g, "");
             }
           }
           return result;
@@ -317,9 +319,7 @@ function normalizeTypeText(
     const parts = text
       .split("|")
       .map((part) => part.trim())
-      .filter(
-        (part) => part !== "" && part !== "null" && part !== "undefined",
-      );
+      .filter((part) => part !== "" && part !== "null" && part !== "undefined");
     if (parts.length === 1) {
       return normalizeSingleType(parts[0]);
     }

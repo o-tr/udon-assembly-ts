@@ -13,11 +13,7 @@ const base = {
 export default defineConfig([
   {
     ...base,
-    entry: [
-      "src/index.ts",
-      "src/transpiler/**/*.ts",
-      "src/stubs/*.ts",
-    ],
+    entry: ["src/index.ts", "src/transpiler/**/*.ts", "src/stubs/*.ts"],
     dts: true,
     clean: true,
   },

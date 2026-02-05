@@ -43,10 +43,7 @@ export class TypeMetadataRegistry {
     return candidates?.[0];
   }
 
-  getMemberOverloads(
-    tsTypeName: string,
-    memberName: string,
-  ): MemberMetadata[] {
+  getMemberOverloads(tsTypeName: string, memberName: string): MemberMetadata[] {
     const type = this.types.get(tsTypeName);
     if (!type) return [];
     return type.members.get(memberName) ?? [];

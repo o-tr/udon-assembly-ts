@@ -42,8 +42,7 @@ function selectOverload(
   overloads: ReturnType<typeof typeMetadataRegistry.getMemberOverloads>,
   mappedParams: string[],
 ): (typeof overloads)[number] | undefined {
-  let best: { score: number; member: (typeof overloads)[number] } | null =
-    null;
+  let best: { score: number; member: (typeof overloads)[number] } | null = null;
   for (const member of overloads) {
     if (member.paramCsharpTypes.length !== mappedParams.length) continue;
     let score = 0;
@@ -76,7 +75,7 @@ export function resolveExternSignature(
 ): string | null {
   const normalizedTypeName = normalizeTypeName(typeName);
   const hasParamTypes = paramTypes !== undefined;
-  let metadata =
+  const metadata =
     hasParamTypes && paramTypes
       ? (() => {
           const overloads = typeMetadataRegistry.getMemberOverloads(
@@ -98,8 +97,7 @@ export function resolveExternSignature(
       const propertyName = metadata.memberName;
       const methodName =
         accessType === "setter" ? `set_${propertyName}` : `get_${propertyName}`;
-      const params =
-        accessType === "setter" ? [metadata.returnCsharpType] : [];
+      const params = accessType === "setter" ? [metadata.returnCsharpType] : [];
       const returnCsharp =
         accessType === "setter" ? "System.Void" : metadata.returnCsharpType;
       return generateExternSignature(

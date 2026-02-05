@@ -2,8 +2,8 @@
  * UdonSharp collection stubs.
  */
 
-import { UdonStub } from "./UdonDecorators.js";
 import { SystemCollectionsIEnumerator } from "./SystemTypes.js";
+import { UdonStub } from "./UdonDecorators.js";
 import type { UdonInt } from "./UdonTypes.js";
 
 @UdonStub("UdonSharpRuntime_List")
@@ -41,9 +41,7 @@ export class UdonList<T> {
     return new UdonList<TItem>();
   }
 
-  static CreateFromHashSet<TItem>(
-    _set: UdonHashSet<TItem>,
-  ): UdonList<TItem> {
+  static CreateFromHashSet<TItem>(_set: UdonHashSet<TItem>): UdonList<TItem> {
     return new UdonList<TItem>();
   }
 }

@@ -2,8 +2,8 @@
  * Main transpiler pipeline: TypeScript -> TAC -> Udon Assembly
  */
 
-import { TACToUdonConverter } from "./codegen/tac_to_udon.js";
 import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
+import { TACToUdonConverter } from "./codegen/tac_to_udon.js";
 import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
@@ -240,9 +240,9 @@ export class TypeScriptToUdonTranspiler {
 }
 
 export {
-  BatchTranspiler,
   type BatchFileResult,
   type BatchResult,
+  BatchTranspiler,
   type BatchTranspilerOptions,
 } from "./batch/batch_transpiler.js";
 export { TACToUdonConverter } from "./codegen/tac_to_udon.js";

@@ -9,9 +9,6 @@ import type { UdonInt } from "./UdonTypes.js";
 
 @UdonStub("VRC.SDK3.Data.DataList")
 export class DataList {
-  // Minimal surface for transpilation/type-checking.
-  constructor() {}
-
   Count!: UdonInt;
   [index: number]: DataToken;
 
@@ -72,8 +69,6 @@ export class DataToken {
  */
 @UdonStub("VRC.SDK3.Data.DataDictionary")
 export class DataDictionary {
-  constructor() {}
-
   Count!: UdonInt;
   // Allow both token-style values and method properties on the stub.
   [key: string]:
@@ -81,7 +76,9 @@ export class DataDictionary {
     | DataList
     | number
     | boolean
-    | ((...args: DataToken[]) => DataToken | DataList | boolean | void);
+    | ((
+        ...args: DataToken[]
+      ) => DataToken | DataList | boolean | undefined | undefined);
 
   SetValue(_key: DataToken, _value: DataToken): void {}
   GetValue(_key: DataToken): DataToken {

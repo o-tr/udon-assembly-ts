@@ -4,10 +4,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { TACToUdonConverter } from "../codegen/tac_to_udon.js";
 import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
-import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { ErrorCollector } from "../errors/error_collector.js";
 import { AggregateTranspileError } from "../errors/transpile_errors.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";

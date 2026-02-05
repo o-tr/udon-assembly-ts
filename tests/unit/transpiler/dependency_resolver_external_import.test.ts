@@ -50,9 +50,7 @@ describe("DependencyResolver external imports", () => {
       const resolved = deps ? Array.from(deps) : [];
       expect(
         resolved.some((dep) =>
-          dep.endsWith(
-            path.join("node_modules", "external-lib", "index.d.ts"),
-          ),
+          dep.endsWith(path.join("node_modules", "external-lib", "index.d.ts")),
         ),
       ).toBe(true);
     } finally {

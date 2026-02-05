@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { BatchTranspiler } from "../transpiler/index.js";
 import type { BatchTranspilerOptions } from "../transpiler/batch/batch_transpiler.js";
+import { BatchTranspiler } from "../transpiler/index.js";
 
 interface Options {
   inputs: string[];

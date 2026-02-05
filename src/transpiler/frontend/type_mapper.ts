@@ -272,11 +272,8 @@ export class TypeMapper {
     return /^[A-Z]\w*$/.test(typeText);
   }
 
-
   private normalizeGenericTypeParameterName(typeText: string): string | null {
-    const normalized = typeText.startsWith("_")
-      ? typeText.slice(1)
-      : typeText;
+    const normalized = typeText.startsWith("_") ? typeText.slice(1) : typeText;
     if (normalized === "T") return "T";
     if (/^T[A-Z0-9]\w*$/.test(normalized)) return normalized;
     return null;

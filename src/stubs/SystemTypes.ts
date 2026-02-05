@@ -76,13 +76,7 @@ export class Convert {
   static ToInt32(_value: UdonLong): UdonInt;
   static ToInt32(_value: UdonULong): UdonInt;
   static ToInt32(
-    _value:
-      | UdonByte
-      | UdonInt
-      | UdonFloat
-      | UdonDouble
-      | UdonLong
-      | UdonULong,
+    _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonInt {
     return 0 as UdonInt;
   }
@@ -94,13 +88,7 @@ export class Convert {
   static ToInt64(_value: UdonLong): UdonLong;
   static ToInt64(_value: UdonULong): UdonLong;
   static ToInt64(
-    _value:
-      | UdonByte
-      | UdonInt
-      | UdonFloat
-      | UdonDouble
-      | UdonLong
-      | UdonULong,
+    _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonLong {
     return 0n as UdonLong;
   }
@@ -112,13 +100,7 @@ export class Convert {
   static ToUInt64(_value: UdonLong): UdonULong;
   static ToUInt64(_value: UdonULong): UdonULong;
   static ToUInt64(
-    _value:
-      | UdonByte
-      | UdonInt
-      | UdonFloat
-      | UdonDouble
-      | UdonLong
-      | UdonULong,
+    _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonULong {
     return 0n as UdonULong;
   }
@@ -130,13 +112,7 @@ export class Convert {
   static ToSingle(_value: UdonLong): UdonFloat;
   static ToSingle(_value: UdonULong): UdonFloat;
   static ToSingle(
-    _value:
-      | UdonByte
-      | UdonInt
-      | UdonFloat
-      | UdonDouble
-      | UdonLong
-      | UdonULong,
+    _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonFloat {
     return 0 as UdonFloat;
   }
@@ -148,13 +124,7 @@ export class Convert {
   static ToDouble(_value: UdonLong): UdonDouble;
   static ToDouble(_value: UdonULong): UdonDouble;
   static ToDouble(
-    _value:
-      | UdonByte
-      | UdonInt
-      | UdonFloat
-      | UdonDouble
-      | UdonLong
-      | UdonULong,
+    _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonDouble {
     return 0 as UdonDouble;
   }
@@ -166,13 +136,7 @@ export class Convert {
   static ToBoolean(_value: UdonLong): boolean;
   static ToBoolean(_value: UdonULong): boolean;
   static ToBoolean(
-    _value:
-      | UdonByte
-      | UdonInt
-      | UdonFloat
-      | UdonDouble
-      | UdonLong
-      | UdonULong,
+    _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): boolean {
     return false;
   }

@@ -22,7 +22,13 @@ describe("extern signatures expansion", () => {
       "SystemString.__Contains__SystemString__SystemBoolean",
     );
     expect(
-      resolveExternSignature("String", "Substring", "method", ["int"], "string"),
+      resolveExternSignature(
+        "String",
+        "Substring",
+        "method",
+        ["int"],
+        "string",
+      ),
     ).toBe("SystemString.__Substring__SystemInt32__SystemString");
     expect(
       resolveExternSignature(
@@ -32,20 +38,14 @@ describe("extern signatures expansion", () => {
         ["int", "int"],
         "string",
       ),
-    ).toBe(
-      "SystemString.__Substring__SystemInt32_SystemInt32__SystemString",
-    );
+    ).toBe("SystemString.__Substring__SystemInt32_SystemInt32__SystemString");
   });
 
   it("should include Transform and GameObject properties", () => {
-    expect(
-      resolveExternSignature("Transform", "localPosition", "getter"),
-    ).toBe(
+    expect(resolveExternSignature("Transform", "localPosition", "getter")).toBe(
       "UnityEngineTransform.__get_localPosition____UnityEngineVector3",
     );
-    expect(
-      resolveExternSignature("Transform", "localRotation", "getter"),
-    ).toBe(
+    expect(resolveExternSignature("Transform", "localRotation", "getter")).toBe(
       "UnityEngineTransform.__get_localRotation____UnityEngineQuaternion",
     );
     expect(resolveExternSignature("GameObject", "activeSelf", "getter")).toBe(

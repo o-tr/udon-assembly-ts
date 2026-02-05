@@ -13,7 +13,7 @@ export class DependencyResolver {
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
 
-  constructor(private projectRoot: string = process.cwd()) {
+  constructor(projectRoot: string = process.cwd()) {
     this.compilerOptions = this.loadCompilerOptions(projectRoot);
   }
 

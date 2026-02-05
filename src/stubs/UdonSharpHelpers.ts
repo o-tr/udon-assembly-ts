@@ -8,10 +8,7 @@ import type { Component } from "./UnityTypes.js";
 
 @UdonStub("UdonSharp.Lib.Internal.GetComponentShim")
 export class GetComponentShim {
-  static GetComponent(
-    _component: Component,
-    _typeId: UdonLong,
-  ): Component {
+  static GetComponent(_component: Component, _typeId: UdonLong): Component {
     return null as unknown as Component;
   }
 

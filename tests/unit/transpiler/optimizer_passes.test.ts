@@ -138,8 +138,7 @@ describe("optimizer passes", () => {
     expect(text).not.toContain("a = a");
     expect(
       optimized.filter(
-        (inst) =>
-          inst.kind === "Assignment" || inst.kind === "Copy",
+        (inst) => inst.kind === "Assignment" || inst.kind === "Copy",
       ).length,
     ).toBe(0);
   });
@@ -323,8 +322,18 @@ describe("optimizer passes", () => {
       new LabelInstruction(lPre),
       new UnconditionalJumpInstruction(lStart),
       new LabelInstruction(lStart),
-      new BinaryOpInstruction(i, i, "+", createConstant(1, PrimitiveTypes.int32)),
-      new BinaryOpInstruction(t0, i, "*", createConstant(2, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "*",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
       new BinaryOpInstruction(
         cond,
         t0,
@@ -340,7 +349,9 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = t0 + 2");
-    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBeGreaterThan(0);
+    expect(
+      optimized.filter((inst) => inst.kind === "BinaryOp").length,
+    ).toBeGreaterThan(0);
     expect(text).toContain("t0 = i * 2");
   });
 });
