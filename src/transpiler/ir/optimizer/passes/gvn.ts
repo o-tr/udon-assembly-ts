@@ -1,3 +1,4 @@
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
   type ArrayAccessInstruction,
@@ -17,6 +18,7 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -160,12 +162,7 @@ export const globalValueNumbering = (
       if (inst.kind === TACInstructionKind.PropertySet) {
         const setInst = inst as PropertySetInstruction;
         result.push(inst);
-        const valueType = getOperandType(setInst.value);
-        const exprKey = `propget|${operandKey(setInst.object)}|${setInst.property}|${valueType.udonType}|`;
-        working.set(exprKey, {
-          operandKey: operandKey(setInst.value),
-          operand: setInst.value,
-        });
+        updatePropertySetCache(working, setInst);
         continue;
       }
 
@@ -190,7 +187,7 @@ export const globalValueNumbering = (
 
       if (inst.kind === TACInstructionKind.Call) {
         const callInst = inst as CallInstruction;
-        const exprKey = pureCallExprKey(callInst);
+        const exprKey = callExprKey(callInst);
         if (exprKey && callInst.dest) {
           const existing = working.get(exprKey);
           if (
@@ -306,12 +303,7 @@ const simulateExpressionMap = (
 
     if (inst.kind === TACInstructionKind.PropertySet) {
       const setInst = inst as PropertySetInstruction;
-      const valueType = getOperandType(setInst.value);
-      const exprKey = `propget|${operandKey(setInst.object)}|${setInst.property}|${valueType.udonType}|`;
-      working.set(exprKey, {
-        operandKey: operandKey(setInst.value),
-        operand: setInst.value,
-      });
+      updatePropertySetCache(working, setInst);
     }
 
     if (inst.kind === TACInstructionKind.ArrayAccess) {
@@ -325,7 +317,7 @@ const simulateExpressionMap = (
 
     if (inst.kind === TACInstructionKind.Call) {
       const callInst = inst as CallInstruction;
-      const exprKey = pureCallExprKey(callInst);
+      const exprKey = callExprKey(callInst);
       if (exprKey && callInst.dest) {
         working.set(exprKey, {
           operandKey: operandKey(callInst.dest),
@@ -341,7 +333,10 @@ const isSideEffectBarrier = (inst: TACInstruction): boolean => {
   switch (inst.kind) {
     case TACInstructionKind.Call: {
       const callInst = inst as CallInstruction;
-      return !pureExternEvaluators.has(callInst.func);
+      return (
+        !pureExternEvaluators.has(callInst.func) &&
+        !isIdempotentMethod(callInst.func)
+      );
     }
     case TACInstructionKind.MethodCall:
     case TACInstructionKind.PropertySet:
@@ -372,7 +367,7 @@ const invalidateExpressionsForSideEffect = (
   }
   if (inst.kind === TACInstructionKind.PropertySet) {
     for (const key of Array.from(map.keys())) {
-      if (key.startsWith("propget|")) {
+      if (key.startsWith("propget|") || key.startsWith("propget_idem|")) {
         map.delete(key);
       }
     }
@@ -452,7 +447,64 @@ const castExprKey = (inst: CastInstruction): string => {
 const propertyGetExprKey = (inst: PropertyGetInstruction): string => {
   const typeKey = getOperandType(inst.dest).udonType;
   const objectKey = operandKey(inst.object);
-  return `propget|${objectKey}|${inst.property}|${typeKey}|`;
+  const objectTypeName = getOperandType(inst.object).name;
+  const returnTypeName = getOperandType(inst.dest).name;
+  const signature = resolveExternSignature(
+    objectTypeName,
+    inst.property,
+    "getter",
+    [],
+    returnTypeName,
+  );
+  const prefix =
+    signature && isIdempotentMethod(signature) ? "propget_idem" : "propget";
+  return `${prefix}|${objectKey}|${inst.property}|${typeKey}|`;
+};
+
+const propertySetExprKey = (inst: PropertySetInstruction): string => {
+  const valueType = getOperandType(inst.value);
+  const typeKey = valueType.udonType;
+  const objectKey = operandKey(inst.object);
+  const objectTypeName = getOperandType(inst.object).name;
+  const signature = resolveExternSignature(
+    objectTypeName,
+    inst.property,
+    "getter",
+    [],
+    valueType.name,
+  );
+  const prefix =
+    signature && isIdempotentMethod(signature) ? "propget_idem" : "propget";
+  return `${prefix}|${objectKey}|${inst.property}|${typeKey}|`;
+};
+
+const updatePropertySetCache = (
+  map: Map<string, ExprValue>,
+  inst: PropertySetInstruction,
+): void => {
+  const objectKey = operandKey(inst.object);
+  let updated = false;
+  for (const key of Array.from(map.keys())) {
+    if (!key.startsWith("propget|") && !key.startsWith("propget_idem|")) {
+      continue;
+    }
+    if (!key.includes(`|${objectKey}|${inst.property}|`)) {
+      continue;
+    }
+    map.set(key, {
+      operandKey: operandKey(inst.value),
+      operand: inst.value,
+    });
+    updated = true;
+  }
+
+  if (!updated) {
+    const exprKey = propertySetExprKey(inst);
+    map.set(exprKey, {
+      operandKey: operandKey(inst.value),
+      operand: inst.value,
+    });
+  }
 };
 
 const arrayAccessExprKey = (inst: ArrayAccessInstruction): string => {
@@ -462,10 +514,13 @@ const arrayAccessExprKey = (inst: ArrayAccessInstruction): string => {
   return `arrayget|${arrayKey}|${indexKey}|${typeKey}|`;
 };
 
-const pureCallExprKey = (inst: CallInstruction): string | null => {
+const callExprKey = (inst: CallInstruction): string | null => {
   if (!inst.dest) return null;
-  if (!pureExternEvaluators.has(inst.func)) return null;
+  const isPure = pureExternEvaluators.has(inst.func);
+  const isIdempotent = isIdempotentMethod(inst.func);
+  if (!isPure && !isIdempotent) return null;
   const typeKey = getOperandType(inst.dest).udonType;
   const argKeys = inst.args.map((arg) => operandKey(arg)).join("|");
-  return `purecall|${inst.func}|${argKeys}|${typeKey}|`;
+  const prefix = isPure ? "purecall" : "idempotentcall";
+  return `${prefix}|${inst.func}|${argKeys}|${typeKey}|`;
 };

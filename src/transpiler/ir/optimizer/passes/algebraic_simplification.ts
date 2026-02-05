@@ -2,7 +2,7 @@ import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
-  type BinaryOpInstruction,
+  BinaryOpInstruction,
   type CastInstruction,
   type TACInstruction,
   TACInstructionKind,
@@ -104,6 +104,29 @@ export const trySimplifyBinaryOp = (
   if (inst.operator === "/") {
     if (isOneConstant(right)) {
       return new AssignmentInstruction(inst.dest, left);
+    }
+    const powerOfTwo = getPowerOfTwoValue(right);
+    if (powerOfTwo !== null && isUnsignedIntegerType(destUdonType)) {
+      const shiftAmount = Math.log2(powerOfTwo);
+      return new BinaryOpInstruction(
+        inst.dest,
+        left,
+        ">>",
+        createConstant(shiftAmount, PrimitiveTypes.int32),
+      );
+    }
+  }
+
+  if (inst.operator === "%") {
+    const powerOfTwo = getPowerOfTwoValue(right);
+    if (powerOfTwo !== null && isUnsignedIntegerType(destUdonType)) {
+      const mask = powerOfTwo - 1;
+      return new BinaryOpInstruction(
+        inst.dest,
+        left,
+        "&",
+        createConstant(mask, getOperandType(inst.dest)),
+      );
     }
   }
 
@@ -220,10 +243,32 @@ export const isOneConstant = (operand: TACOperand): boolean => {
   );
 };
 
+const getPowerOfTwoValue = (operand: TACOperand): number | null => {
+  if (operand.kind !== TACOperandKind.Constant) return null;
+  const value = (operand as ConstantOperand).value;
+  if (typeof value !== "number") return null;
+  if (!Number.isFinite(value)) return null;
+  if (!Number.isInteger(value)) return null;
+  if (!Number.isSafeInteger(value)) return null;
+  if (value <= 0) return null;
+  const exponent = Math.log2(value);
+  if (!Number.isInteger(exponent)) return null;
+  return value;
+};
+
 const isFloatingPointType = (udonType: UdonType): boolean => {
   return udonType === UdonType.Single || udonType === UdonType.Double;
 };
 
 const isIntegerType = (udonType: UdonType): boolean => {
   return isIntegerUdonType(udonType);
+};
+
+const isUnsignedIntegerType = (udonType: UdonType): boolean => {
+  return (
+    udonType === UdonType.Byte ||
+    udonType === UdonType.UInt16 ||
+    udonType === UdonType.UInt32 ||
+    udonType === UdonType.UInt64
+  );
 };

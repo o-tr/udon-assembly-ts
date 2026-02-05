@@ -20,6 +20,7 @@ export {
   Int32,
   Math,
   String,
+  StringBuilder,
   SystemArray,
   SystemCollectionsIEnumerator,
   Type,
