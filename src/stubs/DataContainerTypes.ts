@@ -76,9 +76,8 @@ export class DataDictionary {
     | DataList
     | number
     | boolean
-    | ((
-        ...args: DataToken[]
-      ) => DataToken | DataList | boolean | undefined | undefined);
+    | ((...args: DataToken[]) => DataToken | DataList | boolean | undefined)
+    | ((...args: DataToken[]) => void);
 
   SetValue(_key: DataToken, _value: DataToken): void {}
   GetValue(_key: DataToken): DataToken {
