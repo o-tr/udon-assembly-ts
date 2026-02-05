@@ -17,6 +17,7 @@ import { performLICM } from "./passes/licm.js";
 import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
+import { optimizeTailCalls } from "./passes/tco.js";
 import {
   copyOnWriteTemporaries,
   eliminateSingleUseTemporaries,
@@ -65,6 +66,9 @@ export class TACOptimizer {
 
       // Apply global value numbering / CSE across blocks
       next = globalValueNumbering(next);
+
+      // Optimize tail calls (call followed immediately by return)
+      next = optimizeTailCalls(next);
 
       // Eliminate single-use temporaries inside basic blocks
       next = eliminateSingleUseTemporaries(next);

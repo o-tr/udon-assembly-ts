@@ -439,7 +439,13 @@ export const eliminateSingleUseTemporaries = (
       const inst = blockInstructions[i];
       const next = blockInstructions[i + 1];
 
-      if (next && isPureProducer(inst) && isCopyFromTemp(next)) {
+      if (
+        next &&
+        (isPureProducer(inst) ||
+          inst.kind === TACInstructionKind.Call ||
+          inst.kind === TACInstructionKind.MethodCall) &&
+        isCopyFromTemp(next)
+      ) {
         const destTemp = (inst as unknown as InstWithDest).dest;
         if (
           destTemp.kind === TACOperandKind.Temporary &&
