@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
+import {
+  ExternTypes,
+  ObjectType,
+  PrimitiveTypes,
+} from "../../../src/transpiler/frontend/type_symbols";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import {
   AssignmentInstruction,
@@ -8,6 +12,8 @@ import {
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
+  PropertyGetInstruction,
+  PropertySetInstruction,
   ReturnInstruction,
   UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
@@ -40,7 +46,7 @@ describe("optimizer passes", () => {
     const optimized = optimizer.optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 1 + 1");
+    expect(text).toContain("t0 = 2");
   });
 
   it("eliminates dead assignments", () => {
@@ -59,7 +65,7 @@ describe("optimizer passes", () => {
     const optimized = optimizer.optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 1 + 1");
+    expect(text).toContain("t0 = 2");
     expect(text).not.toContain("b = 2");
   });
 
@@ -179,7 +185,8 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L1");
-    expect(text).toContain("goto L2");
+    expect(text).not.toContain("goto L2");
+    expect(text).toContain("L2:");
   });
 
   it("prunes unreachable blocks on constant branches", () => {
@@ -353,5 +360,321 @@ describe("optimizer passes", () => {
       optimized.filter((inst) => inst.kind === "BinaryOp").length,
     ).toBeGreaterThan(0);
     expect(text).toContain("t0 = i * 2");
+  });
+
+  it("iterative passes fold multi-step constants", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const c = createVariable("c", PrimitiveTypes.int32);
+
+    const instructions = [
+      new AssignmentInstruction(a, createConstant(3, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        b,
+        a,
+        "+",
+        createConstant(4, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        c,
+        b,
+        "*",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(c),
+    ];
+
+    const optimizer = new TACOptimizer();
+    const optimized = optimizer.optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("return 14");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x - x to zero for integers", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "-", a),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = 0");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x & 0 to zero", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        "&",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = 0");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x | 0 to x", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        "|",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x ^ 0 to x", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        "^",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x & x to x", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "&", a),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x | x to x", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "|", a),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x ^ x to zero for integers", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "^", a),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = 0");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x << 0 to x", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        "<<",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x >> 0 to x", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        ">>",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("reassociates addition of constants", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        "+",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        t0,
+        "+",
+        createConstant(4, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("a + 7");
+  });
+
+  it("reassociates multiplication of constants", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a,
+        "*",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        t0,
+        "*",
+        createConstant(5, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("a * 15");
+  });
+
+  it("eliminates redundant PropertyGet", () => {
+    const obj = createVariable("obj", ExternTypes.transform);
+    const t0 = createTemporary(0, ExternTypes.vector3);
+    const t1 = createTemporary(1, ExternTypes.vector3);
+    const instructions = [
+      new PropertyGetInstruction(t0, obj, "position"),
+      new PropertyGetInstruction(t1, obj, "position"),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
+      1,
+    );
+  });
+
+  it("does not CSE PropertyGet across PropertySet on same object", () => {
+    const obj = createVariable("obj", ExternTypes.transform);
+    const t0 = createTemporary(0, ExternTypes.vector3);
+    const t1 = createTemporary(1, ExternTypes.vector3);
+    const val = createConstant(1.0, PrimitiveTypes.single);
+    const instructions = [
+      new PropertyGetInstruction(t0, obj, "x"),
+      new PropertySetInstruction(obj, "y", val),
+      new PropertyGetInstruction(t1, obj, "x"),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
+      2,
+    );
+  });
+
+  it("eliminates redundant pure extern calls", () => {
+    const x = createVariable("x", PrimitiveTypes.single);
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const t1 = createTemporary(1, PrimitiveTypes.single);
+    const instructions = [
+      new CallInstruction(
+        t0,
+        "UnityEngineMathf.__Sqrt__SystemSingle__SystemSingle",
+        [x],
+      ),
+      new CallInstruction(
+        t1,
+        "UnityEngineMathf.__Sqrt__SystemSingle__SystemSingle",
+        [x],
+      ),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(1);
+  });
+
+  it("does not CSE non-pure extern calls", () => {
+    const obj = createVariable("obj", ObjectType);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const instructions = [
+      new CallInstruction(t0, "SomeNonPureExtern", [obj]),
+      new CallInstruction(t1, "SomeNonPureExtern", [obj]),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = new TACOptimizer().optimize(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(2);
   });
 });
