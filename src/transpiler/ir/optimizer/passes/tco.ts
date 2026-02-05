@@ -1,9 +1,9 @@
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
-  TACInstructionKind,
   type CallInstruction,
   type MethodCallInstruction,
   type ReturnInstruction,
+  TACInstructionKind,
 } from "../../tac_instruction.js";
 import { buildCFG } from "../analysis/cfg.js";
 
