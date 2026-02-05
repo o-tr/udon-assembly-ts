@@ -1,6 +1,7 @@
 import type { TACInstruction } from "../tac_instruction.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
+import { castChainFolding } from "./passes/cast_chain_folding.js";
 import { constantFolding } from "./passes/constant_folding.js";
 import {
   deadCodeElimination,
@@ -8,10 +9,12 @@ import {
   eliminateDeadTemporaries,
   eliminateNoopCopies,
 } from "./passes/dead_code.js";
+import { doubleNegationElimination } from "./passes/double_negation.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
 import { performLICM } from "./passes/licm.js";
+import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
 import {
@@ -20,6 +23,7 @@ import {
   reuseLocalVariables,
   reuseTemporaries,
 } from "./passes/temp_reuse.js";
+import { eliminateUnusedLabels } from "./passes/unused_labels.js";
 
 /**
  * TAC optimizer
@@ -44,8 +48,17 @@ export class TACOptimizer {
       // Apply boolean simplifications
       next = booleanSimplification(next);
 
+      // Fuse negated comparisons
+      next = negatedComparisonFusion(next);
+
+      // Eliminate double negations
+      next = doubleNegationElimination(next);
+
       // Apply algebraic simplifications and redundant cast removal
       next = algebraicSimplification(next);
+
+      // Fold cast chains
+      next = castChainFolding(next);
 
       // Reassociate partially-constant binary operations
       next = reassociate(next);
@@ -76,6 +89,9 @@ export class TACOptimizer {
 
       // Remove unused temporary computations
       next = eliminateDeadTemporaries(next);
+
+      // Remove unused labels
+      next = eliminateUnusedLabels(next);
 
       return next;
     };

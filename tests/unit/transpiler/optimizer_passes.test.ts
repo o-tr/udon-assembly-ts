@@ -6,15 +6,19 @@ import {
 } from "../../../src/transpiler/frontend/type_symbols";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import {
+  ArrayAccessInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
+  MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
   ReturnInstruction,
+  UnaryOpInstruction,
   UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
@@ -186,7 +190,6 @@ describe("optimizer passes", () => {
 
     expect(text).not.toContain("goto L1");
     expect(text).not.toContain("goto L2");
-    expect(text).toContain("L2:");
   });
 
   it("prunes unreachable blocks on constant branches", () => {
@@ -309,11 +312,9 @@ describe("optimizer passes", () => {
     const optimized = optimizer.optimize(instructions);
     const text = stringify(optimized);
 
-    const preIndex = text.indexOf("L_pre");
     const hoistedIndex = text.indexOf("t0 = a + b");
     const loopIndex = text.indexOf("L_start");
     expect(hoistedIndex).toBeGreaterThan(-1);
-    expect(preIndex).toBeGreaterThan(-1);
     expect(loopIndex).toBeGreaterThan(-1);
     expect(hoistedIndex).toBeLessThan(loopIndex);
   });
@@ -676,5 +677,181 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
 
     expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(2);
+  });
+
+  it("fuses negated comparison into inverted comparison", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.boolean);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "<", b),
+      new UnaryOpInstruction(t1, "!", t0),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("a >= b");
+    expect(optimized.filter((inst) => inst.kind === "UnaryOp").length).toBe(0);
+  });
+
+  it("does not fuse negated comparison when comparison result is reused", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.boolean);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "<", b),
+      new UnaryOpInstruction(t1, "!", t0),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("a < b");
+    expect(text).not.toContain("a >= b");
+  });
+
+  it("forwards stored value to subsequent PropertyGet", () => {
+    const obj = createVariable("obj", ExternTypes.transform);
+    const val = createVariable("val", ExternTypes.vector3);
+    const t0 = createTemporary(0, ExternTypes.vector3);
+    const instructions = [
+      new PropertySetInstruction(obj, "position", val),
+      new PropertyGetInstruction(t0, obj, "position"),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
+      0,
+    );
+    const text = stringify(optimized);
+    expect(text).toContain("t0 = val");
+  });
+
+  it("does not forward PropertyGet across MethodCall", () => {
+    const obj = createVariable("obj", ExternTypes.transform);
+    const val = createVariable("val", ExternTypes.vector3);
+    const t0 = createTemporary(0, ExternTypes.vector3);
+    const instructions = [
+      new PropertySetInstruction(obj, "position", val),
+      new MethodCallInstruction(undefined, obj, "Rotate", []),
+      new PropertyGetInstruction(t0, obj, "position"),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
+      1,
+    );
+  });
+
+  it("eliminates double negation", () => {
+    const a = createVariable("a", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.boolean);
+    const instructions = [
+      new UnaryOpInstruction(t0, "!", a),
+      new UnaryOpInstruction(t1, "!", t0),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).not.toContain("!");
+    expect(optimized.filter((inst) => inst.kind === "UnaryOp").length).toBe(0);
+  });
+
+  it("does not eliminate double negation when inner result is reused", () => {
+    const a = createVariable("a", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.boolean);
+    const instructions = [
+      new UnaryOpInstruction(t0, "!", a),
+      new UnaryOpInstruction(t1, "!", t0),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(optimized.filter((inst) => inst.kind === "UnaryOp").length).toBe(1);
+  });
+
+  it("eliminates redundant ArrayAccess", () => {
+    const arr = createVariable("arr", ObjectType);
+    const idx = createVariable("idx", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, ObjectType);
+    const t1 = createTemporary(1, ObjectType);
+    const instructions = [
+      new ArrayAccessInstruction(t0, arr, idx),
+      new ArrayAccessInstruction(t1, arr, idx),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(optimized.filter((inst) => inst.kind === "ArrayAccess").length).toBe(
+      1,
+    );
+  });
+
+  it("simplifies x && x to x", () => {
+    const a = createVariable("a", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "&&", a),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("t0 = a");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+  });
+
+  it("simplifies x == x to true for integers", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "==", a),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("t0 = true");
+  });
+
+  it("folds int-to-float-to-double cast chain", () => {
+    const x = createVariable("x", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const t1 = createTemporary(1, PrimitiveTypes.double);
+    const instructions = [
+      new CastInstruction(t0, x),
+      new CastInstruction(t1, t0),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(
+      optimized.filter((inst) => inst.kind === "Cast").length,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("does not fold float-to-int-to-double cast chain", () => {
+    const x = createVariable("x", PrimitiveTypes.single);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.double);
+    const instructions = [
+      new CastInstruction(t0, x),
+      new CastInstruction(t1, t0),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(optimized.filter((inst) => inst.kind === "Cast").length).toBe(2);
+  });
+
+  it("removes labels with no incoming jumps", () => {
+    const l0 = createLabel("L_used");
+    const l1 = createLabel("L_unused");
+    const instructions = [
+      new UnconditionalJumpInstruction(l0),
+      new LabelInstruction(l1),
+      new LabelInstruction(l0),
+      new ReturnInstruction(),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).not.toContain("L_unused");
   });
 });

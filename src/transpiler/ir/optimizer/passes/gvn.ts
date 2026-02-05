@@ -1,10 +1,12 @@
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
+  type ArrayAccessInstruction,
   type BinaryOpInstruction,
   type CallInstruction,
   type CastInstruction,
   CopyInstruction,
   type PropertyGetInstruction,
+  type PropertySetInstruction,
   TACInstructionKind,
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
@@ -155,6 +157,37 @@ export const globalValueNumbering = (
         continue;
       }
 
+      if (inst.kind === TACInstructionKind.PropertySet) {
+        const setInst = inst as PropertySetInstruction;
+        result.push(inst);
+        const valueType = getOperandType(setInst.value);
+        const exprKey = `propget|${operandKey(setInst.object)}|${setInst.property}|${valueType.udonType}|`;
+        working.set(exprKey, {
+          operandKey: operandKey(setInst.value),
+          operand: setInst.value,
+        });
+        continue;
+      }
+
+      if (inst.kind === TACInstructionKind.ArrayAccess) {
+        const accInst = inst as ArrayAccessInstruction;
+        const exprKey = arrayAccessExprKey(accInst);
+        const existing = working.get(exprKey);
+        if (
+          existing &&
+          existing.operandKey !== operandKey(accInst.dest) &&
+          sameUdonType(existing.operand, accInst.dest)
+        ) {
+          inst = new CopyInstruction(accInst.dest, existing.operand);
+        }
+        result.push(inst);
+        working.set(exprKey, {
+          operandKey: operandKey(accInst.dest),
+          operand: accInst.dest,
+        });
+        continue;
+      }
+
       if (inst.kind === TACInstructionKind.Call) {
         const callInst = inst as CallInstruction;
         const exprKey = pureCallExprKey(callInst);
@@ -271,6 +304,25 @@ const simulateExpressionMap = (
       });
     }
 
+    if (inst.kind === TACInstructionKind.PropertySet) {
+      const setInst = inst as PropertySetInstruction;
+      const valueType = getOperandType(setInst.value);
+      const exprKey = `propget|${operandKey(setInst.object)}|${setInst.property}|${valueType.udonType}|`;
+      working.set(exprKey, {
+        operandKey: operandKey(setInst.value),
+        operand: setInst.value,
+      });
+    }
+
+    if (inst.kind === TACInstructionKind.ArrayAccess) {
+      const accInst = inst as ArrayAccessInstruction;
+      const exprKey = arrayAccessExprKey(accInst);
+      working.set(exprKey, {
+        operandKey: operandKey(accInst.dest),
+        operand: accInst.dest,
+      });
+    }
+
     if (inst.kind === TACInstructionKind.Call) {
       const callInst = inst as CallInstruction;
       const exprKey = pureCallExprKey(callInst);
@@ -306,7 +358,14 @@ const invalidateExpressionsForSideEffect = (
 ): void => {
   if (inst.kind === TACInstructionKind.Call) {
     for (const key of Array.from(map.keys())) {
-      if (key.startsWith("propget|")) {
+      if (key.startsWith("propget|") || key.startsWith("arrayget|")) {
+        map.delete(key);
+      }
+    }
+  }
+  if (inst.kind === TACInstructionKind.ArrayAssignment) {
+    for (const key of Array.from(map.keys())) {
+      if (key.startsWith("arrayget|")) {
         map.delete(key);
       }
     }
@@ -387,6 +446,13 @@ const propertyGetExprKey = (inst: PropertyGetInstruction): string => {
   const typeKey = getOperandType(inst.dest).udonType;
   const objectKey = operandKey(inst.object);
   return `propget|${objectKey}|${inst.property}|${typeKey}|`;
+};
+
+const arrayAccessExprKey = (inst: ArrayAccessInstruction): string => {
+  const typeKey = getOperandType(inst.dest).udonType;
+  const arrayKey = operandKey(inst.array);
+  const indexKey = operandKey(inst.index);
+  return `arrayget|${arrayKey}|${indexKey}|${typeKey}|`;
 };
 
 const pureCallExprKey = (inst: CallInstruction): string | null => {
