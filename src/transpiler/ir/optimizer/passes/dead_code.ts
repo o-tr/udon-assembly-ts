@@ -1,36 +1,17 @@
 import type { TACInstruction } from "../../tac_instruction.js";
-import {
-  AssignmentInstruction,
-  type ConditionalJumpInstruction,
-  CopyInstruction,
-  LabelInstruction,
-  type ReturnInstruction,
-  TACInstructionKind,
-  UnconditionalJumpInstruction,
-} from "../../tac_instruction.js";
-import type {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
-  BinaryOpInstruction,
-  CallInstruction,
-  MethodCallInstruction,
-  PropertyGetInstruction,
-  PropertySetInstruction,
-  UnaryOpInstruction,
-} from "../../tac_instruction.js";
-import type { TACOperand } from "../../tac_operand.js";
+import { TACInstructionKind } from "../../tac_instruction.js";
+import type { TACOperand, TemporaryOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
-import type { TemporaryOperand } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import { stringSetEqual } from "../utils/sets.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
-  InstWithDestSrc,
+  type InstWithDestSrc,
   isPureProducer,
 } from "../utils/instructions.js";
-import { sameOperand } from "../utils/operands.js";
 import { livenessKey } from "../utils/liveness.js";
+import { sameOperand } from "../utils/operands.js";
+import { stringSetEqual } from "../utils/sets.js";
 
 /**
  * Dead code elimination

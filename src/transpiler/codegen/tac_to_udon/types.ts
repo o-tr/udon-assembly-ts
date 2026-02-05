@@ -3,14 +3,14 @@ import { TACToUdonConverter } from "./converter.js";
 
 export function isFloatType(
   this: TACToUdonConverter,
-  typeName: string
+  typeName: string,
 ): boolean {
   return typeName === "Single" || typeName === "Double";
 }
 
 export function isIntegerType(
   this: TACToUdonConverter,
-  typeName: string
+  typeName: string,
 ): boolean {
   return (
     typeName === "Byte" ||
@@ -26,7 +26,7 @@ export function isIntegerType(
 
 export function mapUdonTypeToTs(
   this: TACToUdonConverter,
-  typeName: string
+  typeName: string,
 ): string {
   switch (typeName) {
     case "Byte":
@@ -60,7 +60,7 @@ export function mapUdonTypeToTs(
 
 export function getOperandTsTypeName(
   this: TACToUdonConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): string {
   switch (operand.kind) {
     case TACOperandKind.Variable:
@@ -77,7 +77,7 @@ export function getOperandTsTypeName(
 
 export function extractInlineClassName(
   this: TACToUdonConverter,
-  name: string
+  name: string,
 ): string | null {
   if (!name.startsWith("__inst_")) {
     return null;

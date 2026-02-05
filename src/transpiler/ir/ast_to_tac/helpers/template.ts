@@ -1,11 +1,15 @@
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
-import { ASTNodeKind, type LiteralNode, type TemplatePart } from "../../../frontend/types.js";
+import {
+  ASTNodeKind,
+  type LiteralNode,
+  type TemplatePart,
+} from "../../../frontend/types.js";
 import { type ConstantOperand, createConstant } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function mergeTemplateParts(
   this: ASTToTACConverter,
-  parts: TemplatePart[]
+  parts: TemplatePart[],
 ): TemplatePart[] {
   const merged: TemplatePart[] = [];
   let textBuffer = "";

@@ -1,24 +1,24 @@
 import type { TACInstruction } from "../tac_instruction.js";
-import { constantFolding } from "./passes/constant_folding.js";
-import { sccpAndPrune } from "./passes/sccp.js";
-import { booleanSimplification } from "./passes/boolean_simplification.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
-import { globalValueNumbering } from "./passes/gvn.js";
+import { booleanSimplification } from "./passes/boolean_simplification.js";
+import { constantFolding } from "./passes/constant_folding.js";
 import {
-  eliminateSingleUseTemporaries,
-  copyOnWriteTemporaries,
-  reuseTemporaries,
-  reuseLocalVariables,
-} from "./passes/temp_reuse.js";
-import {
-  eliminateNoopCopies,
-  eliminateDeadStoresCFG,
   deadCodeElimination,
+  eliminateDeadStoresCFG,
   eliminateDeadTemporaries,
+  eliminateNoopCopies,
 } from "./passes/dead_code.js";
+import { globalValueNumbering } from "./passes/gvn.js";
+import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
 import { performLICM } from "./passes/licm.js";
-import { optimizeInductionVariables } from "./passes/induction.js";
+import { sccpAndPrune } from "./passes/sccp.js";
+import {
+  copyOnWriteTemporaries,
+  eliminateSingleUseTemporaries,
+  reuseLocalVariables,
+  reuseTemporaries,
+} from "./passes/temp_reuse.js";
 
 /**
  * TAC optimizer

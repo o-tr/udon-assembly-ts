@@ -1,4 +1,8 @@
-import { ExternTypes, ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
+import {
+  ExternTypes,
+  ObjectType,
+  PrimitiveTypes,
+} from "../../../frontend/type_symbols.js";
 import type { ObjectLiteralPropertyNode } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
@@ -47,7 +51,7 @@ export function emitDictionaryFromProperties(
 
 export function emitDataDictionaryKeys(
   this: ASTToTACConverter,
-  target: TACOperand
+  target: TACOperand,
 ): TACOperand {
   const result = this.newTemp(ExternTypes.dataList);
   this.instructions.push(
@@ -58,7 +62,7 @@ export function emitDataDictionaryKeys(
 
 export function emitDataDictionaryValues(
   this: ASTToTACConverter,
-  target: TACOperand
+  target: TACOperand,
 ): TACOperand {
   const result = this.newTemp(ExternTypes.dataList);
   this.instructions.push(
@@ -69,7 +73,7 @@ export function emitDataDictionaryValues(
 
 export function emitDataDictionaryEntries(
   this: ASTToTACConverter,
-  target: TACOperand
+  target: TACOperand,
 ): TACOperand {
   const result = this.newTemp(ExternTypes.dataList);
   const listCtorSig = this.requireExternSignature(

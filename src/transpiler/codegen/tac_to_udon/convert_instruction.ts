@@ -5,6 +5,8 @@ import {
   type CastInstruction as TACCastInstruction,
   type ConditionalJumpInstruction as TACConditionalJumpInstruction,
   type CopyInstruction as TACCopyInstruction,
+  type TACInstruction,
+  TACInstructionKind,
   type LabelInstruction as TACLabelInstruction,
   type MethodCallInstruction as TACMethodCallInstruction,
   type PropertyGetInstruction as TACPropertyGetInstruction,
@@ -12,17 +14,15 @@ import {
   type ReturnInstruction as TACReturnInstruction,
   type UnaryOpInstruction as TACUnaryOpInstruction,
   type UnconditionalJumpInstruction as TACUnconditionalJumpInstruction,
-  type TACInstruction,
-  TACInstructionKind,
 } from "../../ir/tac_instruction.js";
-import {
-  type ConstantOperand,
-  type LabelOperand,
-  type TACOperand,
-  TACOperandKind,
-  type TemporaryOperand,
-  type VariableOperand,
+import type {
+  ConstantOperand,
+  LabelOperand,
+  TACOperand,
+  TemporaryOperand,
+  VariableOperand,
 } from "../../ir/tac_operand.js";
+import { resolveExternSignature } from "../extern_signatures.js";
 import {
   CopyInstruction,
   createUdonExternSignature,
@@ -32,19 +32,16 @@ import {
   LabelInstruction,
   PushInstruction,
 } from "../udon_instruction.js";
-import { resolveExternSignature } from "../extern_signatures.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function convertInstruction(
   this: TACToUdonConverter,
-  inst: TACInstruction
+  inst: TACInstruction,
 ): void {
   switch (inst.kind) {
     case TACInstructionKind.Assignment: // fallthrough
     case TACInstructionKind.Copy: {
-      const assignInst = inst as
-        | TACAssignmentInstruction
-        | TACCopyInstruction;
+      const assignInst = inst as TACAssignmentInstruction | TACCopyInstruction;
       this.pushOperand(assignInst.src);
       const destAddr = this.getOperandAddress(assignInst.dest);
       this.instructions.push(new PushInstruction(destAddr));
@@ -91,10 +88,7 @@ export function convertInstruction(
       // operandOp might be a LabelOperand in theory if TAC is broken, but safe to assume it has type if valid
       // Actually, let's correspond to the fix I made earlier exactly
       const operandType = operandOp.type?.udonType ?? "Single";
-      const externSig = this.getExternForUnaryOp(
-        unInst.operator,
-        operandType,
-      );
+      const externSig = this.getExternForUnaryOp(unInst.operator, operandType);
       this.externSignatures.add(externSig);
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),

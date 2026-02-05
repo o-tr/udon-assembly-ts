@@ -1,41 +1,41 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
+  type ArrayAccessInstruction,
+  type ArrayAssignmentInstruction,
   AssignmentInstruction,
-  BinaryOpInstruction,
-  CallInstruction,
+  type BinaryOpInstruction,
+  type CallInstruction,
   CastInstruction,
-  ConditionalJumpInstruction,
+  type ConditionalJumpInstruction,
   CopyInstruction,
-  MethodCallInstruction,
-  PropertyGetInstruction,
-  PropertySetInstruction,
+  type MethodCallInstruction,
+  type PropertyGetInstruction,
+  type PropertySetInstruction,
   type ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
-  UnaryOpInstruction,
+  type UnaryOpInstruction,
 } from "../../tac_instruction.js";
+import type { TemporaryOperand, VariableOperand } from "../../tac_operand.js";
 import {
   createTemporary,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
-import type { TemporaryOperand, VariableOperand } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import { getOperandType } from "./constant_folding.js";
 import {
   countTempUses,
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
-  InstWithDest,
-  InstWithDestSrc,
+  type InstWithDest,
+  type InstWithDestSrc,
   isCopyFromTemp,
   isPureProducer,
   rewriteOperands,
   rewriteProducerDest,
 } from "../utils/instructions.js";
 import { sameUdonType } from "../utils/operands.js";
+import { getOperandType } from "./constant_folding.js";
 
 export const copyOnWriteTemporaries = (
   instructions: TACInstruction[],
@@ -111,7 +111,10 @@ export const copyOnWriteTemporaries = (
     aliasGroups.set(temp.id, new Set([temp.id]));
   };
 
-  const setAlias = (aliasTemp: TemporaryOperand, targetTemp: TemporaryOperand) => {
+  const setAlias = (
+    aliasTemp: TemporaryOperand,
+    targetTemp: TemporaryOperand,
+  ) => {
     ensureAlias(targetTemp);
     removeAlias(aliasTemp.id);
     aliasMap.set(aliasTemp.id, targetTemp);
@@ -276,7 +279,11 @@ export const copyOnWriteTemporaries = (
       const array = rewriteOperand(assign.array);
       const index = rewriteOperand(assign.index);
       const value = rewriteOperand(assign.value);
-      if (array !== assign.array || index !== assign.index || value !== assign.value) {
+      if (
+        array !== assign.array ||
+        index !== assign.index ||
+        value !== assign.value
+      ) {
         return new (assign.constructor as typeof ArrayAssignmentInstruction)(
           array,
           index,

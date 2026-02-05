@@ -1,5 +1,9 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
-import { ArrayTypeSymbol, ExternTypes, ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
+import {
+  ExternTypes,
+  ObjectType,
+  PrimitiveTypes,
+} from "../../../frontend/type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -8,11 +12,9 @@ import {
   type BinaryExpressionNode,
   type BlockStatementNode,
   type CallExpressionNode,
-  type ClassDeclarationNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
-  type IdentifierNode,
   type IfStatementNode,
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
@@ -29,11 +31,9 @@ import {
   CallInstruction,
   CopyInstruction,
   LabelInstruction,
-  MethodCallInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
-  createLabel,
   createVariable,
   type TACOperand,
   TACOperandKind,
@@ -81,10 +81,7 @@ export function visitInlineConstructor(
     if (!prop.initializer) continue;
     const previousSerializeFieldState = this.inSerializeFieldInitializer;
     this.inSerializeFieldInitializer = !!prop.isSerializeField;
-    const propVar = createVariable(
-      `${instancePrefix}_${prop.name}`,
-      prop.type,
-    );
+    const propVar = createVariable(`${instancePrefix}_${prop.name}`, prop.type);
     const value = this.visitExpression(prop.initializer);
     this.inSerializeFieldInitializer = previousSerializeFieldState;
     this.instructions.push(new AssignmentInstruction(propVar, value));
@@ -320,9 +317,7 @@ export function collectRecursiveLocals(
   return Array.from(locals.entries()).map(([name, type]) => ({ name, type }));
 }
 
-export function emitRecursivePrologue(
-  this: ASTToTACConverter,
-): void {
+export function emitRecursivePrologue(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
   if (!context) return;
 
@@ -351,9 +346,7 @@ export function emitRecursivePrologue(
   }
 }
 
-export function emitRecursiveEpilogue(
-  this: ASTToTACConverter,
-): void {
+export function emitRecursiveEpilogue(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
   if (!context) return;
 

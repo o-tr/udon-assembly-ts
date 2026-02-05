@@ -4,21 +4,13 @@
 
 import type { TACInstruction } from "../../ir/tac_instruction.js";
 import type { UdonInstruction } from "../udon_instruction.js";
-import { convertInstruction } from "./convert_instruction.js";
-import {
-  getOperandAddress,
-  getOperandTypeName,
-  getOperandUdonType,
-  getReturnValueAddress,
-  normalizeVariableName,
-  pushOperand,
-} from "./operands.js";
 import {
   formatInt64HexConstant,
   getConstantKey,
   getConstantKeyPayload,
   parseConstantKey,
 } from "./constants.js";
+import { convertInstruction } from "./convert_instruction.js";
 import {
   getConvertExternSignature,
   getConvertMethodName,
@@ -27,6 +19,14 @@ import {
   getExternSymbol,
   getTruncateExternSignature,
 } from "./externs.js";
+import {
+  getOperandAddress,
+  getOperandTypeName,
+  getOperandUdonType,
+  getReturnValueAddress,
+  normalizeVariableName,
+  pushOperand,
+} from "./operands.js";
 import {
   extractInlineClassName,
   getOperandTsTypeName,

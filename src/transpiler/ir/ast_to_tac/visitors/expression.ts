@@ -1,7 +1,6 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
-  ArrayTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -11,10 +10,10 @@ import {
 import {
   type ArrayAccessExpressionNode,
   type ArrayLiteralExpressionNode,
-  type AssignmentExpressionNode,
   type ASTNode,
   ASTNodeKind,
   type AsExpressionNode,
+  type AssignmentExpressionNode,
   type BinaryExpressionNode,
   type CallExpressionNode,
   type ConditionalExpressionNode,
@@ -29,12 +28,11 @@ import {
   type PropertyAccessExpressionNode,
   type SuperExpressionNode,
   type TemplateExpressionNode,
-  type TemplatePart,
   type ThisExpressionNode,
   type TypeofExpressionNode,
   UdonType,
-  type UpdateExpressionNode,
   type UnaryExpressionNode,
+  type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
   ArrayAccessInstruction,
@@ -42,7 +40,6 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
-  CastInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
@@ -53,20 +50,15 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
-  type ConstantOperand,
   createConstant,
-  createTemporary,
   createVariable,
   type TACOperand,
-  TACOperandKind,
-  type TemporaryOperand,
-  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function visitExpression(
   this: ASTToTACConverter,
-  node: ASTNode
+  node: ASTNode,
 ): TACOperand {
   switch (node.kind) {
     case ASTNodeKind.BinaryExpression:
@@ -76,9 +68,7 @@ export function visitExpression(
     case ASTNodeKind.UpdateExpression:
       return this.visitUpdateExpression(node as UpdateExpressionNode);
     case ASTNodeKind.ConditionalExpression:
-      return this.visitConditionalExpression(
-        node as ConditionalExpressionNode,
-      );
+      return this.visitConditionalExpression(node as ConditionalExpressionNode);
     case ASTNodeKind.NullCoalescingExpression:
       return this.visitNullCoalescingExpression(
         node as NullCoalescingExpressionNode,
@@ -120,9 +110,7 @@ export function visitExpression(
         node as PropertyAccessExpressionNode,
       );
     case ASTNodeKind.ArrayAccessExpression:
-      return this.visitArrayAccessExpression(
-        node as ArrayAccessExpressionNode,
-      );
+      return this.visitArrayAccessExpression(node as ArrayAccessExpressionNode);
     case ASTNodeKind.ThisExpression:
       return this.visitThisExpression(node as ThisExpressionNode);
     default:
@@ -132,7 +120,7 @@ export function visitExpression(
 
 export function visitBinaryExpression(
   this: ASTToTACConverter,
-  node: BinaryExpressionNode
+  node: BinaryExpressionNode,
 ): TACOperand {
   if (node.operator === "===") {
     node = { ...node, operator: "==" };
@@ -223,7 +211,7 @@ export function visitBinaryExpression(
 
 export function visitShortCircuitAnd(
   this: ASTToTACConverter,
-  node: BinaryExpressionNode
+  node: BinaryExpressionNode,
 ): TACOperand {
   const endLabel = this.newLabel("and_end");
 
@@ -245,7 +233,7 @@ export function visitShortCircuitAnd(
 
 export function visitShortCircuitOr(
   this: ASTToTACConverter,
-  node: BinaryExpressionNode
+  node: BinaryExpressionNode,
 ): TACOperand {
   const result = this.newTemp(PrimitiveTypes.boolean);
   const shortCircuitLabel = this.newLabel("or_short");
@@ -273,7 +261,7 @@ export function visitShortCircuitOr(
 
 export function visitUnaryExpression(
   this: ASTToTACConverter,
-  node: UnaryExpressionNode
+  node: UnaryExpressionNode,
 ): TACOperand {
   const operand = this.visitExpression(node.operand);
   const resultType = this.getOperandType(operand);
@@ -293,9 +281,7 @@ export function visitConditionalExpression(
   const falseLabel = this.newLabel("cond_false");
   const endLabel = this.newLabel("cond_end");
 
-  this.instructions.push(
-    new ConditionalJumpInstruction(condition, falseLabel),
-  );
+  this.instructions.push(new ConditionalJumpInstruction(condition, falseLabel));
 
   const trueVal = this.visitExpression(node.whenTrue);
   const result = this.newTemp(this.getOperandType(trueVal));
@@ -323,9 +309,7 @@ export function visitNullCoalescingExpression(
   this.instructions.push(
     new BinaryOpInstruction(isNull, left, "==", nullConstant),
   );
-  this.instructions.push(
-    new ConditionalJumpInstruction(isNull, notNullLabel),
-  );
+  this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
   this.instructions.push(new CopyInstruction(result, right));
@@ -339,7 +323,7 @@ export function visitNullCoalescingExpression(
 
 export function visitTemplateExpression(
   this: ASTToTACConverter,
-  node: TemplateExpressionNode
+  node: TemplateExpressionNode,
 ): TACOperand {
   const mergedParts = this.mergeTemplateParts(node.parts);
   const folded = this.tryFoldTemplateExpression(mergedParts);
@@ -423,14 +407,14 @@ export function visitArrayLiteralExpression(
 
 export function visitLiteral(
   this: ASTToTACConverter,
-  node: LiteralNode
+  node: LiteralNode,
 ): TACOperand {
   return createConstant(node.value, node.type);
 }
 
 export function visitIdentifier(
   this: ASTToTACConverter,
-  node: IdentifierNode
+  node: IdentifierNode,
 ): TACOperand {
   if (node.name === "undefined") {
     return createConstant(null, ObjectType);
@@ -503,8 +487,7 @@ export function visitArrayAccessExpression(
     return result;
   }
 
-  const elementType =
-    this.getArrayElementType(array) ?? PrimitiveTypes.single;
+  const elementType = this.getArrayElementType(array) ?? PrimitiveTypes.single;
   const result = this.newTemp(elementType);
   this.instructions.push(new ArrayAccessInstruction(result, array, index));
   return result;
@@ -609,9 +592,7 @@ export function visitPropertyAccessExpression(
       this.currentClassName
     ) {
       const classNode = this.classMap.get(this.currentClassName);
-      const prop = classNode?.properties.find(
-        (p) => p.name === node.property,
-      );
+      const prop = classNode?.properties.find((p) => p.name === node.property);
       if (prop) resultType = prop.type;
     }
     const result = this.newTemp(resultType ?? PrimitiveTypes.single);
@@ -626,14 +607,14 @@ export function visitPropertyAccessExpression(
 
 export function visitThisExpression(
   this: ASTToTACConverter,
-  _node: ThisExpressionNode
+  _node: ThisExpressionNode,
 ): TACOperand {
   return createVariable("this", ObjectType);
 }
 
 export function visitSuperExpression(
   this: ASTToTACConverter,
-  _node: SuperExpressionNode
+  _node: SuperExpressionNode,
 ): TACOperand {
   return createVariable("this", ObjectType);
 }
@@ -674,9 +655,7 @@ export function visitObjectLiteralExpression(
       const spreadValue = this.visitExpression(prop.value);
       const spreadToken = this.wrapDataToken(spreadValue);
       this.instructions.push(
-        new MethodCallInstruction(undefined, listResult, "Add", [
-          spreadToken,
-        ]),
+        new MethodCallInstruction(undefined, listResult, "Add", [spreadToken]),
       );
       continue;
     }
@@ -695,7 +674,7 @@ export function visitObjectLiteralExpression(
 
 export function visitDeleteExpression(
   this: ASTToTACConverter,
-  node: DeleteExpressionNode
+  node: DeleteExpressionNode,
 ): TACOperand {
   if (node.target.kind === ASTNodeKind.PropertyAccessExpression) {
     const propAccess = node.target as PropertyAccessExpressionNode;
@@ -784,9 +763,7 @@ export function visitOptionalChainingExpression(
   const notNullLabel = this.newLabel("opt_notnull");
   const endLabel = this.newLabel("opt_end");
   const result = this.newTemp(ObjectType);
-  this.instructions.push(
-    new ConditionalJumpInstruction(isNull, notNullLabel),
-  );
+  this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
   this.instructions.push(
     new AssignmentInstruction(result, createConstant(null, ObjectType)),
   );
@@ -803,7 +780,7 @@ export function visitOptionalChainingExpression(
 
 export function visitAsExpression(
   this: ASTToTACConverter,
-  node: AsExpressionNode
+  node: AsExpressionNode,
 ): TACOperand {
   const operand = this.visitExpression(node.expression);
   const targetTypeText = node.targetType.trim();
@@ -818,14 +795,14 @@ export function visitAsExpression(
 
 export function visitNameofExpression(
   this: ASTToTACConverter,
-  node: NameofExpressionNode
+  node: NameofExpressionNode,
 ): TACOperand {
   return createConstant(node.name, PrimitiveTypes.string);
 }
 
 export function visitTypeofExpression(
   this: ASTToTACConverter,
-  node: TypeofExpressionNode
+  node: TypeofExpressionNode,
 ): TACOperand {
   const typeNameConst = createConstant(node.typeName, PrimitiveTypes.string);
   const result = this.newTemp(ExternTypes.systemType);

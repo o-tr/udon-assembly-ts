@@ -4,7 +4,7 @@ import type { TACToUdonConverter } from "./converter.js";
 
 export function getExternSymbol(
   this: TACToUdonConverter,
-  signature: string
+  signature: string,
 ): string {
   const existing = this.externSymbolBySignature.get(signature);
   if (existing) return existing;
@@ -16,7 +16,8 @@ export function getExternSymbol(
 
 export function getExternForBinaryOp(
   this: TACToUdonConverter,
-  operator: string, typeStr: string
+  operator: string,
+  typeStr: string,
 ): string {
   let methodName: string;
   let returnType = typeStr;
@@ -80,16 +81,13 @@ export function getExternForBinaryOp(
       throw new Error(`Unsupported binary operator: ${operator}`);
   }
 
-  return createUdonExternSignature(
-    methodName,
-    [typeStr, typeStr],
-    returnType,
-  );
+  return createUdonExternSignature(methodName, [typeStr, typeStr], returnType);
 }
 
 export function getExternForUnaryOp(
   this: TACToUdonConverter,
-  operator: string, operandType: string
+  operator: string,
+  operandType: string,
 ): string {
   let methodName: string;
 
@@ -131,7 +129,7 @@ export function getConvertExternSignature(
 
 export function getConvertMethodName(
   this: TACToUdonConverter,
-  targetType: string
+  targetType: string,
 ): string {
   switch (targetType) {
     case "Int16":
@@ -157,9 +155,7 @@ export function getConvertMethodName(
   }
 }
 
-export function getTruncateExternSignature(
-  this: TACToUdonConverter,
-): string {
+export function getTruncateExternSignature(this: TACToUdonConverter): string {
   const externSig = resolveExternSignature(
     "SystemMath",
     "Truncate",

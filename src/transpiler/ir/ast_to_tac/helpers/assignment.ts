@@ -14,12 +14,11 @@ import {
   type AssignmentExpressionNode,
   type IdentifierNode,
   type PropertyAccessExpressionNode,
-  type UpdateExpressionNode,
   UdonType,
+  type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
   ArrayAssignmentInstruction,
-  AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
   CopyInstruction,
@@ -29,7 +28,6 @@ import {
 import {
   type ConstantOperand,
   createConstant,
-  createVariable,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
@@ -39,7 +37,8 @@ import type { ASTToTACConverter } from "../converter.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
-  target: ASTNode, value: TACOperand
+  target: ASTNode,
+  value: TACOperand,
 ): TACOperand {
   if (target.kind === ASTNodeKind.ArrayAccessExpression) {
     const arrayAccess = target as ArrayAccessExpressionNode;
@@ -48,10 +47,7 @@ export function assignToTarget(
     const arrayType = this.getOperandType(array);
     if (arrayType instanceof CollectionTypeSymbol) {
       this.instructions.push(
-        new MethodCallInstruction(undefined, array, "set_Item", [
-          index,
-          value,
-        ]),
+        new MethodCallInstruction(undefined, array, "set_Item", [index, value]),
       );
       return value;
     }
@@ -61,16 +57,11 @@ export function assignToTarget(
     ) {
       const token = this.wrapDataToken(value);
       this.instructions.push(
-        new MethodCallInstruction(undefined, array, "set_Item", [
-          index,
-          token,
-        ]),
+        new MethodCallInstruction(undefined, array, "set_Item", [index, token]),
       );
       return value;
     }
-    this.instructions.push(
-      new ArrayAssignmentInstruction(array, index, value),
-    );
+    this.instructions.push(new ArrayAssignmentInstruction(array, index, value));
     return value;
   }
 
@@ -161,7 +152,7 @@ export function visitAssignmentExpression(
 
 export function visitUpdateExpression(
   this: ASTToTACConverter,
-  node: UpdateExpressionNode
+  node: UpdateExpressionNode,
 ): TACOperand {
   const oldValue = this.visitExpression(node.operand);
   const delta = createConstant(1, PrimitiveTypes.int32);
@@ -204,7 +195,7 @@ export function coerceConstantToType(
 
 export function getArrayElementType(
   this: ASTToTACConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): TypeSymbol | null {
   if (
     operand.kind === TACOperandKind.Variable ||
@@ -223,7 +214,7 @@ export function getArrayElementType(
 
 export function wrapDataToken(
   this: ASTToTACConverter,
-  value: TACOperand
+  value: TACOperand,
 ): TACOperand {
   const valueType = this.getOperandType(value);
   if (valueType.name === ExternTypes.dataToken.name) {
@@ -243,7 +234,7 @@ export function wrapDataToken(
 
 export function getOperandType(
   this: ASTToTACConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): TypeSymbol {
   switch (operand.kind) {
     case TACOperandKind.Variable:
@@ -258,7 +249,7 @@ export function getOperandType(
 
 export function isNullableType(
   this: ASTToTACConverter,
-  type: TypeSymbol
+  type: TypeSymbol,
 ): boolean {
   switch (type.udonType) {
     case UdonType.Boolean:
@@ -281,7 +272,7 @@ export function isNullableType(
 
 export function isStatementNode(
   this: ASTToTACConverter,
-  node: ASTNode
+  node: ASTNode,
 ): boolean {
   return (
     node.kind === ASTNodeKind.VariableDeclaration ||

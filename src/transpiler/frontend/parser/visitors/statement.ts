@@ -68,9 +68,7 @@ export function visitNode(
     case ts.SyntaxKind.Block:
       return this.visitBlock(node as ts.Block);
     case ts.SyntaxKind.ExpressionStatement:
-      return this.visitExpression(
-        (node as ts.ExpressionStatement).expression,
-      );
+      return this.visitExpression((node as ts.ExpressionStatement).expression);
     case ts.SyntaxKind.ReturnStatement:
       return this.visitReturnStatement(node as ts.ReturnStatement);
     case ts.SyntaxKind.ClassDeclaration:
@@ -378,7 +376,9 @@ export function visitDoWhileStatement(
   };
 }
 
-export function visitBreakStatement(this: TypeScriptParser): BreakStatementNode {
+export function visitBreakStatement(
+  this: TypeScriptParser,
+): BreakStatementNode {
   return {
     kind: ASTNodeKind.BreakStatement,
   };
@@ -451,7 +451,9 @@ export function visitForStatement(
       : this.visitExpression(node.initializer as ts.Expression)
     : undefined;
 
-  const condition = node.condition ? this.visitExpression(node.condition) : undefined;
+  const condition = node.condition
+    ? this.visitExpression(node.condition)
+    : undefined;
   const incrementor = node.incrementor
     ? this.visitExpression(node.incrementor)
     : undefined;

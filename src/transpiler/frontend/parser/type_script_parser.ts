@@ -7,72 +7,72 @@ import { ErrorCollector } from "../../errors/error_collector.js";
 import { EnumRegistry } from "../enum_registry.js";
 import { SymbolTable } from "../symbol_table.js";
 import { TypeMapper } from "../type_mapper.js";
-import { ASTNodeKind, type ASTNode, type ProgramNode } from "../types.js";
+import { type ASTNode, ASTNodeKind, type ProgramNode } from "../types.js";
 import {
-  mapTypeWithGenerics,
-  isStringTypeNode,
-  resolveGenericParam,
-  parseGenericType,
-  inferType,
-} from "./types.js";
-import {
-  warnEnumInitializer,
+  createUnsupportedExpressionPlaceholder,
   reportTypeError,
   reportUnsupportedNode,
-  createUnsupportedExpressionPlaceholder,
+  warnEnumInitializer,
 } from "./errors.js";
 import {
-  visitNode,
-  visitVariableStatement,
-  visitTypeAliasDeclaration,
-  visitIfStatement,
-  visitWhileStatement,
-  visitSwitchStatement,
-  visitDoWhileStatement,
-  visitBreakStatement,
-  visitContinueStatement,
-  visitReturnStatement,
-  visitTryStatement,
-  visitThrowStatement,
-  visitForStatement,
-  visitForOfStatement,
-  visitBlock,
-} from "./visitors/statement.js";
-import {
-  visitExpression,
-  visitBinaryExpression,
-  visitConditionalExpression,
-  visitTemplateExpression,
-  visitUnaryExpression,
-  visitUpdateExpression,
-  visitFunctionLiteralExpression,
-  visitRegexLiteralExpression,
-  visitNonNullExpression,
-  visitIdentifier,
-  visitThisExpression,
-  visitSuperExpression,
-  visitObjectLiteralExpression,
-  visitDeleteExpression,
-  visitPropertyAccessExpression,
-  visitOptionalChainingExpression,
-  visitLiteral,
-  visitCallExpression,
-  visitNameofExpression,
-  visitTypeofExpression,
-  visitElementAccessExpression,
-  visitNewExpression,
-  visitArrayLiteralExpression,
-  visitParenthesizedExpression,
-  visitAsExpression,
-} from "./visitors/expression.js";
+  inferType,
+  isStringTypeNode,
+  mapTypeWithGenerics,
+  parseGenericType,
+  resolveGenericParam,
+} from "./types.js";
 import {
   visitClassDeclaration,
-  visitInterfaceDeclaration,
   visitDecorator,
-  visitPropertyDeclaration,
-  visitMethodDeclaration,
   visitEnumDeclaration,
+  visitInterfaceDeclaration,
+  visitMethodDeclaration,
+  visitPropertyDeclaration,
 } from "./visitors/declaration.js";
+import {
+  visitArrayLiteralExpression,
+  visitAsExpression,
+  visitBinaryExpression,
+  visitCallExpression,
+  visitConditionalExpression,
+  visitDeleteExpression,
+  visitElementAccessExpression,
+  visitExpression,
+  visitFunctionLiteralExpression,
+  visitIdentifier,
+  visitLiteral,
+  visitNameofExpression,
+  visitNewExpression,
+  visitNonNullExpression,
+  visitObjectLiteralExpression,
+  visitOptionalChainingExpression,
+  visitParenthesizedExpression,
+  visitPropertyAccessExpression,
+  visitRegexLiteralExpression,
+  visitSuperExpression,
+  visitTemplateExpression,
+  visitThisExpression,
+  visitTypeofExpression,
+  visitUnaryExpression,
+  visitUpdateExpression,
+} from "./visitors/expression.js";
+import {
+  visitBlock,
+  visitBreakStatement,
+  visitContinueStatement,
+  visitDoWhileStatement,
+  visitForOfStatement,
+  visitForStatement,
+  visitIfStatement,
+  visitNode,
+  visitReturnStatement,
+  visitSwitchStatement,
+  visitThrowStatement,
+  visitTryStatement,
+  visitTypeAliasDeclaration,
+  visitVariableStatement,
+  visitWhileStatement,
+} from "./visitors/statement.js";
 
 export class TypeScriptParser {
   symbolTable: SymbolTable;
@@ -150,7 +150,8 @@ export class TypeScriptParser {
   warnEnumInitializer = warnEnumInitializer;
   reportTypeError = reportTypeError;
   reportUnsupportedNode = reportUnsupportedNode;
-  createUnsupportedExpressionPlaceholder = createUnsupportedExpressionPlaceholder;
+  createUnsupportedExpressionPlaceholder =
+    createUnsupportedExpressionPlaceholder;
 
   visitNode = visitNode;
   visitVariableStatement = visitVariableStatement;

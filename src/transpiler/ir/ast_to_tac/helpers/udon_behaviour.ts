@@ -7,7 +7,6 @@ import {
   type IdentifierNode,
   type PropertyAccessExpressionNode,
 } from "../../../frontend/types.js";
-import type { UdonBehaviourClassLayout } from "../../udon_behaviour_layout.js";
 import {
   BinaryOpInstruction,
   ConditionalJumpInstruction,
@@ -17,11 +16,8 @@ import {
   PropertyGetInstruction,
   ReturnInstruction,
 } from "../../tac_instruction.js";
-import {
-  createLabel,
-  createVariable,
-  type TACOperand,
-} from "../../tac_operand.js";
+import { createLabel, createVariable } from "../../tac_operand.js";
+import type { UdonBehaviourClassLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function isUdonBehaviourType(
@@ -133,9 +129,7 @@ export function emitOnDeserializationForFieldChangeCallbacks(
       new BinaryOpInstruction(changed, currentVal, "!=", prevVar),
     );
     const skipLabel = this.newLabel("fcb_skip");
-    this.instructions.push(
-      new ConditionalJumpInstruction(changed, skipLabel),
-    );
+    this.instructions.push(new ConditionalJumpInstruction(changed, skipLabel));
     this.instructions.push(new CopyInstruction(prevVar, currentVal));
     if (prop.fieldChangeCallback) {
       this.instructions.push(

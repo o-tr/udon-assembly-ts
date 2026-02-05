@@ -5,8 +5,8 @@ import type {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import { TACInstructionKind } from "../../tac_instruction.js";
-import { TACOperandKind } from "../../tac_operand.js";
 import type { LabelOperand } from "../../tac_operand.js";
+import { TACOperandKind } from "../../tac_operand.js";
 
 export type BasicBlock = {
   id: number;

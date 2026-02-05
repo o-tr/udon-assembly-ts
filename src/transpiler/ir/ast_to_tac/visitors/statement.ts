@@ -1,6 +1,10 @@
-import { getVrcEventDefinition } from "../../../vrc/event_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
-import { ArrayTypeSymbol, ExternTypes, ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
+import {
+  ArrayTypeSymbol,
+  ExternTypes,
+  ObjectType,
+  PrimitiveTypes,
+} from "../../../frontend/type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -20,6 +24,7 @@ import {
   type VariableDeclarationNode,
   type WhileStatementNode,
 } from "../../../frontend/types.js";
+import { getVrcEventDefinition } from "../../../vrc/event_registry.js";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -31,22 +36,18 @@ import {
   MethodCallInstruction,
   PropertyGetInstruction,
   ReturnInstruction,
-  UnconditionalJumpInstruction,
   type TACInstruction,
+  UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
   createLabel,
   createVariable,
   type TACOperand,
-  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
-export function visitStatement(
-  this: ASTToTACConverter,
-  node: ASTNode
-): void {
+export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
     case ASTNodeKind.VariableDeclaration:
       this.visitVariableDeclaration(node as VariableDeclarationNode);
@@ -108,7 +109,7 @@ export function visitStatement(
 
 export function visitVariableDeclaration(
   this: ASTToTACConverter,
-  node: VariableDeclarationNode
+  node: VariableDeclarationNode,
 ): void {
   const dest = createVariable(node.name, node.type, { isLocal: true });
 
@@ -125,15 +126,13 @@ export function visitVariableDeclaration(
 
 export function visitIfStatement(
   this: ASTToTACConverter,
-  node: IfStatementNode
+  node: IfStatementNode,
 ): void {
   const condition = this.visitExpression(node.condition);
   const elseLabel = this.newLabel("else");
   const endLabel = this.newLabel("endif");
 
-  this.instructions.push(
-    new ConditionalJumpInstruction(condition, elseLabel),
-  );
+  this.instructions.push(new ConditionalJumpInstruction(condition, elseLabel));
 
   // Then branch
   this.visitStatement(node.thenBranch);
@@ -151,7 +150,7 @@ export function visitIfStatement(
 
 export function visitWhileStatement(
   this: ASTToTACConverter,
-  node: WhileStatementNode
+  node: WhileStatementNode,
 ): void {
   const startLabel = this.newLabel("while_start");
   const endLabel = this.newLabel("while_end");
@@ -180,7 +179,7 @@ export function visitWhileStatement(
 
 export function visitForStatement(
   this: ASTToTACConverter,
-  node: ForStatementNode
+  node: ForStatementNode,
 ): void {
   if (node.initializer) {
     if (this.isStatementNode(node.initializer)) {
@@ -197,9 +196,7 @@ export function visitForStatement(
 
   if (node.condition) {
     const condition = this.visitExpression(node.condition);
-    this.instructions.push(
-      new ConditionalJumpInstruction(condition, endLabel),
-    );
+    this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
   }
 
   const continueLabel = this.newLabel("for_continue");
@@ -221,7 +218,7 @@ export function visitForStatement(
 
 export function visitForOfStatement(
   this: ASTToTACConverter,
-  node: ForOfStatementNode
+  node: ForOfStatementNode,
 ): void {
   const iterableOperand = this.visitExpression(node.iterable);
   const indexVar = this.newTemp(PrimitiveTypes.int32);
@@ -335,7 +332,7 @@ export function visitForOfStatement(
 
 export function visitSwitchStatement(
   this: ASTToTACConverter,
-  node: SwitchStatementNode
+  node: SwitchStatementNode,
 ): void {
   const endLabel = this.newLabel("switch_end");
   const switchValue = this.visitExpression(node.expression);
@@ -387,7 +384,7 @@ export function visitSwitchStatement(
 
 export function visitDoWhileStatement(
   this: ASTToTACConverter,
-  node: DoWhileStatementNode
+  node: DoWhileStatementNode,
 ): void {
   const startLabel = this.newLabel("do_start");
   const conditionLabel = this.newLabel("do_condition");
@@ -411,20 +408,18 @@ export function visitDoWhileStatement(
 
 export function visitBreakStatement(
   this: ASTToTACConverter,
-  _node: BreakStatementNode
+  _node: BreakStatementNode,
 ): void {
   const context = this.loopContextStack[this.loopContextStack.length - 1];
   if (!context) {
     throw new Error("Break statement used outside of loop or switch");
   }
-  this.instructions.push(
-    new UnconditionalJumpInstruction(context.breakLabel),
-  );
+  this.instructions.push(new UnconditionalJumpInstruction(context.breakLabel));
 }
 
 export function visitContinueStatement(
   this: ASTToTACConverter,
-  _node: ContinueStatementNode
+  _node: ContinueStatementNode,
 ): void {
   const context = this.loopContextStack[this.loopContextStack.length - 1];
   if (!context) {
@@ -437,7 +432,7 @@ export function visitContinueStatement(
 
 export function visitReturnStatement(
   this: ASTToTACConverter,
-  node: ReturnStatementNode
+  node: ReturnStatementNode,
 ): void {
   if (this.currentRecursiveContext) {
     const valueOperand = node.value
@@ -475,7 +470,7 @@ export function visitReturnStatement(
 
 export function visitBlockStatement(
   this: ASTToTACConverter,
-  node: BlockStatementNode
+  node: BlockStatementNode,
 ): void {
   this.symbolTable.enterScope();
   this.scanDeclarations(node.statements);
@@ -487,7 +482,7 @@ export function visitBlockStatement(
 
 export function visitInlineBlockStatement(
   this: ASTToTACConverter,
-  node: BlockStatementNode
+  node: BlockStatementNode,
 ): void {
   for (const statement of node.statements) {
     this.visitStatement(statement);
@@ -496,7 +491,7 @@ export function visitInlineBlockStatement(
 
 export function visitClassDeclaration(
   this: ASTToTACConverter,
-  node: ClassDeclarationNode
+  node: ClassDeclarationNode,
 ): void {
   this.currentClassName = node.name;
   const classLayout = this.getUdonBehaviourLayout(node.name);
@@ -606,14 +601,14 @@ export function visitClassDeclaration(
 
 export function visitEnumDeclaration(
   this: ASTToTACConverter,
-  _node: EnumDeclarationNode
+  _node: EnumDeclarationNode,
 ): void {
   // enums are compile-time only
 }
 
 export function visitTryCatchStatement(
   this: ASTToTACConverter,
-  node: TryCatchStatementNode
+  node: TryCatchStatementNode,
 ): void {
   const tryId = this.tryCounter++;
   const errorFlagName = `__error_flag_${tryId}`;
@@ -649,10 +644,7 @@ export function visitTryCatchStatement(
     ),
   );
   this.instructions.push(
-    new AssignmentInstruction(
-      errorValueVar,
-      createConstant(null, ObjectType),
-    ),
+    new AssignmentInstruction(errorValueVar, createConstant(null, ObjectType)),
   );
 
   const previousInstructions = this.instructions;
@@ -715,7 +707,7 @@ export function visitTryCatchStatement(
 
 export function visitThrowStatement(
   this: ASTToTACConverter,
-  node: ThrowStatementNode
+  node: ThrowStatementNode,
 ): void {
   const context = this.tryContextStack[this.tryContextStack.length - 1];
   if (!context) {
@@ -727,9 +719,7 @@ export function visitThrowStatement(
       ["object"],
       "void",
     );
-    this.instructions.push(
-      new CallInstruction(undefined, externSig, [value]),
-    );
+    this.instructions.push(new CallInstruction(undefined, externSig, [value]));
     const inlineContext =
       this.inlineReturnStack[this.inlineReturnStack.length - 1];
     if (inlineContext) {
@@ -751,14 +741,12 @@ export function visitThrowStatement(
     ),
   );
   this.instructions.push(new CopyInstruction(context.errorValue, value));
-  this.instructions.push(
-    new UnconditionalJumpInstruction(context.errorTarget),
-  );
+  this.instructions.push(new UnconditionalJumpInstruction(context.errorTarget));
 }
 
 export function isDestructureBlock(
   this: ASTToTACConverter,
-  node: BlockStatementNode
+  node: BlockStatementNode,
 ): boolean {
   if (node.statements.length === 0) return false;
   if (

@@ -1,6 +1,9 @@
-import type { TACOperand } from "../../tac_operand.js";
+import type {
+  TACOperand,
+  TemporaryOperand,
+  VariableOperand,
+} from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
-import type { TemporaryOperand, VariableOperand } from "../../tac_operand.js";
 
 export const livenessKey = (operand: TACOperand | undefined): string | null => {
   if (!operand) return null;

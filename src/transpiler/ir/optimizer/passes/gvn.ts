@@ -1,18 +1,21 @@
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
-  BinaryOpInstruction,
-  CastInstruction,
+  type BinaryOpInstruction,
+  type CastInstruction,
   CopyInstruction,
   TACInstructionKind,
-  UnaryOpInstruction,
+  type UnaryOpInstruction,
 } from "../../tac_instruction.js";
-import type { TACOperand } from "../../tac_operand.js";
+import type {
+  TACOperand,
+  TemporaryOperand,
+  VariableOperand,
+} from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
-import type { TemporaryOperand, VariableOperand } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import { getOperandType } from "./constant_folding.js";
-import { operandKey, sameUdonType } from "../utils/operands.js";
 import { getDefinedOperandForReuse } from "../utils/instructions.js";
+import { operandKey, sameUdonType } from "../utils/operands.js";
+import { getOperandType } from "./constant_folding.js";
 
 type ExprValue = { operandKey: string; operand: TACOperand };
 
@@ -232,7 +235,14 @@ const gvnOperandKey = (operand: TACOperand | undefined): string | null => {
 };
 
 const isCommutativeOperator = (op: string): boolean => {
-  return op === "+" || op === "*" || op === "==" || op === "!=" || op === "&&" || op === "||";
+  return (
+    op === "+" ||
+    op === "*" ||
+    op === "==" ||
+    op === "!=" ||
+    op === "&&" ||
+    op === "||"
+  );
 };
 
 const binaryExprKey = (inst: BinaryOpInstruction): string => {

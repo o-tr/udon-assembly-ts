@@ -1,7 +1,7 @@
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   AssignmentInstruction,
-  BinaryOpInstruction,
+  type BinaryOpInstruction,
   type TACInstruction,
   TACInstructionKind,
   UnaryOpInstruction,
@@ -11,7 +11,7 @@ import type {
   ConstantValue,
   TACOperand,
 } from "../../tac_operand.js";
-import { TACOperandKind, createConstant } from "../../tac_operand.js";
+import { createConstant, TACOperandKind } from "../../tac_operand.js";
 import { getOperandType } from "./constant_folding.js";
 
 export const booleanSimplification = (
@@ -68,10 +68,7 @@ export const booleanSimplification = (
       if (leftConst !== null) {
         if (leftConst) {
           result.push(
-            new AssignmentInstruction(
-              bin.dest,
-              createConstant(true, destType),
-            ),
+            new AssignmentInstruction(bin.dest, createConstant(true, destType)),
           );
         } else {
           result.push(new AssignmentInstruction(bin.dest, bin.right));
@@ -81,10 +78,7 @@ export const booleanSimplification = (
       if (rightConst !== null) {
         if (rightConst) {
           result.push(
-            new AssignmentInstruction(
-              bin.dest,
-              createConstant(true, destType),
-            ),
+            new AssignmentInstruction(bin.dest, createConstant(true, destType)),
           );
         } else {
           result.push(new AssignmentInstruction(bin.dest, bin.left));

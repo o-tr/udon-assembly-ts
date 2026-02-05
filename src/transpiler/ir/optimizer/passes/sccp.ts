@@ -1,38 +1,38 @@
-import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
+  type ArrayAccessInstruction,
+  type ArrayAssignmentInstruction,
   AssignmentInstruction,
-  BinaryOpInstruction,
-  CallInstruction,
+  type BinaryOpInstruction,
+  type CallInstruction,
   CastInstruction,
-  ConditionalJumpInstruction,
-  LabelInstruction,
-  MethodCallInstruction,
-  PropertyGetInstruction,
-  PropertySetInstruction,
+  type ConditionalJumpInstruction,
+  type LabelInstruction,
+  type MethodCallInstruction,
+  type PropertyGetInstruction,
+  type PropertySetInstruction,
   type ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
-  UnaryOpInstruction,
+  type UnaryOpInstruction,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import type {
   ConstantOperand,
-  ConstantValue,
   LabelOperand,
   TACOperand,
   VariableOperand,
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import type { BasicBlock } from "../analysis/cfg.js";
-import { resolveReachableSuccs } from "./jumps.js";
+import {
+  getDefinedOperandForReuse,
+  type InstWithDestSrc,
+} from "../utils/instructions.js";
+import { stringifyConstant } from "../utils/operands.js";
 import { isTruthyConstant } from "./boolean_simplification.js";
 import { getOperandType } from "./constant_folding.js";
+import { resolveReachableSuccs } from "./jumps.js";
 import { isCopyOnWriteCandidateType } from "./temp_reuse.js";
-import { stringifyConstant } from "../utils/operands.js";
-import { getDefinedOperandForReuse, InstWithDestSrc } from "../utils/instructions.js";
 
 export type LatticeValue =
   | { kind: "unknown" }
@@ -375,7 +375,10 @@ const replaceInstructionWithLatticeMap = (
     const call = inst as MethodCallInstruction;
     const object = replace(call.object);
     const args = call.args.map((arg) => replace(arg));
-    if (object !== call.object || args.some((arg, idx) => arg !== call.args[idx])) {
+    if (
+      object !== call.object ||
+      args.some((arg, idx) => arg !== call.args[idx])
+    ) {
       return new (call.constructor as typeof MethodCallInstruction)(
         call.dest,
         object,
@@ -441,7 +444,11 @@ const replaceInstructionWithLatticeMap = (
     const array = replace(assign.array);
     const index = replace(assign.index);
     const value = replace(assign.value);
-    if (array !== assign.array || index !== assign.index || value !== assign.value) {
+    if (
+      array !== assign.array ||
+      index !== assign.index ||
+      value !== assign.value
+    ) {
       return new (assign.constructor as typeof ArrayAssignmentInstruction)(
         array,
         index,

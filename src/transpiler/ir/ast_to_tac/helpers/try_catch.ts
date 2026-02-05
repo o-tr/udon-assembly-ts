@@ -1,19 +1,22 @@
 import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
-import { UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
-  CallInstruction,
+  type CallInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
-  MethodCallInstruction,
-  PropertyGetInstruction,
+  type MethodCallInstruction,
+  type PropertyGetInstruction,
   type TACInstruction,
   TACInstructionKind,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
-import { createConstant, type TACOperand, type VariableOperand } from "../../tac_operand.js";
+import {
+  createConstant,
+  type TACOperand,
+  type VariableOperand,
+} from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function emitTryInstructionsWithChecks(
@@ -58,7 +61,7 @@ export function emitTryInstructionsWithChecks(
 
 export function getCheckOperand(
   this: ASTToTACConverter,
-  inst: TACInstruction
+  inst: TACInstruction,
 ): TACOperand | null {
   switch (inst.kind) {
     case TACInstructionKind.Call:

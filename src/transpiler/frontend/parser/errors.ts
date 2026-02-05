@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import type * as ts from "typescript";
 import { TranspileError } from "../../errors/transpile_errors.js";
 import { ASTNodeKind, type LiteralNode } from "../types.js";
 import type { TypeScriptParser } from "./type_script_parser.js";

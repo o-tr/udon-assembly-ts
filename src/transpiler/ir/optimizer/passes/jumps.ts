@@ -1,20 +1,20 @@
 import {
   ConditionalJumpInstruction,
-  LabelInstruction,
+  type LabelInstruction,
   type TACInstruction,
   TACInstructionKind,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
+import type { ConstantOperand } from "../../tac_operand.js";
 import {
   createLabel,
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
-import { buildCFG } from "../analysis/cfg.js";
 import type { BasicBlock } from "../analysis/cfg.js";
+import { buildCFG } from "../analysis/cfg.js";
 import { isTruthyConstant } from "./boolean_simplification.js";
-import type { ConstantOperand } from "../../tac_operand.js";
 
 export const simplifyJumps = (
   instructions: TACInstruction[],
@@ -243,7 +243,9 @@ export const resolveReachableSuccs = (
       label.kind === TACOperandKind.Label
         ? labelToBlock.get((label as LabelOperand).name)
         : undefined;
-    const truthy = conditionConst ? isTruthyConstant(conditionConst.value) : null;
+    const truthy = conditionConst
+      ? isTruthyConstant(conditionConst.value)
+      : null;
     if (truthy === true) {
       return fallthrough !== undefined ? [fallthrough] : [];
     }

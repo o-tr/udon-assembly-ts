@@ -1,15 +1,13 @@
 import type { TACInstruction } from "../../tac_instruction.js";
-import { TACInstructionKind } from "../../tac_instruction.js";
-import type { TACOperand } from "../../tac_operand.js";
 import type { BasicBlock } from "../analysis/cfg.js";
 import { buildCFG, isBlockTerminator } from "../analysis/cfg.js";
-import { numberSetEqual } from "../utils/sets.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
   isPureProducer,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
+import { numberSetEqual } from "../utils/sets.js";
 
 export const computeDominators = (cfg: {
   blocks: BasicBlock[];
@@ -51,7 +49,9 @@ export const computeDominators = (cfg: {
   return dom;
 };
 
-export const collectLoops = (cfg: { blocks: BasicBlock[] }): Array<{
+export const collectLoops = (cfg: {
+  blocks: BasicBlock[];
+}): Array<{
   headerId: number;
   blocks: Set<number>;
   preheaderId: number;

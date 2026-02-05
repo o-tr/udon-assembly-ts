@@ -2,201 +2,134 @@
  * Convert AST to TAC (Three-Address Code)
  */
 
-import { resolveExternSignature } from "../../codegen/extern_signatures.js";
-import {
-  computeTypeId,
-  typeMetadataRegistry,
-} from "../../codegen/type_metadata_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
-import { isTsOnlyCallExpression } from "../../frontend/ts_only.js";
 import { TypeMapper } from "../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../frontend/type_symbols.js";
+import { PrimitiveTypes } from "../../frontend/type_symbols.js";
 import {
-  ArrayTypeSymbol,
-  CollectionTypeSymbol,
-  DataListTypeSymbol,
-  ExternTypes,
-  ObjectType,
-  PrimitiveTypes,
-} from "../../frontend/type_symbols.js";
-import {
-  type ArrayAccessExpressionNode,
-  type ArrayLiteralExpressionNode,
   type ASTNode,
   ASTNodeKind,
-  type AsExpressionNode,
-  type AssignmentExpressionNode,
-  type BinaryExpressionNode,
-  type BlockStatementNode,
-  type BreakStatementNode,
-  type CallExpressionNode,
   type ClassDeclarationNode,
-  type ConditionalExpressionNode,
-  type ContinueStatementNode,
-  type DeleteExpressionNode,
-  type DoWhileStatementNode,
-  type EnumDeclarationNode,
-  type ForOfStatementNode,
-  type ForStatementNode,
-  type IdentifierNode,
-  type IfStatementNode,
-  type LiteralNode,
-  type NameofExpressionNode,
-  type NullCoalescingExpressionNode,
-  type ObjectLiteralExpressionNode,
-  type ObjectLiteralPropertyNode,
-  type OptionalChainingExpressionNode,
   type ProgramNode,
-  type PropertyAccessExpressionNode,
-  type ReturnStatementNode,
-  type SuperExpressionNode,
-  type SwitchStatementNode,
-  type TemplateExpressionNode,
-  type TemplatePart,
-  type ThisExpressionNode,
-  type ThrowStatementNode,
-  type TryCatchStatementNode,
-  type TypeofExpressionNode,
-  UdonType,
-  type UnaryExpressionNode,
-  type UpdateExpressionNode,
   type VariableDeclarationNode,
-  type WhileStatementNode,
 } from "../../frontend/types.js";
 import { getVrcEventDefinition } from "../../vrc/event_registry.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
-  AssignmentInstruction,
-  BinaryOpInstruction,
-  CallInstruction,
-  CastInstruction,
-  ConditionalJumpInstruction,
-  CopyInstruction,
   LabelInstruction,
-  MethodCallInstruction,
-  PropertyGetInstruction,
-  PropertySetInstruction,
   ReturnInstruction,
   type TACInstruction,
-  TACInstructionKind,
-  UnaryOpInstruction,
-  UnconditionalJumpInstruction,
 } from "../tac_instruction.js";
 import {
-  type ConstantOperand,
-  createConstant,
   createLabel,
   createTemporary,
-  createVariable,
   type TACOperand,
-  TACOperandKind,
-  type TemporaryOperand,
   type VariableOperand,
 } from "../tac_operand.js";
 import type {
-  UdonBehaviourClassLayout,
   UdonBehaviourLayouts,
   UdonBehaviourMethodLayout,
 } from "../udon_behaviour_layout.js";
 import {
-  visitStatement,
-  visitVariableDeclaration,
-  visitIfStatement,
-  visitWhileStatement,
-  visitForStatement,
-  visitForOfStatement,
-  visitSwitchStatement,
-  visitDoWhileStatement,
-  visitBreakStatement,
-  visitContinueStatement,
-  visitReturnStatement,
-  visitBlockStatement,
-  visitInlineBlockStatement,
-  visitClassDeclaration,
-  visitTryCatchStatement,
-  visitThrowStatement,
-  visitEnumDeclaration,
-  isDestructureBlock,
-} from "./visitors/statement.js";
-import {
-  visitExpression,
-  visitBinaryExpression,
-  visitShortCircuitAnd,
-  visitShortCircuitOr,
-  visitUnaryExpression,
-  visitConditionalExpression,
-  visitNullCoalescingExpression,
-  visitTemplateExpression,
-  visitArrayLiteralExpression,
-  visitLiteral,
-  visitIdentifier,
-  visitArrayAccessExpression,
-  visitPropertyAccessExpression,
-  visitThisExpression,
-  visitSuperExpression,
-  visitObjectLiteralExpression,
-  visitDeleteExpression,
-  visitOptionalChainingExpression,
-  visitAsExpression,
-  visitNameofExpression,
-  visitTypeofExpression,
-} from "./visitors/expression.js";
-import {
-  visitCallExpression,
-  getUdonTypeConverterTargetType,
-  visitObjectStaticCall,
-  visitNumberStaticCall,
-  visitMathStaticCall,
-  visitArrayStaticCall,
-  resolveStaticExtern,
-} from "./visitors/call.js";
-import {
   assignToTarget,
-  visitAssignmentExpression,
-  visitUpdateExpression,
   coerceConstantToType,
   getArrayElementType,
-  wrapDataToken,
   getOperandType,
   isNullableType,
   isStatementNode,
+  visitAssignmentExpression,
+  visitUpdateExpression,
+  wrapDataToken,
 } from "./helpers/assignment.js";
 import {
-  emitDictionaryFromProperties,
+  emitDataDictionaryEntries,
   emitDataDictionaryKeys,
   emitDataDictionaryValues,
-  emitDataDictionaryEntries,
+  emitDictionaryFromProperties,
 } from "./helpers/data_dictionary.js";
+import { requireExternSignature } from "./helpers/extern.js";
 import {
-  isUdonBehaviourType,
-  getUdonBehaviourLayout,
-  isUdonBehaviourPropertyAccess,
-  resolveFieldChangeCallback,
-  emitOnDeserializationForFieldChangeCallbacks,
-} from "./helpers/udon_behaviour.js";
-import {
+  collectRecursiveLocals,
+  emitRecursiveEpilogue,
+  emitRecursivePrologue,
+  mapInlineProperty,
+  maybeTrackInlineInstanceAssignment,
+  tryResolveUnitySelfReference,
   visitInlineConstructor,
   visitInlineStaticMethodCall,
-  maybeTrackInlineInstanceAssignment,
-  mapInlineProperty,
-  tryResolveUnitySelfReference,
-  collectRecursiveLocals,
-  emitRecursivePrologue,
-  emitRecursiveEpilogue,
 } from "./helpers/inline.js";
+import {
+  coerceSwitchOperand,
+  isSwitchComparableType,
+} from "./helpers/switch.js";
+import {
+  mergeTemplateParts,
+  templateLiteralValueToString,
+  tryFoldTemplateExpression,
+} from "./helpers/template.js";
 import {
   emitTryInstructionsWithChecks,
   getCheckOperand,
 } from "./helpers/try_catch.js";
 import {
-  mergeTemplateParts,
-  tryFoldTemplateExpression,
-  templateLiteralValueToString,
-} from "./helpers/template.js";
-import { coerceSwitchOperand, isSwitchComparableType } from "./helpers/switch.js";
-import { requireExternSignature } from "./helpers/extern.js";
+  emitOnDeserializationForFieldChangeCallbacks,
+  getUdonBehaviourLayout,
+  isUdonBehaviourPropertyAccess,
+  isUdonBehaviourType,
+  resolveFieldChangeCallback,
+} from "./helpers/udon_behaviour.js";
+import {
+  getUdonTypeConverterTargetType,
+  resolveStaticExtern,
+  visitArrayStaticCall,
+  visitCallExpression,
+  visitMathStaticCall,
+  visitNumberStaticCall,
+  visitObjectStaticCall,
+} from "./visitors/call.js";
+import {
+  visitArrayAccessExpression,
+  visitArrayLiteralExpression,
+  visitAsExpression,
+  visitBinaryExpression,
+  visitConditionalExpression,
+  visitDeleteExpression,
+  visitExpression,
+  visitIdentifier,
+  visitLiteral,
+  visitNameofExpression,
+  visitNullCoalescingExpression,
+  visitObjectLiteralExpression,
+  visitOptionalChainingExpression,
+  visitPropertyAccessExpression,
+  visitShortCircuitAnd,
+  visitShortCircuitOr,
+  visitSuperExpression,
+  visitTemplateExpression,
+  visitThisExpression,
+  visitTypeofExpression,
+  visitUnaryExpression,
+} from "./visitors/expression.js";
+import {
+  isDestructureBlock,
+  visitBlockStatement,
+  visitBreakStatement,
+  visitClassDeclaration,
+  visitContinueStatement,
+  visitDoWhileStatement,
+  visitEnumDeclaration,
+  visitForOfStatement,
+  visitForStatement,
+  visitIfStatement,
+  visitInlineBlockStatement,
+  visitReturnStatement,
+  visitStatement,
+  visitSwitchStatement,
+  visitThrowStatement,
+  visitTryCatchStatement,
+  visitVariableDeclaration,
+  visitWhileStatement,
+} from "./visitors/statement.js";
 
 /**
  * AST to TAC converter

@@ -2,12 +2,12 @@ import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   AssignmentInstruction,
-  BinaryOpInstruction,
-  CallInstruction,
-  CastInstruction,
-  UnaryOpInstruction,
+  type BinaryOpInstruction,
+  type CallInstruction,
+  type CastInstruction,
   type TACInstruction,
   TACInstructionKind,
+  type UnaryOpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
@@ -212,10 +212,7 @@ export const tryFoldPureExternCall = (
   const casted = evaluateCastValue(result, destType);
   if (casted === null || typeof casted !== "number") return null;
 
-  return new AssignmentInstruction(
-    inst.dest,
-    createConstant(casted, destType),
-  );
+  return new AssignmentInstruction(inst.dest, createConstant(casted, destType));
 };
 
 /**

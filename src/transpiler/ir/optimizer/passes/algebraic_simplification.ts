@@ -1,10 +1,10 @@
 import {
   AssignmentInstruction,
-  BinaryOpInstruction,
-  CastInstruction,
+  type BinaryOpInstruction,
+  type CastInstruction,
   type TACInstruction,
   TACInstructionKind,
-  UnaryOpInstruction,
+  type UnaryOpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,

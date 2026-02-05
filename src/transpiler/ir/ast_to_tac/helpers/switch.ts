@@ -1,7 +1,11 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
 import { CastInstruction } from "../../tac_instruction.js";
-import { type ConstantOperand, type TACOperand, TACOperandKind } from "../../tac_operand.js";
+import {
+  type ConstantOperand,
+  type TACOperand,
+  TACOperandKind,
+} from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function coerceSwitchOperand(
@@ -34,7 +38,7 @@ export function coerceSwitchOperand(
 
 export function isSwitchComparableType(
   this: ASTToTACConverter,
-  type: TypeSymbol
+  type: TypeSymbol,
 ): boolean {
   switch (type.udonType) {
     case UdonType.Int32:

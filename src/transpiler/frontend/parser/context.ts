@@ -1,4 +1,4 @@
-import * as ts from "typescript";
+import type * as ts from "typescript";
 import type { ErrorCollector } from "../../errors/error_collector.js";
 import type { EnumRegistry } from "../enum_registry.js";
 import type { SymbolTable } from "../symbol_table.js";

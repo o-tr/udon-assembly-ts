@@ -1,11 +1,14 @@
+import type {
+  CallInstruction,
+  MethodCallInstruction as MethodCallInstructionType,
+} from "../../tac_instruction.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
+  type ArrayAccessInstruction,
+  type ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CastInstruction,
   type ConditionalJumpInstruction,
-  CopyInstruction,
   type MethodCallInstruction,
   type PropertyGetInstruction,
   type PropertySetInstruction,
@@ -14,20 +17,13 @@ import {
   TACInstructionKind,
   UnaryOpInstruction,
 } from "../../tac_instruction.js";
-import type {
-  CallInstruction,
-  MethodCallInstruction as MethodCallInstructionType,
-} from "../../tac_instruction.js";
-import type { TACOperand } from "../../tac_operand.js";
+import type { TACOperand, TemporaryOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
-import type { TemporaryOperand } from "../../tac_operand.js";
 
 export type InstWithDestSrc = { dest: TACOperand; src: TACOperand };
 export type InstWithDest = { dest: TACOperand };
 
-export const getUsedOperandsForReuse = (
-  inst: TACInstruction,
-): TACOperand[] => {
+export const getUsedOperandsForReuse = (inst: TACInstruction): TACOperand[] => {
   switch (inst.kind) {
     case TACInstructionKind.Assignment:
     case TACInstructionKind.Copy:
@@ -203,7 +199,12 @@ export const rewriteProducerDest = (
     }
     case TACInstructionKind.BinaryOp: {
       const bin = inst as BinaryOpInstruction;
-      return new BinaryOpInstruction(newDest, bin.left, bin.operator, bin.right);
+      return new BinaryOpInstruction(
+        newDest,
+        bin.left,
+        bin.operator,
+        bin.right,
+      );
     }
     case TACInstructionKind.UnaryOp: {
       const un = inst as UnaryOpInstruction;

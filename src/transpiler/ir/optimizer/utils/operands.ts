@@ -1,6 +1,10 @@
-import type { TACOperand } from "../../tac_operand.js";
+import type {
+  ConstantOperand,
+  TACOperand,
+  TemporaryOperand,
+  VariableOperand,
+} from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
-import type { ConstantOperand, TemporaryOperand, VariableOperand } from "../../tac_operand.js";
 
 export const sameOperand = (a: TACOperand, b: TACOperand): boolean => {
   if (a.kind !== b.kind) return false;

@@ -2,7 +2,8 @@ import type { TACToUdonConverter } from "./converter.js";
 
 export function getConstantKey(
   this: TACToUdonConverter,
-  value: unknown, typeName: string
+  value: unknown,
+  typeName: string,
 ): string {
   if (typeof value === "bigint") {
     return `${typeName}|bigint:${value.toString()}`;
@@ -12,7 +13,7 @@ export function getConstantKey(
 
 export function parseConstantKey(
   this: TACToUdonConverter,
-  key: string
+  key: string,
 ): unknown {
   const payload = this.getConstantKeyPayload(key);
   if (payload.startsWith("bigint:")) {
@@ -23,7 +24,7 @@ export function parseConstantKey(
 
 export function getConstantKeyPayload(
   this: TACToUdonConverter,
-  key: string
+  key: string,
 ): string {
   const sep = key.indexOf("|");
   if (sep === -1) {
@@ -34,7 +35,8 @@ export function getConstantKeyPayload(
 
 export function formatInt64HexConstant(
   this: TACToUdonConverter,
-  key: string, rawValue: unknown
+  key: string,
+  rawValue: unknown,
 ): string {
   let value: bigint;
 

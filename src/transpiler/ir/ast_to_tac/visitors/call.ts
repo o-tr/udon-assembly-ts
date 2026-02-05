@@ -3,21 +3,17 @@ import { computeTypeId } from "../../../codegen/type_metadata_registry.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
-  ArrayTypeSymbol,
-  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
-  type ASTNode,
   ASTNodeKind,
   type CallExpressionNode,
   type IdentifierNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
-  type TypeofExpressionNode,
   UdonType,
 } from "../../../frontend/types.js";
 import {
@@ -30,14 +26,11 @@ import {
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
-  PropertySetInstruction,
-  UnaryOpInstruction,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
   createConstant,
-  createVariable,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
@@ -45,7 +38,7 @@ import type { ASTToTACConverter } from "../converter.js";
 
 export function visitCallExpression(
   this: ASTToTACConverter,
-  node: CallExpressionNode
+  node: CallExpressionNode,
 ): TACOperand {
   const callee = node.callee;
   if (isTsOnlyCallExpression(node)) {
@@ -161,9 +154,7 @@ export function visitCallExpression(
         ["GameObject"],
         "GameObject",
       );
-      this.instructions.push(
-        new CallInstruction(instResult, externSig, args),
-      );
+      this.instructions.push(new CallInstruction(instResult, externSig, args));
       return instResult;
     }
     if (node.isNew && (calleeName === "Vector3" || calleeName === "Color")) {
@@ -246,10 +237,7 @@ export function visitCallExpression(
       propAccess.object.kind === ASTNodeKind.Identifier &&
       (propAccess.object as IdentifierNode).name === "Array"
     ) {
-      const arrayResult = this.visitArrayStaticCall(
-        propAccess.property,
-        args,
-      );
+      const arrayResult = this.visitArrayStaticCall(propAccess.property, args);
       if (arrayResult) return arrayResult;
     }
 
@@ -405,10 +393,7 @@ export function visitCallExpression(
       );
       return createConstant(0, PrimitiveTypes.void);
     }
-    if (
-      propAccess.property === "SendCustomNetworkEvent" &&
-      args.length === 2
-    ) {
+    if (propAccess.property === "SendCustomNetworkEvent" && args.length === 2) {
       const externSig = this.requireExternSignature(
         "UdonBehaviour",
         "SendCustomNetworkEvent",

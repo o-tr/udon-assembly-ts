@@ -4,19 +4,14 @@ import {
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
+import type { VariableOperand } from "../../tac_operand.js";
 import {
   type ConstantOperand,
   createConstant,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
-import type { VariableOperand } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import {
-  computeDominators,
-  collectLoops,
-  preheaderInsertIndex,
-} from "./licm.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -27,6 +22,11 @@ import {
   getOperandType,
   isNumericUdonType,
 } from "./constant_folding.js";
+import {
+  collectLoops,
+  computeDominators,
+  preheaderInsertIndex,
+} from "./licm.js";
 
 export const optimizeInductionVariables = (
   instructions: TACInstruction[],

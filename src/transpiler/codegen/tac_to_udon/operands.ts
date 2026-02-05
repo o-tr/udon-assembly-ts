@@ -11,7 +11,7 @@ import type { TACToUdonConverter } from "./converter.js";
 
 export function pushOperand(
   this: TACToUdonConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): void {
   const addr = this.getOperandAddress(operand);
   this.instructions.push(new PushInstruction(addr));
@@ -19,7 +19,7 @@ export function pushOperand(
 
 export function getOperandAddress(
   this: TACToUdonConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): number | string {
   switch (operand.kind) {
     case TACOperandKind.Variable: {
@@ -69,7 +69,7 @@ export function getOperandAddress(
 
 export function getOperandTypeName(
   this: TACToUdonConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): string {
   switch (operand.kind) {
     case TACOperandKind.Variable:
@@ -87,15 +87,14 @@ export function getOperandTypeName(
 
 export function getOperandUdonType(
   this: TACToUdonConverter,
-  operand: TACOperand
+  operand: TACOperand,
 ): string {
   switch (operand.kind) {
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary:
       return (
-        (operand as { type?: { udonType?: string } }).type?.udonType ??
-        "Object"
+        (operand as { type?: { udonType?: string } }).type?.udonType ?? "Object"
       );
     default:
       return "Object";
@@ -104,7 +103,7 @@ export function getOperandUdonType(
 
 export function normalizeVariableName(
   this: TACToUdonConverter,
-  name: string
+  name: string,
 ): string {
   if (name === "this") {
     return "__this";
@@ -114,7 +113,7 @@ export function normalizeVariableName(
 
 export function getReturnValueAddress(
   this: TACToUdonConverter,
-  name: string
+  name: string,
 ): void {
   const normalizedName = this.normalizeVariableName(name);
   if (!this.variableAddresses.has(normalizedName)) {
