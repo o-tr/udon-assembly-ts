@@ -183,7 +183,12 @@ export function visitBinaryExpression(
     return createConstant(false, PrimitiveTypes.boolean);
   }
   if (node.operator === ">>>") {
-    return this.visitExpression(node.left);
+    const left = this.visitExpression(node.left);
+    const right = this.visitExpression(node.right);
+    const resultType = this.getOperandType(left);
+    const result = this.newTemp(resultType);
+    this.instructions.push(new BinaryOpInstruction(result, left, ">>", right));
+    return result;
   }
   if (node.operator === "&&") {
     return this.visitShortCircuitAnd(node);
@@ -391,8 +396,76 @@ export function visitArrayLiteralExpression(
 
   for (const element of node.elements) {
     if (element.kind === "spread") {
-      // TODO: support spread elements by concatenating arrays/lists instead of ignoring them.
-      this.visitExpression(element.value);
+      const spreadValue = this.visitExpression(element.value);
+      const spreadType = this.getOperandType(spreadValue);
+      const isDataList =
+        spreadType.udonType === UdonType.DataList ||
+        spreadType.name === ExternTypes.dataList.name;
+      const isArray = spreadType.udonType === UdonType.Array;
+      if (!isDataList && !isArray) {
+        throw new Error("Array spread expects an array or DataList");
+      }
+
+      const indexVar = this.newTemp(PrimitiveTypes.int32);
+      const lengthVar = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new AssignmentInstruction(
+          indexVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(
+        new PropertyGetInstruction(
+          lengthVar,
+          spreadValue,
+          isDataList ? "Count" : "length",
+        ),
+      );
+
+      const loopStart = this.newLabel("array_spread_start");
+      const loopContinue = this.newLabel("array_spread_continue");
+      const loopEnd = this.newLabel("array_spread_end");
+
+      this.instructions.push(new LabelInstruction(loopStart));
+      const condTemp = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+      );
+      this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
+
+      const elementType = isDataList
+        ? spreadType instanceof DataListTypeSymbol
+          ? spreadType.elementType
+          : ObjectType
+        : (this.getArrayElementType(spreadValue) ?? ObjectType);
+      const itemTemp = this.newTemp(elementType);
+      if (isDataList) {
+        this.instructions.push(
+          new MethodCallInstruction(itemTemp, spreadValue, "get_Item", [
+            indexVar,
+          ]),
+        );
+      } else {
+        this.instructions.push(
+          new ArrayAccessInstruction(itemTemp, spreadValue, indexVar),
+        );
+      }
+      const token = this.wrapDataToken(itemTemp);
+      this.instructions.push(
+        new MethodCallInstruction(undefined, listResult, "Add", [token]),
+      );
+
+      this.instructions.push(new LabelInstruction(loopContinue));
+      this.instructions.push(
+        new BinaryOpInstruction(
+          indexVar,
+          indexVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      this.instructions.push(new LabelInstruction(loopEnd));
       continue;
     }
     const value = this.visitExpression(element.value);

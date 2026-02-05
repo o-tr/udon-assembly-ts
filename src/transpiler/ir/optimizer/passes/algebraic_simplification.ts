@@ -6,6 +6,7 @@ import {
   TACInstructionKind,
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
+import { UdonType } from "../../../frontend/types.js";
 import {
   type ConstantOperand,
   createConstant,
@@ -78,7 +79,11 @@ export const trySimplifyBinaryOp = (
     if (isOneConstant(left)) {
       return new AssignmentInstruction(inst.dest, right);
     }
-    if (isZeroConstant(right) || isZeroConstant(left)) {
+    const destUdonType = getOperandType(inst.dest).udonType;
+    if (
+      (isZeroConstant(right) || isZeroConstant(left)) &&
+      !isFloatingPointType(destUdonType)
+    ) {
       return new AssignmentInstruction(
         inst.dest,
         createConstant(0, getOperandType(inst.dest)),
@@ -129,4 +134,8 @@ export const isOneConstant = (operand: TACOperand): boolean => {
     typeof (operand as ConstantOperand).value === "number" &&
     (operand as ConstantOperand).value === 1
   );
+};
+
+const isFloatingPointType = (udonType: UdonType): boolean => {
+  return udonType === UdonType.Single || udonType === UdonType.Double;
 };

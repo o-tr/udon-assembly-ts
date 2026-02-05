@@ -168,7 +168,13 @@ export class TACToUdonConverter {
       ...Array.from(this.tempAddresses.entries()).map(
         ([id, addr]): [string, number] => [`__t${id}`, addr],
       ),
-      ...Array.from(this.constantAddresses.entries()),
+      ...Array.from(this.constantAddresses.entries()).map(
+        ([key, addr]): [string, number] => {
+          const type = this.constantTypes.get(key) ?? "Single";
+          const name = `__const_${addr}_System${type}`;
+          return [name, addr];
+        },
+      ),
     );
     return new Map(entries);
   }

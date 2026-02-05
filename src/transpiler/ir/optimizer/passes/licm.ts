@@ -116,6 +116,54 @@ export const preheaderInsertIndex = (
   return preheader.end + 1;
 };
 
+const orderHoistedByDeps = (
+  hoisted: TACInstruction[],
+  preheaderDefKeys: Set<string>,
+): { ordered: TACInstruction[]; defined: Set<string> } => {
+  const defKeys = new Map<TACInstruction, string | null>();
+  const defKeySet = new Set<string>();
+  for (const inst of hoisted) {
+    const defKey = livenessKey(getDefinedOperandForReuse(inst));
+    defKeys.set(inst, defKey ?? null);
+    if (defKey) defKeySet.add(defKey);
+  }
+
+  const remaining = hoisted.slice();
+  const ordered: TACInstruction[] = [];
+  const defined = new Set(preheaderDefKeys);
+
+  let progress = true;
+  while (remaining.length > 0 && progress) {
+    progress = false;
+    for (let i = 0; i < remaining.length; ) {
+      const inst = remaining[i];
+      const deps = new Set(
+        getUsedOperandsForReuse(inst)
+          .map((op) => livenessKey(op))
+          .filter((key): key is string => !!key && defKeySet.has(key)),
+      );
+      let ready = true;
+      for (const dep of deps) {
+        if (!defined.has(dep)) {
+          ready = false;
+          break;
+        }
+      }
+      if (ready) {
+        ordered.push(inst);
+        const defKey = defKeys.get(inst);
+        if (defKey) defined.add(defKey);
+        remaining.splice(i, 1);
+        progress = true;
+      } else {
+        i += 1;
+      }
+    }
+  }
+
+  return { ordered, defined };
+};
+
 export const performLICM = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
@@ -135,6 +183,7 @@ export const performLICM = (
 
   const hoistMap = new Map<number, TACInstruction[]>();
   const hoistIndices = new Set<number>();
+  const preheaderDefKeys = new Map<number, Set<string>>();
 
   for (const loop of loops) {
     const loopBlocks = loop.blocks;
@@ -214,14 +263,22 @@ export const performLICM = (
     if (candidates.length === 0) continue;
 
     candidates.sort((a, b) => a.index - b.index);
-    for (const candidate of candidates) {
-      hoistIndices.add(candidate.index);
-    }
 
     const hoisted = candidates.map((candidate) => candidate.inst);
     if (hoisted.length > 0) {
       const existing = hoistMap.get(preheaderInsert) ?? [];
-      hoistMap.set(preheaderInsert, existing.concat(hoisted));
+      const existingDefs = preheaderDefKeys.get(preheaderInsert) ?? new Set();
+      const { ordered, defined } = orderHoistedByDeps(hoisted, existingDefs);
+      if (ordered.length > 0) {
+        hoistMap.set(preheaderInsert, existing.concat(ordered));
+        preheaderDefKeys.set(preheaderInsert, defined);
+        const orderedSet = new Set(ordered);
+        for (const candidate of candidates) {
+          if (orderedSet.has(candidate.inst)) {
+            hoistIndices.add(candidate.index);
+          }
+        }
+      }
     }
   }
 

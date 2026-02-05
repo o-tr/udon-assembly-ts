@@ -130,10 +130,10 @@ export const sccpAndPrune = (
         const condInst = inst as ConditionalJumpInstruction;
         const condConst = resolveLatticeConstant(condInst.condition, working);
         const truthy = condConst ? isTruthyConstant(condConst.value) : null;
-        if (truthy === false) {
+        if (truthy === true) {
           result.push(new UnconditionalJumpInstruction(condInst.label));
-        } else if (truthy === true) {
-          // Always true; skip conditional jump (fallthrough).
+        } else if (truthy === false) {
+          // Always false; skip conditional jump (fallthrough).
         } else {
           result.push(inst);
         }

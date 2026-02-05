@@ -251,6 +251,16 @@ export function collectRecursiveLocals(
       }
       case ASTNodeKind.ForOfStatement: {
         const forOfNode = node as ForOfStatementNode;
+        if (Array.isArray(forOfNode.variable)) {
+          for (const name of forOfNode.variable) {
+            locals.set(name, ObjectType);
+          }
+        } else {
+          const mappedType = forOfNode.variableType
+            ? this.typeMapper.mapTypeScriptType(forOfNode.variableType)
+            : ObjectType;
+          locals.set(forOfNode.variable, mappedType);
+        }
         visitNode(forOfNode.iterable);
         visitNode(forOfNode.body);
         break;

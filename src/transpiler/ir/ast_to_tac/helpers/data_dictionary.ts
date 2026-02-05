@@ -21,6 +21,54 @@ export function emitDictionaryFromProperties(
   this: ASTToTACConverter,
   properties: ObjectLiteralPropertyNode[],
 ): TACOperand {
+  const hasSpread = properties.some((prop) => prop.kind === "spread");
+  if (hasSpread) {
+    const listResult = this.newTemp(ExternTypes.dataList);
+    const listCtorSig = this.requireExternSignature(
+      "DataList",
+      "ctor",
+      "method",
+      [],
+      "DataList",
+    );
+    this.instructions.push(new CallInstruction(listResult, listCtorSig, []));
+
+    let pendingProps: ObjectLiteralPropertyNode[] = [];
+    const flushPending = (): void => {
+      if (pendingProps.length === 0) return;
+      const dictSegment = this.emitDictionaryFromProperties(pendingProps);
+      const dictToken = this.wrapDataToken(dictSegment);
+      this.instructions.push(
+        new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
+      );
+      pendingProps = [];
+    };
+
+    for (const prop of properties) {
+      if (prop.kind === "spread") {
+        flushPending();
+        const spreadValue = this.visitExpression(prop.value);
+        const spreadToken = this.wrapDataToken(spreadValue);
+        this.instructions.push(
+          new MethodCallInstruction(undefined, listResult, "Add", [
+            spreadToken,
+          ]),
+        );
+        continue;
+      }
+      pendingProps.push(prop);
+    }
+    flushPending();
+
+    const mergeResult = this.newTemp(ExternTypes.dataDictionary);
+    this.instructions.push(
+      new CallInstruction(mergeResult, "DataDictionaryHelpers.Merge", [
+        listResult,
+      ]),
+    );
+    return mergeResult;
+  }
+
   const dictResult = this.newTemp(ExternTypes.dataDictionary);
   const dictCtorSig = this.requireExternSignature(
     "DataDictionary",

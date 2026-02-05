@@ -540,30 +540,30 @@ export function visitCallExpression(
     const objTemp = this.newTemp(this.getOperandType(object));
     this.instructions.push(new CopyInstruction(objTemp, object));
 
-    const isNull = this.newTemp(PrimitiveTypes.boolean);
+    const isNotNull = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
       new BinaryOpInstruction(
-        isNull,
+        isNotNull,
         objTemp,
-        "==",
+        "!=",
         createConstant(null, ObjectType),
       ),
     );
-    const notNullLabel = this.newLabel("opt_call_notnull");
+    const nullLabel = this.newLabel("opt_call_null");
     const endLabel = this.newLabel("opt_call_end");
     const callResult = this.newTemp(ObjectType);
     this.instructions.push(
-      new ConditionalJumpInstruction(isNull, notNullLabel),
+      new ConditionalJumpInstruction(isNotNull, nullLabel),
     );
 
     this.instructions.push(
-      new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
+      new MethodCallInstruction(callResult, objTemp, opt.property, args),
     );
     this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
-    this.instructions.push(new LabelInstruction(notNullLabel));
+    this.instructions.push(new LabelInstruction(nullLabel));
     this.instructions.push(
-      new MethodCallInstruction(callResult, objTemp, opt.property, args),
+      new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
     );
     this.instructions.push(new LabelInstruction(endLabel));
     return callResult;
@@ -723,7 +723,24 @@ export function visitArrayStaticCall(
       return args.length >= 1 ? args[0] : null;
     case "isArray":
       if (args.length !== 1) return null;
-      return createConstant(true, PrimitiveTypes.boolean);
+      const target = args[0];
+      const targetType = this.getOperandType(target);
+      if (
+        targetType.udonType === UdonType.Array ||
+        targetType.udonType === UdonType.DataList
+      ) {
+        return createConstant(true, PrimitiveTypes.boolean);
+      }
+      if (targetType.udonType !== UdonType.Object) {
+        return createConstant(false, PrimitiveTypes.boolean);
+      }
+      const externSig = this.resolveStaticExtern("Array", "isArray", "method");
+      if (!externSig) {
+        throw new Error("Missing extern signature for Array.isArray");
+      }
+      const result = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(new CallInstruction(result, externSig, [target]));
+      return result;
     default:
       return null;
   }

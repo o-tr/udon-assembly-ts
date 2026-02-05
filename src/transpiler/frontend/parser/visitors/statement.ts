@@ -91,7 +91,16 @@ export function visitVariableStatement(
   this: TypeScriptParser,
   node: ts.VariableStatement,
 ): ASTNode | undefined {
-  const declaration = node.declarationList.declarations[0];
+  const declarations = node.declarationList.declarations;
+  if (declarations.length > 1) {
+    this.reportUnsupportedNode(
+      node,
+      "Multiple variable declarations in a single statement are not supported",
+      "Split declarations into separate statements.",
+    );
+    return undefined;
+  }
+  const declaration = declarations[0];
   if (!declaration) return undefined;
   const isConst = !!(node.declarationList.flags & ts.NodeFlags.Const);
 
@@ -480,65 +489,95 @@ export function visitForOfStatement(
   this: TypeScriptParser,
   node: ts.ForOfStatement,
 ): ForOfStatementNode {
-  const decl = node.initializer as ts.VariableDeclarationList;
-  const varDecl = decl.declarations[0];
   const iterable = this.visitExpression(node.expression);
   this.symbolTable.enterScope();
 
-  let varName: string | string[] = varDecl.name.getText();
+  let varName: string | string[] = "";
+  let varDecl: ts.VariableDeclaration | null = null;
+  let variableTypeText: string | undefined;
   let destructureProperties:
     | Array<{ name: string; property: string }>
     | undefined;
-  if (ts.isArrayBindingPattern(varDecl.name)) {
-    varName = varDecl.name.elements
-      .map((element) =>
-        ts.isBindingElement(element) ? element.name.getText() : "",
-      )
-      .filter((name) => name.length > 0);
-    for (const name of varName) {
-      if (!this.symbolTable.hasInCurrentScope(name)) {
+  if (ts.isVariableDeclarationList(node.initializer)) {
+    const decl = node.initializer;
+    varDecl = decl.declarations[0] ?? null;
+    if (!varDecl) {
+      this.symbolTable.exitScope();
+      throw new Error("For-of statement must declare a variable");
+    }
+    variableTypeText = varDecl.type ? varDecl.type.getText() : undefined;
+    varName = varDecl.name.getText();
+    if (ts.isArrayBindingPattern(varDecl.name)) {
+      varName = varDecl.name.elements
+        .map((element) =>
+          ts.isBindingElement(element) ? element.name.getText() : "",
+        )
+        .filter((name) => name.length > 0);
+      for (const name of varName) {
+        if (!this.symbolTable.hasInCurrentScope(name)) {
+          this.symbolTable.addSymbol(
+            name,
+            this.mapTypeWithGenerics("object"),
+            false,
+            false,
+          );
+        }
+      }
+    } else if (ts.isObjectBindingPattern(varDecl.name)) {
+      const tempName = `__forof_destructure_${this.destructureCounter++}`;
+      varName = tempName;
+      if (!this.symbolTable.hasInCurrentScope(tempName)) {
         this.symbolTable.addSymbol(
-          name,
+          tempName,
           this.mapTypeWithGenerics("object"),
           false,
           false,
         );
       }
+      destructureProperties = [];
+      for (const element of varDecl.name.elements) {
+        if (!ts.isBindingElement(element)) continue;
+        const name = element.name.getText();
+        const property = element.propertyName
+          ? element.propertyName.getText()
+          : name;
+        destructureProperties.push({ name, property });
+        if (!this.symbolTable.hasInCurrentScope(name)) {
+          this.symbolTable.addSymbol(
+            name,
+            this.mapTypeWithGenerics("object"),
+            false,
+            false,
+          );
+        }
+      }
+    } else {
+      const varType = varDecl.type
+        ? this.mapTypeWithGenerics(varDecl.type.getText(), varDecl.type)
+        : this.mapTypeWithGenerics("object");
+      if (!this.symbolTable.hasInCurrentScope(varName)) {
+        this.symbolTable.addSymbol(varName, varType, false, false);
+      }
     }
-  } else if (ts.isObjectBindingPattern(varDecl.name)) {
-    const tempName = `__forof_destructure_${this.destructureCounter++}`;
-    varName = tempName;
-    if (!this.symbolTable.hasInCurrentScope(tempName)) {
+  } else {
+    const initializer = node.initializer as ts.Expression;
+    if (!ts.isIdentifier(initializer)) {
+      this.reportUnsupportedNode(
+        initializer,
+        "Unsupported for-of initializer",
+        "Use a single identifier or a variable declaration.",
+      );
+      this.symbolTable.exitScope();
+      throw new Error("Unsupported for-of initializer");
+    }
+    varName = initializer.getText();
+    if (!this.symbolTable.hasInCurrentScope(varName)) {
       this.symbolTable.addSymbol(
-        tempName,
+        varName,
         this.mapTypeWithGenerics("object"),
         false,
         false,
       );
-    }
-    destructureProperties = [];
-    for (const element of varDecl.name.elements) {
-      if (!ts.isBindingElement(element)) continue;
-      const name = element.name.getText();
-      const property = element.propertyName
-        ? element.propertyName.getText()
-        : name;
-      destructureProperties.push({ name, property });
-      if (!this.symbolTable.hasInCurrentScope(name)) {
-        this.symbolTable.addSymbol(
-          name,
-          this.mapTypeWithGenerics("object"),
-          false,
-          false,
-        );
-      }
-    }
-  } else {
-    const varType = varDecl.type
-      ? this.mapTypeWithGenerics(varDecl.type.getText(), varDecl.type)
-      : this.mapTypeWithGenerics("object");
-    if (!this.symbolTable.hasInCurrentScope(varName)) {
-      this.symbolTable.addSymbol(varName, varType, false, false);
     }
   }
 
@@ -551,7 +590,7 @@ export function visitForOfStatement(
   const result: ForOfStatementNode = {
     kind: ASTNodeKind.ForOfStatement,
     variable: varName,
-    variableType: varDecl.type ? varDecl.type.getText() : undefined,
+    variableType: variableTypeText,
     destructureProperties,
     iterable,
     body,

@@ -63,13 +63,13 @@ export function getExternForBinaryOp(
       returnType = "Boolean";
       break;
     case "&":
-      methodName = "op_LogicalAnd";
+      methodName = "op_BitwiseAnd";
       break;
     case "|":
-      methodName = "op_LogicalOr";
+      methodName = "op_BitwiseOr";
       break;
     case "^":
-      methodName = "op_LogicalXor";
+      methodName = "op_ExclusiveOr";
       break;
     case "<<":
       methodName = "op_LeftShift";
