@@ -141,6 +141,7 @@ export class ASTToTACConverter {
   labelCounter = 0;
   instanceCounter = 0;
   useStringBuilder = true;
+  stringBuilderThreshold = 6;
   symbolTable: SymbolTable;
   currentReturnVar: string | undefined;
   currentClassName: string | undefined;
@@ -190,7 +191,7 @@ export class ASTToTACConverter {
     udonBehaviourClasses?: Set<string>,
     udonBehaviourLayouts?: UdonBehaviourLayouts,
     classRegistry?: ClassRegistry,
-    options?: { useStringBuilder?: boolean },
+    options?: { useStringBuilder?: boolean; stringBuilderThreshold?: number },
   ) {
     this.symbolTable = symbolTable;
     this.enumRegistry = enumRegistry ?? new EnumRegistry();
@@ -199,6 +200,8 @@ export class ASTToTACConverter {
     this.udonBehaviourLayouts = udonBehaviourLayouts ?? new Map();
     this.classRegistry = classRegistry ?? null;
     this.useStringBuilder = options?.useStringBuilder !== false;
+    this.stringBuilderThreshold =
+      options?.stringBuilderThreshold ?? this.stringBuilderThreshold;
   }
 
   /**
