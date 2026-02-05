@@ -5,6 +5,7 @@ import {
   type BinaryOpInstruction,
   type CallInstruction,
   CastInstruction,
+  CopyInstruction,
   type ConditionalJumpInstruction,
   type LabelInstruction,
   type MethodCallInstruction,
@@ -336,15 +337,21 @@ const replaceInstructionWithLatticeMap = (
     const { dest, src } = inst as unknown as InstWithDestSrc;
     const resolved = replace(src);
     if (resolved !== src) {
+      if (inst.kind === TACInstructionKind.Copy) {
+        return new CopyInstruction(dest, resolved);
+      }
       return new AssignmentInstruction(dest, resolved);
     }
   }
 
   if (inst.kind === TACInstructionKind.Cast) {
-    const castInst = inst as unknown as InstWithDestSrc;
+    const castInst = inst as CastInstruction;
     const resolved = replace(castInst.src);
     if (resolved !== castInst.src) {
-      return new CastInstruction(castInst.dest, resolved);
+      return new (castInst.constructor as typeof CastInstruction)(
+        castInst.dest,
+        resolved,
+      );
     }
   }
 

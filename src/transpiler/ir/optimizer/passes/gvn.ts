@@ -69,6 +69,9 @@ export const globalValueNumbering = (
       if (defKey) {
         killExpressionsUsingOperand(working, defKey);
       }
+      if (isSideEffectBarrier(inst)) {
+        working.clear();
+      }
 
       if (inst.kind === TACInstructionKind.BinaryOp) {
         const bin = inst as BinaryOpInstruction;
@@ -180,6 +183,9 @@ const simulateExpressionMap = (
     if (defKey) {
       killExpressionsUsingOperand(working, defKey);
     }
+    if (isSideEffectBarrier(inst)) {
+      working.clear();
+    }
 
     if (inst.kind === TACInstructionKind.BinaryOp) {
       const bin = inst as BinaryOpInstruction;
@@ -209,6 +215,18 @@ const simulateExpressionMap = (
     }
   }
   return working;
+};
+
+const isSideEffectBarrier = (inst: TACInstruction): boolean => {
+  switch (inst.kind) {
+    case TACInstructionKind.Call:
+    case TACInstructionKind.MethodCall:
+    case TACInstructionKind.PropertySet:
+    case TACInstructionKind.ArrayAssignment:
+      return true;
+    default:
+      return false;
+  }
 };
 
 const killExpressionsUsingOperand = (
