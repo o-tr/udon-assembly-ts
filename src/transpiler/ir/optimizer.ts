@@ -1102,6 +1102,33 @@ export class TACOptimizer {
       return next;
     }
 
+    if (inst.kind === TACInstructionKind.PropertySet) {
+      const set = inst as PropertySetInstruction;
+      if (set.object.kind === TACOperandKind.Variable) {
+        next.delete((set.object as VariableOperand).name);
+      }
+      return next;
+    }
+
+    if (inst.kind === TACInstructionKind.ArrayAssignment) {
+      const assign = inst as ArrayAssignmentInstruction;
+      if (assign.array.kind === TACOperandKind.Variable) {
+        next.delete((assign.array as VariableOperand).name);
+      }
+      return next;
+    }
+
+    if (inst.kind === TACInstructionKind.MethodCall) {
+      const call = inst as MethodCallInstruction;
+      if (
+        call.object.kind === TACOperandKind.Variable &&
+        this.isCopyOnWriteCandidateType(this.getOperandType(call.object))
+      ) {
+        next.delete((call.object as VariableOperand).name);
+      }
+      // fall through to clear any defined variable via getDefinedOperandForReuse
+    }
+
     const defined = this.getDefinedOperandForReuse(inst);
     if (defined && defined.kind === TACOperandKind.Variable) {
       next.delete((defined as VariableOperand).name);
