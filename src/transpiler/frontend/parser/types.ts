@@ -1,0 +1,196 @@
+import * as ts from "typescript";
+import type { TypeSymbol } from "../type_symbols.js";
+import {
+  ArrayTypeSymbol,
+  CollectionTypeSymbol,
+  ExternTypes,
+  GenericTypeParameterSymbol,
+  ObjectType,
+  PrimitiveTypes,
+} from "../type_symbols.js";
+import type { TypeScriptParser } from "./type_script_parser.js";
+
+export function mapTypeWithGenerics(
+  this: TypeScriptParser,
+  typeText: string,
+  node?: ts.Node,
+): TypeSymbol {
+  const trimmed = typeText.trim();
+  const genericParam = this.resolveGenericParam(trimmed);
+  if (genericParam) return genericParam;
+
+  if (node && ts.isTypePredicateNode(node)) {
+    return PrimitiveTypes.boolean;
+  }
+
+  if (
+    node &&
+    (ts.isTypeQueryNode(node) ||
+      ts.isIndexedAccessTypeNode(node) ||
+      ts.isConditionalTypeNode(node) ||
+      ts.isMappedTypeNode(node) ||
+      ts.isIntersectionTypeNode(node))
+  ) {
+    return ObjectType;
+  }
+
+  if (node && ts.isTupleTypeNode(node)) {
+    return new ArrayTypeSymbol(ObjectType);
+  }
+
+  if (node && ts.isTypeLiteralNode(node)) {
+    return ExternTypes.dataDictionary;
+  }
+
+  if (node && ts.isUnionTypeNode(node)) {
+    if (node.types.every((t) => this.isStringTypeNode(t))) {
+      return PrimitiveTypes.string;
+    }
+  }
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return ExternTypes.dataDictionary;
+  }
+
+  if (trimmed.endsWith("[]")) {
+    let base = trimmed;
+    let dimensions = 0;
+    while (base.endsWith("[]")) {
+      base = base.slice(0, -2).trim();
+      dimensions += 1;
+    }
+    const elementType: TypeSymbol = this.mapTypeWithGenerics(base);
+    return new ArrayTypeSymbol(elementType, dimensions);
+  }
+
+  const genericMatch = this.parseGenericType(trimmed);
+  if (genericMatch) {
+    const { base, args } = genericMatch;
+    switch (base) {
+      case "Array":
+      case "ReadonlyArray":
+        return new ArrayTypeSymbol(
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+        );
+      case "UdonList":
+      case "List":
+        return new CollectionTypeSymbol(
+          base,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+        );
+      case "UdonQueue":
+      case "Queue":
+        return new CollectionTypeSymbol(
+          base,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+        );
+      case "UdonStack":
+      case "Stack":
+        return new CollectionTypeSymbol(
+          base,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+        );
+      case "UdonHashSet":
+      case "HashSet":
+        return new CollectionTypeSymbol(
+          base,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+        );
+      case "UdonDictionary":
+      case "Dictionary":
+        return new CollectionTypeSymbol(
+          base,
+          undefined,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+          this.mapTypeWithGenerics(args[1] ?? "object"),
+        );
+      case "Record":
+      case "Map":
+        return ExternTypes.dataDictionary;
+    }
+  }
+
+  return this.typeMapper.mapTypeScriptType(trimmed);
+}
+
+export function isStringTypeNode(
+  this: TypeScriptParser,
+  node: ts.TypeNode,
+): boolean {
+  if (node.kind === ts.SyntaxKind.StringKeyword) return true;
+  if (ts.isLiteralTypeNode(node)) {
+    return ts.isStringLiteral(node.literal);
+  }
+  if (ts.isUnionTypeNode(node)) {
+    return node.types.every((t) => this.isStringTypeNode(t));
+  }
+  return false;
+}
+
+export function resolveGenericParam(
+  this: TypeScriptParser,
+  typeText: string,
+): TypeSymbol | undefined {
+  for (let i = this.genericTypeParamStack.length - 1; i >= 0; i -= 1) {
+    const scope = this.genericTypeParamStack[i];
+    if (scope?.has(typeText)) {
+      return new GenericTypeParameterSymbol(typeText);
+    }
+  }
+  return undefined;
+}
+
+export function parseGenericType(
+  this: TypeScriptParser,
+  tsType: string,
+): { base: string; args: string[] } | null {
+  const ltIndex = tsType.indexOf("<");
+  if (ltIndex === -1 || !tsType.endsWith(">")) return null;
+  const base = tsType.slice(0, ltIndex).trim();
+  const argsRaw = tsType.slice(ltIndex + 1, -1).trim();
+  if (!argsRaw) return { base, args: [] };
+  const args: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const char of argsRaw) {
+    if (char === "<") depth += 1;
+    if (char === ">") depth -= 1;
+    if (char === "," && depth === 0) {
+      args.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim().length > 0) {
+    args.push(current.trim());
+  }
+  return { base, args };
+}
+
+export function inferType(
+  this: TypeScriptParser,
+  node: ts.Expression,
+): TypeSymbol {
+  switch (node.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+      return this.typeMapper.mapTypeScriptType("number");
+    case ts.SyntaxKind.StringLiteral:
+      return this.typeMapper.mapTypeScriptType("string");
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+      return this.typeMapper.mapTypeScriptType("boolean");
+    case ts.SyntaxKind.BigIntLiteral:
+      return this.typeMapper.mapTypeScriptType("bigint");
+    case ts.SyntaxKind.AsExpression:
+    case ts.SyntaxKind.TypeAssertionExpression: {
+      const asExpr = node as ts.AsExpression;
+      if (ts.isConstTypeReference(asExpr.type)) {
+        return this.inferType(asExpr.expression);
+      }
+      return this.mapTypeWithGenerics(asExpr.type.getText(), asExpr.type);
+    }
+    default:
+      return this.typeMapper.mapTypeScriptType("number"); // Default fallback
+  }
+}

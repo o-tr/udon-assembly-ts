@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ErrorCollector } from "../../../src/transpiler/errors/error_collector";
 import { ClassRegistry } from "../../../src/transpiler/frontend/class_registry";
 import { InheritanceValidator } from "../../../src/transpiler/frontend/inheritance_validator";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser";
+import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 
 describe("interface validation", () => {
   it("reports missing members for implements", () => {

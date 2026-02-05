@@ -1,0 +1,132 @@
+import {
+  AssignmentInstruction,
+  BinaryOpInstruction,
+  CastInstruction,
+  type TACInstruction,
+  TACInstructionKind,
+  UnaryOpInstruction,
+} from "../../tac_instruction.js";
+import {
+  type ConstantOperand,
+  createConstant,
+  type TACOperand,
+  TACOperandKind,
+} from "../../tac_operand.js";
+import { getOperandType } from "./constant_folding.js";
+
+export const algebraicSimplification = (
+  instructions: TACInstruction[],
+): TACInstruction[] => {
+  const result: TACInstruction[] = [];
+
+  for (const inst of instructions) {
+    if (inst.kind === TACInstructionKind.BinaryOp) {
+      const simplified = trySimplifyBinaryOp(inst as BinaryOpInstruction);
+      if (simplified) {
+        result.push(simplified);
+        continue;
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.UnaryOp) {
+      const simplified = trySimplifyUnaryOp(inst as UnaryOpInstruction);
+      if (simplified) {
+        result.push(simplified);
+        continue;
+      }
+    }
+
+    if (inst.kind === TACInstructionKind.Cast) {
+      const simplified = trySimplifyCast(inst as CastInstruction);
+      if (simplified) {
+        result.push(simplified);
+        continue;
+      }
+    }
+
+    result.push(inst);
+  }
+
+  return result;
+};
+
+export const trySimplifyBinaryOp = (
+  inst: BinaryOpInstruction,
+): TACInstruction | null => {
+  const left = inst.left;
+  const right = inst.right;
+
+  if (inst.operator === "+") {
+    if (isZeroConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+    if (isZeroConstant(left)) {
+      return new AssignmentInstruction(inst.dest, right);
+    }
+  }
+
+  if (inst.operator === "-") {
+    if (isZeroConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  if (inst.operator === "*") {
+    if (isOneConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+    if (isOneConstant(left)) {
+      return new AssignmentInstruction(inst.dest, right);
+    }
+    if (isZeroConstant(right) || isZeroConstant(left)) {
+      return new AssignmentInstruction(
+        inst.dest,
+        createConstant(0, getOperandType(inst.dest)),
+      );
+    }
+  }
+
+  if (inst.operator === "/") {
+    if (isOneConstant(right)) {
+      return new AssignmentInstruction(inst.dest, left);
+    }
+  }
+
+  return null;
+};
+
+export const trySimplifyUnaryOp = (
+  inst: UnaryOpInstruction,
+): TACInstruction | null => {
+  if (inst.operator === "+") {
+    return new AssignmentInstruction(inst.dest, inst.operand);
+  }
+  return null;
+};
+
+export const trySimplifyCast = (
+  inst: CastInstruction,
+): TACInstruction | null => {
+  const srcType = getOperandType(inst.src).udonType;
+  const destType = getOperandType(inst.dest).udonType;
+  if (srcType === destType) {
+    return new AssignmentInstruction(inst.dest, inst.src);
+  }
+  return null;
+};
+
+export const isZeroConstant = (operand: TACOperand): boolean => {
+  return (
+    operand.kind === TACOperandKind.Constant &&
+    typeof (operand as ConstantOperand).value === "number" &&
+    (operand as ConstantOperand).value === 0
+  );
+};
+
+export const isOneConstant = (operand: TACOperand): boolean => {
+  return (
+    operand.kind === TACOperandKind.Constant &&
+    typeof (operand as ConstantOperand).value === "number" &&
+    (operand as ConstantOperand).value === 1
+  );
+};

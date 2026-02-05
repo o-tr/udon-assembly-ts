@@ -4,7 +4,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
-import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon";
+import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { UdonInstructionKind } from "../../../src/transpiler/codegen/udon_instruction";
 import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
 import {

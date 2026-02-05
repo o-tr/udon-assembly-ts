@@ -3,12 +3,12 @@
  */
 
 import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
-import { TACToUdonConverter } from "./codegen/tac_to_udon.js";
+import { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
-import { TypeScriptParser } from "./frontend/parser.js";
+import { TypeScriptParser } from "./frontend/parser/index.js";
 import {
   ASTNodeKind,
   type ClassDeclarationNode,
@@ -19,8 +19,8 @@ import {
   computeHeapUsage,
   UASM_HEAP_LIMIT,
 } from "./heap_limits.js";
-import { ASTToTACConverter } from "./ir/ast_to_tac.js";
-import { TACOptimizer } from "./ir/optimizer.js";
+import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
+import { TACOptimizer } from "./ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
 
 /**
@@ -245,7 +245,7 @@ export {
   BatchTranspiler,
   type BatchTranspilerOptions,
 } from "./batch/batch_transpiler.js";
-export { TACToUdonConverter } from "./codegen/tac_to_udon.js";
+export { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 export { UdonAssembler } from "./codegen/udon_assembler.js";
 export * from "./codegen/udon_instruction.js";
 export { ErrorCollector } from "./errors/error_collector.js";
@@ -253,11 +253,11 @@ export * from "./errors/transpile_errors.js";
 export { ClassRegistry } from "./frontend/class_registry.js";
 export { InheritanceValidator } from "./frontend/inheritance_validator.js";
 // Export all main classes
-export { TypeScriptParser } from "./frontend/parser.js";
+export { TypeScriptParser } from "./frontend/parser/index.js";
 export { SymbolTable } from "./frontend/symbol_table.js";
 export * from "./frontend/types.js";
-export { ASTToTACConverter } from "./ir/ast_to_tac.js";
-export { TACOptimizer } from "./ir/optimizer.js";
+export { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
+export { TACOptimizer } from "./ir/optimizer/index.js";
 export {
   ArrayAccessInstruction,
   ArrayAssignmentInstruction,

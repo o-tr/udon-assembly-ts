@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
-import { TACToUdonConverter } from "../codegen/tac_to_udon.js";
+import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
 import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
@@ -15,7 +15,7 @@ import type { MethodInfo, PropertyInfo } from "../frontend/class_registry.js";
 import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
-import { TypeScriptParser } from "../frontend/parser.js";
+import { TypeScriptParser } from "../frontend/parser/index.js";
 import { SymbolTable } from "../frontend/symbol_table.js";
 import { TypeMapper } from "../frontend/type_mapper.js";
 import {
@@ -30,8 +30,8 @@ import {
   computeHeapUsage,
   UASM_HEAP_LIMIT,
 } from "../heap_limits.js";
-import { ASTToTACConverter } from "../ir/ast_to_tac.js";
-import { TACOptimizer } from "../ir/optimizer.js";
+import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
+import { TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import {

@@ -3,7 +3,7 @@ import {
   ExternTypes,
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
-import { TACOptimizer } from "../../../src/transpiler/ir/optimizer";
+import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import {
   CopyInstruction,
   PropertySetInstruction,

@@ -79,17 +79,34 @@ npx tsx scripts/transpiler-demo.ts
 ```
 src/transpiler/
 ├── frontend/          # TypeScript parsing and symbol management
-│   ├── parser.ts      # TypeScript AST parser
+│   ├── parser/        # TypeScript AST parser (split by responsibility)
+│   │   ├── index.ts
+│   │   ├── type_script_parser.ts
+│   │   ├── context.ts
+│   │   └── visitors/
 │   ├── symbol_table.ts # Variable scope tracking
 │   └── types.ts       # AST node definitions and type mapping
 ├── ir/                # Intermediate representation (TAC)
+│   ├── ast_to_tac/     # AST → TAC converter (split by responsibility)
+│   │   ├── converter.ts
+│   │   ├── context.ts
+│   │   ├── visitors/
+│   │   └── helpers/
+│   ├── optimizer/      # Optimization passes (split by pass/analysis)
+│   │   ├── tac_optimizer.ts
+│   │   ├── passes/
+│   │   └── analysis/
 │   ├── tac_instruction.ts  # TAC instruction types
 │   ├── tac_operand.ts      # TAC operand types
-│   ├── ast_to_tac.ts       # AST → TAC converter
-│   └── optimizer.ts        # Optimization passes
 ├── codegen/           # Udon Assembly generation
+│   ├── tac_to_udon/    # TAC → Udon converter (split by concern)
+│   │   ├── converter.ts
+│   │   ├── convert_instruction.ts
+│   │   ├── operands.ts
+│   │   ├── constants.ts
+│   │   ├── externs.ts
+│   │   └── types.ts
 │   ├── udon_instruction.ts # Udon instruction types
-│   ├── tac_to_udon.ts      # TAC → Udon converter
 │   └── udon_assembler.ts   # .uasm file generator
 └── index.ts           # Main entry point
 ```
