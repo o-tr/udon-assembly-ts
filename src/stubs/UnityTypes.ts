@@ -250,9 +250,23 @@ export class Quaternion {
 
 @UdonStub("UnityEngine.Debug")
 export class Debug {
-  static Log(_message: object): void {}
-  static LogWarning(_message: object): void {}
-  static LogError(_message: object): void {}
+  static Log(_message: object): void;
+  static Log(_message: string): void;
+  static Log(_message: number): void;
+  static Log(_message: boolean): void;
+  static Log(_message: unknown): void {}
+
+  static LogWarning(_message: object): void;
+  static LogWarning(_message: string): void;
+  static LogWarning(_message: number): void;
+  static LogWarning(_message: boolean): void;
+  static LogWarning(_message: unknown): void {}
+
+  static LogError(_message: object): void;
+  static LogError(_message: string): void;
+  static LogError(_message: number): void;
+  static LogError(_message: boolean): void;
+  static LogError(_message: unknown): void {}
 }
 
 @UdonStub("UnityEngine.BoxCollider")

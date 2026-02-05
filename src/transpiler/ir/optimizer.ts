@@ -647,7 +647,7 @@ export class TACOptimizer {
     cfg: { blocks: BasicBlock[] },
   ): Map<number, Set<number>> {
     const dom = new Map<number, Set<number>>();
-    const all = new Set(cfg.blocks.map((block) => block.id));
+    const all = new Set<number>(cfg.blocks.map((block) => block.id));
 
     for (const block of cfg.blocks) {
       if (block.id === 0) {
@@ -664,15 +664,15 @@ export class TACOptimizer {
         if (block.id === 0) continue;
         const preds = block.preds;
         if (preds.length === 0) continue;
-        let intersection = new Set(dom.get(preds[0]) ?? new Set());
+        let intersection = new Set<number>(dom.get(preds[0]) ?? []);
         for (let i = 1; i < preds.length; i++) {
-          const predDom = dom.get(preds[i]) ?? new Set();
+          const predDom = dom.get(preds[i]) ?? new Set<number>();
           intersection = new Set(
             Array.from(intersection).filter((id) => predDom.has(id)),
           );
         }
         intersection.add(block.id);
-        const current = dom.get(block.id) ?? new Set();
+        const current = dom.get(block.id) ?? new Set<number>();
         if (!this.numberSetEqual(current, intersection)) {
           dom.set(block.id, intersection);
           changed = true;
@@ -3114,7 +3114,7 @@ export class TACOptimizer {
       const temp = operand as TemporaryOperand;
       const mapped = oldToNew.get(temp.id);
       if (mapped === undefined || mapped === temp.id) return operand;
-      return { ...temp, id: mapped };
+      return createTemporary(mapped, temp.type);
     };
 
     for (const inst of instructions) {
@@ -3237,7 +3237,7 @@ export class TACOptimizer {
       const variable = operand as VariableOperand;
       const mapped = oldToNew.get(variable.name);
       if (!mapped || mapped === variable.name) return operand;
-      return { ...variable, name: mapped };
+      return { ...variable, name: mapped } as VariableOperand;
     };
 
     for (const inst of instructions) {
@@ -3562,7 +3562,7 @@ export class TACOptimizer {
       case TACInstructionKind.Assignment:
       case TACInstructionKind.Copy:
       case TACInstructionKind.Cast: {
-        const typed = inst as InstWithDestSrc;
+        const typed = inst as unknown as InstWithDestSrc;
         typed.dest = rewrite(typed.dest);
         typed.src = rewrite(typed.src);
         return;
