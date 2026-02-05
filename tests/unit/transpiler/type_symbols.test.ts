@@ -46,8 +46,10 @@ describe("Type symbols", () => {
 
   it("maps generic placeholder types", () => {
     const mapper = new TypeMapper();
-    expect(mapper.mapTypeScriptType("_T")).toBeInstanceOf(
-      GenericTypeParameterSymbol,
-    );
+    const generic = mapper.mapTypeScriptType("_T");
+    expect(generic).toBeInstanceOf(GenericTypeParameterSymbol);
+    expect(generic.name).toBe("T");
+    expect(mapper.mapTypeScriptType("T").name).toBe("T");
+    expect(mapper.mapTypeScriptType("_TKey").name).toBe("TKey");
   });
 });
