@@ -1,12 +1,17 @@
 import {
   AssignmentInstruction,
+  type ConditionalJumpInstruction,
+  LabelInstruction,
   PhiInstruction as PhiInst,
   type PhiInstruction,
   type PhiSource,
   type TACInstruction,
   TACInstructionKind,
+  UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
+  createLabel,
+  type LabelOperand,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
@@ -200,24 +205,55 @@ const setDefinedOperand = (
   }
 };
 
+const computeImmediateDominators = (
+  cfg: ReturnType<typeof buildCFG>,
+  dom: Map<number, Set<number>>,
+): Map<number, number | null> => {
+  const idom = new Map<number, number | null>();
+  idom.set(0, null);
+
+  for (const block of cfg.blocks) {
+    if (block.id === 0) continue;
+    const strict = new Set(dom.get(block.id) ?? []);
+    strict.delete(block.id);
+    let candidate: number | null = null;
+    for (const d of strict) {
+      let dominatedByAll = true;
+      for (const other of strict) {
+        if (other === d) continue;
+        if (!dom.get(d)?.has(other)) {
+          dominatedByAll = false;
+          break;
+        }
+      }
+      if (dominatedByAll) {
+        candidate = d;
+        break;
+      }
+    }
+    idom.set(block.id, candidate);
+  }
+
+  return idom;
+};
+
 const computeDominanceFrontiers = (
   cfg: ReturnType<typeof buildCFG>,
   dom: Map<number, Set<number>>,
 ): Map<number, Set<number>> => {
-  const blocks = cfg.blocks.map((block) => block.id);
   const frontiers = new Map<number, Set<number>>();
-  for (const id of blocks) frontiers.set(id, new Set());
+  for (const block of cfg.blocks) frontiers.set(block.id, new Set());
+
+  const idom = computeImmediateDominators(cfg, dom);
 
   for (const block of cfg.blocks) {
     if (block.preds.length < 2) continue;
+    const stop = idom.get(block.id) ?? null;
     for (const pred of block.preds) {
-      for (const candidate of blocks) {
-        if (
-          dom.get(pred)?.has(candidate) &&
-          (candidate === block.id || !dom.get(block.id)?.has(candidate))
-        ) {
-          frontiers.get(candidate)?.add(block.id);
-        }
+      let runner: number | null = pred;
+      while (runner !== null && runner !== stop) {
+        frontiers.get(runner)?.add(block.id);
+        runner = idom.get(runner) ?? null;
       }
     }
   }
@@ -229,30 +265,7 @@ const computeDomTree = (
   cfg: ReturnType<typeof buildCFG>,
   dom: Map<number, Set<number>>,
 ): DomTree => {
-  const idom = new Map<number, number | null>();
-  idom.set(0, null);
-
-  for (const block of cfg.blocks) {
-    if (block.id === 0) continue;
-    const strict = new Set(dom.get(block.id) ?? []);
-    strict.delete(block.id);
-    let candidate: number | null = null;
-    for (const d of strict) {
-      let isImmediate = true;
-      for (const other of strict) {
-        if (other === d) continue;
-        if (dom.get(other)?.has(d)) {
-          isImmediate = false;
-          break;
-        }
-      }
-      if (isImmediate) {
-        candidate = d;
-        break;
-      }
-    }
-    idom.set(block.id, candidate);
-  }
+  const idom = computeImmediateDominators(cfg, dom);
 
   const tree: DomTree = new Map();
   for (const block of cfg.blocks) {
@@ -786,6 +799,9 @@ export const deconstructSSA = (
   if (cfg.blocks.length === 0) return instructions;
 
   const blocks: BlockInsts = new Map();
+  const orderedBlockIds = cfg.blocks.map((block) => block.id);
+  let nextBlockId = cfg.blocks.length;
+  let nextEdgeLabelId = 0;
   let nextTempId = collectTemps(instructions);
   const createTemp = (source: TACOperand): TACOperand => {
     const type = operandType(source);
@@ -807,12 +823,55 @@ export const deconstructSSA = (
     blocks.set(block.id, [...info.labels, ...info.phis, ...info.body]);
   }
 
+  const ensureBlockLabel = (blockId: number): LabelOperand => {
+    const insts = blocks.get(blockId) ?? [];
+    const existing = insts.find(
+      (inst): inst is LabelInstruction =>
+        inst.kind === TACInstructionKind.Label,
+    );
+    if (existing && existing.label.kind === TACOperandKind.Label) {
+      return existing.label as LabelOperand;
+    }
+    const label = createLabel(`ssa_block_${blockId}_${nextEdgeLabelId++}`);
+    insts.unshift(new LabelInstruction(label));
+    blocks.set(blockId, insts);
+    return label;
+  };
+
+  const insertEdgeBlock = (
+    targetLabel: LabelOperand,
+    lowered: AssignmentInstruction[],
+    insertBeforeTarget?: number,
+  ): LabelOperand => {
+    const edgeLabel = createLabel(`ssa_edge_${nextEdgeLabelId++}`);
+    const edgeInsts: TACInstruction[] = [
+      new LabelInstruction(edgeLabel),
+      ...lowered,
+      new UnconditionalJumpInstruction(targetLabel),
+    ];
+    const newId = nextBlockId++;
+    blocks.set(newId, edgeInsts);
+    if (insertBeforeTarget !== undefined) {
+      const targetIndex = orderedBlockIds.indexOf(insertBeforeTarget);
+      if (targetIndex >= 0) {
+        orderedBlockIds.splice(targetIndex, 0, newId);
+      } else {
+        orderedBlockIds.push(newId);
+      }
+    } else {
+      orderedBlockIds.push(newId);
+    }
+    return edgeLabel;
+  };
+
   for (const block of cfg.blocks) {
     const insts = blocks.get(block.id) ?? [];
     const phis = insts.filter(
       (inst): inst is PhiInstruction => inst.kind === TACInstructionKind.Phi,
     );
     if (phis.length === 0) continue;
+
+    const targetLabel = ensureBlockLabel(block.id);
 
     const movesByPred = new Map<number, ParallelMove[]>();
     for (const phi of phis) {
@@ -826,16 +885,41 @@ export const deconstructSSA = (
     for (const [predId, moves] of movesByPred.entries()) {
       const predInsts = blocks.get(predId);
       if (!predInsts || moves.length === 0) continue;
+      const lowered = linearizeParallelCopies(moves, createTemp);
+      if (lowered.length === 0) continue;
+
+      const predBlock = cfg.blocks[predId];
+      if (predBlock && predBlock.succs.length > 1) {
+        let terminatorIndex = -1;
+        for (let i = predInsts.length - 1; i >= 0; i--) {
+          if (isBlockTerminator(predInsts[i])) {
+            terminatorIndex = i;
+            break;
+          }
+        }
+        const terminator =
+          terminatorIndex >= 0 ? predInsts[terminatorIndex] : null;
+        if (terminator?.kind === TACInstructionKind.ConditionalJump) {
+          const jump = terminator as ConditionalJumpInstruction;
+          const jumpLabel = jump.label as LabelOperand;
+          if (jumpLabel?.name === targetLabel.name) {
+            const edgeLabel = insertEdgeBlock(targetLabel, lowered);
+            jump.label = edgeLabel;
+            continue;
+          }
+          insertEdgeBlock(targetLabel, lowered, block.id);
+          continue;
+        }
+      }
+
       let insertIndex = predInsts.length;
       for (let i = predInsts.length - 1; i >= 0; i--) {
         if (isBlockTerminator(predInsts[i])) {
           insertIndex = i;
+          break;
         }
       }
-      const lowered = linearizeParallelCopies(moves, createTemp);
-      if (lowered.length > 0) {
-        predInsts.splice(insertIndex, 0, ...lowered);
-      }
+      predInsts.splice(insertIndex, 0, ...lowered);
     }
 
     blocks.set(
@@ -845,8 +929,8 @@ export const deconstructSSA = (
   }
 
   const ordered: TACInstruction[] = [];
-  for (const block of cfg.blocks) {
-    const insts = blocks.get(block.id);
+  for (const blockId of orderedBlockIds) {
+    const insts = blocks.get(blockId);
     if (insts) ordered.push(...insts);
   }
 
