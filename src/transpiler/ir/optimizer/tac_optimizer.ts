@@ -1,5 +1,6 @@
 import type { TACInstruction } from "../tac_instruction.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
+import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
 import { castChainFolding } from "./passes/cast_chain_folding.js";
 import { constantFolding } from "./passes/constant_folding.js";
@@ -10,6 +11,7 @@ import {
   eliminateNoopCopies,
 } from "./passes/dead_code.js";
 import { doubleNegationElimination } from "./passes/double_negation.js";
+import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
@@ -17,6 +19,7 @@ import { performLICM } from "./passes/licm.js";
 import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
+import { optimizeStringConcatenation } from "./passes/string_optimization.js";
 import { optimizeTailCalls } from "./passes/tco.js";
 import {
   copyOnWriteTemporaries,
@@ -42,6 +45,9 @@ export class TACOptimizer {
 
       // Apply constant folding
       next = constantFolding(next);
+
+      // Coalesce string concatenation chains
+      next = optimizeStringConcatenation(next);
 
       // Apply SCCP and prune unreachable blocks
       next = sccpAndPrune(next);
@@ -81,6 +87,12 @@ export class TACOptimizer {
 
       // Apply dead code elimination
       next = deadCodeElimination(next);
+
+      // Reorder basic blocks to reduce jumps
+      next = optimizeBlockLayout(next);
+
+      // Remove jumps that fall through to the next label
+      next = eliminateFallthroughJumps(next);
 
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);

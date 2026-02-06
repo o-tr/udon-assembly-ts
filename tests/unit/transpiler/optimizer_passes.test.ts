@@ -5,6 +5,9 @@ import {
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
+import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
+import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
+import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -190,6 +193,64 @@ describe("optimizer passes", () => {
 
     expect(text).not.toContain("goto L1");
     expect(text).not.toContain("goto L2");
+  });
+
+  it("reorders block layout to reduce jumps", () => {
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const l2 = createLabel("L2");
+
+    const instructions = [
+      new LabelInstruction(l0),
+      new UnconditionalJumpInstruction(l2),
+      new LabelInstruction(l1),
+      new ReturnInstruction(),
+      new LabelInstruction(l2),
+      new UnconditionalJumpInstruction(l1),
+    ];
+
+    const reordered = optimizeBlockLayout(instructions);
+    const text = stringify(reordered);
+
+    expect(text.indexOf("L2:")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("L1:")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("L2:")).toBeLessThan(text.indexOf("L1:"));
+  });
+
+  it("coalesces string concatenation chains", () => {
+    const a = createVariable("a", PrimitiveTypes.string);
+    const b = createVariable("b", PrimitiveTypes.string);
+    const c = createVariable("c", PrimitiveTypes.string);
+    const d = createVariable("d", PrimitiveTypes.string);
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+    const t1 = createTemporary(1, PrimitiveTypes.string);
+    const t2 = createTemporary(2, PrimitiveTypes.string);
+
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "+", b),
+      new BinaryOpInstruction(t1, t0, "+", c),
+      new BinaryOpInstruction(t2, t1, "+", d),
+      new ReturnInstruction(t2),
+    ];
+
+    const optimized = optimizeStringConcatenation(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(3);
+  });
+
+  it("removes fallthrough jumps", () => {
+    const l0 = createLabel("L0");
+    const instructions = [
+      new UnconditionalJumpInstruction(l0),
+      new LabelInstruction(l0),
+      new ReturnInstruction(),
+    ];
+
+    const optimized = eliminateFallthroughJumps(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L0");
   });
 
   it("prunes unreachable blocks on constant branches", () => {
