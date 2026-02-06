@@ -26,23 +26,23 @@ export const eliminateFallthroughJumps = (
       continue;
     }
 
-    const next = instructions[i + 1];
-    if (!next || next.kind !== TACInstructionKind.Label) {
-      result.push(inst);
-      continue;
-    }
-
-    const labelInst = next as LabelInstruction;
-    if (labelInst.label.kind !== TACOperandKind.Label) {
-      result.push(inst);
-      continue;
-    }
-
     const targetName = (jump.label as LabelOperand).name;
-    const labelName = (labelInst.label as LabelOperand).name;
-    if (targetName === labelName) {
-      continue;
+    let cursor = i + 1;
+    let matched = false;
+    while (cursor < instructions.length) {
+      const next = instructions[cursor];
+      if (next.kind !== TACInstructionKind.Label) break;
+      const labelInst = next as LabelInstruction;
+      if (labelInst.label.kind === TACOperandKind.Label) {
+        const labelName = (labelInst.label as LabelOperand).name;
+        if (targetName === labelName) {
+          matched = true;
+          break;
+        }
+      }
+      cursor += 1;
     }
+    if (matched) continue;
 
     result.push(inst);
   }

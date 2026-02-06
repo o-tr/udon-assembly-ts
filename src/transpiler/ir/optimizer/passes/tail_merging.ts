@@ -68,15 +68,15 @@ const instSignature = (inst: TACInstruction): string | null => {
   switch (inst.kind) {
     case TACInstructionKind.BinaryOp: {
       const b = inst as BinaryOpInstruction;
-      return `BinaryOp|${b.operator}|${operandKey(b.left)}|${operandKey(b.right)}|${operandKey(b.dest)}`;
+      return `BinaryOp|${b.operator}|${operandKey(b.left)}|${operandKey(b.right)}`;
     }
     case TACInstructionKind.Assignment: {
       const a = inst as AssignmentInstruction;
-      return `${inst.kind}|${operandKey(a.dest)}|${operandKey((a as AssignmentInstruction).src)}`;
+      return `Assignment|${operandKey((a as AssignmentInstruction).src)}`;
     }
     case TACInstructionKind.Copy: {
       const c = inst as CopyInstruction;
-      return `${inst.kind}|${operandKey(c.dest)}|${operandKey(c.src)}`;
+      return `Copy|${operandKey(c.src)}`;
     }
     case TACInstructionKind.PropertySet: {
       const p = inst as PropertySetInstruction;

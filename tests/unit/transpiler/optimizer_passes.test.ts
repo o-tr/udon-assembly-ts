@@ -319,6 +319,22 @@ describe("optimizer passes", () => {
     expect(text).not.toContain("goto L0");
   });
 
+  it("removes fallthrough jumps across consecutive labels", () => {
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const instructions = [
+      new UnconditionalJumpInstruction(l0),
+      new LabelInstruction(l1),
+      new LabelInstruction(l0),
+      new ReturnInstruction(),
+    ];
+
+    const optimized = eliminateFallthroughJumps(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L0");
+  });
+
   it("unrolls simple fixed loops", () => {
     const i = createVariable("i", PrimitiveTypes.int32);
     const a = createVariable("a", PrimitiveTypes.int32);
