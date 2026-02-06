@@ -63,6 +63,7 @@ export const optimizeStringConcatenation = (
     let chainLength = 1;
     let cursor = i;
 
+    // Only left-associative temp chains are coalesced (TAC emits these).
     while (
       isTemp(currentDest) &&
       (tempUses.get(currentDest.id) ?? 0) === 1 &&

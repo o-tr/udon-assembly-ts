@@ -310,6 +310,118 @@ describe("optimizer passes", () => {
     ).toBeGreaterThan(1);
   });
 
+  it("unrolls <= loops with fresh temporaries", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<=",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        t1,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new AssignmentInstruction(a, t1),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+    const tempMatches = text.match(/t\d+/g) ?? [];
+    const uniqueTemps = new Set(tempMatches);
+
+    expect(text).not.toContain("goto L_start");
+    expect(text).not.toContain("ifFalse");
+    expect(uniqueTemps.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not unroll zero-trip loops", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(3, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("goto L_start");
+  });
+
+  it("does not unroll negative-step loops", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(3, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        ">",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "-",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("goto L_start");
+  });
+
   it("merges identical return tails", () => {
     const a = createVariable("a", PrimitiveTypes.int32);
     const l0 = createLabel("L0");
@@ -325,6 +437,24 @@ describe("optimizer passes", () => {
 
     expect(text).toContain("tail_merge_");
     expect(text).toContain("goto tail_merge_");
+  });
+
+  it("does not merge tails with side-effecting calls", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const l0 = createLabel("L0");
+
+    const instructions = [
+      new CallInstruction(t0, "Foo", []),
+      new ReturnInstruction(t0),
+      new LabelInstruction(l0),
+      new CallInstruction(t0, "Foo", []),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("tail_merge_");
   });
 
   it("folds scalar Vector3 component updates", () => {

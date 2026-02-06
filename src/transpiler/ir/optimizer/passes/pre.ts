@@ -8,11 +8,11 @@ import {
   createTemporary,
   type TACOperand,
   TACOperandKind,
-  type TemporaryOperand,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
   getDefinedOperandForReuse,
+  getMaxTempId,
   getUsedOperandsForReuse,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
@@ -87,11 +87,9 @@ const computeAvailableMaps = (
       }
 
       const working = new Map(inMaps.get(block.id) ?? new Map());
-      let _hasSideEffect = false;
       for (let i = block.start; i <= block.end; i += 1) {
         const inst = instructions[i];
         if (isSideEffectBarrier(inst)) {
-          _hasSideEffect = true;
           working.clear();
           continue;
         }
@@ -153,24 +151,26 @@ const isTerminator = (inst: TACInstruction): boolean => {
   );
 };
 
-const getMaxTempId = (instructions: TACInstruction[]): number => {
-  let maxTempId = -1;
-  for (const inst of instructions) {
-    const def = getDefinedOperandForReuse(inst);
-    if (def?.kind === TACOperandKind.Temporary) {
-      maxTempId = Math.max(maxTempId, (def as TemporaryOperand).id);
-    }
-    for (const op of getUsedOperandsForReuse(inst)) {
-      if (op.kind === TACOperandKind.Temporary) {
-        maxTempId = Math.max(maxTempId, (op as TemporaryOperand).id);
-      }
-    }
-  }
-  return maxTempId;
-};
-
 const usesOperandKey = (inst: TACInstruction, key: string): boolean => {
   return getUsedOperandsForReuse(inst).some((op) => livenessKey(op) === key);
+};
+
+const definesOperandKey = (inst: TACInstruction, key: string): boolean => {
+  const def = getDefinedOperandForReuse(inst);
+  return !!def && livenessKey(def) === key;
+};
+
+const isTempLocalToBlock = (
+  block: { start: number; end: number },
+  instructions: TACInstruction[],
+  tempKey: string,
+): boolean => {
+  for (let i = 0; i < instructions.length; i += 1) {
+    if (i >= block.start && i <= block.end) continue;
+    if (usesOperandKey(instructions[i], tempKey)) return false;
+    if (definesOperandKey(instructions[i], tempKey)) return false;
+  }
+  return true;
 };
 
 const isOperandAvailableInBlock = (
@@ -217,7 +217,10 @@ export const performPRE = (
   if (cfg.blocks.length === 0) return instructions;
 
   const { inMaps } = computeAvailableMaps(instructions);
-  const inserts = new Map<number, TACInstruction[]>();
+  const inserts = new Map<
+    number,
+    Array<{ order: number; insts: TACInstruction[] }>
+  >();
   const removeIndices = new Set<number>();
   let nextTempId = getMaxTempId(instructions) + 1;
 
@@ -242,6 +245,7 @@ export const performPRE = (
         }
       }
       if (usedBefore) continue;
+      if (!isTempLocalToBlock(block, instructions, destKey)) continue;
 
       let canInsertAll = true;
       const predPlans: Array<{ index: number; insts: TACInstruction[] }> = [];
@@ -255,7 +259,10 @@ export const performPRE = (
           break;
         }
         for (let j = predBlock.start; j <= predBlock.end; j += 1) {
-          if (usesOperandKey(instructions[j], destKey)) {
+          if (
+            usesOperandKey(instructions[j], destKey) ||
+            definesOperandKey(instructions[j], destKey)
+          ) {
             canInsertAll = false;
             break;
           }
@@ -289,7 +296,7 @@ export const performPRE = (
 
       for (const plan of predPlans) {
         const list = inserts.get(plan.index) ?? [];
-        list.push(...plan.insts);
+        list.push({ order: i, insts: plan.insts });
         inserts.set(plan.index, list);
       }
 
@@ -304,12 +311,16 @@ export const performPRE = (
     const pending = inserts.get(i);
     const inst = instructions[i];
     if (pending) {
+      const ordered = pending
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .flatMap((entry) => entry.insts);
       if (isTerminator(inst)) {
-        result.push(...pending);
+        result.push(...ordered);
         if (!removeIndices.has(i)) result.push(inst);
       } else {
         if (!removeIndices.has(i)) result.push(inst);
-        result.push(...pending);
+        result.push(...ordered);
       }
       continue;
     }
@@ -318,7 +329,13 @@ export const performPRE = (
   }
 
   const tail = inserts.get(instructions.length);
-  if (tail) result.push(...tail);
+  if (tail) {
+    const ordered = tail
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .flatMap((entry) => entry.insts);
+    result.push(...ordered);
+  }
 
   return result;
 };

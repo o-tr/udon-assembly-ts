@@ -52,6 +52,14 @@ const isStraightLineTail = (
     ) {
       return false;
     }
+    if (
+      inst.kind === TACInstructionKind.Call ||
+      inst.kind === TACInstructionKind.MethodCall ||
+      inst.kind === TACInstructionKind.PropertySet ||
+      inst.kind === TACInstructionKind.ArrayAssignment
+    ) {
+      return false;
+    }
   }
   return true;
 };

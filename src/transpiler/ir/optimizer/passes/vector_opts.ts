@@ -15,11 +15,7 @@ import {
   TACOperandKind,
   type TemporaryOperand,
 } from "../../tac_operand.js";
-import {
-  countTempUses,
-  getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
-} from "../utils/instructions.js";
+import { countTempUses, getMaxTempId } from "../utils/instructions.js";
 import { sameOperand } from "../utils/operands.js";
 import { getOperandType } from "./constant_folding.js";
 
@@ -74,22 +70,6 @@ const extractComponentUpdate = (
   return { delta, object: getInst.object };
 };
 
-const getMaxTempId = (instructions: TACInstruction[]): number => {
-  let maxTempId = -1;
-  for (const inst of instructions) {
-    const def = getDefinedOperandForReuse(inst);
-    if (def?.kind === TACOperandKind.Temporary) {
-      maxTempId = Math.max(maxTempId, (def as TemporaryOperand).id);
-    }
-    for (const op of getUsedOperandsForReuse(inst)) {
-      if (op.kind === TACOperandKind.Temporary) {
-        maxTempId = Math.max(maxTempId, (op as TemporaryOperand).id);
-      }
-    }
-  }
-  return maxTempId;
-};
-
 export const optimizeVectorSwizzle = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
@@ -101,11 +81,12 @@ export const optimizeVectorSwizzle = (
 
   let i = 0;
   while (i < instructions.length) {
-    const window = instructions.slice(i, i + 9);
-    if (window.length < 9) {
-      result.push(...window);
-      break;
+    if (i + 9 > instructions.length) {
+      result.push(instructions[i]);
+      i += 1;
+      continue;
     }
+    const window = instructions.slice(i, i + 9);
 
     const [gX, bX, sX, gY, bY, sY, gZ, bZ, sZ] = window;
     if (

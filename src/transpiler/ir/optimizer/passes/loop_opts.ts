@@ -1,20 +1,35 @@
 import {
-  type AssignmentInstruction,
-  type BinaryOpInstruction,
+  ArrayAccessInstruction,
+  ArrayAssignmentInstruction,
+  AssignmentInstruction,
+  BinaryOpInstruction,
+  CallInstruction,
+  CastInstruction,
   type ConditionalJumpInstruction,
+  CopyInstruction,
   type LabelInstruction,
+  MethodCallInstruction,
+  PropertyGetInstruction,
+  PropertySetInstruction,
+  ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
+  UnaryOpInstruction,
   type UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import type {
   ConstantOperand,
   LabelOperand,
   TACOperand,
+  TemporaryOperand,
   VariableOperand,
 } from "../../tac_operand.js";
-import { TACOperandKind } from "../../tac_operand.js";
-import { getDefinedOperandForReuse } from "../utils/instructions.js";
+import { createTemporary, TACOperandKind } from "../../tac_operand.js";
+import {
+  getDefinedOperandForReuse,
+  getMaxTempId,
+  rewriteOperands,
+} from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
 
 const collectLabelIndices = (
@@ -89,6 +104,8 @@ const extractCondition = (
   bound: number;
   operator: "<" | "<=";
 } | null => {
+  // ConditionalJump is defined as ifFalse; this treats the condition as
+  // the loop-continue predicate (see TACInstructionKind.ConditionalJump).
   let conditionDef: BinaryOpInstruction | null = null;
   const conditionKey = livenessKey(condition);
   if (!conditionKey) return null;
@@ -177,6 +194,108 @@ const computeTripCount = (
   return Math.floor(diff / step) + 1;
 };
 
+const cloneInstruction = (inst: TACInstruction): TACInstruction => {
+  switch (inst.kind) {
+    case TACInstructionKind.Assignment: {
+      const a = inst as AssignmentInstruction;
+      return new AssignmentInstruction(a.dest, a.src);
+    }
+    case TACInstructionKind.Copy: {
+      const c = inst as CopyInstruction;
+      return new CopyInstruction(c.dest, c.src);
+    }
+    case TACInstructionKind.Cast: {
+      const c = inst as CastInstruction;
+      return new CastInstruction(c.dest, c.src);
+    }
+    case TACInstructionKind.BinaryOp: {
+      const b = inst as BinaryOpInstruction;
+      return new BinaryOpInstruction(b.dest, b.left, b.operator, b.right);
+    }
+    case TACInstructionKind.UnaryOp: {
+      const u = inst as UnaryOpInstruction;
+      return new UnaryOpInstruction(u.dest, u.operator, u.operand);
+    }
+    case TACInstructionKind.Call: {
+      const c = inst as CallInstruction;
+      return new CallInstruction(c.dest, c.func, [...c.args], c.isTailCall);
+    }
+    case TACInstructionKind.MethodCall: {
+      const m = inst as MethodCallInstruction;
+      return new MethodCallInstruction(
+        m.dest,
+        m.object,
+        m.method,
+        [...m.args],
+        m.isTailCall,
+      );
+    }
+    case TACInstructionKind.PropertyGet: {
+      const g = inst as PropertyGetInstruction;
+      return new PropertyGetInstruction(g.dest, g.object, g.property);
+    }
+    case TACInstructionKind.PropertySet: {
+      const s = inst as PropertySetInstruction;
+      return new PropertySetInstruction(s.object, s.property, s.value);
+    }
+    case TACInstructionKind.ArrayAccess: {
+      const a = inst as ArrayAccessInstruction;
+      return new ArrayAccessInstruction(a.dest, a.array, a.index);
+    }
+    case TACInstructionKind.ArrayAssignment: {
+      const a = inst as ArrayAssignmentInstruction;
+      return new ArrayAssignmentInstruction(a.array, a.index, a.value);
+    }
+    case TACInstructionKind.Return: {
+      const r = inst as ReturnInstruction;
+      return new ReturnInstruction(r.value);
+    }
+    default:
+      return inst;
+  }
+};
+
+const collectTempDefs = (insts: TACInstruction[]): Set<number> => {
+  const defs = new Set<number>();
+  for (const inst of insts) {
+    const def = getDefinedOperandForReuse(inst);
+    if (def?.kind === TACOperandKind.Temporary) {
+      defs.add((def as TemporaryOperand).id);
+    }
+  }
+  return defs;
+};
+
+const remapTemp = (
+  operand: TACOperand,
+  map: Map<number, TemporaryOperand>,
+  defIds: Set<number>,
+  nextTempIdRef: { value: number },
+): TACOperand => {
+  if (operand.kind !== TACOperandKind.Temporary) return operand;
+  const temp = operand as TemporaryOperand;
+  if (!defIds.has(temp.id)) return operand;
+  let mapped = map.get(temp.id);
+  if (!mapped) {
+    mapped = createTemporary(nextTempIdRef.value++, temp.type);
+    map.set(temp.id, mapped);
+  }
+  return mapped;
+};
+
+const cloneWithTempMap = (
+  insts: TACInstruction[],
+  map: Map<number, TemporaryOperand>,
+  defIds: Set<number>,
+  nextTempIdRef: { value: number },
+): TACInstruction[] => {
+  return insts.map((inst) => {
+    const cloned = cloneInstruction(inst);
+    rewriteOperands(cloned, (op) => remapTemp(op, map, defIds, nextTempIdRef));
+    return cloned;
+  });
+};
+
 export const optimizeLoopStructures = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
@@ -185,20 +304,23 @@ export const optimizeLoopStructures = (
   const labelIndices = collectLabelIndices(instructions);
   const labelUses = collectLabelUses(instructions);
   const result: TACInstruction[] = [];
+  let nextTempId = getMaxTempId(instructions) + 1;
 
   let i = 0;
   while (i < instructions.length) {
     const inst = instructions[i];
-    if (inst.kind !== TACInstructionKind.Label) {
+    const bail = (): void => {
       result.push(inst);
       i += 1;
+    };
+    if (inst.kind !== TACInstructionKind.Label) {
+      bail();
       continue;
     }
 
     const startLabel = inst as LabelInstruction;
     if (startLabel.label.kind !== TACOperandKind.Label) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
     const startName = (startLabel.label as LabelOperand).name;
@@ -213,58 +335,49 @@ export const optimizeLoopStructures = (
       }
     }
     if (condJumpIndex === -1) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
     const condJump = instructions[condJumpIndex] as ConditionalJumpInstruction;
     if (condJump.label.kind !== TACOperandKind.Label) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
     const endName = (condJump.label as LabelOperand).name;
     const endIndex = labelIndices.get(endName);
     if (endIndex === undefined) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
     const jumpBackIndex = endIndex - 1;
     if (jumpBackIndex <= condJumpIndex) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
     const jumpBack = instructions[jumpBackIndex];
     if (jumpBack.kind !== TACInstructionKind.UnconditionalJump) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
     const backLabel = (jumpBack as UnconditionalJumpInstruction).label;
     if (backLabel.kind !== TACOperandKind.Label) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
     const backName = (backLabel as LabelOperand).name;
     if (backName !== startName) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
     if ((labelUses.get(startName) ?? 0) !== 1) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
     if ((labelUses.get(endName) ?? 0) !== 1) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
@@ -275,8 +388,7 @@ export const optimizeLoopStructures = (
       condJump.condition,
     );
     if (!conditionInfo) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
@@ -286,8 +398,7 @@ export const optimizeLoopStructures = (
       conditionInfo.variableKey,
     );
     if (initValue === null) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
@@ -296,8 +407,7 @@ export const optimizeLoopStructures = (
       conditionInfo.variableKey,
     );
     if (!incrementInfo) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
@@ -308,8 +418,7 @@ export const optimizeLoopStructures = (
       conditionInfo.operator,
     );
     if (tripCount === null || tripCount <= 0 || tripCount > 3) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
@@ -331,8 +440,7 @@ export const optimizeLoopStructures = (
     const headerBeforeCondition =
       condDefIndex >= 0 ? instructions.slice(i + 1, condDefIndex) : header;
     if (!isLoopBodySimple(headerBeforeCondition)) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
@@ -340,16 +448,38 @@ export const optimizeLoopStructures = (
     const incrementIndex = jumpBackIndex - 1;
     const body = instructions.slice(bodyStart, incrementIndex);
     if (!isLoopBodySimple(body)) {
-      result.push(inst);
-      i += 1;
+      bail();
       continue;
     }
 
     const incrementInst = instructions[incrementIndex];
 
+    const defIds = collectTempDefs([
+      ...headerBeforeCondition,
+      ...body,
+      incrementInst,
+    ]);
+    const nextTempIdRef = { value: nextTempId };
+
     for (let iter = 0; iter < tripCount; iter += 1) {
-      result.push(...headerBeforeCondition, ...body, incrementInst);
+      const tempMap = new Map<number, TemporaryOperand>();
+      const clonedHeader = cloneWithTempMap(
+        headerBeforeCondition,
+        tempMap,
+        defIds,
+        nextTempIdRef,
+      );
+      const clonedBody = cloneWithTempMap(body, tempMap, defIds, nextTempIdRef);
+      const [clonedIncrement] = cloneWithTempMap(
+        [incrementInst],
+        tempMap,
+        defIds,
+        nextTempIdRef,
+      );
+      result.push(...clonedHeader, ...clonedBody, clonedIncrement);
     }
+
+    nextTempId = nextTempIdRef.value;
 
     i = endIndex + 1;
   }

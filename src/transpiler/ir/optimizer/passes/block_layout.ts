@@ -129,11 +129,6 @@ const orderChains = (
   const entryChain = blockToChain[0] !== -1 ? blockToChain[0] : 0;
   appendChain(entryChain);
 
-  const chainByHead = new Map<number, number>();
-  for (const chain of chains) {
-    chainByHead.set(chain.head, chain.id);
-  }
-
   while (ordered.length < chains.length) {
     const currentChainId = ordered[ordered.length - 1];
     const currentChain = chains[currentChainId];
