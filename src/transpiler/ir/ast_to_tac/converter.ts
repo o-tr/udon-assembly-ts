@@ -212,7 +212,16 @@ export class ASTToTACConverter {
       if (stmt.kind === ASTNodeKind.VariableDeclaration) {
         const node = stmt as VariableDeclarationNode;
         if (!this.symbolTable.hasInCurrentScope(node.name)) {
-          this.symbolTable.addSymbol(node.name, node.type, false, node.isConst);
+          this.symbolTable.addSymbol(
+            node.name,
+            node.type,
+            false,
+            node.isConst,
+            // propagate initializer so later resolveTypeFromNode can
+            // inspect it when the symbol's declared type is generic
+            // or unresolved
+            node.initializer,
+          );
         }
       }
     }

@@ -9,6 +9,7 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
+import type { SymbolInfo } from "../../../frontend/types.js";
 import {
   type ArrayAccessExpressionNode,
   type ArrayLiteralExpressionNode,
@@ -113,7 +114,13 @@ export function resolveTypeFromNode(
       const symbol = converter.symbolTable.lookup(
         (node as IdentifierNode).name,
       );
-      return symbol?.type ?? null;
+      // If the symbol has a concrete/non-generic type, return it. Otherwise
+      // fall back to resolving from the initializer AST when available.
+      if (symbol?.type && symbol.type !== ObjectType) return symbol.type;
+      if (symbol?.initialValue) {
+        return resolveTypeFromNode(converter, symbol.initialValue as ASTNode);
+      }
+      return null;
     }
     case ASTNodeKind.PropertyAccessExpression: {
       const access = node as PropertyAccessExpressionNode;
@@ -634,7 +641,57 @@ export function visitArrayLiteralExpression(
         spreadType.name === ExternTypes.dataList.name;
       let isArray = spreadType.udonType === UdonType.Array;
       if (!isDataList && !isArray) {
-        const resolvedType = resolveTypeFromNode(this, element.value);
+        let resolvedType = resolveTypeFromNode(this, element.value);
+        // Additional fallback: if resolveTypeFromNode couldn't determine the
+        // property type for a PropertyAccessExpression, try looking up the
+        // base identifier in the current symbol table or the current class
+        // properties. This helps in cases like `ponMeld.tiles` where the
+        // identifier has a declared type but the node-level resolver missed it.
+        if (
+          !resolvedType &&
+          element.value.kind === ASTNodeKind.PropertyAccessExpression
+        ) {
+          const access = element.value as PropertyAccessExpressionNode;
+          // If base is an identifier, try symbol table
+          if (access.object.kind === ASTNodeKind.Identifier) {
+            const ident = access.object as IdentifierNode;
+            const sym = this.symbolTable.lookup(ident.name);
+            if (sym?.type) {
+              resolvedType = resolvePropertyTypeFromType(
+                this,
+                sym.type,
+                access.property,
+              );
+            }
+            // If the symbol was created with an initializer AST, try resolving
+            // the property type from that initializer as a fallback.
+            if (!resolvedType && sym?.initialValue) {
+              const initResolved = resolveTypeFromNode(
+                this,
+                sym.initialValue as ASTNode,
+              );
+              if (initResolved) {
+                resolvedType = resolvePropertyTypeFromType(
+                  this,
+                  initResolved,
+                  access.property,
+                );
+              }
+            }
+          }
+          // If base is `this`, try current class declaration
+          if (
+            !resolvedType &&
+            access.object.kind === ASTNodeKind.ThisExpression &&
+            this.currentClassName
+          ) {
+            const classNode = this.classMap.get(this.currentClassName);
+            const prop = classNode?.properties.find(
+              (p) => p.name === access.property,
+            );
+            if (prop) resolvedType = prop.type;
+          }
+        }
         if (resolvedType) {
           if (
             resolvedType instanceof DataListTypeSymbol ||
@@ -688,11 +745,51 @@ export function visitArrayLiteralExpression(
               return String(n.kind);
           }
         };
+
+        const buildSymbolDiag = (
+          identName: string,
+          s: SymbolInfo | undefined,
+        ): string => {
+          if (!s) return "";
+          const tname = s.type?.name ?? "<unknown>";
+          const inits = s.initialValue
+            ? describeNode(s.initialValue as ASTNode)
+            : "<none>";
+          return `; symbol(${identName})={type:${tname},initial:${inits}}`;
+        };
+
         const sourceHint = describeNode(element.value);
         const spreadTypeName = spreadType ? `${spreadType.name}` : "<unknown>";
         const spreadUdon = spreadType ? `${spreadType.udonType}` : "<unknown>";
+
+        // Diagnostic details: if the spread expression is a property access,
+        // include info about the base expression resolution and any symbol info
+        let diag = "";
+        if (element.value.kind === ASTNodeKind.PropertyAccessExpression) {
+          const access = element.value as PropertyAccessExpressionNode;
+          const baseDesc = describeNode(access.object);
+          const baseResolved = resolveTypeFromNode(this, access.object);
+          const baseResolvedName = baseResolved
+            ? baseResolved.name
+            : "<unknown>";
+          diag += `; base=${baseDesc} -> ${baseResolvedName}`;
+          if (access.object.kind === ASTNodeKind.Identifier) {
+            const ident = access.object as IdentifierNode;
+            diag += buildSymbolDiag(
+              ident.name,
+              this.symbolTable.lookup(ident.name),
+            );
+          }
+        } else if (element.value.kind === ASTNodeKind.Identifier) {
+          const ident = element.value as IdentifierNode;
+          diag += buildSymbolDiag(
+            ident.name,
+            this.symbolTable.lookup(ident.name),
+          );
+        }
+
         throw new Error(
-          `Array spread expects an Array or DataList (spread expression "${sourceHint}" resolved to ${spreadTypeName} (${spreadUdon}))`,
+          `Array spread expects an Array or DataList (spread expression "${sourceHint}" resolved to ${spreadTypeName} (${spreadUdon})${diag})`,
         );
       }
 
