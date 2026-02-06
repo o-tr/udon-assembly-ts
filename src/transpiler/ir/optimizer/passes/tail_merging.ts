@@ -84,7 +84,7 @@ const instSignature = (inst: TACInstruction): string | null => {
     }
     case TACInstructionKind.PropertyGet: {
       const p = inst as PropertyGetInstruction;
-      return `PropertyGet|${operandKey(p.dest)}|${operandKey(p.object)}|${p.property}`;
+      return `PropertyGet|${operandKey(p.object)}|${p.property}`;
     }
     case TACInstructionKind.Label:
       return `Label`;
@@ -166,6 +166,14 @@ export const mergeTails = (
       ) {
         nonStart += 1;
       }
+      let hasInteriorLabel = false;
+      for (let j = nonStart; j < nonCanonical.index; j += 1) {
+        if (instructions[j].kind === TACInstructionKind.Label) {
+          hasInteriorLabel = true;
+          break;
+        }
+      }
+      if (hasInteriorLabel) continue;
       replaceWithJump.set(nonStart, {
         label: labelName,
         end: nonCanonical.index,
@@ -178,8 +186,7 @@ export const mergeTails = (
   }
 
   const result: TACInstruction[] = [];
-  let i = 0;
-  while (i < instructions.length) {
+  for (let i = 0; i < instructions.length; i += 1) {
     const labelName = insertLabels.get(i);
     if (labelName) {
       result.push(new LabelInstruction(createLabel(labelName)));
@@ -191,12 +198,11 @@ export const mergeTails = (
       if (label.kind === TACOperandKind.Label) {
         result.push(new UnconditionalJumpInstruction(label));
       }
-      i = rep.end + 1;
+      i = rep.end;
       continue;
     }
 
     result.push(instructions[i]);
-    i += 1;
   }
 
   return result;

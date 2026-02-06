@@ -64,8 +64,9 @@ const extractComponentUpdate = (
 
   const getUses = tempUses.get((getInst.dest as TemporaryOperand).id) ?? 0;
   const addUses = tempUses.get((addInst.dest as TemporaryOperand).id) ?? 0;
+  const setUses = tempUses.get((setInst.value as TemporaryOperand).id) ?? 0;
   // Must be used only within the get/add/set window to avoid removing values
-  if (getUses !== 1 || addUses !== 1) return null;
+  if (getUses !== 1 || addUses !== 1 || setUses !== 1) return null;
 
   const delta = addInst.operator === "-" ? -step : step;
   return { delta, object: getInst.object };
@@ -185,6 +186,7 @@ export const optimizeVectorSwizzle = (
       nextTempId++,
       getOperandType(updateX.object),
     );
+    // BinaryOp for Vector3 maps to extern op_Addition in codegen.
     result.push(
       new BinaryOpInstruction(updateTemp, updateX.object, "+", vectorConst),
     );

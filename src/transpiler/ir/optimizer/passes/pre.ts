@@ -1,3 +1,4 @@
+import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   BinaryOpInstruction,
   CopyInstruction,
@@ -37,7 +38,7 @@ const binaryExprKey = (inst: BinaryOpInstruction): string => {
   let leftKey = operandKey(inst.left);
   let rightKey = operandKey(inst.right);
   const commutative =
-    inst.operator === "+" && typeKey === "String"
+    inst.operator === "+" && typeKey === PrimitiveTypes.string.udonType
       ? false
       : isCommutativeOperator(inst.operator);
   if (commutative && leftKey > rightKey) {
