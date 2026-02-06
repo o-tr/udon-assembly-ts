@@ -64,7 +64,7 @@ const isStraightLineTail = (
   return true;
 };
 
-const instSignature = (inst: TACInstruction): string => {
+const instSignature = (inst: TACInstruction): string | null => {
   switch (inst.kind) {
     case TACInstructionKind.BinaryOp: {
       const b = inst as BinaryOpInstruction;
@@ -93,7 +93,7 @@ const instSignature = (inst: TACInstruction): string => {
       return `Return|${r.value ? operandKey(r.value) : "<void>"}`;
     }
     default:
-      return `${inst.kind}|${inst.toString()}`;
+      return null;
   }
 };
 
@@ -108,7 +108,13 @@ const buildTailSignature = (
   let s = 0;
   while (s < slice.length && slice[s].kind === TACInstructionKind.Label) s++;
   const canonical = slice.slice(s);
-  return canonical.map((inst) => instSignature(inst)).join("|");
+  const parts: string[] = [];
+  for (const inst of canonical) {
+    const sig = instSignature(inst);
+    if (!sig) return null;
+    parts.push(sig);
+  }
+  return parts.join("|");
 };
 
 const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {

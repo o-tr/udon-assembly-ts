@@ -251,7 +251,9 @@ const cloneInstruction = (inst: TACInstruction): TACInstruction => {
       return new ReturnInstruction(r.value);
     }
     default:
-      return inst;
+      throw new Error(
+        `Unsupported instruction kind in unroll clone: ${inst.kind}`,
+      );
   }
 };
 

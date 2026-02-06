@@ -250,6 +250,38 @@ describe("optimizer passes", () => {
     expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(3);
   });
 
+  it("coalesces two-op string concatenation chains", () => {
+    const a = createVariable("a", PrimitiveTypes.string);
+    const b = createVariable("b", PrimitiveTypes.string);
+    const c = createVariable("c", PrimitiveTypes.string);
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+    const t1 = createTemporary(1, PrimitiveTypes.string);
+
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "+", b),
+      new BinaryOpInstruction(t1, t0, "+", c),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = optimizeStringConcatenation(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(2);
+  });
+
+  it("does not coalesce single string concatenation", () => {
+    const a = createVariable("a", PrimitiveTypes.string);
+    const b = createVariable("b", PrimitiveTypes.string);
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+
+    const instructions = [new BinaryOpInstruction(t0, a, "+", b)];
+
+    const optimized = optimizeStringConcatenation(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(0);
+  });
+
   it("removes fallthrough jumps", () => {
     const l0 = createLabel("L0");
     const instructions = [
@@ -308,6 +340,42 @@ describe("optimizer passes", () => {
     expect(
       optimized.filter((inst) => inst.kind === "BinaryOp").length,
     ).toBeGreaterThan(1);
+  });
+
+  it("unrolls loops and keeps increments", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+    const incrementCount = text.split("i = i + 1").length - 1;
+
+    expect(text).not.toContain("goto L_start");
+    expect(text).not.toContain("ifFalse");
+    expect(incrementCount).toBeGreaterThanOrEqual(2);
   });
 
   it("unrolls <= loops with fresh temporaries", () => {
