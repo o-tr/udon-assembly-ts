@@ -58,6 +58,7 @@ export const optimizeStringConcatenation = (
     }
 
     const operands: TACOperand[] = [bin.left, bin.right];
+    const dests: TACOperand[] = [bin.dest];
     let currentDest: TACOperand = bin.dest;
     let chainLength = 1;
     let cursor = i;
@@ -80,6 +81,7 @@ export const optimizeStringConcatenation = (
 
       operands.push(nextBin.right);
       currentDest = nextBin.dest;
+      dests.push(currentDest);
       chainLength += 1;
       cursor += 1;
     }
@@ -91,15 +93,15 @@ export const optimizeStringConcatenation = (
     }
 
     result.push(
-      new CallInstruction(currentDest, CONCAT_EXTERN, [
+      new CallInstruction(dests[0], CONCAT_EXTERN, [
         operands[0],
         operands[1],
       ]),
     );
     for (let idx = 2; idx < operands.length; idx += 1) {
       result.push(
-        new CallInstruction(currentDest, CONCAT_EXTERN, [
-          currentDest,
+        new CallInstruction(dests[idx - 1], CONCAT_EXTERN, [
+          dests[idx - 2],
           operands[idx],
         ]),
       );

@@ -32,6 +32,10 @@ const isVector3 = (operand: TACOperand): boolean => {
   return getOperandType(operand).name === ExternTypes.vector3.name;
 };
 
+const isLocalVectorTarget = (operand: TACOperand): boolean => {
+  return operand.kind === TACOperandKind.Variable;
+};
+
 const extractComponentUpdate = (
   getInst: PropertyGetInstruction,
   addInst: BinaryOpInstruction,
@@ -180,6 +184,11 @@ export const optimizeVectorSwizzle = (
       continue;
     }
     if (!isVector3(updateX.object)) {
+      result.push(instructions[i]);
+      i += 1;
+      continue;
+    }
+    if (!isLocalVectorTarget(updateX.object)) {
       result.push(instructions[i]);
       i += 1;
       continue;

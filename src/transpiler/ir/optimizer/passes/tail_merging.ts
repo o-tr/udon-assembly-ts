@@ -11,6 +11,47 @@ import { operandKey } from "../utils/operands.js";
 type ReturnInfo = {
   index: number;
   key: string;
+  tailSig: string | null;
+};
+
+const findTailStart = (
+  instructions: TACInstruction[],
+  index: number,
+): number => {
+  for (let i = index; i >= 0; i -= 1) {
+    if (instructions[i].kind === TACInstructionKind.Label) return i;
+  }
+  return 0;
+};
+
+const isStraightLineTail = (
+  instructions: TACInstruction[],
+  start: number,
+  end: number,
+): boolean => {
+  for (let i = start; i < end; i += 1) {
+    const inst = instructions[i];
+    if (
+      inst.kind === TACInstructionKind.ConditionalJump ||
+      inst.kind === TACInstructionKind.UnconditionalJump ||
+      inst.kind === TACInstructionKind.Return
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const buildTailSignature = (
+  instructions: TACInstruction[],
+  index: number,
+): string | null => {
+  const start = findTailStart(instructions, index);
+  if (!isStraightLineTail(instructions, start, index)) return null;
+  return instructions
+    .slice(start, index + 1)
+    .map((inst) => inst.toString())
+    .join("|");
 };
 
 const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {
@@ -20,7 +61,8 @@ const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {
     if (inst.kind !== TACInstructionKind.Return) continue;
     const ret = inst as ReturnInstruction;
     const key = ret.value ? operandKey(ret.value) : "<void>";
-    returns.push({ index: i, key });
+    const tailSig = buildTailSignature(instructions, i);
+    returns.push({ index: i, key, tailSig });
   }
   return returns;
 };
@@ -35,9 +77,11 @@ export const mergeTails = (
 
   const groups = new Map<string, ReturnInfo[]>();
   for (const info of returns) {
-    const group = groups.get(info.key) ?? [];
+    if (!info.tailSig) continue;
+    const groupKey = `${info.key}|${info.tailSig}`;
+    const group = groups.get(groupKey) ?? [];
     group.push(info);
-    groups.set(info.key, group);
+    groups.set(groupKey, group);
   }
 
   let labelCounter = 0;
