@@ -24,6 +24,7 @@ export enum TACInstructionKind {
   Return = "Return",
   ArrayAccess = "ArrayAccess",
   ArrayAssignment = "ArrayAssignment",
+  Phi = "Phi",
 }
 
 /**
@@ -290,5 +291,26 @@ export class ArrayAssignmentInstruction implements TACInstruction {
 
   toString(): string {
     return `${operandToString(this.array)}[${operandToString(this.index)}] = ${operandToString(this.value)}`;
+  }
+}
+
+export type PhiSource = { pred: number; value: TACOperand };
+
+/**
+ * Phi instruction: dest = phi(pred1: value1, pred2: value2, ...)
+ */
+export class PhiInstruction implements TACInstruction {
+  kind = TACInstructionKind.Phi as const;
+
+  constructor(
+    public dest: TACOperand,
+    public sources: PhiSource[],
+  ) {}
+
+  toString(): string {
+    const sources = this.sources
+      .map((source) => `b${source.pred}: ${operandToString(source.value)}`)
+      .join(", ");
+    return `${operandToString(this.dest)} = phi(${sources})`;
   }
 }

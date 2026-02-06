@@ -7,6 +7,7 @@ import {
   CastInstruction,
   type ConditionalJumpInstruction,
   MethodCallInstruction,
+  type PhiInstruction,
   type PropertyGetInstruction,
   type PropertySetInstruction,
   type ReturnInstruction,
@@ -57,6 +58,10 @@ export const getUsedOperandsForReuse = (inst: TACInstruction): TACOperand[] => {
     case TACInstructionKind.ArrayAssignment: {
       const assign = inst as ArrayAssignmentInstruction;
       return [assign.array, assign.index, assign.value];
+    }
+    case TACInstructionKind.Phi: {
+      const phi = inst as PhiInstruction;
+      return phi.sources.map((source) => source.value);
     }
     default:
       return [];
@@ -138,6 +143,15 @@ export const rewriteOperands = (
       assign.value = rewrite(assign.value);
       return;
     }
+    case TACInstructionKind.Phi: {
+      const phi = inst as PhiInstruction;
+      phi.dest = rewrite(phi.dest);
+      phi.sources = phi.sources.map((source) => ({
+        pred: source.pred,
+        value: rewrite(source.value),
+      }));
+      return;
+    }
     default:
       return;
   }
@@ -158,6 +172,8 @@ export const getDefinedOperandForReuse = (
     case TACInstructionKind.Call:
     case TACInstructionKind.MethodCall:
       return (inst as { dest?: TACOperand }).dest;
+    case TACInstructionKind.Phi:
+      return (inst as unknown as InstWithDest).dest;
     default:
       return undefined;
   }

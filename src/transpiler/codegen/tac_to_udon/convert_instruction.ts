@@ -415,6 +415,10 @@ export function convertInstruction(
       break;
     }
 
+    case TACInstructionKind.Phi: {
+      throw new Error("Phi instructions must be lowered before codegen");
+    }
+
     default: {
       const _exhaustive: never = inst.kind as never;
       throw new Error(`Unhandled TACInstructionKind: ${_exhaustive}`);
