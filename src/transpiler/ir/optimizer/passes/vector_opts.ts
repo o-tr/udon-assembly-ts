@@ -1,5 +1,6 @@
 import { ExternTypes } from "../../../frontend/type_symbols.js";
 import {
+  AssignmentInstruction,
   BinaryOpInstruction,
   type PropertyGetInstruction,
   type PropertySetInstruction,
@@ -9,11 +10,16 @@ import {
 import {
   type ConstantOperand,
   createConstant,
+  createTemporary,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
 } from "../../tac_operand.js";
-import { countTempUses } from "../utils/instructions.js";
+import {
+  countTempUses,
+  getDefinedOperandForReuse,
+  getUsedOperandsForReuse,
+} from "../utils/instructions.js";
 import { sameOperand } from "../utils/operands.js";
 import { getOperandType } from "./constant_folding.js";
 
@@ -63,12 +69,29 @@ const extractComponentUpdate = (
   return { delta, object: getInst.object };
 };
 
+const getMaxTempId = (instructions: TACInstruction[]): number => {
+  let maxTempId = -1;
+  for (const inst of instructions) {
+    const def = getDefinedOperandForReuse(inst);
+    if (def?.kind === TACOperandKind.Temporary) {
+      maxTempId = Math.max(maxTempId, (def as TemporaryOperand).id);
+    }
+    for (const op of getUsedOperandsForReuse(inst)) {
+      if (op.kind === TACOperandKind.Temporary) {
+        maxTempId = Math.max(maxTempId, (op as TemporaryOperand).id);
+      }
+    }
+  }
+  return maxTempId;
+};
+
 export const optimizeVectorSwizzle = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
   if (instructions.length < 9) return instructions;
 
   const tempUses = countTempUses(instructions);
+  let nextTempId = getMaxTempId(instructions) + 1;
   const result: TACInstruction[] = [];
 
   let i = 0;
@@ -166,9 +189,14 @@ export const optimizeVectorSwizzle = (
       { x: updateX.delta, y: updateY.delta, z: updateZ.delta },
       ExternTypes.vector3,
     );
-    result.push(
-      new BinaryOpInstruction(updateX.object, updateX.object, "+", vectorConst),
+    const updateTemp = createTemporary(
+      nextTempId++,
+      getOperandType(updateX.object),
     );
+    result.push(
+      new BinaryOpInstruction(updateTemp, updateX.object, "+", vectorConst),
+    );
+    result.push(new AssignmentInstruction(updateX.object, updateTemp));
 
     i += 9;
   }

@@ -313,6 +313,13 @@ export const optimizeLoopStructures = (
       continue;
     }
 
+    const header = instructions.slice(i + 1, condJumpIndex);
+    if (!isLoopBodySimple(header)) {
+      result.push(inst);
+      i += 1;
+      continue;
+    }
+
     const bodyStart = condJumpIndex + 1;
     const bodyEnd = jumpBackIndex - 1;
     const body = instructions.slice(bodyStart, bodyEnd + 1);
@@ -323,7 +330,7 @@ export const optimizeLoopStructures = (
     }
 
     for (let iter = 0; iter < tripCount; iter += 1) {
-      result.push(...body);
+      result.push(...header, ...body);
     }
 
     i = endIndex + 1;

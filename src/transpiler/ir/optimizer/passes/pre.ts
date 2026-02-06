@@ -1,9 +1,15 @@
 import {
   BinaryOpInstruction,
+  CopyInstruction,
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
-import { TACOperandKind } from "../../tac_operand.js";
+import {
+  createTemporary,
+  type TACOperand,
+  TACOperandKind,
+  type TemporaryOperand,
+} from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
   getDefinedOperandForReuse,
@@ -136,21 +142,67 @@ const computeAvailableMaps = (
 
 const insertBeforeTerminator = (
   block: { start: number; end: number },
-  instructions: TACInstruction[],
+  _instructions: TACInstruction[],
 ): number => {
-  const last = instructions[block.end];
-  if (
-    last.kind === TACInstructionKind.UnconditionalJump ||
-    last.kind === TACInstructionKind.ConditionalJump ||
-    last.kind === TACInstructionKind.Return
-  ) {
-    return block.end;
+  return block.end;
+};
+
+const isTerminator = (inst: TACInstruction): boolean => {
+  return (
+    inst.kind === TACInstructionKind.UnconditionalJump ||
+    inst.kind === TACInstructionKind.ConditionalJump ||
+    inst.kind === TACInstructionKind.Return
+  );
+};
+
+const getMaxTempId = (instructions: TACInstruction[]): number => {
+  let maxTempId = -1;
+  for (const inst of instructions) {
+    const def = getDefinedOperandForReuse(inst);
+    if (def?.kind === TACOperandKind.Temporary) {
+      maxTempId = Math.max(maxTempId, (def as TemporaryOperand).id);
+    }
+    for (const op of getUsedOperandsForReuse(inst)) {
+      if (op.kind === TACOperandKind.Temporary) {
+        maxTempId = Math.max(maxTempId, (op as TemporaryOperand).id);
+      }
+    }
   }
-  return block.end + 1;
+  return maxTempId;
 };
 
 const usesOperandKey = (inst: TACInstruction, key: string): boolean => {
   return getUsedOperandsForReuse(inst).some((op) => livenessKey(op) === key);
+};
+
+const isOperandAvailableInBlock = (
+  block: { start: number; end: number },
+  instructions: TACInstruction[],
+  operand: TACOperand,
+): boolean => {
+  if (operand.kind === TACOperandKind.Constant) return true;
+  if (operand.kind === TACOperandKind.Label) return true;
+  const key = livenessKey(operand);
+  if (!key) return true;
+  for (let i = block.start; i <= block.end; i += 1) {
+    const def = getDefinedOperandForReuse(instructions[i]);
+    if (def && livenessKey(def) === key) return true;
+  }
+  return false;
+};
+
+const findEquivalentBinaryOp = (
+  block: { start: number; end: number },
+  instructions: TACInstruction[],
+  exprKey: string,
+): BinaryOpInstruction | null => {
+  for (let i = block.start; i <= block.end; i += 1) {
+    const inst = instructions[i];
+    if (inst.kind !== TACInstructionKind.BinaryOp) continue;
+    const bin = inst as BinaryOpInstruction;
+    if (binaryExprKey(bin) === exprKey) return bin;
+  }
+  return null;
 };
 
 export const performPRE = (
@@ -162,6 +214,7 @@ export const performPRE = (
   const { inMaps } = computeAvailableMaps(instructions);
   const inserts = new Map<number, TACInstruction[]>();
   const removeIndices = new Set<number>();
+  let nextTempId = getMaxTempId(instructions) + 1;
 
   for (const block of cfg.blocks) {
     const inMap = inMaps.get(block.id) ?? new Map();
@@ -186,8 +239,16 @@ export const performPRE = (
       if (usedBefore) continue;
 
       let canInsertAll = true;
+      const predPlans: Array<{ index: number; insts: TACInstruction[] }> = [];
       for (const predId of block.preds) {
         const predBlock = cfg.blocks[predId];
+        if (
+          !isOperandAvailableInBlock(predBlock, instructions, bin.left) ||
+          !isOperandAvailableInBlock(predBlock, instructions, bin.right)
+        ) {
+          canInsertAll = false;
+          break;
+        }
         for (let j = predBlock.start; j <= predBlock.end; j += 1) {
           if (usesOperandKey(instructions[j], destKey)) {
             canInsertAll = false;
@@ -195,17 +256,41 @@ export const performPRE = (
           }
         }
         if (!canInsertAll) break;
+
+        const insertIndex = insertBeforeTerminator(predBlock, instructions);
+        const insts: TACInstruction[] = [];
+        const existing = findEquivalentBinaryOp(
+          predBlock,
+          instructions,
+          exprKey,
+        );
+        if (existing) {
+          if (operandKey(existing.dest) !== operandKey(bin.dest)) {
+            insts.push(new CopyInstruction(bin.dest, existing.dest));
+          }
+        } else {
+          const temp = createTemporary(nextTempId++, getOperandType(bin.dest));
+          insts.push(
+            new BinaryOpInstruction(
+              temp,
+              bin.left,
+              bin.operator,
+              bin.right,
+            ),
+          );
+          insts.push(new CopyInstruction(bin.dest, temp));
+        }
+
+        if (insts.length > 0) {
+          predPlans.push({ index: insertIndex, insts });
+        }
       }
       if (!canInsertAll) continue;
 
-      for (const predId of block.preds) {
-        const predBlock = cfg.blocks[predId];
-        const insertIndex = insertBeforeTerminator(predBlock, instructions);
-        const list = inserts.get(insertIndex) ?? [];
-        list.push(
-          new BinaryOpInstruction(bin.dest, bin.left, bin.operator, bin.right),
-        );
-        inserts.set(insertIndex, list);
+      for (const plan of predPlans) {
+        const list = inserts.get(plan.index) ?? [];
+        list.push(...plan.insts);
+        inserts.set(plan.index, list);
       }
 
       removeIndices.add(i);
@@ -217,9 +302,19 @@ export const performPRE = (
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i += 1) {
     const pending = inserts.get(i);
-    if (pending) result.push(...pending);
+    const inst = instructions[i];
+    if (pending) {
+      if (isTerminator(inst)) {
+        result.push(...pending);
+        if (!removeIndices.has(i)) result.push(inst);
+      } else {
+        if (!removeIndices.has(i)) result.push(inst);
+        result.push(...pending);
+      }
+      continue;
+    }
     if (removeIndices.has(i)) continue;
-    result.push(instructions[i]);
+    result.push(inst);
   }
 
   const tail = inserts.get(instructions.length);

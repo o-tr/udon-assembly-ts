@@ -108,7 +108,7 @@ const orderChains = (
     ordered.push(chainId);
   };
 
-  const entryChain = blockToChain[0] ?? 0;
+  const entryChain = blockToChain[0] !== -1 ? blockToChain[0] : 0;
   appendChain(entryChain);
 
   const chainByHead = new Map<number, number>();
