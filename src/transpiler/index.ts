@@ -8,6 +8,7 @@ import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
+import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "./frontend/parser/index.js";
 import {
   ASTNodeKind,
@@ -21,6 +22,7 @@ import {
 } from "./heap_limits.js";
 import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
 import { TACOptimizer } from "./ir/optimizer/index.js";
+import { pruneProgramByMethodUsage } from "./ir/optimizer/ipa.js";
 import { buildUdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
 
 /**
@@ -59,8 +61,13 @@ export class TypeScriptToUdonTranspiler {
       TypeScriptToUdonTranspiler.INLINE_SOURCE_ID,
     );
     const symbolTable = parser.getSymbolTable();
+    let program = ast;
+    if (options.optimize === true) {
+      const usage = new MethodUsageAnalyzer(registry).analyze();
+      program = pruneProgramByMethodUsage(program, usage);
+    }
     const udonBehaviourClasses = new Set(
-      ast.statements
+      program.statements
         .filter(
           (node): node is ClassDeclarationNode =>
             node.kind === ASTNodeKind.ClassDeclaration,
@@ -73,7 +80,7 @@ export class TypeScriptToUdonTranspiler {
         .map((cls) => cls.name),
     );
     const udonBehaviourLayouts = buildUdonBehaviourLayouts(
-      ast.statements
+      program.statements
         .filter(
           (node): node is ClassDeclarationNode =>
             node.kind === ASTNodeKind.ClassDeclaration,
@@ -104,7 +111,7 @@ export class TypeScriptToUdonTranspiler {
       registry,
       { useStringBuilder: options.useStringBuilder },
     );
-    let tacInstructions = tacConverter.convert(ast);
+    let tacInstructions = tacConverter.convert(program);
 
     // Phase 3: Optimize TAC (only when explicitly enabled)
     if (options.optimize === true) {
@@ -117,8 +124,11 @@ export class TypeScriptToUdonTranspiler {
 
     // Phase 4: Convert TAC to Udon instructions
     const udonConverter = new TACToUdonConverter();
-    const entryClassName = this.pickEntryClassName(ast);
-    const inlineClassNames = this.collectInlineClassNames(ast, entryClassName);
+    const entryClassName = this.pickEntryClassName(program);
+    const inlineClassNames = this.collectInlineClassNames(
+      program,
+      entryClassName,
+    );
     const udonInstructions = udonConverter.convert(tacInstructions, {
       entryClassName: entryClassName ?? undefined,
       inlineClassNames,
@@ -128,7 +138,7 @@ export class TypeScriptToUdonTranspiler {
     if (options.reflect === true) {
       dataSectionWithTypes = this.appendReflectionData(
         dataSectionWithTypes,
-        ast,
+        program,
       );
     }
 
@@ -277,6 +287,7 @@ export {
   CopyInstruction as TACCopyInstruction,
   LabelInstruction as TACLabelInstruction,
   MethodCallInstruction,
+  PhiInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
   ReturnInstruction,
