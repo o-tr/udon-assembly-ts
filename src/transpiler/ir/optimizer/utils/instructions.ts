@@ -253,3 +253,19 @@ export const countTempUses = (
 
   return counts;
 };
+
+export const getMaxTempId = (instructions: TACInstruction[]): number => {
+  let maxTempId = -1;
+  for (const inst of instructions) {
+    const def = getDefinedOperandForReuse(inst);
+    if (def?.kind === TACOperandKind.Temporary) {
+      maxTempId = Math.max(maxTempId, (def as TemporaryOperand).id);
+    }
+    for (const op of getUsedOperandsForReuse(inst)) {
+      if (op.kind === TACOperandKind.Temporary) {
+        maxTempId = Math.max(maxTempId, (op as TemporaryOperand).id);
+      }
+    }
+  }
+  return maxTempId;
+};

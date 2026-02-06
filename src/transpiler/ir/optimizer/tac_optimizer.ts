@@ -1,5 +1,6 @@
 import type { TACInstruction } from "../tac_instruction.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
+import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
 import { castChainFolding } from "./passes/cast_chain_folding.js";
 import { constantFolding } from "./passes/constant_folding.js";
@@ -10,13 +11,18 @@ import {
   eliminateNoopCopies,
 } from "./passes/dead_code.js";
 import { doubleNegationElimination } from "./passes/double_negation.js";
+import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
 import { performLICM } from "./passes/licm.js";
+import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
+import { performPRE } from "./passes/pre.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
+import { optimizeStringConcatenation } from "./passes/string_optimization.js";
+import { mergeTails } from "./passes/tail_merging.js";
 import { optimizeTailCalls } from "./passes/tco.js";
 import {
   copyOnWriteTemporaries,
@@ -25,6 +31,7 @@ import {
   reuseTemporaries,
 } from "./passes/temp_reuse.js";
 import { eliminateUnusedLabels } from "./passes/unused_labels.js";
+import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
 
 /**
  * TAC optimizer
@@ -42,6 +49,9 @@ export class TACOptimizer {
 
       // Apply constant folding
       next = constantFolding(next);
+
+      // Coalesce string concatenation chains
+      next = optimizeStringConcatenation(next);
 
       // Apply SCCP and prune unreachable blocks
       next = sccpAndPrune(next);
@@ -64,6 +74,9 @@ export class TACOptimizer {
       // Reassociate partially-constant binary operations
       next = reassociate(next);
 
+      // Partial redundancy elimination
+      next = performPRE(next);
+
       // Apply global value numbering / CSE across blocks
       next = globalValueNumbering(next);
 
@@ -82,6 +95,12 @@ export class TACOptimizer {
       // Apply dead code elimination
       next = deadCodeElimination(next);
 
+      // Reorder basic blocks to reduce jumps
+      next = optimizeBlockLayout(next);
+
+      // Remove jumps that fall through to the next label
+      next = eliminateFallthroughJumps(next);
+
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);
 
@@ -91,8 +110,17 @@ export class TACOptimizer {
       // Optimize simple induction variables
       next = optimizeInductionVariables(next);
 
+      // Unroll simple fixed-count loops
+      next = optimizeLoopStructures(next);
+
+      // Fold scalar Vector3 updates into vector ops
+      next = optimizeVectorSwizzle(next);
+
       // Remove unused temporary computations
       next = eliminateDeadTemporaries(next);
+
+      // Merge identical return tails
+      next = mergeTails(next);
 
       // Remove unused labels
       next = eliminateUnusedLabels(next);

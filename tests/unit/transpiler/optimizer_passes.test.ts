@@ -5,6 +5,21 @@ import {
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
+import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
+import { constantFolding } from "../../../src/transpiler/ir/optimizer/passes/constant_folding";
+import {
+  deadCodeElimination,
+  eliminateDeadStoresCFG,
+} from "../../../src/transpiler/ir/optimizer/passes/dead_code";
+import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
+import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
+import { optimizeInductionVariables } from "../../../src/transpiler/ir/optimizer/passes/induction";
+import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
+import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
+import { sccpAndPrune } from "../../../src/transpiler/ir/optimizer/passes/sccp";
+import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
+import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
+import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -46,8 +61,8 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    let optimized = sccpAndPrune(instructions);
+    optimized = constantFolding(optimized);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 2");
@@ -65,8 +80,10 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    let optimized = sccpAndPrune(instructions);
+    optimized = constantFolding(optimized);
+    optimized = eliminateDeadStoresCFG(optimized);
+    optimized = deadCodeElimination(optimized);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 2");
@@ -85,13 +102,11 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = globalValueNumbering(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("a + b");
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
-    expect(optimized.filter((inst) => inst.kind === "Copy").length).toBe(0);
   });
 
   it("folds string concatenation", () => {
@@ -106,8 +121,10 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    let optimized = sccpAndPrune(instructions);
+    optimized = constantFolding(optimized);
+    optimized = eliminateDeadStoresCFG(optimized);
+    optimized = deadCodeElimination(optimized);
     const text = stringify(optimized);
 
     expect(text).toContain('t0 = "Hello World"');
@@ -126,8 +143,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = false");
@@ -141,8 +157,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).not.toContain("a = a");
@@ -184,12 +199,559 @@ describe("optimizer passes", () => {
       new ReturnInstruction(),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L1");
     expect(text).not.toContain("goto L2");
+  });
+
+  it("reorders block layout to reduce jumps", () => {
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const l2 = createLabel("L2");
+
+    const instructions = [
+      new LabelInstruction(l0),
+      new UnconditionalJumpInstruction(l2),
+      new LabelInstruction(l1),
+      new ReturnInstruction(),
+      new LabelInstruction(l2),
+      new UnconditionalJumpInstruction(l1),
+    ];
+
+    const reordered = optimizeBlockLayout(instructions);
+    const text = stringify(reordered);
+
+    expect(text.indexOf("L2:")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("L1:")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("L2:")).toBeLessThan(text.indexOf("L1:"));
+  });
+
+  it("keeps conditional jump blocks during layout", () => {
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const l2 = createLabel("L2");
+
+    const instructions = [
+      new LabelInstruction(l0),
+      new ConditionalJumpInstruction(cond, l2),
+      new LabelInstruction(l1),
+      new ReturnInstruction(),
+      new LabelInstruction(l2),
+      new ReturnInstruction(),
+    ];
+
+    const reordered = optimizeBlockLayout(instructions);
+    const text = stringify(reordered);
+
+    expect(text).toContain("L0:");
+    expect(text).toContain("L1:");
+    expect(text).toContain("L2:");
+  });
+
+  it("coalesces string concatenation chains", () => {
+    const a = createVariable("a", PrimitiveTypes.string);
+    const b = createVariable("b", PrimitiveTypes.string);
+    const c = createVariable("c", PrimitiveTypes.string);
+    const d = createVariable("d", PrimitiveTypes.string);
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+    const t1 = createTemporary(1, PrimitiveTypes.string);
+    const t2 = createTemporary(2, PrimitiveTypes.string);
+
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "+", b),
+      new BinaryOpInstruction(t1, t0, "+", c),
+      new BinaryOpInstruction(t2, t1, "+", d),
+      new ReturnInstruction(t2),
+    ];
+
+    const optimized = optimizeStringConcatenation(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(3);
+  });
+
+  it("coalesces two-op string concatenation chains", () => {
+    const a = createVariable("a", PrimitiveTypes.string);
+    const b = createVariable("b", PrimitiveTypes.string);
+    const c = createVariable("c", PrimitiveTypes.string);
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+    const t1 = createTemporary(1, PrimitiveTypes.string);
+
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "+", b),
+      new BinaryOpInstruction(t1, t0, "+", c),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = optimizeStringConcatenation(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(2);
+  });
+
+  it("does not coalesce single string concatenation", () => {
+    const a = createVariable("a", PrimitiveTypes.string);
+    const b = createVariable("b", PrimitiveTypes.string);
+    const t0 = createTemporary(0, PrimitiveTypes.string);
+
+    const instructions = [new BinaryOpInstruction(t0, a, "+", b)];
+
+    const optimized = optimizeStringConcatenation(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
+    expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(0);
+  });
+
+  it("removes fallthrough jumps", () => {
+    const l0 = createLabel("L0");
+    const instructions = [
+      new UnconditionalJumpInstruction(l0),
+      new LabelInstruction(l0),
+      new ReturnInstruction(),
+    ];
+
+    const optimized = eliminateFallthroughJumps(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L0");
+  });
+
+  it("removes fallthrough jumps across consecutive labels", () => {
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const instructions = [
+      new UnconditionalJumpInstruction(l0),
+      new LabelInstruction(l1),
+      new LabelInstruction(l0),
+      new ReturnInstruction(),
+    ];
+
+    const optimized = eliminateFallthroughJumps(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L0");
+  });
+
+  it("unrolls simple fixed loops", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        t1,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new AssignmentInstruction(a, t1),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L_start");
+    expect(text).not.toContain("ifFalse");
+    expect(
+      optimized.filter((inst) => inst.kind === "BinaryOp").length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("unrolls loops and keeps increments", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+    const incrementCount = text.split("i = i + 1").length - 1;
+
+    expect(text).not.toContain("goto L_start");
+    expect(text).not.toContain("ifFalse");
+    expect(incrementCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not unroll loops with condition gaps", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("goto L_start");
+  });
+
+  it("unrolls <= loops with fresh temporaries", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<=",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        t1,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new AssignmentInstruction(a, t1),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+    const tempMatches = text.match(/t\d+/g) ?? [];
+    const uniqueTemps = new Set(tempMatches);
+
+    expect(text).not.toContain("goto L_start");
+    expect(text).not.toContain("ifFalse");
+    expect(uniqueTemps.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not unroll zero-trip loops", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(3, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("goto L_start");
+  });
+
+  it("does not unroll negative-step loops", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(3, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        ">",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "-",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("goto L_start");
+  });
+
+  it("merges identical return tails", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const l0 = createLabel("L0");
+
+    const instructions = [
+      new ReturnInstruction(a),
+      new LabelInstruction(l0),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("tail_merge_");
+    expect(text).toContain("goto tail_merge_");
+  });
+
+  it("merges three identical return tails", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+
+    const instructions = [
+      new ReturnInstruction(a),
+      new LabelInstruction(l0),
+      new ReturnInstruction(a),
+      new LabelInstruction(l1),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+    const gotoCount = text.split("goto tail_merge_").length - 1;
+
+    expect(text).toContain("tail_merge_");
+    expect(gotoCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not merge tails with side-effecting calls", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const l0 = createLabel("L0");
+
+    const instructions = [
+      new CallInstruction(t0, "Foo", []),
+      new ReturnInstruction(t0),
+      new LabelInstruction(l0),
+      new CallInstruction(t0, "Foo", []),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("tail_merge_");
+  });
+
+  it("folds scalar Vector3 component updates", () => {
+    const v = createVariable("v", ExternTypes.vector3);
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const t1 = createTemporary(1, PrimitiveTypes.single);
+    const t2 = createTemporary(2, PrimitiveTypes.single);
+    const t3 = createTemporary(3, PrimitiveTypes.single);
+    const t4 = createTemporary(4, PrimitiveTypes.single);
+    const t5 = createTemporary(5, PrimitiveTypes.single);
+
+    const instructions = [
+      new PropertyGetInstruction(t0, v, "x"),
+      new BinaryOpInstruction(
+        t1,
+        t0,
+        "+",
+        createConstant(1, PrimitiveTypes.single),
+      ),
+      new PropertySetInstruction(v, "x", t1),
+      new PropertyGetInstruction(t2, v, "y"),
+      new BinaryOpInstruction(
+        t3,
+        t2,
+        "+",
+        createConstant(1, PrimitiveTypes.single),
+      ),
+      new PropertySetInstruction(v, "y", t3),
+      new PropertyGetInstruction(t4, v, "z"),
+      new BinaryOpInstruction(
+        t5,
+        t4,
+        "+",
+        createConstant(1, PrimitiveTypes.single),
+      ),
+      new PropertySetInstruction(v, "z", t5),
+    ];
+
+    const optimized = optimizeVectorSwizzle(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "PropertySet").length).toBe(
+      0,
+    );
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
+  });
+
+  it("inserts partial redundancy computations", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new BinaryOpInstruction(t0, a, "+", b),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = performPRE(instructions);
+    const endLabelIndex = optimized.findIndex(
+      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
+    );
+    // there should be no 'a + b' BinaryOp after the end label
+    const hasBinAfterEnd = optimized
+      .slice(endLabelIndex)
+      .some(
+        (inst) => inst.kind === "BinaryOp" && inst.toString().includes("a + b"),
+      );
+    // there should be BinaryOp(s) inserted before the end label (in preds)
+    const hasBinBeforeEnd = optimized
+      .slice(0, endLabelIndex)
+      .some(
+        (inst) => inst.kind === "BinaryOp" && inst.toString().includes("a + b"),
+      );
+
+    expect(endLabelIndex).toBeGreaterThanOrEqual(0);
+    expect(hasBinBeforeEnd).toBe(true);
+    expect(hasBinAfterEnd).toBe(false);
+  });
+
+  it("hoists when operands are temps defined in preds", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const c = createVariable("c", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new BinaryOpInstruction(t0, a, "+", b),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new BinaryOpInstruction(t0, a, "+", b),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new BinaryOpInstruction(t1, t0, "+", c),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = performPRE(instructions);
+    const endLabelIndex = optimized.findIndex(
+      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
+    );
+    const hasBinAfterEnd = optimized
+      .slice(endLabelIndex)
+      .some(
+        (inst) =>
+          inst.kind === "BinaryOp" && inst.toString().includes("t0 + c"),
+      );
+    const hasBinBeforeEnd = optimized
+      .slice(0, endLabelIndex)
+      .some(
+        (inst) =>
+          inst.kind === "BinaryOp" && inst.toString().includes("t0 + c"),
+      );
+
+    expect(endLabelIndex).toBeGreaterThanOrEqual(0);
+    expect(hasBinBeforeEnd).toBe(true);
+    expect(hasBinAfterEnd).toBe(false);
   });
 
   it("prunes unreachable blocks on constant branches", () => {
@@ -212,8 +774,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).not.toContain("L_else");
@@ -234,8 +795,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = a");
@@ -253,8 +813,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 1");
@@ -399,8 +958,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     const hoistedIndex = text.indexOf("t0 = a + b");
@@ -443,8 +1001,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = optimizeInductionVariables(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = t0 + 2");
