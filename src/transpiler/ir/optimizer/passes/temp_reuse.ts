@@ -22,6 +22,7 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
   countTempUses,
@@ -432,6 +433,26 @@ export const eliminateSingleUseTemporaries = (
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
+  const isUdonExternSignature = (signature: string): boolean => {
+    return /^[A-Za-z0-9._]+\.__[A-Za-z0-9_]+__(?:[A-Za-z0-9_]+)?__[A-Za-z0-9_]+$/.test(
+      signature,
+    );
+  };
+
+  const resolvePureExternSignature = (func: string): string | null => {
+    if (isUdonExternSignature(func)) return func;
+    const lastDot = func.lastIndexOf(".");
+    if (lastDot <= 0) return null;
+    const typeName = func.slice(0, lastDot);
+    const memberName = func.slice(lastDot + 1);
+    return resolveExternSignature(typeName, memberName, "method");
+  };
+
+  const isPureExternCall = (call: CallInstruction): boolean => {
+    const resolved = resolvePureExternSignature(call.func);
+    return resolved ? pureExternEvaluators.has(resolved) : false;
+  };
+
   const result: TACInstruction[] = [];
 
   for (const block of cfg.blocks) {
@@ -449,9 +470,7 @@ export const eliminateSingleUseTemporaries = (
         const isAllowedProducer =
           isPureProducer(inst) ||
           (inst.kind === TACInstructionKind.Call &&
-            pureExternEvaluators.has(
-              (inst as unknown as CallInstruction).func,
-            ));
+            isPureExternCall(inst as CallInstruction));
 
         if (!isAllowedProducer) {
           result.push(inst);

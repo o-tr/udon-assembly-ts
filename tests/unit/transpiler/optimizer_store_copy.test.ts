@@ -5,34 +5,44 @@ import {
   CallInstruction,
   CopyInstruction,
   ReturnInstruction,
+  TACInstructionKind,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
-  createConstant,
   createTemporary,
   createVariable,
+  TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
 
 describe("store-copy optimization", () => {
-  it("forwards call result into final variable when temp is single-use", () => {
-    const t0 = createTemporary(0, PrimitiveTypes.int32);
-    const a = createVariable("a", PrimitiveTypes.int32);
+  it("forwards pure call result into final variable", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const a = createVariable("a", PrimitiveTypes.single, { isLocal: true });
+    const x = createVariable("x", PrimitiveTypes.single, { isLocal: true });
+    const pureExtern = "UnityEngineMathf.__Abs__SystemSingle__SystemSingle";
 
     const instructions = [
-      new CallInstruction(t0, "SomePureFunc", [
-        createConstant(1, PrimitiveTypes.int32),
-      ]),
+      new CallInstruction(t0, pureExtern, [x]),
       new CopyInstruction(a, t0),
       new ReturnInstruction(a),
     ];
 
     const optimized = new TACOptimizer().optimize(instructions);
-    const text = optimized.map((i) => i.toString()).join("\n");
 
-    // Final form should be either a direct call into `a` or a tail-call.
-    expect(
-      text.includes("a = call SomePureFunc(1)") ||
-        text.includes("tail call SomePureFunc(1)") ||
-        text.includes("= t0"),
-    ).toBe(true);
+    // Forwarding should eliminate the temp->variable copy.
+    const hasCopyFromTempToVar = optimized.some((inst) => {
+      if (inst.kind !== TACInstructionKind.Copy) return false;
+      const copy = inst as CopyInstruction;
+      return (
+        copy.src.kind === TACOperandKind.Temporary &&
+        copy.dest.kind === TACOperandKind.Variable
+      );
+    });
+
+    const call = optimized.find(
+      (inst) => inst.kind === TACInstructionKind.Call,
+    ) as CallInstruction | undefined;
+
+    expect(hasCopyFromTempToVar).toBe(false);
+    expect(call?.dest?.kind).toBe(TACOperandKind.Variable);
   });
 });

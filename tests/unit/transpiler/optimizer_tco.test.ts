@@ -11,7 +11,7 @@ import {
 } from "../../../src/transpiler/ir/tac_operand";
 
 describe("tail-call optimization", () => {
-  it("marks call+return as tail call and removes return", () => {
+  it("marks call+return as tail call and preserves return", () => {
     const t0 = createTemporary(0, PrimitiveTypes.int32);
     const instructions = [
       new CallInstruction(t0, "RecurseFunc", [
@@ -23,9 +23,9 @@ describe("tail-call optimization", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = optimized.map((i) => i.toString()).join("\n");
 
-    // Call should be rewritten as a tail-call hint (IR-level). We
-    // preserve the return instruction to avoid dropping return-value
-    // semantics at this stage.
+    // Call should be rewritten as a tail-call hint (IR-level) while
+    // preserving the return for correct semantics.
     expect(text).toContain("tail call RecurseFunc(1)");
+    expect(text).toContain("return t0");
   });
 });

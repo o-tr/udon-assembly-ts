@@ -6,7 +6,7 @@ import { CallInstruction } from "../../../src/transpiler/ir/tac_instruction";
 import { createConstant } from "../../../src/transpiler/ir/tac_operand";
 
 describe("TAC->Udon TCO generation", () => {
-  it("emits JUMP for tail calls", () => {
+  it("does not lower tail-call hint to JUMP", () => {
     const call = new CallInstruction(
       undefined,
       "System.__SomeExtern__SystemSingle__SystemSingle",
@@ -18,10 +18,12 @@ describe("TAC->Udon TCO generation", () => {
     const udon = conv.convert([call]);
 
     // Codegen should emit a normal extern call rather than a raw JUMP
-    // for tail-call IR hints; ensure an EXTERN instruction is present.
+    // for tail-call IR hints.
     const hasExtern = udon.some(
       (inst) => inst.kind === UdonInstructionKind.Extern,
     );
+    const hasJump = udon.some((inst) => inst.kind === UdonInstructionKind.Jump);
     expect(hasExtern).toBe(true);
+    expect(hasJump).toBe(false);
   });
 });
