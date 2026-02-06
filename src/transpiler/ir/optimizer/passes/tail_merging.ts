@@ -158,7 +158,8 @@ export const mergeTails = (
   }
 
   const result: TACInstruction[] = [];
-  for (let i = 0; i < instructions.length; i += 1) {
+  let i = 0;
+  while (i < instructions.length) {
     const labelName = insertLabels.get(i);
     if (labelName) {
       result.push(new LabelInstruction(createLabel(labelName)));
@@ -170,10 +171,12 @@ export const mergeTails = (
       if (label.kind === TACOperandKind.Label) {
         result.push(new UnconditionalJumpInstruction(label));
       }
-      i = rep.end;
-    } else {
-      result.push(instructions[i]);
+      i = rep.end + 1;
+      continue;
     }
+
+    result.push(instructions[i]);
+    i += 1;
   }
 
   return result;
