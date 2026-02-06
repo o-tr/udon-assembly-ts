@@ -659,7 +659,7 @@ export function visitArrayLiteralExpression(
             }
             case ASTNodeKind.ArrayAccessExpression: {
               const a = n as ArrayAccessExpressionNode;
-              return `${describeNode(a.array)}[${a.index.kind}]`;
+              return `${describeNode(a.array)}[${describeNode(a.index)}]`;
             }
             case ASTNodeKind.Literal: {
               const lit = n as LiteralNode;
