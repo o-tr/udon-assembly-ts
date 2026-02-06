@@ -46,6 +46,7 @@ const extractComponentUpdate = (
   if (addInst.operator !== "+" && addInst.operator !== "-") return null;
   if (addInst.left.kind !== TACOperandKind.Temporary) return null;
   if (addInst.right.kind !== TACOperandKind.Constant) return null;
+  if (addInst.dest.kind !== TACOperandKind.Temporary) return null;
   if (getInst.dest.kind !== TACOperandKind.Temporary) return null;
   if (
     (addInst.left as TemporaryOperand).id !==
