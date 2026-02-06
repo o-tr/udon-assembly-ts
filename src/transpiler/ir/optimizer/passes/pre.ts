@@ -271,12 +271,35 @@ export const performPRE = (
         if (!canInsertAll) break;
 
         const insertIndex = insertBeforeTerminator(predBlock, instructions);
+        if (insertIndex > predBlock.end) {
+          // Fallthrough predecessor: inserting here would place
+          // predecessor-specific instructions inside the successor block.
+          canInsertAll = false;
+          break;
+        }
         const insts: TACInstruction[] = [];
-        const existing = findEquivalentBinaryOp(
+        let existing = findEquivalentBinaryOp(
           predBlock,
           instructions,
           exprKey,
         );
+        if (existing) {
+          // Verify existing.dest is not redefined after the instruction
+          const existDestKey = livenessKey(existing.dest);
+          if (existDestKey) {
+            let found = false;
+            for (let j = predBlock.start; j <= predBlock.end; j += 1) {
+              if (instructions[j] === existing) {
+                found = true;
+                continue;
+              }
+              if (found && definesOperandKey(instructions[j], existDestKey)) {
+                existing = null;
+                break;
+              }
+            }
+          }
+        }
         if (existing) {
           if (operandKey(existing.dest) !== operandKey(bin.dest)) {
             insts.push(new CopyInstruction(bin.dest, existing.dest));
