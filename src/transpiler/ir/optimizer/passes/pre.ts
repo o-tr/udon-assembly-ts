@@ -144,7 +144,15 @@ const insertBeforeTerminator = (
   block: { start: number; end: number },
   _instructions: TACInstruction[],
 ): number => {
-  return block.end;
+  const last = _instructions[block.end];
+  if (
+    last.kind === TACInstructionKind.UnconditionalJump ||
+    last.kind === TACInstructionKind.ConditionalJump ||
+    last.kind === TACInstructionKind.Return
+  ) {
+    return block.end;
+  }
+  return block.end + 1;
 };
 
 const isTerminator = (inst: TACInstruction): boolean => {
@@ -180,13 +188,20 @@ const isOperandAvailableInBlock = (
   instructions: TACInstruction[],
   operand: TACOperand,
 ): boolean => {
+  // Constants and labels always available
   if (operand.kind === TACOperandKind.Constant) return true;
   if (operand.kind === TACOperandKind.Label) return true;
-  const key = livenessKey(operand);
-  if (!key) return true;
-  for (let i = block.start; i <= block.end; i += 1) {
-    const def = getDefinedOperandForReuse(instructions[i]);
-    if (def && livenessKey(def) === key) return true;
+  // Variables (locals/params) are assumed available at block entry
+  if (operand.kind === TACOperandKind.Variable) return true;
+  // Temporaries must be defined in the predecessor block to be available
+  if (operand.kind === TACOperandKind.Temporary) {
+    const key = livenessKey(operand);
+    if (!key) return false;
+    for (let i = block.start; i <= block.end; i += 1) {
+      const def = getDefinedOperandForReuse(instructions[i]);
+      if (def && livenessKey(def) === key) return true;
+    }
+    return false;
   }
   return false;
 };

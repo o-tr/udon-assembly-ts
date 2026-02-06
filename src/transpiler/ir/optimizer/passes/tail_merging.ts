@@ -48,10 +48,12 @@ const buildTailSignature = (
 ): string | null => {
   const start = findTailStart(instructions, index);
   if (!isStraightLineTail(instructions, start, index)) return null;
-  return instructions
-    .slice(start, index + 1)
-    .map((inst) => inst.toString())
-    .join("|");
+  const slice = instructions.slice(start, index + 1);
+  // strip leading labels for canonicalization
+  let s = 0;
+  while (s < slice.length && slice[s].kind === TACInstructionKind.Label) s++;
+  const canonical = slice.slice(s);
+  return canonical.map((inst) => inst.toString()).join("|");
 };
 
 const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {
