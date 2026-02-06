@@ -140,9 +140,21 @@ export function visitVariableDeclaration(
   const dest = createVariable(node.name, destType, { isLocal: true });
 
   if (!this.symbolTable.hasInCurrentScope(node.name)) {
-    this.symbolTable.addSymbol(node.name, destType, false, node.isConst);
+    this.symbolTable.addSymbol(
+      node.name,
+      destType,
+      false,
+      node.isConst,
+      node.initializer,
+    );
   } else {
     this.symbolTable.updateTypeInCurrentScope(node.name, destType);
+    if (node.initializer) {
+      this.symbolTable.updateInitialValueInCurrentScope(
+        node.name,
+        node.initializer,
+      );
+    }
   }
 
   if (src) {
