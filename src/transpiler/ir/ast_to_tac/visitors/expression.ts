@@ -649,12 +649,50 @@ export function visitArrayLiteralExpression(
         }
       }
       if (!isDataList && !isArray) {
-        const sourceHint =
-          element.value.kind === ASTNodeKind.Identifier
-            ? (element.value as IdentifierNode).name
-            : String(element.value.kind);
+        const describeNode = (n: ASTNode, depth = 0): string => {
+          if (depth > 50) return "...";
+          switch (n.kind) {
+            case ASTNodeKind.Identifier:
+              return (n as IdentifierNode).name;
+            case ASTNodeKind.PropertyAccessExpression: {
+              const p = n as PropertyAccessExpressionNode;
+              return `${describeNode(p.object, depth + 1)}.${p.property}`;
+            }
+            case ASTNodeKind.ArrayAccessExpression: {
+              const a = n as ArrayAccessExpressionNode;
+              return `${describeNode(a.array, depth + 1)}[${describeNode(
+                a.index,
+                depth + 1,
+              )}]`;
+            }
+            case ASTNodeKind.CallExpression: {
+              const c = n as CallExpressionNode;
+              return `${describeNode(c.callee, depth + 1)}(...)`;
+            }
+            case ASTNodeKind.BinaryExpression: {
+              const b = n as BinaryExpressionNode;
+              return `${describeNode(b.left, depth + 1)} ${b.operator} ${describeNode(
+                b.right,
+                depth + 1,
+              )}`;
+            }
+            case ASTNodeKind.UnaryExpression: {
+              const u = n as UnaryExpressionNode;
+              return `${u.operator}${describeNode(u.operand, depth + 1)}`;
+            }
+            case ASTNodeKind.Literal: {
+              const lit = n as LiteralNode;
+              return String(lit.value);
+            }
+            default:
+              return String(n.kind);
+          }
+        };
+        const sourceHint = describeNode(element.value);
+        const spreadTypeName = spreadType ? `${spreadType.name}` : "<unknown>";
+        const spreadUdon = spreadType ? `${spreadType.udonType}` : "<unknown>";
         throw new Error(
-          `Array spread expects an array or DataList (got ${spreadType.name}, ${spreadType.udonType}, from ${sourceHint})`,
+          `Array spread expects an Array or DataList (spread expression "${sourceHint}" resolved to ${spreadTypeName} (${spreadUdon}))`,
         );
       }
 
