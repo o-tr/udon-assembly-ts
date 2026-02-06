@@ -10,6 +10,7 @@ import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/
 import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
 import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
+import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -304,6 +305,33 @@ describe("optimizer passes", () => {
 
     expect(text).toContain("tail_merge_");
     expect(text).toContain("goto tail_merge_");
+  });
+
+  it("folds scalar Vector3 component updates", () => {
+    const v = createVariable("v", ExternTypes.vector3);
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const t1 = createTemporary(1, PrimitiveTypes.single);
+    const t2 = createTemporary(2, PrimitiveTypes.single);
+    const t3 = createTemporary(3, PrimitiveTypes.single);
+    const t4 = createTemporary(4, PrimitiveTypes.single);
+    const t5 = createTemporary(5, PrimitiveTypes.single);
+
+    const instructions = [
+      new PropertyGetInstruction(t0, v, "x"),
+      new BinaryOpInstruction(t1, t0, "+", createConstant(1, PrimitiveTypes.single)),
+      new PropertySetInstruction(v, "x", t1),
+      new PropertyGetInstruction(t2, v, "y"),
+      new BinaryOpInstruction(t3, t2, "+", createConstant(1, PrimitiveTypes.single)),
+      new PropertySetInstruction(v, "y", t3),
+      new PropertyGetInstruction(t4, v, "z"),
+      new BinaryOpInstruction(t5, t4, "+", createConstant(1, PrimitiveTypes.single)),
+      new PropertySetInstruction(v, "z", t5),
+    ];
+
+    const optimized = optimizeVectorSwizzle(instructions);
+
+    expect(optimized.filter((inst) => inst.kind === "PropertySet").length).toBe(0);
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
   });
 
   it("prunes unreachable blocks on constant branches", () => {

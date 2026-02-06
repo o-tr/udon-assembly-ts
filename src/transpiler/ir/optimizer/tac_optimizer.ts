@@ -30,6 +30,7 @@ import {
   reuseTemporaries,
 } from "./passes/temp_reuse.js";
 import { eliminateUnusedLabels } from "./passes/unused_labels.js";
+import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
 
 /**
  * TAC optimizer
@@ -107,6 +108,9 @@ export class TACOptimizer {
 
       // Optimize simple induction variables
       next = optimizeInductionVariables(next);
+
+      // Fold scalar Vector3 updates into vector ops
+      next = optimizeVectorSwizzle(next);
 
       // Remove unused temporary computations
       next = eliminateDeadTemporaries(next);
