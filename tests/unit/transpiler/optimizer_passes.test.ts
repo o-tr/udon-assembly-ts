@@ -11,6 +11,7 @@ import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimize
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
 import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
 import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
+import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -332,6 +333,34 @@ describe("optimizer passes", () => {
 
     expect(optimized.filter((inst) => inst.kind === "PropertySet").length).toBe(0);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
+  });
+
+  it("inserts partial redundancy computations", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new BinaryOpInstruction(t0, a, "+", b),
+      new ReturnInstruction(t0),
+    ];
+
+    const optimized = performPRE(instructions);
+    const text = stringify(optimized);
+    const endIndex = text.indexOf("L_end:");
+    const exprIndex = text.lastIndexOf("a + b");
+
+    expect(endIndex).toBeGreaterThanOrEqual(0);
+    expect(exprIndex).toBeGreaterThanOrEqual(0);
+    expect(exprIndex).toBeLessThan(endIndex);
   });
 
   it("prunes unreachable blocks on constant branches", () => {

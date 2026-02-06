@@ -18,6 +18,7 @@ import { simplifyJumps } from "./passes/jumps.js";
 import { performLICM } from "./passes/licm.js";
 import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
+import { performPRE } from "./passes/pre.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
 import { optimizeStringConcatenation } from "./passes/string_optimization.js";
@@ -72,6 +73,9 @@ export class TACOptimizer {
 
       // Reassociate partially-constant binary operations
       next = reassociate(next);
+
+      // Partial redundancy elimination
+      next = performPRE(next);
 
       // Apply global value numbering / CSE across blocks
       next = globalValueNumbering(next);
