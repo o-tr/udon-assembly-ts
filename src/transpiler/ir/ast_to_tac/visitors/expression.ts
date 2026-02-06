@@ -113,8 +113,9 @@ export function resolveTypeFromNode(
       const symbol = converter.symbolTable.lookup(
         (node as IdentifierNode).name,
       );
-      if (symbol?.type) return symbol.type;
-      // Fallback: if the symbol has an initializer AST, try resolving type from it
+      // If the symbol has a concrete/non-generic type, return it. Otherwise
+      // fall back to resolving from the initializer AST when available.
+      if (symbol?.type && symbol.type !== ObjectType) return symbol.type;
       if (symbol?.initialValue) {
         return resolveTypeFromNode(converter, symbol.initialValue as ASTNode);
       }
@@ -762,29 +763,19 @@ export function visitArrayLiteralExpression(
             const ident = access.object as IdentifierNode;
             const sym = this.symbolTable.lookup(ident.name);
             if (sym) {
-              diag += `; symbol(${ident.name})={type:${sym.type.name},initial:${sym.initialValue ? describeNode(sym.initialValue as ASTNode) : "<none>"}}`;
+              const tname = sym.type?.name ?? "<unknown>";
+              const inits = sym.initialValue ? describeNode(sym.initialValue as ASTNode) : "<none>";
+              diag += `; symbol(${ident.name})={type:${tname},initial:${inits}}`;
             }
           }
         } else if (element.value.kind === ASTNodeKind.Identifier) {
           const ident = element.value as IdentifierNode;
           const sym = this.symbolTable.lookup(ident.name);
           if (sym) {
-            diag += `; symbol(${ident.name})={type:${sym.type.name},initial:${sym.initialValue ? describeNode(sym.initialValue as ASTNode) : "<none>"}}`;
+            const tname = sym.type?.name ?? "<unknown>";
+            const inits = sym.initialValue ? describeNode(sym.initialValue as ASTNode) : "<none>";
+            diag += `; symbol(${ident.name})={type:${tname},initial:${inits}}`;
           }
-        }
-
-        // Emit additional runtime diagnostics to help trace why the spread
-        // expression couldn't be recognized as an Array/DataList during
-        // transpilation of consuming projects (e.g. mahjong-t2).
-        try {
-          console.error("[udon-assembly-ts] Array spread diagnostic:", {
-            source: sourceHint,
-            spreadTypeName,
-            spreadUdon,
-            detail: diag,
-          });
-        } catch (_e) {
-          // Ignore logging errors
         }
 
         throw new Error(
