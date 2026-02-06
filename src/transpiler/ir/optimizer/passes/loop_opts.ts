@@ -439,6 +439,14 @@ export const optimizeLoopStructures = (
     // headerBeforeCondition are header instructions before the condition def
     const headerBeforeCondition =
       condDefIndex >= 0 ? instructions.slice(i + 1, condDefIndex) : header;
+    if (condDefIndex >= 0) {
+      const gapStart = condDefIndex + 1;
+      const gapEnd = condJumpIndex - 1;
+      if (gapStart <= gapEnd) {
+        bail();
+        continue;
+      }
+    }
     if (!isLoopBodySimple(headerBeforeCondition)) {
       bail();
       continue;

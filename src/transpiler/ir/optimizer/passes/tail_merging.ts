@@ -153,7 +153,13 @@ export const mergeTails = (
     insertLabels.set(canonicalStart, labelName);
     for (let i = 1; i < group.length; i += 1) {
       const nonCanonical = group[i];
-      const nonStart = findTailStart(instructions, nonCanonical.index);
+      let nonStart = findTailStart(instructions, nonCanonical.index);
+      while (
+        nonStart < nonCanonical.index &&
+        instructions[nonStart].kind === TACInstructionKind.Label
+      ) {
+        nonStart += 1;
+      }
       replaceWithJump.set(nonStart, {
         label: labelName,
         end: nonCanonical.index,
