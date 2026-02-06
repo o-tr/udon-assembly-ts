@@ -649,12 +649,31 @@ export function visitArrayLiteralExpression(
         }
       }
       if (!isDataList && !isArray) {
-        const sourceHint =
-          element.value.kind === ASTNodeKind.Identifier
-            ? (element.value as IdentifierNode).name
-            : String(element.value.kind);
+        const describeNode = (n: ASTNode): string => {
+          switch (n.kind) {
+            case ASTNodeKind.Identifier:
+              return (n as IdentifierNode).name;
+            case ASTNodeKind.PropertyAccessExpression: {
+              const p = n as PropertyAccessExpressionNode;
+              return `${describeNode(p.object)}.${p.property}`;
+            }
+            case ASTNodeKind.ArrayAccessExpression: {
+              const a = n as ArrayAccessExpressionNode;
+              return `${describeNode(a.array)}[${a.index.kind}]`;
+            }
+            case ASTNodeKind.Literal: {
+              const lit = n as LiteralNode;
+              return String(lit.value);
+            }
+            default:
+              return String(n.kind);
+          }
+        };
+        const sourceHint = describeNode(element.value);
+        const spreadTypeName = spreadType ? `${spreadType.name}` : "<unknown>";
+        const spreadUdon = spreadType ? `${spreadType.udonType}` : "<unknown>";
         throw new Error(
-          `Array spread expects an array or DataList (got ${spreadType.name}, ${spreadType.udonType}, from ${sourceHint})`,
+          `Array spread expects an Array or DataList (spread expression "${sourceHint}" resolved to ${spreadTypeName} (${spreadUdon}))`,
         );
       }
 
@@ -970,7 +989,7 @@ export function visitPropertyAccessExpression(
           resultType;
       }
     }
-    const result = this.newTemp(resultType ?? PrimitiveTypes.single);
+    const result = this.newTemp(resultType ?? ObjectType);
     this.instructions.push(
       new PropertyGetInstruction(result, object, node.property),
     );
