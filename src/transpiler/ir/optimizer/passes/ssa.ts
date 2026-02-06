@@ -44,6 +44,16 @@ const baseKeyForOperand = (operand: TACOperand | undefined): string | null => {
   return null;
 };
 
+const cloneBaseOperand = (operand: TACOperand): TACOperand => {
+  if (operand.kind === TACOperandKind.Variable) {
+    return { ...(operand as VariableOperand) };
+  }
+  if (operand.kind === TACOperandKind.Temporary) {
+    return { ...(operand as TemporaryOperand) };
+  }
+  return operand;
+};
+
 const cloneWithVersion = (
   operand: TACOperand,
   version: number,
@@ -443,11 +453,15 @@ const linearizeParallelCopies = (
 ): AssignmentInstruction[] => {
   const pending = moves.map((move) => ({ ...move }));
   const emitted: AssignmentInstruction[] = [];
+  const moveKey = (operand: TACOperand): string => {
+    const baseKey = baseKeyForOperand(operand);
+    return baseKey ?? operandKey(operand);
+  };
 
   while (pending.length > 0) {
-    const sourceKeys = new Set(pending.map((move) => operandKey(move.src)));
+    const sourceKeys = new Set(pending.map((move) => moveKey(move.src)));
     const readyIndex = pending.findIndex(
-      (move) => !sourceKeys.has(operandKey(move.dest)),
+      (move) => !sourceKeys.has(moveKey(move.dest)),
     );
 
     if (readyIndex >= 0) {
@@ -459,9 +473,9 @@ const linearizeParallelCopies = (
     const cycleMove = pending[0];
     const temp = createTemp(cycleMove.src);
     emitted.push(new AssignmentInstruction(temp, cycleMove.src));
-    const srcKey = operandKey(cycleMove.src);
+    const srcKey = moveKey(cycleMove.src);
     for (const move of pending) {
-      if (operandKey(move.src) === srcKey) {
+      if (moveKey(move.src) === srcKey) {
         move.src = temp;
       }
     }
@@ -507,11 +521,12 @@ const insertPhis = (
       for (const target of frontier) {
         if (hasPhi.has(target)) continue;
         hasPhi.add(target);
-        const dest = baseOperand.get(key);
-        if (!dest) continue;
+        const baseDest = baseOperand.get(key);
+        if (!baseDest) continue;
+        const dest = cloneBaseOperand(baseDest);
         const sources: PhiSource[] = cfg.blocks[target].preds.map((pred) => ({
           pred,
-          value: dest,
+          value: baseDest,
         }));
         phiByBlock.get(target)?.push(new PhiInst(dest, sources));
         if (!defs.has(target)) {
