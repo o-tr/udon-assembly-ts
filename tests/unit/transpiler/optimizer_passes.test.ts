@@ -390,13 +390,25 @@ describe("optimizer passes", () => {
     ];
 
     const optimized = performPRE(instructions);
-    const text = stringify(optimized);
-    const endIndex = text.indexOf("L_end:");
-    const exprIndex = text.lastIndexOf("a + b");
+    const endLabelIndex = optimized.findIndex(
+      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
+    );
+    // there should be no 'a + b' BinaryOp after the end label
+    const hasBinAfterEnd = optimized
+      .slice(endLabelIndex)
+      .some(
+        (inst) => inst.kind === "BinaryOp" && inst.toString().includes("a + b"),
+      );
+    // there should be BinaryOp(s) inserted before the end label (in preds)
+    const hasBinBeforeEnd = optimized
+      .slice(0, endLabelIndex)
+      .some(
+        (inst) => inst.kind === "BinaryOp" && inst.toString().includes("a + b"),
+      );
 
-    expect(endIndex).toBeGreaterThanOrEqual(0);
-    expect(exprIndex).toBeGreaterThanOrEqual(0);
-    expect(exprIndex).toBeLessThan(endIndex);
+    expect(endLabelIndex).toBeGreaterThanOrEqual(0);
+    expect(hasBinBeforeEnd).toBe(true);
+    expect(hasBinAfterEnd).toBe(false);
   });
 
   it("prunes unreachable blocks on constant branches", () => {

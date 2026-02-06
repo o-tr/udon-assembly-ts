@@ -314,6 +314,22 @@ export const optimizeLoopStructures = (
     }
 
     const header = instructions.slice(i + 1, condJumpIndex);
+    // exclude the condition computation from unrolled iterations: it's only
+    // used by the conditional jump and not needed once the loop is unrolled.
+    const condKey = livenessKey(condJump.condition);
+    let condDefIndex = -1;
+    if (condKey) {
+      for (let k = i + 1; k < condJumpIndex; k += 1) {
+        const def = getDefinedOperandForReuse(instructions[k]);
+        if (def && livenessKey(def) === condKey) {
+          condDefIndex = k;
+          break;
+        }
+      }
+    }
+    // headerBeforeCondition are header instructions before the condition def
+    const headerBeforeCondition =
+      condDefIndex >= 0 ? instructions.slice(i + 1, condDefIndex) : header;
     if (!isLoopBodySimple(header)) {
       result.push(inst);
       i += 1;
@@ -332,7 +348,7 @@ export const optimizeLoopStructures = (
     const incrementInst = instructions[incrementIndex];
 
     for (let iter = 0; iter < tripCount; iter += 1) {
-      result.push(...header, ...body, incrementInst);
+      result.push(...headerBeforeCondition, ...body, incrementInst);
     }
 
     i = endIndex + 1;
