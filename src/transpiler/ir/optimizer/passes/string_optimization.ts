@@ -93,10 +93,7 @@ export const optimizeStringConcatenation = (
     }
 
     result.push(
-      new CallInstruction(dests[0], CONCAT_EXTERN, [
-        operands[0],
-        operands[1],
-      ]),
+      new CallInstruction(dests[0], CONCAT_EXTERN, [operands[0], operands[1]]),
     );
     for (let idx = 2; idx < operands.length; idx += 1) {
       result.push(

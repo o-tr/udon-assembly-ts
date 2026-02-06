@@ -271,12 +271,7 @@ export const performPRE = (
         } else {
           const temp = createTemporary(nextTempId++, getOperandType(bin.dest));
           insts.push(
-            new BinaryOpInstruction(
-              temp,
-              bin.left,
-              bin.operator,
-              bin.right,
-            ),
+            new BinaryOpInstruction(temp, bin.left, bin.operator, bin.right),
           );
           insts.push(new CopyInstruction(bin.dest, temp));
         }
