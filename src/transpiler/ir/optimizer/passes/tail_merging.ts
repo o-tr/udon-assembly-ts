@@ -1,5 +1,10 @@
 import {
+  type AssignmentInstruction,
+  type BinaryOpInstruction,
+  type CopyInstruction,
   LabelInstruction,
+  type PropertyGetInstruction,
+  type PropertySetInstruction,
   type ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
@@ -51,6 +56,39 @@ const isStraightLineTail = (
   return true;
 };
 
+const instSignature = (inst: TACInstruction): string => {
+  switch (inst.kind) {
+    case TACInstructionKind.BinaryOp: {
+      const b = inst as BinaryOpInstruction;
+      return `BinaryOp|${b.operator}|${operandKey(b.left)}|${operandKey(b.right)}|${operandKey(b.dest)}`;
+    }
+    case TACInstructionKind.Assignment: {
+      const a = inst as AssignmentInstruction;
+      return `${inst.kind}|${operandKey(a.dest)}|${operandKey((a as AssignmentInstruction).src)}`;
+    }
+    case TACInstructionKind.Copy: {
+      const c = inst as CopyInstruction;
+      return `${inst.kind}|${operandKey(c.dest)}|${operandKey(c.src)}`;
+    }
+    case TACInstructionKind.PropertySet: {
+      const p = inst as PropertySetInstruction;
+      return `PropertySet|${operandKey(p.object)}|${p.property}|${operandKey(p.value)}`;
+    }
+    case TACInstructionKind.PropertyGet: {
+      const p = inst as PropertyGetInstruction;
+      return `PropertyGet|${operandKey(p.dest)}|${operandKey(p.object)}|${p.property}`;
+    }
+    case TACInstructionKind.Label:
+      return `Label`;
+    case TACInstructionKind.Return: {
+      const r = inst as ReturnInstruction;
+      return `Return|${r.value ? operandKey(r.value) : "<void>"}`;
+    }
+    default:
+      return `${inst.kind}|${inst.toString()}`;
+  }
+};
+
 const buildTailSignature = (
   instructions: TACInstruction[],
   index: number,
@@ -62,7 +100,7 @@ const buildTailSignature = (
   let s = 0;
   while (s < slice.length && slice[s].kind === TACInstructionKind.Label) s++;
   const canonical = slice.slice(s);
-  return canonical.map((inst) => inst.toString()).join("|");
+  return canonical.map((inst) => instSignature(inst)).join("|");
 };
 
 const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {
