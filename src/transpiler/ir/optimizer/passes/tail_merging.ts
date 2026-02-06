@@ -171,10 +171,9 @@ export const mergeTails = (
         result.push(new UnconditionalJumpInstruction(label));
       }
       i = rep.end;
-      continue;
+    } else {
+      result.push(instructions[i]);
     }
-
-    result.push(instructions[i]);
   }
 
   return result;

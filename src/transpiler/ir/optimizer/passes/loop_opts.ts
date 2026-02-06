@@ -330,7 +330,7 @@ export const optimizeLoopStructures = (
     // headerBeforeCondition are header instructions before the condition def
     const headerBeforeCondition =
       condDefIndex >= 0 ? instructions.slice(i + 1, condDefIndex) : header;
-    if (!isLoopBodySimple(header)) {
+    if (!isLoopBodySimple(headerBeforeCondition)) {
       result.push(inst);
       i += 1;
       continue;

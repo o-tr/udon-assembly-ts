@@ -89,6 +89,24 @@ const buildChains = (
     }
   }
 
+  for (let i = 0; i < blocks.length; i += 1) {
+    if (blockToChain[i] !== -1) continue;
+    const chainBlocks: number[] = [];
+    let current = i;
+    while (current < blocks.length && blockToChain[current] === -1) {
+      chainBlocks.push(current);
+      if (!hasFallthrough(blocks[current], instructions)) break;
+      const next = current + 1;
+      if (next >= blocks.length || blockToChain[next] !== -1) break;
+      current = next;
+    }
+    const chainId = chains.length;
+    chains.push({ id: chainId, blocks: chainBlocks, head: chainBlocks[0] });
+    for (const blockId of chainBlocks) {
+      blockToChain[blockId] = chainId;
+    }
+  }
+
   return { chains, blockToChain };
 };
 
