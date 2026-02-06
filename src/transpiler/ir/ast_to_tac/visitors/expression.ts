@@ -1,5 +1,6 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
+import type { SymbolInfo } from "../../../frontend/types.js";
 import {
   ArrayTypeSymbol,
   CollectionTypeSymbol,
@@ -744,6 +745,14 @@ export function visitArrayLiteralExpression(
               return String(n.kind);
           }
         };
+
+        const buildSymbolDiag = (identName: string, s: SymbolInfo | undefined): string => {
+          if (!s) return "";
+          const tname = s.type?.name ?? "<unknown>";
+          const inits = s.initialValue ? describeNode(s.initialValue as ASTNode) : "<none>";
+          return `; symbol(${identName})={type:${tname},initial:${inits}}`;
+        };
+
         const sourceHint = describeNode(element.value);
         const spreadTypeName = spreadType ? `${spreadType.name}` : "<unknown>";
         const spreadUdon = spreadType ? `${spreadType.udonType}` : "<unknown>";
@@ -755,27 +764,15 @@ export function visitArrayLiteralExpression(
           const access = element.value as PropertyAccessExpressionNode;
           const baseDesc = describeNode(access.object);
           const baseResolved = resolveTypeFromNode(this, access.object);
-          const baseResolvedName = baseResolved
-            ? baseResolved.name
-            : "<unknown>";
+          const baseResolvedName = baseResolved ? baseResolved.name : "<unknown>";
           diag += `; base=${baseDesc} -> ${baseResolvedName}`;
           if (access.object.kind === ASTNodeKind.Identifier) {
             const ident = access.object as IdentifierNode;
-            const sym = this.symbolTable.lookup(ident.name);
-            if (sym) {
-              const tname = sym.type?.name ?? "<unknown>";
-              const inits = sym.initialValue ? describeNode(sym.initialValue as ASTNode) : "<none>";
-              diag += `; symbol(${ident.name})={type:${tname},initial:${inits}}`;
-            }
+            diag += buildSymbolDiag(ident.name, this.symbolTable.lookup(ident.name));
           }
         } else if (element.value.kind === ASTNodeKind.Identifier) {
           const ident = element.value as IdentifierNode;
-          const sym = this.symbolTable.lookup(ident.name);
-          if (sym) {
-            const tname = sym.type?.name ?? "<unknown>";
-            const inits = sym.initialValue ? describeNode(sym.initialValue as ASTNode) : "<none>";
-            diag += `; symbol(${ident.name})={type:${tname},initial:${inits}}`;
-          }
+          diag += buildSymbolDiag(ident.name, this.symbolTable.lookup(ident.name));
         }
 
         throw new Error(
