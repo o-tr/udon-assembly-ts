@@ -17,7 +17,7 @@ describe("array spread diagnostics", () => {
       parser.getEnumRegistry(),
     );
     expect(() => converter.convert(ast)).toThrowError(
-      /Array spread expects .*obj.value/,
+      /Array spread expects.*obj\.value.*resolved to.*\(/,
     );
   });
 

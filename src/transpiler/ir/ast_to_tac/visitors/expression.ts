@@ -649,17 +649,36 @@ export function visitArrayLiteralExpression(
         }
       }
       if (!isDataList && !isArray) {
-        const describeNode = (n: ASTNode): string => {
+        const describeNode = (n: ASTNode, depth = 0): string => {
+          if (depth > 50) return "...";
           switch (n.kind) {
             case ASTNodeKind.Identifier:
               return (n as IdentifierNode).name;
             case ASTNodeKind.PropertyAccessExpression: {
               const p = n as PropertyAccessExpressionNode;
-              return `${describeNode(p.object)}.${p.property}`;
+              return `${describeNode(p.object, depth + 1)}.${p.property}`;
             }
             case ASTNodeKind.ArrayAccessExpression: {
               const a = n as ArrayAccessExpressionNode;
-              return `${describeNode(a.array)}[${describeNode(a.index)}]`;
+              return `${describeNode(a.array, depth + 1)}[${describeNode(
+                a.index,
+                depth + 1,
+              )}]`;
+            }
+            case ASTNodeKind.CallExpression: {
+              const c = n as CallExpressionNode;
+              return `${describeNode(c.callee, depth + 1)}(...)`;
+            }
+            case ASTNodeKind.BinaryExpression: {
+              const b = n as BinaryExpressionNode;
+              return `${describeNode(b.left, depth + 1)} ${b.operator} ${describeNode(
+                b.right,
+                depth + 1,
+              )}`;
+            }
+            case ASTNodeKind.UnaryExpression: {
+              const u = n as UnaryExpressionNode;
+              return `${u.operator}${describeNode(u.operand, depth + 1)}`;
             }
             case ASTNodeKind.Literal: {
               const lit = n as LiteralNode;
