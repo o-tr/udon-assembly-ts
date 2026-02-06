@@ -278,11 +278,7 @@ export const performPRE = (
           break;
         }
         const insts: TACInstruction[] = [];
-        let existing = findEquivalentBinaryOp(
-          predBlock,
-          instructions,
-          exprKey,
-        );
+        let existing = findEquivalentBinaryOp(predBlock, instructions, exprKey);
         if (existing) {
           // Verify existing.dest is not redefined after the instruction
           const existDestKey = livenessKey(existing.dest);
