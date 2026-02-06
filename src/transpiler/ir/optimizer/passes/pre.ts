@@ -29,14 +29,7 @@ const isSideEffectBarrier = (inst: TACInstruction): boolean => {
 };
 
 const isCommutativeOperator = (op: string): boolean => {
-  return (
-    op === "+" ||
-    op === "*" ||
-    op === "==" ||
-    op === "!=" ||
-    op === "&&" ||
-    op === "||"
-  );
+  return op === "+" || op === "*" || op === "==" || op === "!=";
 };
 
 const binaryExprKey = (inst: BinaryOpInstruction): string => {
@@ -94,11 +87,11 @@ const computeAvailableMaps = (
       }
 
       const working = new Map(inMaps.get(block.id) ?? new Map());
-      let hasSideEffect = false;
+      let _hasSideEffect = false;
       for (let i = block.start; i <= block.end; i += 1) {
         const inst = instructions[i];
         if (isSideEffectBarrier(inst)) {
-          hasSideEffect = true;
+          _hasSideEffect = true;
           working.clear();
           continue;
         }
@@ -116,9 +109,6 @@ const computeAvailableMaps = (
           const exprKey = binaryExprKey(bin);
           working.set(exprKey, { key: exprKey, inst: bin });
         }
-      }
-      if (hasSideEffect) {
-        working.clear();
       }
       const currentOut = outMaps.get(block.id) ?? new Map();
       if (currentOut.size !== working.size) {

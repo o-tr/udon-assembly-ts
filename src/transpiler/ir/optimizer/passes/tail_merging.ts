@@ -18,8 +18,17 @@ const findTailStart = (
   instructions: TACInstruction[],
   index: number,
 ): number => {
-  for (let i = index; i >= 0; i -= 1) {
-    if (instructions[i].kind === TACInstructionKind.Label) return i;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const k = instructions[i].kind;
+    if (k === TACInstructionKind.Label) return i;
+    // stop at control-flow boundaries: conditional/unconditional jumps or returns
+    if (
+      k === TACInstructionKind.ConditionalJump ||
+      k === TACInstructionKind.UnconditionalJump ||
+      k === TACInstructionKind.Return
+    ) {
+      return i + 1;
+    }
   }
   return 0;
 };
@@ -88,15 +97,21 @@ export const mergeTails = (
 
   let labelCounter = 0;
   const insertLabels = new Map<number, string>();
-  const replaceWithJump = new Map<number, string>();
+  const replaceWithJump = new Map<number, { label: string; end: number }>();
 
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     const canonical = group[0];
     const labelName = `tail_merge_${labelCounter++}`;
-    insertLabels.set(canonical.index, labelName);
+    const canonicalStart = findTailStart(instructions, canonical.index);
+    insertLabels.set(canonicalStart, labelName);
     for (let i = 1; i < group.length; i += 1) {
-      replaceWithJump.set(group[i].index, labelName);
+      const nonCanonical = group[i];
+      const nonStart = findTailStart(instructions, nonCanonical.index);
+      replaceWithJump.set(nonStart, {
+        label: labelName,
+        end: nonCanonical.index,
+      });
     }
   }
 
@@ -111,12 +126,13 @@ export const mergeTails = (
       result.push(new LabelInstruction(createLabel(labelName)));
     }
 
-    const jumpLabel = replaceWithJump.get(i);
-    if (jumpLabel) {
-      const label = createLabel(jumpLabel);
+    const rep = replaceWithJump.get(i);
+    if (rep) {
+      const label = createLabel(rep.label);
       if (label.kind === TACOperandKind.Label) {
         result.push(new UnconditionalJumpInstruction(label));
       }
+      i = rep.end;
       continue;
     }
 
