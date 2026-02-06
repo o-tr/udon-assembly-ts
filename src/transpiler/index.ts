@@ -116,7 +116,22 @@ export class TypeScriptToUdonTranspiler {
     // Phase 3: Optimize TAC (only when explicitly enabled)
     if (options.optimize === true) {
       const optimizer = new TACOptimizer();
-      tacInstructions = optimizer.optimize(tacInstructions);
+      // Compute labels that should be preserved because of @UdonExport
+      const exposedLabels = new Set<string>();
+      for (const cls of registry.getAllClasses()) {
+        for (const method of cls.methods) {
+          if (!method.isExported) continue;
+          const layout = udonBehaviourLayouts.get(cls.name);
+          if (layout) {
+            const ml = layout.get(method.name);
+            if (ml) exposedLabels.add(ml.exportMethodName);
+          } else {
+            // fallback for non-UdonBehaviour methods: use TAC label scheme
+            exposedLabels.add(`__${method.name}_${cls.name}`);
+          }
+        }
+      }
+      tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
     }
 
     // Generate TAC text representation
@@ -148,6 +163,19 @@ export class TypeScriptToUdonTranspiler {
       for (const methodLayout of layout.values()) {
         if (methodLayout.isPublic)
           exportLabels.add(methodLayout.exportMethodName);
+      }
+    }
+    // Ensure decorator-marked exports are included in assembler exports
+    for (const cls of registry.getAllClasses()) {
+      for (const method of cls.methods) {
+        if (!method.isExported) continue;
+        const layout = udonBehaviourLayouts.get(cls.name);
+        if (layout) {
+          const ml = layout.get(method.name);
+          if (ml) exportLabels.add(ml.exportMethodName);
+        } else {
+          exportLabels.add(`__${method.name}_${cls.name}`);
+        }
       }
     }
     const assembler = new UdonAssembler();

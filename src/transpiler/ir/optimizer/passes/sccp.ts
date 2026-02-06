@@ -42,6 +42,7 @@ export type LatticeValue =
 
 export const sccpAndPrune = (
   instructions: TACInstruction[],
+  exposedLabels?: Set<string>,
 ): TACInstruction[] => {
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
@@ -74,8 +75,20 @@ export const sccpAndPrune = (
     }
   };
 
+  // entry block always reachable
   reachable.add(0);
   enqueue(0);
+
+  // Also mark explicitly-exposed labels reachable so they won't be pruned
+  if (exposedLabels && exposedLabels.size > 0) {
+    for (const lbl of exposedLabels) {
+      const b = labelToBlock.get(lbl);
+      if (b !== undefined && !reachable.has(b)) {
+        reachable.add(b);
+        enqueue(b);
+      }
+    }
+  }
 
   while (queue.length > 0) {
     const blockId = queue.shift() as number;

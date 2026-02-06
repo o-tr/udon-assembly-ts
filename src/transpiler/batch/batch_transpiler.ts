@@ -263,7 +263,21 @@ export class BatchTranspiler {
 
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();
-        tacInstructions = optimizer.optimize(tacInstructions);
+        // Compute exposed labels from @UdonExport
+        const exposedLabels = new Set<string>();
+        for (const cls of registry.getAllClasses()) {
+          for (const method of cls.methods) {
+            if (!method.isExported) continue;
+            const layout = udonBehaviourLayouts.get(cls.name);
+            if (layout) {
+              const ml = layout.get(method.name);
+              if (ml) exposedLabels.add(ml.exportMethodName);
+            } else {
+              exposedLabels.add(`__${method.name}_${cls.name}`);
+            }
+          }
+        }
+        tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
       }
 
       const udonConverter = new TACToUdonConverter();
@@ -499,7 +513,21 @@ export class BatchTranspiler {
 
     if (optimize === true) {
       const optimizer = new TACOptimizer();
-      tacInstructions = optimizer.optimize(tacInstructions);
+      // Compute exposed labels from @UdonExport
+      const exposedLabels = new Set<string>();
+      for (const cls of registry.getAllClasses()) {
+        for (const method of cls.methods) {
+          if (!method.isExported) continue;
+          const layout = udonBehaviourLayouts.get(cls.name);
+          if (layout) {
+            const ml = layout.get(method.name);
+            if (ml) exposedLabels.add(ml.exportMethodName);
+          } else {
+            exposedLabels.add(`__${method.name}_${cls.name}`);
+          }
+        }
+      }
+      tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
     }
 
     const udonConverter = new TACToUdonConverter();
