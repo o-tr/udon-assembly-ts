@@ -273,18 +273,6 @@ export const pureExternEvaluators = new Map<
     },
   ],
   [
-    "SystemString.__Concat__SystemString_SystemString__SystemString",
-    {
-      arity: 2,
-      eval: ([a, b]) => {
-        const left = toStringValue(a);
-        const right = toStringValue(b);
-        if (left === null || right === null) return null;
-        return left + right;
-      },
-    },
-  ],
-  [
     "SystemString.__get_Length__SystemInt32",
     {
       arity: 1,
