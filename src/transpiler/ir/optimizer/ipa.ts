@@ -21,8 +21,8 @@ export const pruneProgramByMethodUsage = (
         methods: [],
       };
     }
-    const filteredMethods = classNode.methods.filter((method) =>
-      reachable.has(method.name),
+    const filteredMethods = classNode.methods.filter(
+      (method) => reachable.has(method.name) || method.name === "constructor",
     );
     return {
       ...classNode,

@@ -14,6 +14,7 @@ import {
 import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
 import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
 import { optimizeInductionVariables } from "../../../src/transpiler/ir/optimizer/passes/induction";
+import { performLICM } from "../../../src/transpiler/ir/optimizer/passes/licm";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
 import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
 import { sccpAndPrune } from "../../../src/transpiler/ir/optimizer/passes/sccp";
@@ -958,7 +959,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = new TACOptimizer().optimize(instructions);
+    const optimized = performLICM(instructions);
     const text = stringify(optimized);
 
     const hoistedIndex = text.indexOf("t0 = a + b");

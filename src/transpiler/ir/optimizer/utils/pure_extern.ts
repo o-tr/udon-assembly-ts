@@ -35,6 +35,18 @@ export const pureExternEvaluators = new Map<
   { arity: number; eval: (args: PureExternValue[]) => PureExternResult | null }
 >([
   [
+    "SystemString.__Concat__SystemString_SystemString__SystemString",
+    {
+      arity: 2,
+      eval: ([a, b]) => {
+        const left = toStringValue(a);
+        const right = toStringValue(b);
+        if (left === null || right === null) return null;
+        return left + right;
+      },
+    },
+  ],
+  [
     "UnityEngineMathf.__Abs__SystemSingle__SystemSingle",
     {
       arity: 1,

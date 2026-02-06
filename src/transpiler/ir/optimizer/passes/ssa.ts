@@ -204,7 +204,7 @@ const computeDominanceFrontiers = (
       for (const candidate of blocks) {
         if (
           dom.get(pred)?.has(candidate) &&
-          !dom.get(block.id)?.has(candidate)
+          (candidate === block.id || !dom.get(block.id)?.has(candidate))
         ) {
           frontiers.get(candidate)?.add(block.id);
         }
@@ -273,6 +273,201 @@ const splitBlockInstructions = (
     }
   }
   return { labels, body, phis };
+};
+
+const operandType = (operand: TACOperand): { udonType: string } => {
+  if (operand.kind === TACOperandKind.Variable) {
+    return (operand as VariableOperand).type;
+  }
+  if (operand.kind === TACOperandKind.Temporary) {
+    return (operand as TemporaryOperand).type;
+  }
+  if (operand.kind === TACOperandKind.Constant) {
+    return (operand as unknown as { type: { udonType: string } }).type;
+  }
+  return { udonType: "Single" };
+};
+
+const operandKey = (operand: TACOperand): string => {
+  if (operand.kind === TACOperandKind.Variable) {
+    const variable = operand as VersionedOperand & VariableOperand;
+    return `v:${variable.name}:${variable.ssaVersion ?? ""}`;
+  }
+  if (operand.kind === TACOperandKind.Temporary) {
+    const temp = operand as VersionedOperand & TemporaryOperand;
+    return `t:${temp.id}:${temp.ssaVersion ?? ""}`;
+  }
+  if (operand.kind === TACOperandKind.Constant) {
+    const constant = operand as unknown as {
+      value: unknown;
+      type: { udonType: string };
+    };
+    return `c:${JSON.stringify(constant.value)}:${constant.type.udonType}`;
+  }
+  return `o:${operand.kind}`;
+};
+
+const collectTemps = (instructions: TACInstruction[]): number => {
+  let maxId = -1;
+  const check = (operand: TACOperand | undefined) => {
+    if (!operand) return;
+    if (operand.kind === TACOperandKind.Temporary) {
+      maxId = Math.max(maxId, (operand as TemporaryOperand).id);
+    }
+  };
+
+  for (const inst of instructions) {
+    switch (inst.kind) {
+      case TACInstructionKind.Assignment:
+      case TACInstructionKind.Copy:
+      case TACInstructionKind.Cast: {
+        const typed = inst as unknown as { dest: TACOperand; src: TACOperand };
+        check(typed.dest);
+        check(typed.src);
+        break;
+      }
+      case TACInstructionKind.BinaryOp: {
+        const bin = inst as unknown as {
+          dest: TACOperand;
+          left: TACOperand;
+          right: TACOperand;
+        };
+        check(bin.dest);
+        check(bin.left);
+        check(bin.right);
+        break;
+      }
+      case TACInstructionKind.UnaryOp: {
+        const unary = inst as unknown as {
+          dest: TACOperand;
+          operand: TACOperand;
+        };
+        check(unary.dest);
+        check(unary.operand);
+        break;
+      }
+      case TACInstructionKind.Call: {
+        const call = inst as unknown as {
+          dest?: TACOperand;
+          args: TACOperand[];
+        };
+        check(call.dest);
+        for (const arg of call.args) check(arg);
+        break;
+      }
+      case TACInstructionKind.MethodCall: {
+        const method = inst as unknown as {
+          dest?: TACOperand;
+          object: TACOperand;
+          args: TACOperand[];
+        };
+        check(method.dest);
+        check(method.object);
+        for (const arg of method.args) check(arg);
+        break;
+      }
+      case TACInstructionKind.PropertyGet: {
+        const get = inst as unknown as {
+          dest: TACOperand;
+          object: TACOperand;
+        };
+        check(get.dest);
+        check(get.object);
+        break;
+      }
+      case TACInstructionKind.PropertySet: {
+        const set = inst as unknown as {
+          object: TACOperand;
+          value: TACOperand;
+        };
+        check(set.object);
+        check(set.value);
+        break;
+      }
+      case TACInstructionKind.Return: {
+        const ret = inst as unknown as { value?: TACOperand };
+        check(ret.value);
+        break;
+      }
+      case TACInstructionKind.ArrayAccess: {
+        const acc = inst as unknown as {
+          dest: TACOperand;
+          array: TACOperand;
+          index: TACOperand;
+        };
+        check(acc.dest);
+        check(acc.array);
+        check(acc.index);
+        break;
+      }
+      case TACInstructionKind.ArrayAssignment: {
+        const assign = inst as unknown as {
+          array: TACOperand;
+          index: TACOperand;
+          value: TACOperand;
+        };
+        check(assign.array);
+        check(assign.index);
+        check(assign.value);
+        break;
+      }
+      case TACInstructionKind.ConditionalJump: {
+        const cond = inst as unknown as { condition: TACOperand };
+        check(cond.condition);
+        break;
+      }
+      case TACInstructionKind.UnconditionalJump: {
+        const jump = inst as unknown as { label: TACOperand };
+        check(jump.label);
+        break;
+      }
+      case TACInstructionKind.Phi: {
+        const phi = inst as PhiInstruction;
+        check(phi.dest);
+        for (const source of phi.sources) check(source.value);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return maxId + 1;
+};
+
+type ParallelMove = { dest: TACOperand; src: TACOperand };
+
+const linearizeParallelCopies = (
+  moves: ParallelMove[],
+  createTemp: (source: TACOperand) => TACOperand,
+): AssignmentInstruction[] => {
+  const pending = moves.map((move) => ({ ...move }));
+  const emitted: AssignmentInstruction[] = [];
+
+  while (pending.length > 0) {
+    const sourceKeys = new Set(pending.map((move) => operandKey(move.src)));
+    const readyIndex = pending.findIndex(
+      (move) => !sourceKeys.has(operandKey(move.dest)),
+    );
+
+    if (readyIndex >= 0) {
+      const [move] = pending.splice(readyIndex, 1);
+      emitted.push(new AssignmentInstruction(move.dest, move.src));
+      continue;
+    }
+
+    const cycleMove = pending[0];
+    const temp = createTemp(cycleMove.src);
+    emitted.push(new AssignmentInstruction(temp, cycleMove.src));
+    const srcKey = operandKey(cycleMove.src);
+    for (const move of pending) {
+      if (operandKey(move.src) === srcKey) {
+        move.src = temp;
+      }
+    }
+  }
+
+  return emitted;
 };
 
 const insertPhis = (
@@ -576,6 +771,18 @@ export const deconstructSSA = (
   if (cfg.blocks.length === 0) return instructions;
 
   const blocks: BlockInsts = new Map();
+  let nextTempId = collectTemps(instructions);
+  const createTemp = (source: TACOperand): TACOperand => {
+    const type = operandType(source);
+    const temp = {
+      kind: TACOperandKind.Temporary,
+      id: nextTempId,
+      type,
+    } as TemporaryOperand;
+    nextTempId += 1;
+    return temp;
+  };
+
   for (const block of cfg.blocks) {
     const slice = instructions.slice(block.start, block.end + 1);
     const phis = slice.filter(
@@ -592,21 +799,27 @@ export const deconstructSSA = (
     );
     if (phis.length === 0) continue;
 
+    const movesByPred = new Map<number, ParallelMove[]>();
     for (const phi of phis) {
       for (const source of phi.sources) {
-        const predInsts = blocks.get(source.pred);
-        if (!predInsts) continue;
-        let insertIndex = predInsts.length;
-        for (let i = predInsts.length - 1; i >= 0; i--) {
-          if (isBlockTerminator(predInsts[i])) {
-            insertIndex = i;
-          }
+        const moves = movesByPred.get(source.pred) ?? [];
+        moves.push({ dest: phi.dest, src: source.value });
+        movesByPred.set(source.pred, moves);
+      }
+    }
+
+    for (const [predId, moves] of movesByPred.entries()) {
+      const predInsts = blocks.get(predId);
+      if (!predInsts || moves.length === 0) continue;
+      let insertIndex = predInsts.length;
+      for (let i = predInsts.length - 1; i >= 0; i--) {
+        if (isBlockTerminator(predInsts[i])) {
+          insertIndex = i;
         }
-        predInsts.splice(
-          insertIndex,
-          0,
-          new AssignmentInstruction(phi.dest, source.value),
-        );
+      }
+      const lowered = linearizeParallelCopies(moves, createTemp);
+      if (lowered.length > 0) {
+        predInsts.splice(insertIndex, 0, ...lowered);
       }
     }
 
