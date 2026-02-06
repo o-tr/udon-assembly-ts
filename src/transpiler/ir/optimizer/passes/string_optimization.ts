@@ -1,14 +1,14 @@
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
-  BinaryOpInstruction,
+  type BinaryOpInstruction,
   CallInstruction,
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
 import type { TACOperand, TemporaryOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
-import { getOperandType } from "./constant_folding.js";
 import { countTempUses } from "../utils/instructions.js";
+import { getOperandType } from "./constant_folding.js";
 
 const CONCAT_EXTERN =
   "SystemString.__Concat__SystemString_SystemString__SystemString";

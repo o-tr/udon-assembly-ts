@@ -2,7 +2,7 @@ import {
   type LabelInstruction,
   type TACInstruction,
   TACInstructionKind,
-  UnconditionalJumpInstruction,
+  type UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import type { LabelOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";

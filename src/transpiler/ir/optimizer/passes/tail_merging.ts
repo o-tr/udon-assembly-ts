@@ -25,7 +25,9 @@ const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {
   return returns;
 };
 
-export const mergeTails = (instructions: TACInstruction[]): TACInstruction[] => {
+export const mergeTails = (
+  instructions: TACInstruction[],
+): TACInstruction[] => {
   if (instructions.length === 0) return instructions;
 
   const returns = collectReturns(instructions);

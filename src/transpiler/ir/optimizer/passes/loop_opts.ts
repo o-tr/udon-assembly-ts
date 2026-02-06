@@ -1,6 +1,6 @@
 import {
   type AssignmentInstruction,
-  BinaryOpInstruction,
+  type BinaryOpInstruction,
   type ConditionalJumpInstruction,
   type LabelInstruction,
   type TACInstruction,
@@ -35,15 +35,15 @@ const collectLabelUses = (
   instructions: TACInstruction[],
 ): Map<string, number> => {
   const map = new Map<string, number>();
-  const bump = (label: string) =>
-    map.set(label, (map.get(label) ?? 0) + 1);
+  const bump = (label: string) => map.set(label, (map.get(label) ?? 0) + 1);
   for (const inst of instructions) {
     if (
       inst.kind === TACInstructionKind.UnconditionalJump ||
       inst.kind === TACInstructionKind.ConditionalJump
     ) {
-      const label = (inst as UnconditionalJumpInstruction | ConditionalJumpInstruction)
-        .label;
+      const label = (
+        inst as UnconditionalJumpInstruction | ConditionalJumpInstruction
+      ).label;
       if (label.kind === TACOperandKind.Label) {
         bump((label as LabelOperand).name);
       }
@@ -67,8 +67,7 @@ const isSimpleIncrement = (
   if (bin.dest.kind !== TACOperandKind.Variable) return null;
   if (bin.left.kind !== TACOperandKind.Variable) return null;
   if (
-    (bin.dest as VariableOperand).name !==
-    (bin.left as VariableOperand).name
+    (bin.dest as VariableOperand).name !== (bin.left as VariableOperand).name
   ) {
     return null;
   }
@@ -85,13 +84,11 @@ const extractCondition = (
   start: number,
   end: number,
   condition: TACOperand,
-):
-  | {
-      variableKey: string;
-      bound: number;
-      operator: "<" | "<=";
-    }
-  | null => {
+): {
+  variableKey: string;
+  bound: number;
+  operator: "<" | "<=";
+} | null => {
   let conditionDef: BinaryOpInstruction | null = null;
   const conditionKey = livenessKey(condition);
   if (!conditionKey) return null;
@@ -149,9 +146,7 @@ const findInitializer = (
   return null;
 };
 
-const isLoopBodySimple = (
-  body: TACInstruction[],
-): boolean => {
+const isLoopBodySimple = (body: TACInstruction[]): boolean => {
   for (const inst of body) {
     if (
       inst.kind === TACInstructionKind.Label ||
@@ -285,7 +280,11 @@ export const optimizeLoopStructures = (
       continue;
     }
 
-    const initValue = findInitializer(instructions, i, conditionInfo.variableKey);
+    const initValue = findInitializer(
+      instructions,
+      i,
+      conditionInfo.variableKey,
+    );
     if (initValue === null) {
       result.push(inst);
       i += 1;

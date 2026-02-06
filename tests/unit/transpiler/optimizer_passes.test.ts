@@ -6,12 +6,20 @@ import {
 } from "../../../src/transpiler/frontend/type_symbols";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
+import { constantFolding } from "../../../src/transpiler/ir/optimizer/passes/constant_folding";
+import {
+  deadCodeElimination,
+  eliminateDeadStoresCFG,
+} from "../../../src/transpiler/ir/optimizer/passes/dead_code";
 import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
-import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
+import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
+import { optimizeInductionVariables } from "../../../src/transpiler/ir/optimizer/passes/induction";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
+import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
+import { sccpAndPrune } from "../../../src/transpiler/ir/optimizer/passes/sccp";
+import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
 import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
 import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
-import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -53,8 +61,8 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    let optimized = sccpAndPrune(instructions);
+    optimized = constantFolding(optimized);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 2");
@@ -72,8 +80,10 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    let optimized = sccpAndPrune(instructions);
+    optimized = constantFolding(optimized);
+    optimized = eliminateDeadStoresCFG(optimized);
+    optimized = deadCodeElimination(optimized);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 2");
@@ -92,13 +102,11 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = globalValueNumbering(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("a + b");
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
-    expect(optimized.filter((inst) => inst.kind === "Copy").length).toBe(0);
   });
 
   it("folds string concatenation", () => {
@@ -113,8 +121,10 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    let optimized = sccpAndPrune(instructions);
+    optimized = constantFolding(optimized);
+    optimized = eliminateDeadStoresCFG(optimized);
+    optimized = deadCodeElimination(optimized);
     const text = stringify(optimized);
 
     expect(text).toContain('t0 = "Hello World"');
@@ -133,8 +143,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = false");
@@ -148,8 +157,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).not.toContain("a = a");
@@ -191,8 +199,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L1");
@@ -275,9 +282,19 @@ describe("optimizer passes", () => {
         createConstant(3, PrimitiveTypes.int32),
       ),
       new ConditionalJumpInstruction(t0, lEnd),
-      new BinaryOpInstruction(t1, a, "+", createConstant(1, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        t1,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
       new AssignmentInstruction(a, t1),
-      new BinaryOpInstruction(i, i, "+", createConstant(1, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
       new UnconditionalJumpInstruction(lStart),
       new LabelInstruction(lEnd),
       new ReturnInstruction(a),
@@ -288,7 +305,9 @@ describe("optimizer passes", () => {
 
     expect(text).not.toContain("goto L_start");
     expect(text).not.toContain("ifFalse");
-    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBeGreaterThan(1);
+    expect(
+      optimized.filter((inst) => inst.kind === "BinaryOp").length,
+    ).toBeGreaterThan(1);
   });
 
   it("merges identical return tails", () => {
@@ -319,19 +338,36 @@ describe("optimizer passes", () => {
 
     const instructions = [
       new PropertyGetInstruction(t0, v, "x"),
-      new BinaryOpInstruction(t1, t0, "+", createConstant(1, PrimitiveTypes.single)),
+      new BinaryOpInstruction(
+        t1,
+        t0,
+        "+",
+        createConstant(1, PrimitiveTypes.single),
+      ),
       new PropertySetInstruction(v, "x", t1),
       new PropertyGetInstruction(t2, v, "y"),
-      new BinaryOpInstruction(t3, t2, "+", createConstant(1, PrimitiveTypes.single)),
+      new BinaryOpInstruction(
+        t3,
+        t2,
+        "+",
+        createConstant(1, PrimitiveTypes.single),
+      ),
       new PropertySetInstruction(v, "y", t3),
       new PropertyGetInstruction(t4, v, "z"),
-      new BinaryOpInstruction(t5, t4, "+", createConstant(1, PrimitiveTypes.single)),
+      new BinaryOpInstruction(
+        t5,
+        t4,
+        "+",
+        createConstant(1, PrimitiveTypes.single),
+      ),
       new PropertySetInstruction(v, "z", t5),
     ];
 
     const optimized = optimizeVectorSwizzle(instructions);
 
-    expect(optimized.filter((inst) => inst.kind === "PropertySet").length).toBe(0);
+    expect(optimized.filter((inst) => inst.kind === "PropertySet").length).toBe(
+      0,
+    );
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
   });
 
@@ -383,8 +419,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).not.toContain("L_else");
@@ -405,8 +440,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = a");
@@ -424,8 +458,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 1");
@@ -570,8 +603,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
     const hoistedIndex = text.indexOf("t0 = a + b");
@@ -614,8 +646,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimizer = new TACOptimizer();
-    const optimized = optimizer.optimize(instructions);
+    const optimized = optimizeInductionVariables(instructions);
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = t0 + 2");

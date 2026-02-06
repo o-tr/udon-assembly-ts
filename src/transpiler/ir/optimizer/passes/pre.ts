@@ -3,7 +3,6 @@ import {
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
-import type { TACOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
@@ -150,18 +149,17 @@ const insertBeforeTerminator = (
   return block.end + 1;
 };
 
-const usesOperandKey = (
-  inst: TACInstruction,
-  key: string,
-): boolean => {
+const usesOperandKey = (inst: TACInstruction, key: string): boolean => {
   return getUsedOperandsForReuse(inst).some((op) => livenessKey(op) === key);
 };
 
-export const performPRE = (instructions: TACInstruction[]): TACInstruction[] => {
+export const performPRE = (
+  instructions: TACInstruction[],
+): TACInstruction[] => {
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  const { inMaps, outMaps } = computeAvailableMaps(instructions);
+  const { inMaps } = computeAvailableMaps(instructions);
   const inserts = new Map<number, TACInstruction[]>();
   const removeIndices = new Set<number>();
 

@@ -104,14 +104,14 @@ export class TACOptimizer {
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);
 
-      // Unroll simple fixed-count loops
-      next = optimizeLoopStructures(next);
-
       // Hoist loop-invariant code
       next = performLICM(next);
 
       // Optimize simple induction variables
       next = optimizeInductionVariables(next);
+
+      // Unroll simple fixed-count loops
+      next = optimizeLoopStructures(next);
 
       // Fold scalar Vector3 updates into vector ops
       next = optimizeVectorSwizzle(next);

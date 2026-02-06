@@ -7,8 +7,8 @@ import {
   TACInstructionKind,
 } from "../../tac_instruction.js";
 import {
-  createConstant,
   type ConstantOperand,
+  createConstant,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
@@ -102,12 +102,20 @@ export const optimizeVectorSwizzle = (
     const setX = sX as PropertySetInstruction;
     const setY = sY as PropertySetInstruction;
     const setZ = sZ as PropertySetInstruction;
-    if (getX.property !== "x" || getY.property !== "y" || getZ.property !== "z") {
+    if (
+      getX.property !== "x" ||
+      getY.property !== "y" ||
+      getZ.property !== "z"
+    ) {
       result.push(instructions[i]);
       i += 1;
       continue;
     }
-    if (setX.property !== "x" || setY.property !== "y" || setZ.property !== "z") {
+    if (
+      setX.property !== "x" ||
+      setY.property !== "y" ||
+      setZ.property !== "z"
+    ) {
       result.push(instructions[i]);
       i += 1;
       continue;
@@ -159,12 +167,7 @@ export const optimizeVectorSwizzle = (
       ExternTypes.vector3,
     );
     result.push(
-      new BinaryOpInstruction(
-        updateX.object,
-        updateX.object,
-        "+",
-        vectorConst,
-      ),
+      new BinaryOpInstruction(updateX.object, updateX.object, "+", vectorConst),
     );
 
     i += 9;
