@@ -230,9 +230,12 @@ export function convertInstruction(
         externSig = resolved;
       }
       this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
+      const externSymbol = this.getExternSymbol(externSig);
+      // Emit a normal extern call. Tail-call optimization is currently
+      // only an IR-level hint; mapping it to a raw `JUMP` is incorrect
+      // for Udon's calling convention and may produce invalid control
+      // flow. Preserve normal call/return semantics here.
+      this.instructions.push(new ExternInstruction(externSymbol, true));
 
       // Store result if needed
       if (call.dest) {
@@ -274,9 +277,10 @@ export function convertInstruction(
           tsReturnType,
         ) ?? createUdonExternSignature(methodName, paramTypes, returnType);
       this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
+      const externSymbol = this.getExternSymbol(externSig);
+      // Emit a normal method call. As above, do not lower IR `isTailCall`
+      // to a raw `JUMP` here; that is unsafe for Udon control flow.
+      this.instructions.push(new ExternInstruction(externSymbol, true));
 
       if (call.dest) {
         const destAddr = this.getOperandAddress(call.dest);

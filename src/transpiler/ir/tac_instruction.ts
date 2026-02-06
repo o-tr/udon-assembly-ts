@@ -169,14 +169,16 @@ export class CallInstruction implements TACInstruction {
     public dest: TACOperand | undefined,
     public func: string,
     public args: TACOperand[],
+    public isTailCall: boolean = false,
   ) {}
 
   toString(): string {
     const argsStr = this.args.map(operandToString).join(", ");
+    const prefix = this.isTailCall ? "tail " : "";
     if (this.dest) {
-      return `${operandToString(this.dest)} = call ${this.func}(${argsStr})`;
+      return `${operandToString(this.dest)} = ${prefix}call ${this.func}(${argsStr})`;
     }
-    return `call ${this.func}(${argsStr})`;
+    return `${prefix}call ${this.func}(${argsStr})`;
   }
 }
 
@@ -191,14 +193,16 @@ export class MethodCallInstruction implements TACInstruction {
     public object: TACOperand,
     public method: string,
     public args: TACOperand[],
+    public isTailCall: boolean = false,
   ) {}
 
   toString(): string {
     const argsStr = this.args.map(operandToString).join(", ");
+    const prefix = this.isTailCall ? "tail " : "";
     if (this.dest) {
-      return `${operandToString(this.dest)} = call ${operandToString(this.object)}.${this.method}(${argsStr})`;
+      return `${operandToString(this.dest)} = ${prefix}call ${operandToString(this.object)}.${this.method}(${argsStr})`;
     }
-    return `call ${operandToString(this.object)}.${this.method}(${argsStr})`;
+    return `${prefix}call ${operandToString(this.object)}.${this.method}(${argsStr})`;
   }
 }
 

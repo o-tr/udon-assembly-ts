@@ -1,15 +1,12 @@
-import type {
-  CallInstruction,
-  MethodCallInstruction as MethodCallInstructionType,
-} from "../../tac_instruction.js";
 import {
   type ArrayAccessInstruction,
   type ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
+  CallInstruction,
   CastInstruction,
   type ConditionalJumpInstruction,
-  type MethodCallInstruction,
+  MethodCallInstruction,
   type PropertyGetInstruction,
   type PropertySetInstruction,
   type ReturnInstruction,
@@ -40,7 +37,7 @@ export const getUsedOperandsForReuse = (inst: TACInstruction): TACOperand[] => {
     case TACInstructionKind.Call:
       return (inst as unknown as CallInstruction).args ?? [];
     case TACInstructionKind.MethodCall: {
-      const method = inst as unknown as MethodCallInstructionType;
+      const method = inst as unknown as MethodCallInstruction;
       return [method.object, ...(method.args ?? [])];
     }
     case TACInstructionKind.PropertyGet:
@@ -213,6 +210,25 @@ export const rewriteProducerDest = (
     case TACInstructionKind.Cast: {
       const cast = inst as CastInstruction;
       return new CastInstruction(newDest, cast.src);
+    }
+    case TACInstructionKind.Call: {
+      const call = inst as unknown as CallInstruction;
+      return new CallInstruction(
+        newDest,
+        call.func,
+        [...(call.args ?? [])],
+        (call as CallInstruction).isTailCall ?? false,
+      );
+    }
+    case TACInstructionKind.MethodCall: {
+      const method = inst as unknown as MethodCallInstruction;
+      return new MethodCallInstruction(
+        newDest,
+        method.object,
+        method.method,
+        [...(method.args ?? [])],
+        (method as MethodCallInstruction).isTailCall ?? false,
+      );
     }
     default:
       return inst;

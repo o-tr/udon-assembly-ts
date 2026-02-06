@@ -1,3 +1,4 @@
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   type ArrayAccessInstruction,
@@ -35,6 +36,7 @@ import {
   rewriteProducerDest,
 } from "../utils/instructions.js";
 import { sameUdonType } from "../utils/operands.js";
+import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { getOperandType } from "./constant_folding.js";
 
 export const copyOnWriteTemporaries = (
@@ -202,6 +204,7 @@ export const copyOnWriteTemporaries = (
           call.dest,
           call.func,
           args,
+          (call as CallInstruction).isTailCall ?? false,
         );
       }
     }
@@ -219,6 +222,7 @@ export const copyOnWriteTemporaries = (
           object,
           call.method,
           args,
+          (call as MethodCallInstruction).isTailCall ?? false,
         );
       }
     }
@@ -429,6 +433,26 @@ export const eliminateSingleUseTemporaries = (
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
+  const isUdonExternSignature = (signature: string): boolean => {
+    return /^[A-Za-z0-9._]+\.__[A-Za-z0-9_]+__(?:[A-Za-z0-9_]+)?__[A-Za-z0-9_]+$/.test(
+      signature,
+    );
+  };
+
+  const resolvePureExternSignature = (func: string): string | null => {
+    if (isUdonExternSignature(func)) return func;
+    const lastDot = func.lastIndexOf(".");
+    if (lastDot <= 0) return null;
+    const typeName = func.slice(0, lastDot);
+    const memberName = func.slice(lastDot + 1);
+    return resolveExternSignature(typeName, memberName, "method");
+  };
+
+  const isPureExternCall = (call: CallInstruction): boolean => {
+    const resolved = resolvePureExternSignature(call.func);
+    return resolved ? pureExternEvaluators.has(resolved) : false;
+  };
+
   const result: TACInstruction[] = [];
 
   for (const block of cfg.blocks) {
@@ -439,9 +463,23 @@ export const eliminateSingleUseTemporaries = (
       const inst = blockInstructions[i];
       const next = blockInstructions[i + 1];
 
-      if (next && isPureProducer(inst) && isCopyFromTemp(next)) {
+      if (next && isCopyFromTemp(next)) {
+        // Only allow forwarding when the producer is pure. For calls we
+        // restrict to known pure externs; method calls are considered
+        // impure by default and are not allowed here.
+        const isAllowedProducer =
+          isPureProducer(inst) ||
+          (inst.kind === TACInstructionKind.Call &&
+            isPureExternCall(inst as CallInstruction));
+
+        if (!isAllowedProducer) {
+          result.push(inst);
+          continue;
+        }
+
         const destTemp = (inst as unknown as InstWithDest).dest;
         if (
+          destTemp &&
           destTemp.kind === TACOperandKind.Temporary &&
           (next as unknown as InstWithDestSrc).src.kind ===
             TACOperandKind.Temporary
@@ -453,7 +491,14 @@ export const eliminateSingleUseTemporaries = (
 
           if (tempId === nextTempId && tempUseCounts.get(tempId) === 1) {
             const nextDest = (next as unknown as InstWithDestSrc).dest;
-            if (sameUdonType(destTemp, nextDest)) {
+            // Only forward into plain local variables; avoid rewriting into
+            // properties/array elements which could change observable
+            // behavior for impure calls.
+            if (
+              nextDest.kind === TACOperandKind.Variable &&
+              isEligibleLocalVariable(nextDest as VariableOperand) &&
+              sameUdonType(destTemp, nextDest)
+            ) {
               const rewritten = rewriteProducerDest(inst, nextDest);
               result.push(rewritten);
               i += 1;
