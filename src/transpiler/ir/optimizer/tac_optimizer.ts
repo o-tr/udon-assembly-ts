@@ -16,6 +16,7 @@ import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
 import { performLICM } from "./passes/licm.js";
+import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
@@ -96,6 +97,9 @@ export class TACOptimizer {
 
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);
+
+      // Unroll simple fixed-count loops
+      next = optimizeLoopStructures(next);
 
       // Hoist loop-invariant code
       next = performLICM(next);

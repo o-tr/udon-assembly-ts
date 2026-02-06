@@ -8,6 +8,7 @@ import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
 import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
 import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
+import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -251,6 +252,40 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L0");
+  });
+
+  it("unrolls simple fixed loops", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(t1, a, "+", createConstant(1, PrimitiveTypes.int32)),
+      new AssignmentInstruction(a, t1),
+      new BinaryOpInstruction(i, i, "+", createConstant(1, PrimitiveTypes.int32)),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).not.toContain("goto L_start");
+    expect(text).not.toContain("ifFalse");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBeGreaterThan(1);
   });
 
   it("prunes unreachable blocks on constant branches", () => {
