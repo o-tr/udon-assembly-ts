@@ -263,11 +263,15 @@ export class BatchTranspiler {
 
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();
-        // Compute exposed labels from @UdonExport
+        // Compute exposed labels from @UdonExport and entry-class non-private methods
         const exposedLabels = new Set<string>();
         for (const cls of registry.getAllClasses()) {
           for (const method of cls.methods) {
-            if (!method.isExported) continue;
+            if (
+              !method.isExported &&
+              !(cls.name === entryPoint.name && method.isPublic)
+            )
+              continue;
             const layout = udonBehaviourLayouts.get(cls.name);
             if (layout) {
               const ml = layout.get(method.name);
@@ -306,6 +310,23 @@ export class BatchTranspiler {
       if (entryLayout) {
         for (const layout of entryLayout.values()) {
           if (layout.isPublic) exportLabels.add(layout.exportMethodName);
+        }
+      }
+      // Also include decorator-marked exports and entry-class non-private methods
+      for (const cls of registry.getAllClasses()) {
+        for (const method of cls.methods) {
+          if (
+            !method.isExported &&
+            !(cls.name === entryPoint.name && method.isPublic)
+          )
+            continue;
+          const layout = udonBehaviourLayouts.get(cls.name);
+          if (layout) {
+            const ml = layout.get(method.name);
+            if (ml) exportLabels.add(ml.exportMethodName);
+          } else {
+            exportLabels.add(`__${method.name}_${cls.name}`);
+          }
         }
       }
       const assembler = new UdonAssembler();
@@ -513,11 +534,15 @@ export class BatchTranspiler {
 
     if (optimize === true) {
       const optimizer = new TACOptimizer();
-      // Compute exposed labels from @UdonExport
+      // Compute exposed labels from @UdonExport and entry-class non-private methods
       const exposedLabels = new Set<string>();
       for (const cls of registry.getAllClasses()) {
         for (const method of cls.methods) {
-          if (!method.isExported) continue;
+          if (
+            !method.isExported &&
+            !(cls.name === entryPointName && method.isPublic)
+          )
+            continue;
           const layout = udonBehaviourLayouts.get(cls.name);
           if (layout) {
             const ml = layout.get(method.name);

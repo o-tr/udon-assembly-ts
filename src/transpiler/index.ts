@@ -117,10 +117,16 @@ export class TypeScriptToUdonTranspiler {
     if (options.optimize === true) {
       const optimizer = new TACOptimizer();
       // Compute labels that should be preserved because of @UdonExport
+      // Also include all non-private methods of the entry class as implicitly exposed
+      const entryClassName = this.pickEntryClassName(program);
       const exposedLabels = new Set<string>();
       for (const cls of registry.getAllClasses()) {
         for (const method of cls.methods) {
-          if (!method.isExported) continue;
+          if (
+            !method.isExported &&
+            !(cls.name === entryClassName && method.isPublic)
+          )
+            continue;
           const layout = udonBehaviourLayouts.get(cls.name);
           if (layout) {
             const ml = layout.get(method.name);
@@ -165,10 +171,15 @@ export class TypeScriptToUdonTranspiler {
           exportLabels.add(methodLayout.exportMethodName);
       }
     }
-    // Ensure decorator-marked exports are included in assembler exports
+    // Ensure decorator-marked exports and entry-class non-private methods are included in assembler exports
+    const entryClassNameForExport = this.pickEntryClassName(program);
     for (const cls of registry.getAllClasses()) {
       for (const method of cls.methods) {
-        if (!method.isExported) continue;
+        if (
+          !method.isExported &&
+          !(cls.name === entryClassNameForExport && method.isPublic)
+        )
+          continue;
         const layout = udonBehaviourLayouts.get(cls.name);
         if (layout) {
           const ml = layout.get(method.name);
