@@ -9,6 +9,7 @@ import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes
 import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
 import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
+import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
 import {
   ArrayAccessInstruction,
   AssignmentInstruction,
@@ -286,6 +287,23 @@ describe("optimizer passes", () => {
     expect(text).not.toContain("goto L_start");
     expect(text).not.toContain("ifFalse");
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBeGreaterThan(1);
+  });
+
+  it("merges identical return tails", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const l0 = createLabel("L0");
+
+    const instructions = [
+      new ReturnInstruction(a),
+      new LabelInstruction(l0),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("tail_merge_");
+    expect(text).toContain("goto tail_merge_");
   });
 
   it("prunes unreachable blocks on constant branches", () => {

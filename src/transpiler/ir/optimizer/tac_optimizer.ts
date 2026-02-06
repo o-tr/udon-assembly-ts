@@ -21,6 +21,7 @@ import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
 import { optimizeStringConcatenation } from "./passes/string_optimization.js";
+import { mergeTails } from "./passes/tail_merging.js";
 import { optimizeTailCalls } from "./passes/tco.js";
 import {
   copyOnWriteTemporaries,
@@ -109,6 +110,9 @@ export class TACOptimizer {
 
       // Remove unused temporary computations
       next = eliminateDeadTemporaries(next);
+
+      // Merge identical return tails
+      next = mergeTails(next);
 
       // Remove unused labels
       next = eliminateUnusedLabels(next);
