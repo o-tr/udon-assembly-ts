@@ -16,15 +16,9 @@ describe("array spread diagnostics", () => {
       parser.getSymbolTable(),
       parser.getEnumRegistry(),
     );
-    try {
-      converter.convert(ast);
-      // If no error, fail the test
-      expect(true).toBe(false);
-    } catch (e: unknown) {
-      const msg = (e as Error).message ?? String(e);
-      expect(msg).toContain("Array spread expects");
-      expect(msg).toContain("obj.value");
-    }
+    expect(() => converter.convert(ast)).toThrowError(
+      /Array spread expects .*obj.value/,
+    );
   });
 
   it("allows spreading an array variable", () => {

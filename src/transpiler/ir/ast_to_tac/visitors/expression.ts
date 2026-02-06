@@ -989,7 +989,7 @@ export function visitPropertyAccessExpression(
           resultType;
       }
     }
-    const result = this.newTemp(resultType ?? ObjectType);
+    const result = this.newTemp(resultType ?? PrimitiveTypes.single);
     this.instructions.push(
       new PropertyGetInstruction(result, object, node.property),
     );
