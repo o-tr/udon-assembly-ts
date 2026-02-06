@@ -526,7 +526,7 @@ const insertPhis = (
         const dest = cloneBaseOperand(baseDest);
         const sources: PhiSource[] = cfg.blocks[target].preds.map((pred) => ({
           pred,
-          value: baseDest,
+          value: cloneBaseOperand(baseDest),
         }));
         phiByBlock.get(target)?.push(new PhiInst(dest, sources));
         if (!defs.has(target)) {
@@ -620,10 +620,10 @@ const renameBlocks = (
       for (const phi of succPhis) {
         const key = baseKeyForOperand(phi.dest);
         if (!key) continue;
-        const top = peekStack(key) ?? phi.dest;
+        const top = peekStack(key);
         const source = phi.sources.find((entry) => entry.pred === blockId);
         if (source) {
-          source.value = top;
+          source.value = top ?? source.value;
         }
       }
     }
