@@ -228,6 +228,29 @@ describe("optimizer passes", () => {
     expect(text.indexOf("L2:")).toBeLessThan(text.indexOf("L1:"));
   });
 
+  it("keeps conditional jump blocks during layout", () => {
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+    const l2 = createLabel("L2");
+
+    const instructions = [
+      new LabelInstruction(l0),
+      new ConditionalJumpInstruction(cond, l2),
+      new LabelInstruction(l1),
+      new ReturnInstruction(),
+      new LabelInstruction(l2),
+      new ReturnInstruction(),
+    ];
+
+    const reordered = optimizeBlockLayout(instructions);
+    const text = stringify(reordered);
+
+    expect(text).toContain("L0:");
+    expect(text).toContain("L1:");
+    expect(text).toContain("L2:");
+  });
+
   it("coalesces string concatenation chains", () => {
     const a = createVariable("a", PrimitiveTypes.string);
     const b = createVariable("b", PrimitiveTypes.string);
@@ -378,6 +401,47 @@ describe("optimizer passes", () => {
     expect(incrementCount).toBeGreaterThanOrEqual(2);
   });
 
+  it("does not unroll loops with condition gaps", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(3, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(i),
+    ];
+
+    const optimized = optimizeLoopStructures(instructions);
+    const text = stringify(optimized);
+
+    expect(text).toContain("goto L_start");
+  });
+
   it("unrolls <= loops with fresh temporaries", () => {
     const i = createVariable("i", PrimitiveTypes.int32);
     const a = createVariable("a", PrimitiveTypes.int32);
@@ -507,6 +571,27 @@ describe("optimizer passes", () => {
     expect(text).toContain("goto tail_merge_");
   });
 
+  it("merges three identical return tails", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const l0 = createLabel("L0");
+    const l1 = createLabel("L1");
+
+    const instructions = [
+      new ReturnInstruction(a),
+      new LabelInstruction(l0),
+      new ReturnInstruction(a),
+      new LabelInstruction(l1),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+    const gotoCount = text.split("goto tail_merge_").length - 1;
+
+    expect(text).toContain("tail_merge_");
+    expect(gotoCount).toBeGreaterThanOrEqual(2);
+  });
+
   it("does not merge tails with side-effecting calls", () => {
     const t0 = createTemporary(0, PrimitiveTypes.int32);
     const l0 = createLabel("L0");
@@ -602,6 +687,50 @@ describe("optimizer passes", () => {
       .slice(0, endLabelIndex)
       .some(
         (inst) => inst.kind === "BinaryOp" && inst.toString().includes("a + b"),
+      );
+
+    expect(endLabelIndex).toBeGreaterThanOrEqual(0);
+    expect(hasBinBeforeEnd).toBe(true);
+    expect(hasBinAfterEnd).toBe(false);
+  });
+
+  it("hoists when operands are temps defined in preds", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const c = createVariable("c", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new BinaryOpInstruction(t0, a, "+", b),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new BinaryOpInstruction(t0, a, "+", b),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new BinaryOpInstruction(t1, t0, "+", c),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = performPRE(instructions);
+    const endLabelIndex = optimized.findIndex(
+      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
+    );
+    const hasBinAfterEnd = optimized
+      .slice(endLabelIndex)
+      .some(
+        (inst) =>
+          inst.kind === "BinaryOp" && inst.toString().includes("t0 + c"),
+      );
+    const hasBinBeforeEnd = optimized
+      .slice(0, endLabelIndex)
+      .some(
+        (inst) =>
+          inst.kind === "BinaryOp" && inst.toString().includes("t0 + c"),
       );
 
     expect(endLabelIndex).toBeGreaterThanOrEqual(0);
