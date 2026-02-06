@@ -1,3 +1,4 @@
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   type ArrayAccessInstruction,
@@ -22,7 +23,6 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
-import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
   countTempUses,
