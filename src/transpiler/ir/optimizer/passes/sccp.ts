@@ -44,7 +44,10 @@ export type LatticeValue =
 export const sccpAndPrune = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,
-  options?: { maxWorklistIterations?: number; onLimitReached?: "markAllReachable" | "break" | "warn" },
+  options?: {
+    maxWorklistIterations?: number;
+    onLimitReached?: "markAllReachable" | "break" | "warn";
+  },
 ): TACInstruction[] => {
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
@@ -127,7 +130,7 @@ export const sccpAndPrune = (
           console.warn(
             `sccpAndPrune: reached maxWorklistIterations=${maxIterations}; aborting early`,
           );
-        } catch (e) {
+        } catch (_e) {
           /* ignore */
         }
       }
