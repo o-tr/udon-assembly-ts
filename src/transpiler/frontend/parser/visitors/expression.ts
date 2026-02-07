@@ -244,12 +244,16 @@ export function visitFunctionLiteralExpression(
   const body = ts.isBlock(node.body)
     ? this.visitBlock(node.body)
     : this.visitExpression(node.body as ts.Expression);
+  const returnType = node.type
+    ? this.mapTypeWithGenerics(node.type.getText(), node.type)
+    : undefined;
 
   return {
     kind: ASTNodeKind.FunctionExpression,
     parameters,
     body,
     isArrow: ts.isArrowFunction(node),
+    returnType,
   };
 }
 

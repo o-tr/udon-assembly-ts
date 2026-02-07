@@ -371,6 +371,7 @@ export interface FunctionExpressionNode extends ASTNode {
   parameters: Array<{ name: string; type: TypeSymbol }>;
   body: ASTNode | BlockStatementNode;
   isArrow: boolean;
+  returnType?: TypeSymbol;
 }
 
 /**

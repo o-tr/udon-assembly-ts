@@ -42,13 +42,8 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { isSetCollectionType } from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
-
-const isSetCollectionType = (
-  type: TypeSymbol | null,
-): type is CollectionTypeSymbol =>
-  type instanceof CollectionTypeSymbol &&
-  type.name === ExternTypes.dataDictionary.name;
 
 const resolveSetElementType = (
   setType: TypeSymbol | null,
@@ -84,28 +79,32 @@ export function visitCallExpression(
   }
   const defaultResult = () => this.newTemp(ObjectType);
 
-  if (callee.kind === ASTNodeKind.PropertyAccessExpression) {
-    const propAccess = callee as PropertyAccessExpressionNode;
-    const setResult = visitSetMethodCall(this, propAccess, rawArgs);
-    if (setResult) {
-      return setResult;
-    }
-  }
-
-  const args = rawArgs.map((arg) => this.visitExpression(arg));
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
-    if (calleeName === "Error") {
-      return args[0] ?? createConstant("Error", PrimitiveTypes.string);
-    }
     if (node.isNew && calleeName === "Set") {
       return emitSetConstructor(this, node);
     }
+  }
+
+  let args: TACOperand[] | null = null;
+  const getArgs = (): TACOperand[] => {
+    if (!args) {
+      args = rawArgs.map((arg) => this.visitExpression(arg));
+    }
+    return args;
+  };
+  if (callee.kind === ASTNodeKind.Identifier) {
+    const calleeName = (callee as IdentifierNode).name;
+    if (calleeName === "Error") {
+      const evaluatedArgs = getArgs();
+      return evaluatedArgs[0] ?? createConstant("Error", PrimitiveTypes.string);
+    }
     if (calleeName === "BigInt") {
-      if (args.length !== 1) {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length !== 1) {
         throw new Error("BigInt(...) expects one argument.");
       }
-      const arg = args[0] ?? createConstant(0, PrimitiveTypes.single);
+      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.single);
       const argType = this.getOperandType(arg);
       if (
         argType.udonType === UdonType.Int64 ||
@@ -118,7 +117,7 @@ export function visitCallExpression(
       return castResult;
     }
     if (node.isNew && this.classMap.has(calleeName)) {
-      return this.visitInlineConstructor(calleeName, args);
+      return this.visitInlineConstructor(calleeName, getArgs());
     }
     if (
       node.isNew &&
@@ -133,7 +132,10 @@ export function visitCallExpression(
         : calleeName;
       const collectionType = this.typeMapper.mapTypeScriptType(typeArgText);
       const collectionResult = this.newTemp(collectionType);
-      const paramTypes = args.map((arg) => this.getOperandType(arg).name);
+      const evaluatedArgs = getArgs();
+      const paramTypes = evaluatedArgs.map(
+        (arg) => this.getOperandType(arg).name,
+      );
       const externSig = this.requireExternSignature(
         calleeName,
         "ctor",
@@ -142,7 +144,7 @@ export function visitCallExpression(
         calleeName,
       );
       this.instructions.push(
-        new CallInstruction(collectionResult, externSig, args),
+        new CallInstruction(collectionResult, externSig, evaluatedArgs),
       );
       return collectionResult;
     }
@@ -170,7 +172,7 @@ export function visitCallExpression(
       this.instructions.push(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
-    if (node.isNew && calleeName === "Array" && args.length > 0) {
+    if (node.isNew && calleeName === "Array" && getArgs().length > 0) {
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;
@@ -183,7 +185,7 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
-      for (const arg of args) {
+      for (const arg of getArgs()) {
         const token = this.wrapDataToken(arg);
         this.instructions.push(
           new MethodCallInstruction(undefined, listResult, "Add", [token]),
@@ -193,7 +195,7 @@ export function visitCallExpression(
     }
     if (
       (calleeName === "Instantiate" || calleeName === "VRCInstantiate") &&
-      args.length === 1
+      getArgs().length === 1
     ) {
       const instResult = this.newTemp(ExternTypes.gameObject);
       const externSig = this.requireExternSignature(
@@ -203,29 +205,57 @@ export function visitCallExpression(
         ["GameObject"],
         "GameObject",
       );
-      this.instructions.push(new CallInstruction(instResult, externSig, args));
+      this.instructions.push(
+        new CallInstruction(instResult, externSig, getArgs()),
+      );
       return instResult;
     }
     if (node.isNew && (calleeName === "Vector3" || calleeName === "Color")) {
       const externSig = `__ctor_${calleeName}`;
       const ctorType = this.typeMapper.mapTypeScriptType(calleeName);
       const ctorResult = this.newTemp(ctorType);
-      this.instructions.push(new CallInstruction(ctorResult, externSig, args));
+      this.instructions.push(
+        new CallInstruction(ctorResult, externSig, getArgs()),
+      );
       return ctorResult;
     }
     const callResult = defaultResult();
-    this.instructions.push(new CallInstruction(callResult, calleeName, args));
+    this.instructions.push(
+      new CallInstruction(callResult, calleeName, getArgs()),
+    );
     return callResult;
   }
 
   if (callee.kind === ASTNodeKind.PropertyAccessExpression) {
     const propAccess = callee as PropertyAccessExpressionNode;
+    const object = this.visitExpression(propAccess.object);
+    const objectType = this.getOperandType(object);
+    const resolvedType = resolveTypeFromNode(this, propAccess.object);
+    const setType = isSetCollectionType(objectType)
+      ? objectType
+      : isSetCollectionType(resolvedType)
+        ? resolvedType
+        : null;
+    if (setType) {
+      const setResult = visitSetMethodCall(
+        this,
+        object,
+        setType,
+        propAccess,
+        rawArgs,
+      );
+      if (setResult) {
+        return setResult;
+      }
+    }
+
+    const evaluatedArgs = getArgs();
 
     if (
       propAccess.object.kind === ASTNodeKind.Identifier &&
       (propAccess.object as IdentifierNode).name === "UdonTypeConverters"
     ) {
-      if (args.length !== 1) {
+      if (evaluatedArgs.length !== 1) {
         throw new Error(
           `UdonTypeConverters.${propAccess.property} expects 1 argument`,
         );
@@ -239,7 +269,7 @@ export function visitCallExpression(
         );
       }
       const castResult = this.newTemp(targetType);
-      this.instructions.push(new CastInstruction(castResult, args[0]));
+      this.instructions.push(new CastInstruction(castResult, evaluatedArgs[0]));
       return castResult;
     }
 
@@ -248,10 +278,10 @@ export function visitCallExpression(
       (propAccess.object as IdentifierNode).name === "BigInt"
     ) {
       if (propAccess.property === "asUintN") {
-        if (args.length !== 2) {
+        if (evaluatedArgs.length !== 2) {
           throw new Error("BigInt.asUintN expects two arguments.");
         }
-        return args[1] ?? createConstant(0, PrimitiveTypes.single);
+        return evaluatedArgs[1] ?? createConstant(0, PrimitiveTypes.single);
       }
     }
 
@@ -261,7 +291,7 @@ export function visitCallExpression(
     ) {
       const objectResult = this.visitObjectStaticCall(
         propAccess.property,
-        args,
+        evaluatedArgs,
       );
       if (objectResult) return objectResult;
     }
@@ -272,7 +302,7 @@ export function visitCallExpression(
     ) {
       const numberResult = this.visitNumberStaticCall(
         propAccess.property,
-        args,
+        evaluatedArgs,
       );
       if (numberResult) return numberResult;
     }
@@ -281,7 +311,10 @@ export function visitCallExpression(
       propAccess.object.kind === ASTNodeKind.Identifier &&
       (propAccess.object as IdentifierNode).name === "Math"
     ) {
-      const mathResult = this.visitMathStaticCall(propAccess.property, args);
+      const mathResult = this.visitMathStaticCall(
+        propAccess.property,
+        evaluatedArgs,
+      );
       if (mathResult) return mathResult;
     }
 
@@ -289,7 +322,10 @@ export function visitCallExpression(
       propAccess.object.kind === ASTNodeKind.Identifier &&
       (propAccess.object as IdentifierNode).name === "Array"
     ) {
-      const arrayResult = this.visitArrayStaticCall(propAccess.property, args);
+      const arrayResult = this.visitArrayStaticCall(
+        propAccess.property,
+        evaluatedArgs,
+      );
       if (arrayResult) return arrayResult;
     }
 
@@ -318,7 +354,7 @@ export function visitCallExpression(
       const inlineResult = this.visitInlineStaticMethodCall(
         className,
         propAccess.property,
-        args,
+        evaluatedArgs,
       );
       if (inlineResult) return inlineResult;
     }
@@ -340,13 +376,13 @@ export function visitCallExpression(
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
         if (returnType === PrimitiveTypes.void) {
           this.instructions.push(
-            new CallInstruction(undefined, externSig, args),
+            new CallInstruction(undefined, externSig, evaluatedArgs),
           );
           return createConstant(0, PrimitiveTypes.void);
         }
         const callResult = this.newTemp(returnType);
         this.instructions.push(
-          new CallInstruction(callResult, externSig, args),
+          new CallInstruction(callResult, externSig, evaluatedArgs),
         );
         return callResult;
       }
@@ -391,7 +427,7 @@ export function visitCallExpression(
 
       if (externName) {
         this.instructions.push(
-          new CallInstruction(undefined, externName, args),
+          new CallInstruction(undefined, externName, evaluatedArgs),
         );
         return createConstant(0, PrimitiveTypes.void); // Console methods return void
       }
@@ -401,18 +437,16 @@ export function visitCallExpression(
       propAccess.property === "length" &&
       propAccess.object.kind === ASTNodeKind.Identifier
     ) {
-      const array = this.visitExpression(propAccess.object);
       const lengthResult = this.newTemp(PrimitiveTypes.int32);
-      const arrayType = this.getOperandType(array);
+      const arrayType = this.getOperandType(object);
       const lengthProp =
         arrayType.name === ExternTypes.dataList.name ? "Count" : "length";
       this.instructions.push(
-        new PropertyGetInstruction(lengthResult, array, lengthProp),
+        new PropertyGetInstruction(lengthResult, object, lengthProp),
       );
       return lengthResult;
     }
 
-    const object = this.visitExpression(propAccess.object);
     if (
       propAccess.property === "GetComponent" &&
       node.typeArguments?.length === 1
@@ -439,10 +473,10 @@ export function visitCallExpression(
     }
     if (
       propAccess.property === "SendCustomEvent" &&
-      args.length === 1 &&
-      args[0].kind === TACOperandKind.Constant
+      evaluatedArgs.length === 1 &&
+      evaluatedArgs[0].kind === TACOperandKind.Constant
     ) {
-      const _methodName = (args[0] as ConstantOperand).value as string;
+      const _methodName = (evaluatedArgs[0] as ConstantOperand).value as string;
       const externSig = this.requireExternSignature(
         "UdonBehaviour",
         "SendCustomEvent",
@@ -451,11 +485,14 @@ export function visitCallExpression(
         "void",
       );
       this.instructions.push(
-        new CallInstruction(undefined, externSig, [object, args[0]]),
+        new CallInstruction(undefined, externSig, [object, evaluatedArgs[0]]),
       );
       return createConstant(0, PrimitiveTypes.void);
     }
-    if (propAccess.property === "SendCustomNetworkEvent" && args.length === 2) {
+    if (
+      propAccess.property === "SendCustomNetworkEvent" &&
+      evaluatedArgs.length === 2
+    ) {
       const externSig = this.requireExternSignature(
         "UdonBehaviour",
         "SendCustomNetworkEvent",
@@ -464,11 +501,14 @@ export function visitCallExpression(
         "void",
       );
       this.instructions.push(
-        new CallInstruction(undefined, externSig, [object, args[0], args[1]]),
+        new CallInstruction(undefined, externSig, [
+          object,
+          evaluatedArgs[0],
+          evaluatedArgs[1],
+        ]),
       );
       return createConstant(0, PrimitiveTypes.void);
     }
-    const objectType = this.getOperandType(object);
     if (
       this.isUdonBehaviourType(objectType) &&
       propAccess.object.kind !== ASTNodeKind.ThisExpression
@@ -482,7 +522,7 @@ export function visitCallExpression(
       );
       if (layout) {
         const paramCount = Math.min(
-          args.length,
+          evaluatedArgs.length,
           layout.parameterExportNames.length,
         );
         for (let i = 0; i < paramCount; i++) {
@@ -501,7 +541,7 @@ export function visitCallExpression(
             new CallInstruction(undefined, externSig, [
               object,
               paramName,
-              args[i],
+              evaluatedArgs[i],
             ]),
           );
         }
@@ -539,15 +579,15 @@ export function visitCallExpression(
       return createConstant(0, PrimitiveTypes.void);
     }
     if (objectType.name === ExternTypes.dataList.name) {
-      if (propAccess.property === "Add" && args.length === 1) {
-        const token = this.wrapDataToken(args[0]);
+      if (propAccess.property === "Add" && evaluatedArgs.length === 1) {
+        const token = this.wrapDataToken(evaluatedArgs[0]);
         this.instructions.push(
           new MethodCallInstruction(undefined, object, "Add", [token]),
         );
         return createConstant(0, PrimitiveTypes.void);
       }
-      if (propAccess.property === "Remove" && args.length === 1) {
-        const token = this.wrapDataToken(args[0]);
+      if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
+        const token = this.wrapDataToken(evaluatedArgs[0]);
         const removeResult = this.newTemp(PrimitiveTypes.boolean);
         this.instructions.push(
           new MethodCallInstruction(removeResult, object, "Remove", [token]),
@@ -556,9 +596,9 @@ export function visitCallExpression(
       }
     }
     if (objectType.name === ExternTypes.dataDictionary.name) {
-      if (propAccess.property === "SetValue" && args.length === 2) {
-        const keyToken = this.wrapDataToken(args[0]);
-        const valueToken = this.wrapDataToken(args[1]);
+      if (propAccess.property === "SetValue" && evaluatedArgs.length === 2) {
+        const keyToken = this.wrapDataToken(evaluatedArgs[0]);
+        const valueToken = this.wrapDataToken(evaluatedArgs[1]);
         this.instructions.push(
           new MethodCallInstruction(undefined, object, "SetValue", [
             keyToken,
@@ -570,9 +610,9 @@ export function visitCallExpression(
       if (
         (propAccess.property === "ContainsKey" ||
           propAccess.property === "Remove") &&
-        args.length === 1
+        evaluatedArgs.length === 1
       ) {
-        const keyToken = this.wrapDataToken(args[0]);
+        const keyToken = this.wrapDataToken(evaluatedArgs[0]);
         const dictResult = this.newTemp(PrimitiveTypes.boolean);
         this.instructions.push(
           new MethodCallInstruction(dictResult, object, propAccess.property, [
@@ -599,7 +639,7 @@ export function visitCallExpression(
               result,
               object,
               propAccess.property,
-              args,
+              evaluatedArgs,
             ),
           );
           return result;
@@ -607,7 +647,7 @@ export function visitCallExpression(
         case "map": {
           const result = this.newTemp(new ArrayTypeSymbol(ObjectType));
           this.instructions.push(
-            new MethodCallInstruction(result, object, "map", args),
+            new MethodCallInstruction(result, object, "map", evaluatedArgs),
           );
           return result;
         }
@@ -618,34 +658,42 @@ export function visitCallExpression(
               : ObjectType;
           const result = this.newTemp(elementType);
           this.instructions.push(
-            new MethodCallInstruction(result, object, "find", args),
+            new MethodCallInstruction(result, object, "find", evaluatedArgs),
           );
           return result;
         }
         case "indexOf": {
           const result = this.newTemp(PrimitiveTypes.int32);
           this.instructions.push(
-            new MethodCallInstruction(result, object, "indexOf", args),
+            new MethodCallInstruction(result, object, "indexOf", evaluatedArgs),
           );
           return result;
         }
         case "includes": {
           const result = this.newTemp(PrimitiveTypes.boolean);
           this.instructions.push(
-            new MethodCallInstruction(result, object, "includes", args),
+            new MethodCallInstruction(
+              result,
+              object,
+              "includes",
+              evaluatedArgs,
+            ),
           );
           return result;
         }
         case "join": {
           const result = this.newTemp(PrimitiveTypes.string);
           this.instructions.push(
-            new MethodCallInstruction(result, object, "join", args),
+            new MethodCallInstruction(result, object, "join", evaluatedArgs),
           );
           return result;
         }
       }
     }
-    if (propAccess.property === "RequestSerialization" && args.length === 0) {
+    if (
+      propAccess.property === "RequestSerialization" &&
+      evaluatedArgs.length === 0
+    ) {
       const externSig = this.requireExternSignature(
         "UdonBehaviour",
         "RequestSerialization",
@@ -685,20 +733,31 @@ export function visitCallExpression(
 
     if (resolvedReturnType === PrimitiveTypes.void) {
       this.instructions.push(
-        new MethodCallInstruction(undefined, object, propAccess.property, args),
+        new MethodCallInstruction(
+          undefined,
+          object,
+          propAccess.property,
+          evaluatedArgs,
+        ),
       );
       return createConstant(0, PrimitiveTypes.void);
     }
 
     const callResult = this.newTemp(resolvedReturnType ?? ObjectType);
     this.instructions.push(
-      new MethodCallInstruction(callResult, object, propAccess.property, args),
+      new MethodCallInstruction(
+        callResult,
+        object,
+        propAccess.property,
+        evaluatedArgs,
+      ),
     );
     return callResult;
   }
 
   if (callee.kind === ASTNodeKind.OptionalChainingExpression) {
     const opt = callee as OptionalChainingExpressionNode;
+    const evaluatedArgs = getArgs();
     const object = this.visitExpression(opt.object);
     const objTemp = this.newTemp(this.getOperandType(object));
     this.instructions.push(new CopyInstruction(objTemp, object));
@@ -720,7 +779,12 @@ export function visitCallExpression(
     );
 
     this.instructions.push(
-      new MethodCallInstruction(callResult, objTemp, opt.property, args),
+      new MethodCallInstruction(
+        callResult,
+        objTemp,
+        opt.property,
+        evaluatedArgs,
+      ),
     );
     this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
@@ -892,21 +956,11 @@ function emitSetPopulateFromIterable(
 
 function visitSetMethodCall(
   converter: ASTToTACConverter,
+  setOperand: TACOperand,
+  setType: CollectionTypeSymbol,
   propAccess: PropertyAccessExpressionNode,
   rawArgs: ASTNode[],
 ): TACOperand | null {
-  const resolvedType = resolveTypeFromNode(converter, propAccess.object);
-  const setOperand = converter.visitExpression(propAccess.object);
-  const operandType = converter.getOperandType(setOperand);
-  const setType = isSetCollectionType(operandType)
-    ? operandType
-    : isSetCollectionType(resolvedType)
-      ? resolvedType
-      : null;
-  if (!setType) {
-    return null;
-  }
-
   const elementType = resolveSetElementType(setType);
 
   switch (propAccess.property) {
@@ -957,51 +1011,9 @@ function visitSetMethodCall(
       if (rawArgs.length !== 0) {
         throw new Error("Set.clear expects no arguments.");
       }
-      const keysList = emitSetKeysList(converter, setOperand, elementType);
-      const indexVar = converter.newTemp(PrimitiveTypes.int32);
-      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
       converter.instructions.push(
-        new AssignmentInstruction(
-          indexVar,
-          createConstant(0, PrimitiveTypes.int32),
-        ),
+        new MethodCallInstruction(undefined, setOperand, "Clear", []),
       );
-      converter.instructions.push(
-        new PropertyGetInstruction(lengthVar, keysList, "Count"),
-      );
-
-      const loopStart = converter.newLabel("set_clear_start");
-      const loopContinue = converter.newLabel("set_clear_continue");
-      const loopEnd = converter.newLabel("set_clear_end");
-
-      converter.instructions.push(new LabelInstruction(loopStart));
-      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
-        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-      );
-      converter.instructions.push(
-        new ConditionalJumpInstruction(condTemp, loopEnd),
-      );
-
-      const keyToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
-      );
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, setOperand, "Remove", [keyToken]),
-      );
-
-      converter.instructions.push(new LabelInstruction(loopContinue));
-      converter.instructions.push(
-        new BinaryOpInstruction(
-          indexVar,
-          indexVar,
-          "+",
-          createConstant(1, PrimitiveTypes.int32),
-        ),
-      );
-      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      converter.instructions.push(new LabelInstruction(loopEnd));
       return createConstant(0, PrimitiveTypes.void);
     }
     case "values":
@@ -1059,15 +1071,18 @@ function visitSetMethodCall(
         new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
       );
 
+      const value = converter.unwrapDataToken(keyToken, elementType);
+      const valueToken = converter.wrapDataToken(value);
+
       const pairList = converter.newTemp(new DataListTypeSymbol(elementType));
       converter.instructions.push(
         new CallInstruction(pairList, listCtorSig, []),
       );
       converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
       );
       converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
       );
       const pairToken = converter.wrapDataToken(pairList);
       converter.instructions.push(

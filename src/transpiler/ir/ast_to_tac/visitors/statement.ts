@@ -1,7 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
-  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   ObjectType,
@@ -49,13 +48,8 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { isSetCollectionType } from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
-
-const isSetCollectionType = (
-  type: TypeSymbol | null,
-): type is CollectionTypeSymbol =>
-  type instanceof CollectionTypeSymbol &&
-  type.name === ExternTypes.dataDictionary.name;
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
