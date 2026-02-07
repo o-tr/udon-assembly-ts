@@ -24,6 +24,7 @@ import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
 import { TACOptimizer } from "./ir/optimizer/index.js";
 import { pruneProgramByMethodUsage } from "./ir/optimizer/ipa.js";
 import { buildUdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
+import { computeExposedLabels, computeExportLabels } from "./exposed_labels.js";
 
 /**
  * Transpiler options
@@ -116,27 +117,12 @@ export class TypeScriptToUdonTranspiler {
     // Phase 3: Optimize TAC (only when explicitly enabled)
     if (options.optimize === true) {
       const optimizer = new TACOptimizer();
-      // Compute labels that should be preserved because of @UdonExport
-      // Also include all non-private methods of the entry class as implicitly exposed
       const entryClassName = this.pickEntryClassName(program);
-      const exposedLabels = new Set<string>();
-      for (const cls of registry.getAllClasses()) {
-        for (const method of cls.methods) {
-          if (
-            !method.isExported &&
-            !(cls.name === entryClassName && method.isPublic)
-          )
-            continue;
-          const layout = udonBehaviourLayouts.get(cls.name);
-          if (layout) {
-            const ml = layout.get(method.name);
-            if (ml) exposedLabels.add(ml.exportMethodName);
-          } else {
-            // fallback for non-UdonBehaviour methods: use TAC label scheme
-            exposedLabels.add(`__${method.name}_${cls.name}`);
-          }
-        }
-      }
+      const exposedLabels = computeExposedLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryClassName,
+      );
       tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
     }
 
@@ -164,31 +150,12 @@ export class TypeScriptToUdonTranspiler {
     }
 
     // Phase 5: Generate .uasm file
-    const exportLabels = new Set<string>();
-    for (const layout of udonBehaviourLayouts.values()) {
-      for (const methodLayout of layout.values()) {
-        if (methodLayout.isPublic)
-          exportLabels.add(methodLayout.exportMethodName);
-      }
-    }
-    // Ensure decorator-marked exports and entry-class non-private methods are included in assembler exports
     const entryClassNameForExport = this.pickEntryClassName(program);
-    for (const cls of registry.getAllClasses()) {
-      for (const method of cls.methods) {
-        if (
-          !method.isExported &&
-          !(cls.name === entryClassNameForExport && method.isPublic)
-        )
-          continue;
-        const layout = udonBehaviourLayouts.get(cls.name);
-        if (layout) {
-          const ml = layout.get(method.name);
-          if (ml) exportLabels.add(ml.exportMethodName);
-        } else {
-          exportLabels.add(`__${method.name}_${cls.name}`);
-        }
-      }
-    }
+    const exportLabels = computeExportLabels(
+      registry,
+      udonBehaviourLayouts,
+      entryClassNameForExport,
+    );
     const assembler = new UdonAssembler();
     const uasm = assembler.assemble(
       udonInstructions,

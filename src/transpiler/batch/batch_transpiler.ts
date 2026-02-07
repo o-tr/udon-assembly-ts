@@ -33,6 +33,7 @@ import {
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
+import { computeExposedLabels, computeExportLabels } from "../exposed_labels.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import {
   discoverEntryFilesUsingTS,
@@ -263,24 +264,11 @@ export class BatchTranspiler {
 
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();
-        // Compute exposed labels from @UdonExport and entry-class non-private methods
-        const exposedLabels = new Set<string>();
-        for (const cls of registry.getAllClasses()) {
-          for (const method of cls.methods) {
-            if (
-              !method.isExported &&
-              !(cls.name === entryPoint.name && method.isPublic)
-            )
-              continue;
-            const layout = udonBehaviourLayouts.get(cls.name);
-            if (layout) {
-              const ml = layout.get(method.name);
-              if (ml) exposedLabels.add(ml.exportMethodName);
-            } else {
-              exposedLabels.add(`__${method.name}_${cls.name}`);
-            }
-          }
-        }
+        const exposedLabels = computeExposedLabels(
+          registry,
+          udonBehaviourLayouts,
+          entryPoint.name,
+        );
         tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
       }
 
@@ -305,30 +293,11 @@ export class BatchTranspiler {
         }
       }
 
-      const exportLabels = new Set<string>();
-      const entryLayout = udonBehaviourLayouts.get(entryPoint.name);
-      if (entryLayout) {
-        for (const layout of entryLayout.values()) {
-          if (layout.isPublic) exportLabels.add(layout.exportMethodName);
-        }
-      }
-      // Also include decorator-marked exports and entry-class non-private methods
-      for (const cls of registry.getAllClasses()) {
-        for (const method of cls.methods) {
-          if (
-            !method.isExported &&
-            !(cls.name === entryPoint.name && method.isPublic)
-          )
-            continue;
-          const layout = udonBehaviourLayouts.get(cls.name);
-          if (layout) {
-            const ml = layout.get(method.name);
-            if (ml) exportLabels.add(ml.exportMethodName);
-          } else {
-            exportLabels.add(`__${method.name}_${cls.name}`);
-          }
-        }
-      }
+      const exportLabels = computeExportLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryPoint.name,
+      );
       const assembler = new UdonAssembler();
       const uasm = assembler.assemble(
         udonInstructions,
@@ -534,24 +503,11 @@ export class BatchTranspiler {
 
     if (optimize === true) {
       const optimizer = new TACOptimizer();
-      // Compute exposed labels from @UdonExport and entry-class non-private methods
-      const exposedLabels = new Set<string>();
-      for (const cls of registry.getAllClasses()) {
-        for (const method of cls.methods) {
-          if (
-            !method.isExported &&
-            !(cls.name === entryPointName && method.isPublic)
-          )
-            continue;
-          const layout = udonBehaviourLayouts.get(cls.name);
-          if (layout) {
-            const ml = layout.get(method.name);
-            if (ml) exposedLabels.add(ml.exportMethodName);
-          } else {
-            exposedLabels.add(`__${method.name}_${cls.name}`);
-          }
-        }
-      }
+      const exposedLabels = computeExposedLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryPointName,
+      );
       tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
     }
 

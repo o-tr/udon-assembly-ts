@@ -9,6 +9,7 @@ import type { LabelOperand } from "../../tac_operand.js";
 
 export const eliminateUnusedLabels = (
   instructions: TACInstruction[],
+  exposedLabels?: Set<string>,
 ): TACInstruction[] => {
   const referenced = new Set<string>();
   for (const inst of instructions) {
@@ -20,6 +21,10 @@ export const eliminateUnusedLabels = (
       const jump = inst as UnconditionalJumpInstruction;
       referenced.add((jump.label as LabelOperand).name);
     }
+  }
+
+  if (exposedLabels) {
+    for (const l of exposedLabels) referenced.add(l);
   }
 
   return instructions.filter((inst) => {

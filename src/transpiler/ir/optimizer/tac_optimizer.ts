@@ -129,8 +129,8 @@ export class TACOptimizer {
       // Merge identical return tails
       next = mergeTails(next);
 
-      // Remove unused labels
-      next = eliminateUnusedLabels(next);
+      // Remove unused labels (preserve externally exposed labels)
+      next = eliminateUnusedLabels(next, exposedLabels);
 
       return next;
     };
