@@ -22,6 +22,7 @@ import {
   type SwitchStatementNode,
   type ThrowStatementNode,
   type TryCatchStatementNode,
+  UdonType,
   type VariableDeclarationNode,
   type WhileStatementNode,
 } from "../../../frontend/types.js";
@@ -47,6 +48,7 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { isSetCollectionType } from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
@@ -259,22 +261,49 @@ export function visitForOfStatement(
   this: ASTToTACConverter,
   node: ForOfStatementNode,
 ): void {
-  const iterableOperand = this.visitExpression(node.iterable);
+  let iterableOperand = this.visitExpression(node.iterable);
   const inferredIterableType = resolveTypeFromNode(this, node.iterable);
+  const operandType = this.getOperandType(iterableOperand);
+  const inferredSetType = isSetCollectionType(operandType)
+    ? operandType
+    : isSetCollectionType(inferredIterableType)
+      ? inferredIterableType
+      : null;
+
+  if (inferredSetType) {
+    const elementType = inferredSetType.elementType ?? ObjectType;
+    const listType = new DataListTypeSymbol(elementType);
+    const listResult = this.newTemp(listType);
+    this.instructions.push(
+      new MethodCallInstruction(listResult, iterableOperand, "GetKeys", []),
+    );
+    iterableOperand = listResult;
+  }
+
+  const iterableType = this.getOperandType(iterableOperand);
   const inferredElementType =
-    inferredIterableType instanceof ArrayTypeSymbol
-      ? inferredIterableType.elementType
-      : inferredIterableType instanceof DataListTypeSymbol
-        ? inferredIterableType.elementType
-        : inferredIterableType?.name === ExternTypes.dataList.name
+    iterableType instanceof ArrayTypeSymbol
+      ? iterableType.elementType
+      : iterableType instanceof DataListTypeSymbol
+        ? iterableType.elementType
+        : iterableType?.name === ExternTypes.dataList.name
           ? ObjectType
           : null;
+  // Only unwrap DataToken elements when we have a DataListTypeSymbol (e.g.,
+  // Set iteration via GetKeys() yields DataListTypeSymbol) so we can use the
+  // element type. When matching ExternTypes.dataList or UdonType.DataList by
+  // name, elements come from DataList.get_Item as raw DataToken and must stay
+  // unwrapped.
+  const isDataList =
+    iterableType instanceof DataListTypeSymbol ||
+    iterableType.name === ExternTypes.dataList.name ||
+    iterableType.udonType === UdonType.DataList;
   const indexVar = this.newTemp(PrimitiveTypes.int32);
   const lengthVar = this.newTemp(PrimitiveTypes.int32);
 
   const isDestructured = Array.isArray(node.variable);
   const isObjectDestructured = !!node.destructureProperties?.length;
-  const elementType = isDestructured
+  let elementType = isDestructured
     ? ExternTypes.dataList
     : isObjectDestructured
       ? ObjectType
@@ -283,6 +312,14 @@ export function visitForOfStatement(
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
           : PrimitiveTypes.single));
+
+  // If we're iterating an untyped `DataList` (matched by name/udonType), the
+  // elements we get are raw `DataToken`s — force the loop variable to be a
+  // `DataToken` so copies are well-typed. Only unwrap to concrete element
+  // types when we have a `DataListTypeSymbol` carrying elementType info.
+  if (isDataList && !(iterableType instanceof DataListTypeSymbol)) {
+    elementType = ExternTypes.dataToken;
+  }
 
   let elementVar: TACOperand;
   if (isDestructured) {
@@ -305,9 +342,7 @@ export function visitForOfStatement(
     new PropertyGetInstruction(
       lengthVar,
       iterableOperand,
-      this.getOperandType(iterableOperand).name === ExternTypes.dataList.name
-        ? "Count"
-        : "length",
+      isDataList ? "Count" : "length",
     ),
   );
 
@@ -327,9 +362,23 @@ export function visitForOfStatement(
   );
   this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
 
-  this.instructions.push(
-    new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
-  );
+  if (isDataList) {
+    const tokenValue = this.newTemp(ExternTypes.dataToken);
+    this.instructions.push(
+      new MethodCallInstruction(tokenValue, iterableOperand, "get_Item", [
+        indexVar,
+      ]),
+    );
+    const resolvedValue =
+      iterableType instanceof DataListTypeSymbol
+        ? this.unwrapDataToken(tokenValue, elementType)
+        : tokenValue;
+    this.instructions.push(new CopyInstruction(elementVar, resolvedValue));
+  } else {
+    this.instructions.push(
+      new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
+    );
+  }
   if (isDestructured) {
     const names = node.variable as string[];
     for (let i = 0; i < names.length; i += 1) {
