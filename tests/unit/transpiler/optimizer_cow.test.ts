@@ -13,7 +13,6 @@ import {
   createConstant,
   createTemporary,
   operandToString,
-  
 } from "../../../src/transpiler/ir/tac_operand";
 
 describe("copy-on-write temporaries", () => {

@@ -38,11 +38,11 @@ import {
   UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
+  type ConstantOperand,
   createConstant,
   createLabel,
   createTemporary,
   createVariable,
-  ConstantOperand,
   TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
 
