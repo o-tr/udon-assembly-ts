@@ -220,8 +220,12 @@ export function visitCallExpression(
         "void",
       );
 
-      // call on `this`
-      const thisOperand = createConstant(null, ObjectType);
+      // call on `this` (use the real `this` operand so SendCustomEventDelayedFrames
+      // is invoked on the behaviour instance)
+      const classType = this.currentClassName
+        ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+        : ObjectType;
+      const thisOperand = createVariable("this", classType);
       this.instructions.push(
         new CallInstruction(undefined, externSig, [
           thisOperand,
@@ -229,7 +233,8 @@ export function visitCallExpression(
           delayConst,
         ]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      // No meaningful return value from scheduling; represent as `null` object
+      return createConstant(null, ObjectType);
     }
     if (node.isNew && calleeName === "Set") {
       return emitSetConstructor(this, node);
