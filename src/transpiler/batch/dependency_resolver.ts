@@ -19,7 +19,9 @@ export class DependencyResolver {
     options?: { allowCircular?: boolean },
   ) {
     this.compilerOptions = this.loadCompilerOptions(projectRoot);
-    this.allowCircular = options?.allowCircular ?? true;
+    // Default to false to preserve previous behavior of throwing on
+    // circular imports unless explicitly allowed.
+    this.allowCircular = options?.allowCircular ?? false;
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {

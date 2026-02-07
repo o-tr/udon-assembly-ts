@@ -343,15 +343,31 @@ export function visitCallExpression(
     if (calleeName === "parseInt") {
       const evaluatedArgs = getArgs();
       if (evaluatedArgs.length === 0) {
-        return createConstant(0, PrimitiveTypes.int32);
+        // No-arg parseInt -> NaN. Represent as single (float) NaN.
+        return createConstant(NaN, PrimitiveTypes.single);
       }
       if (evaluatedArgs.length > 2) {
         throw new Error("parseInt(...) expects one or two arguments.");
       }
-      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.int32);
-      const castResult = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(new CastInstruction(castResult, arg));
-      return castResult;
+      if (evaluatedArgs.length === 2) {
+        // Radix-aware parseInt not implemented in transpiler.
+        throw new Error(
+          "parseInt with radix is not supported by the transpiler",
+        );
+      }
+      const arg =
+        evaluatedArgs[0] ?? createConstant("0", PrimitiveTypes.string);
+      // Use Int32.Parse extern for string->int conversion when possible.
+      const result = this.newTemp(PrimitiveTypes.int32);
+      const externSig = this.requireExternSignature(
+        "Int32",
+        "Parse",
+        "method",
+        ["string"],
+        "int",
+      );
+      this.instructions.push(new CallInstruction(result, externSig, [arg]));
+      return result;
     }
     if (calleeName === "parseFloat") {
       const evaluatedArgs = getArgs();
