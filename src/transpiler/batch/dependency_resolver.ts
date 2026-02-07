@@ -12,9 +12,16 @@ export class DependencyResolver {
   private graph: DependencyGraph = new Map();
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
+  private allowCircular: boolean;
 
-  constructor(projectRoot: string = process.cwd()) {
+  constructor(
+    projectRoot: string = process.cwd(),
+    options?: { allowCircular?: boolean },
+  ) {
     this.compilerOptions = this.loadCompilerOptions(projectRoot);
+    // Default to false to preserve previous behavior of throwing on
+    // circular imports unless explicitly allowed.
+    this.allowCircular = options?.allowCircular ?? false;
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
@@ -46,9 +53,34 @@ export class DependencyResolver {
     return this.resolveDependencies(entryPoint);
   }
 
+  resolveImmediateDependencies(entryPointPath: string): string[] {
+    const deps = new Set<string>();
+    const sourceText = fs.readFileSync(entryPointPath, "utf8");
+    const sourceFile = ts.createSourceFile(
+      entryPointPath,
+      sourceText,
+      ts.ScriptTarget.ES2020,
+      true,
+    );
+
+    for (const stmt of sourceFile.statements) {
+      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+      const moduleText = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
+      const resolved = this.resolveModule(entryPointPath, moduleText);
+      if (resolved && this.isResolvableSource(resolved)) {
+        deps.add(resolved);
+      }
+    }
+
+    return Array.from(deps);
+  }
+
   private visitFile(filePath: string): void {
     if (this.graph.has(filePath)) return;
     if (this.visiting.has(filePath)) {
+      if (this.allowCircular) {
+        return;
+      }
       throw new Error(`Circular dependency detected: ${filePath}`);
     }
     this.visiting.add(filePath);

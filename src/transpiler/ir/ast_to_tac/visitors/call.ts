@@ -48,6 +48,8 @@ import {
 } from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
 
+const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
+
 const resolveSetElementType = (
   setType: TypeSymbol | null,
   fallback?: TypeSymbol,
@@ -137,8 +139,106 @@ export function visitCallExpression(
   }
   const defaultResult = () => this.newTemp(ObjectType);
 
+  // super() constructor calls are handled by the class constructor visitor;
+  // if one reaches here, treat it as void (matching VOID_RETURN semantics).
+  if (callee.kind === ASTNodeKind.SuperExpression) {
+    return VOID_RETURN;
+  }
+
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
+    if (calleeName === "setImmediate") {
+      if (rawArgs.length < 1) {
+        throw new Error("setImmediate expects a callback argument.");
+      }
+      const callbackNode = rawArgs[0];
+      // Instead of executing the callback inline, schedule it for one frame
+      // later via SendCustomEventDelayedFrames. For simplicity only allow
+      // callbacks that are a single call of the form `this.someMethod()`
+      // (optionally wrapped in a block). Other cases will throw.
+      if (callbackNode.kind !== ASTNodeKind.FunctionExpression) {
+        throw new Error(
+          "setImmediate currently requires an inline function or arrow callback.",
+        );
+      }
+      const callback = callbackNode as FunctionExpressionNode;
+
+      // Extract the inner call expression
+      let innerCall: CallExpressionNode | null = null;
+      if (callback.body.kind === ASTNodeKind.BlockStatement) {
+        const block = callback.body as BlockStatementNode;
+        if (block.statements.length !== 1) {
+          throw new Error(
+            "setImmediate callback must contain exactly one statement when using delayed scheduling",
+          );
+        }
+        const stmt = block.statements[0];
+        if (stmt.kind === ASTNodeKind.CallExpression) {
+          innerCall = stmt as CallExpressionNode;
+        }
+      } else if (callback.body.kind === ASTNodeKind.CallExpression) {
+        innerCall = callback.body as CallExpressionNode;
+      }
+
+      if (!innerCall) {
+        throw new Error(
+          "setImmediate callback must be a single call expression to schedule",
+        );
+      }
+
+      // Only allow calls of the form `this.methodName(...)` with no args
+      const calleeExpr = innerCall.callee;
+      if (calleeExpr.kind !== ASTNodeKind.PropertyAccessExpression) {
+        throw new Error(
+          "setImmediate delayed scheduling only supports `this.method()` style callbacks",
+        );
+      }
+      const propAccess = calleeExpr as PropertyAccessExpressionNode;
+      if (propAccess.object.kind !== ASTNodeKind.ThisExpression) {
+        throw new Error(
+          "setImmediate delayed scheduling only supports `this.method()` style callbacks",
+        );
+      }
+      if (innerCall.arguments.length !== 0) {
+        throw new Error(
+          "setImmediate delayed scheduling only supports zero-argument callbacks. " +
+            "Move arguments into class fields and read them in the target method instead.",
+        );
+      }
+
+      const methodName = propAccess.property;
+      const classLayout = this.currentClassName
+        ? this.getUdonBehaviourLayout(this.currentClassName)
+        : null;
+      const methodLayout = classLayout?.get(methodName) ?? null;
+      const exportName = methodLayout?.exportMethodName ?? methodName;
+
+      const methodNameConst = createConstant(exportName, PrimitiveTypes.string);
+      const delayConst = createConstant(1, PrimitiveTypes.int32);
+      const externSig = this.requireExternSignature(
+        "UdonBehaviour",
+        "SendCustomEventDelayedFrames",
+        "method",
+        ["string", "int"],
+        "void",
+      );
+
+      // call on `this` (use the real `this` operand so SendCustomEventDelayedFrames
+      // is invoked on the behaviour instance)
+      const classType = this.currentClassName
+        ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+        : ObjectType;
+      const thisOperand = createVariable("this", classType);
+      this.instructions.push(
+        new CallInstruction(undefined, externSig, [
+          thisOperand,
+          methodNameConst,
+          delayConst,
+        ]),
+      );
+      // No meaningful return value from scheduling; represent as `null` object
+      return createConstant(null, ObjectType);
+    }
     if (node.isNew && calleeName === "Set") {
       return emitSetConstructor(this, node);
     }
@@ -156,6 +256,60 @@ export function visitCallExpression(
   };
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
+    const symbol = this.symbolTable.lookup(calleeName);
+    const initialValue = symbol?.initialValue as ASTNode | undefined;
+    if (initialValue?.kind === ASTNodeKind.PropertyAccessExpression) {
+      const access = initialValue as PropertyAccessExpressionNode;
+      if (access.object.kind === ASTNodeKind.Identifier) {
+        const objectName = (access.object as IdentifierNode).name;
+        const evaluatedArgs = getArgs();
+        if (objectName === "UdonTypeConverters") {
+          if (evaluatedArgs.length !== 1) {
+            throw new Error(
+              `UdonTypeConverters.${access.property} expects 1 argument`,
+            );
+          }
+          const targetType = this.getUdonTypeConverterTargetType(
+            access.property,
+          );
+          if (!targetType) {
+            throw new Error(
+              `Unsupported UdonTypeConverters method: ${access.property}`,
+            );
+          }
+          const castResult = this.newTemp(targetType);
+          this.instructions.push(
+            new CastInstruction(castResult, evaluatedArgs[0]),
+          );
+          return castResult;
+        }
+        const inlineResult = this.visitInlineStaticMethodCall(
+          objectName,
+          access.property,
+          evaluatedArgs,
+        );
+        if (inlineResult) return inlineResult;
+        const externSig = this.resolveStaticExtern(
+          objectName,
+          access.property,
+          "method",
+        );
+        if (externSig) {
+          const returnType = resolveExternReturnType(externSig) ?? ObjectType;
+          if (returnType === PrimitiveTypes.void) {
+            this.instructions.push(
+              new CallInstruction(undefined, externSig, evaluatedArgs),
+            );
+            return VOID_RETURN;
+          }
+          const callResult = this.newTemp(returnType);
+          this.instructions.push(
+            new CallInstruction(callResult, externSig, evaluatedArgs),
+          );
+          return callResult;
+        }
+      }
+    }
     if (calleeName === "Error") {
       const evaluatedArgs = getArgs();
       return evaluatedArgs[0] ?? createConstant("Error", PrimitiveTypes.string);
@@ -177,8 +331,90 @@ export function visitCallExpression(
       this.instructions.push(new CastInstruction(castResult, arg));
       return castResult;
     }
-    if (node.isNew && this.classMap.has(calleeName)) {
-      return this.visitInlineConstructor(calleeName, getArgs());
+    if (calleeName === "Number") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        return createConstant(0, PrimitiveTypes.single);
+      }
+      if (evaluatedArgs.length !== 1) {
+        throw new Error("Number(...) expects one argument.");
+      }
+      const arg = evaluatedArgs[0];
+      const argType = this.getOperandType(arg);
+      // Udon only supports Single (float32), not 64-bit double.
+      // Integer values > 2^24 will lose precision — this is an Udon
+      // platform limitation, not a transpiler bug.
+      if (argType.udonType === UdonType.Single) {
+        return arg;
+      }
+      const castResult = this.newTemp(PrimitiveTypes.single);
+      this.instructions.push(new CastInstruction(castResult, arg));
+      return castResult;
+    }
+    if (calleeName === "parseInt") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        // No-arg parseInt: return a consistent int32 result (0).
+        // Full JS semantics (NaN) are not representable as int32; choose a
+        // consistent sentinel of 0 to keep the return type stable.
+        return createConstant(0, PrimitiveTypes.int32);
+      }
+      if (evaluatedArgs.length > 2) {
+        throw new Error("parseInt(...) expects one or two arguments.");
+      }
+      if (evaluatedArgs.length === 2) {
+        // Radix-aware parseInt not implemented in transpiler.
+        throw new Error(
+          "parseInt with radix is not supported by the transpiler",
+        );
+      }
+      const arg = evaluatedArgs[0];
+      // Int32.Parse is stricter than JS parseInt (e.g., throws on "3.14",
+      // "0xFF", whitespace). This intentionally diverges from JS semantics.
+      // Use Int32.Parse extern for string->int conversion when possible.
+      const result = this.newTemp(PrimitiveTypes.int32);
+      const externSig = this.requireExternSignature(
+        "Int32",
+        "Parse",
+        "method",
+        ["string"],
+        "int",
+      );
+      this.instructions.push(new CallInstruction(result, externSig, [arg]));
+      return result;
+    }
+    if (calleeName === "parseFloat") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        // No-arg parseFloat -> NaN
+        return createConstant(NaN, PrimitiveTypes.single);
+      }
+      if (evaluatedArgs.length !== 1) {
+        throw new Error("parseFloat(...) expects one argument.");
+      }
+      const arg = evaluatedArgs[0];
+      // Use Single.Parse extern for string->float conversion, mirroring
+      // how parseInt uses Int32.Parse.
+      const result = this.newTemp(PrimitiveTypes.single);
+      const externSig = this.requireExternSignature(
+        "Single",
+        "Parse",
+        "method",
+        ["string"],
+        "float",
+      );
+      this.instructions.push(new CallInstruction(result, externSig, [arg]));
+      return result;
+    }
+    if (node.isNew) {
+      const canInline =
+        (this.classMap.has(calleeName) ||
+          this.classRegistry?.getClass(calleeName)) &&
+        !this.classRegistry?.isStub(calleeName) &&
+        !this.udonBehaviourClasses.has(calleeName);
+      if (canInline) {
+        return this.visitInlineConstructor(calleeName, getArgs());
+      }
     }
     if (
       node.isNew &&
@@ -233,7 +469,17 @@ export function visitCallExpression(
       this.instructions.push(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
-    if (node.isNew && calleeName === "Array" && getArgs().length > 0) {
+    if (node.isNew && calleeName === "Array") {
+      if (rawArgs.length === 1) {
+        // Reject any single-argument new Array(x). In JS, new Array(n)
+        // creates a sparse array of length n, but Udon has no sparse arrays
+        // so the semantics diverge. Reject regardless of whether the
+        // argument is a literal, identifier, or expression.
+        throw new Error(
+          "new Array(n) for pre-allocating a fixed-length array is not supported. " +
+            "Use an array literal (e.g., [1, 2, 3]) instead.",
+        );
+      }
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;
@@ -437,14 +683,7 @@ export function visitCallExpression(
       if (inlineResult) return inlineResult;
     }
 
-    if (
-      propAccess.object.kind === ASTNodeKind.Identifier &&
-      this.resolveStaticExtern(
-        (propAccess.object as IdentifierNode).name,
-        propAccess.property,
-        "method",
-      )
-    ) {
+    if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const externSig = this.resolveStaticExtern(
         (propAccess.object as IdentifierNode).name,
         propAccess.property,
@@ -456,7 +695,7 @@ export function visitCallExpression(
           this.instructions.push(
             new CallInstruction(undefined, externSig, evaluatedArgs),
           );
-          return createConstant(0, PrimitiveTypes.void);
+          return VOID_RETURN;
         }
         const callResult = this.newTemp(returnType);
         this.instructions.push(
@@ -507,7 +746,7 @@ export function visitCallExpression(
         this.instructions.push(
           new CallInstruction(undefined, externName, evaluatedArgs),
         );
-        return createConstant(0, PrimitiveTypes.void); // Console methods return void
+        return VOID_RETURN; // Console methods return void
       }
     }
 
@@ -565,7 +804,7 @@ export function visitCallExpression(
       this.instructions.push(
         new CallInstruction(undefined, externSig, [object, evaluatedArgs[0]]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     if (
       propAccess.property === "SendCustomNetworkEvent" &&
@@ -585,7 +824,7 @@ export function visitCallExpression(
           evaluatedArgs[1],
         ]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     if (
       this.isUdonBehaviourType(objectType) &&
@@ -654,7 +893,7 @@ export function visitCallExpression(
         return returnTemp;
       }
 
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     if (objectType.name === ExternTypes.dataList.name) {
       if (propAccess.property === "Add" && evaluatedArgs.length === 1) {
@@ -662,7 +901,7 @@ export function visitCallExpression(
         this.instructions.push(
           new MethodCallInstruction(undefined, object, "Add", [token]),
         );
-        return createConstant(0, PrimitiveTypes.void);
+        return VOID_RETURN;
       }
       if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
@@ -683,7 +922,7 @@ export function visitCallExpression(
             valueToken,
           ]),
         );
-        return createConstant(0, PrimitiveTypes.void);
+        return VOID_RETURN;
       }
       if (
         (propAccess.property === "ContainsKey" ||
@@ -782,7 +1021,7 @@ export function visitCallExpression(
       this.instructions.push(
         new CallInstruction(undefined, externSig, [object]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     let resolvedReturnType: TypeSymbol | null = null;
     if (this.classRegistry) {
@@ -818,7 +1057,7 @@ export function visitCallExpression(
           evaluatedArgs,
         ),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
 
     const callResult = this.newTemp(resolvedReturnType ?? ObjectType);
@@ -1337,7 +1576,7 @@ function visitSetMethodCall(
       converter.instructions.push(
         new MethodCallInstruction(undefined, setOperand, "Clear", []),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     case "values":
     case "keys": {
@@ -1535,7 +1774,7 @@ function visitSetMethodCall(
       converter.instructions.push(new LabelInstruction(loopEnd));
       converter.symbolTable.exitScope();
 
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     default:
       return null;
@@ -1623,7 +1862,7 @@ function visitMapMethodCall(
       converter.instructions.push(
         new MethodCallInstruction(undefined, mapOperand, "Clear", []),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     case "keys": {
       if (rawArgs.length !== 0) {
@@ -1845,7 +2084,7 @@ function visitMapMethodCall(
       converter.instructions.push(new LabelInstruction(loopEnd));
       converter.symbolTable.exitScope();
 
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     default:
       return null;

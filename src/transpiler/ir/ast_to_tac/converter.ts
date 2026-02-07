@@ -249,10 +249,20 @@ export class ASTToTACConverter {
           classNode.methods.some(
             (method) =>
               method.name === "Start" ||
-              getVrcEventDefinition(method.name) !== null,
+              getVrcEventDefinition(method.name) !== undefined,
           )
         ) {
           this.entryPointClasses.add(classNode.name);
+        }
+      }
+    }
+
+    if (this.classRegistry) {
+      for (const cls of this.classRegistry.getAllClasses()) {
+        if (this.udonBehaviourClasses.has(cls.name)) continue;
+        if (this.classRegistry.isStub(cls.name)) continue;
+        if (!this.classMap.has(cls.name)) {
+          this.classMap.set(cls.name, cls.node);
         }
       }
     }

@@ -60,6 +60,12 @@ export function emitDictionaryFromProperties(
     }
     flushPending();
 
+    const inlineResult = this.visitInlineStaticMethodCall(
+      "DataDictionaryHelpers",
+      "Merge",
+      [listResult],
+    );
+    if (inlineResult) return inlineResult;
     const mergeResult = this.newTemp(ExternTypes.dataDictionary);
     this.instructions.push(
       new CallInstruction(mergeResult, "DataDictionaryHelpers.Merge", [
