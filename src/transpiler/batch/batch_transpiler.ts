@@ -10,6 +10,10 @@ import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
 import { AggregateTranspileError } from "../errors/transpile_errors.js";
+import {
+  computeExportLabels,
+  computeExposedLabels,
+} from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
 import type { MethodInfo, PropertyInfo } from "../frontend/class_registry.js";
 import { ClassRegistry } from "../frontend/class_registry.js";
@@ -263,7 +267,12 @@ export class BatchTranspiler {
 
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();
-        tacInstructions = optimizer.optimize(tacInstructions);
+        const exposedLabels = computeExposedLabels(
+          registry,
+          udonBehaviourLayouts,
+          entryPoint.name,
+        );
+        tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
       }
 
       const udonConverter = new TACToUdonConverter();
@@ -287,13 +296,11 @@ export class BatchTranspiler {
         }
       }
 
-      const exportLabels = new Set<string>();
-      const entryLayout = udonBehaviourLayouts.get(entryPoint.name);
-      if (entryLayout) {
-        for (const layout of entryLayout.values()) {
-          if (layout.isPublic) exportLabels.add(layout.exportMethodName);
-        }
-      }
+      const exportLabels = computeExportLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryPoint.name,
+      );
       const assembler = new UdonAssembler();
       const uasm = assembler.assemble(
         udonInstructions,
@@ -499,7 +506,12 @@ export class BatchTranspiler {
 
     if (optimize === true) {
       const optimizer = new TACOptimizer();
-      tacInstructions = optimizer.optimize(tacInstructions);
+      const exposedLabels = computeExposedLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryPointName,
+      );
+      tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
     }
 
     const udonConverter = new TACToUdonConverter();

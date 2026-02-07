@@ -6,6 +6,7 @@ import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
 import { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
+import { computeExportLabels, computeExposedLabels } from "./exposed_labels.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
@@ -116,7 +117,13 @@ export class TypeScriptToUdonTranspiler {
     // Phase 3: Optimize TAC (only when explicitly enabled)
     if (options.optimize === true) {
       const optimizer = new TACOptimizer();
-      tacInstructions = optimizer.optimize(tacInstructions);
+      const entryClassName = this.pickEntryClassName(program);
+      const exposedLabels = computeExposedLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryClassName,
+      );
+      tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
     }
 
     // Generate TAC text representation
@@ -143,13 +150,12 @@ export class TypeScriptToUdonTranspiler {
     }
 
     // Phase 5: Generate .uasm file
-    const exportLabels = new Set<string>();
-    for (const layout of udonBehaviourLayouts.values()) {
-      for (const methodLayout of layout.values()) {
-        if (methodLayout.isPublic)
-          exportLabels.add(methodLayout.exportMethodName);
-      }
-    }
+    const entryClassNameForExport = this.pickEntryClassName(program);
+    const exportLabels = computeExportLabels(
+      registry,
+      udonBehaviourLayouts,
+      entryClassNameForExport,
+    );
     const assembler = new UdonAssembler();
     const uasm = assembler.assemble(
       udonInstructions,

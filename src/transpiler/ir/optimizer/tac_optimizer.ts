@@ -41,7 +41,10 @@ export class TACOptimizer {
   /**
    * Apply all optimization passes
    */
-  optimize(instructions: TACInstruction[]): TACInstruction[] {
+  optimize(
+    instructions: TACInstruction[],
+    exposedLabels?: Set<string>,
+  ): TACInstruction[] {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
@@ -54,8 +57,8 @@ export class TACOptimizer {
       // Coalesce string concatenation chains
       next = optimizeStringConcatenation(next);
 
-      // Apply SCCP and prune unreachable blocks
-      next = sccpAndPrune(next);
+      // Apply SCCP and prune unreachable blocks (preserve exposedLabels)
+      next = sccpAndPrune(next, exposedLabels);
 
       // Apply boolean simplifications
       next = booleanSimplification(next);
@@ -126,8 +129,8 @@ export class TACOptimizer {
       // Merge identical return tails
       next = mergeTails(next);
 
-      // Remove unused labels
-      next = eliminateUnusedLabels(next);
+      // Remove unused labels (preserve externally exposed labels)
+      next = eliminateUnusedLabels(next, exposedLabels);
 
       return next;
     };
