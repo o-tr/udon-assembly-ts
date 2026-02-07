@@ -1,15 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { TypeScriptToUdonTranspiler } from '../../../src/transpiler/index.js';
+import { describe, expect, it } from "vitest";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-describe('setImmediate inline callback lowering', () => {
-  it('inlines simple setImmediate(callback) without throwing and emits TAC/uasm', () => {
+describe("setImmediate inline callback lowering", () => {
+  it("inlines simple setImmediate(callback) without throwing and emits TAC/uasm", () => {
     const src = `
     class Foo {
       start() {
-        setImmediate(() => {
-          const x = 1 + 2;
-          console.log(x);
-        });
+        setImmediate(() => this.startLater());
+      }
+      startLater() {
+        const x = 1 + 2;
+        console.log(x);
       }
     }
     `;
@@ -19,11 +20,11 @@ describe('setImmediate inline callback lowering', () => {
 
     // Should produce TAC and UASM output strings
     expect(result).toBeDefined();
-    expect(typeof result.tac).toBe('string');
-    expect(typeof result.uasm).toBe('string');
+    expect(typeof result.tac).toBe("string");
+    expect(typeof result.uasm).toBe("string");
 
-    // Ensure the generated TAC/uasm contain evidence of the inlined body
-    expect(result.tac).toContain('1 + 2');
+    // Ensure the call was scheduled via SendCustomEventDelayedFrames
+    expect(result.tac).toContain("SendCustomEventDelayedFrames");
     expect(result.uasm.length).toBeGreaterThan(0);
   });
 });

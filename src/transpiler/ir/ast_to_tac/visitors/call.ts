@@ -148,6 +148,10 @@ export function visitCallExpression(
         throw new Error("setImmediate expects a callback argument.");
       }
       const callbackNode = rawArgs[0];
+      // Instead of executing the callback inline, schedule it for one frame
+      // later via SendCustomEventDelayedFrames. For simplicity only allow
+      // callbacks that are a single call of the form `this.someMethod()`
+      // (optionally wrapped in a block). Other cases will throw.
       if (callbackNode.kind !== ASTNodeKind.FunctionExpression) {
         throw new Error(
           "setImmediate currently requires an inline function or arrow callback.",
@@ -155,44 +159,77 @@ export function visitCallExpression(
       }
       const callback = callbackNode as FunctionExpressionNode;
 
-      this.symbolTable.enterScope();
-      const paramVars = callback.parameters.map((param) => {
-        const paramType = param.type ?? ObjectType;
-        if (!this.symbolTable.hasInCurrentScope(param.name)) {
-          this.symbolTable.addSymbol(param.name, paramType, false, false);
-        }
-        return createVariable(param.name, paramType, { isLocal: true });
-      });
-
-      if (rawArgs.length > 1 && paramVars.length > 0) {
-        const argValues = rawArgs
-          .slice(1)
-          .map((arg) => this.visitExpression(arg));
-        for (let i = 0; i < paramVars.length && i < argValues.length; i += 1) {
-          this.instructions.push(
-            new CopyInstruction(paramVars[i], argValues[i]),
+      // Extract the inner call expression
+      let innerCall: CallExpressionNode | null = null;
+      if (callback.body.kind === ASTNodeKind.BlockStatement) {
+        const block = callback.body as BlockStatementNode;
+        if (block.statements.length !== 1) {
+          throw new Error(
+            "setImmediate callback must contain exactly one statement when using delayed scheduling",
           );
         }
+        const stmt = block.statements[0];
+        if (stmt.kind === ASTNodeKind.CallExpression) {
+          const expr = stmt as ASTNode;
+          if (expr.kind === ASTNodeKind.CallExpression)
+            innerCall = expr as CallExpressionNode;
+        }
+      } else if (callback.body.kind === ASTNodeKind.CallExpression) {
+        innerCall = callback.body as CallExpressionNode;
       }
 
-      let thisOverride: TACOperand | null = null;
-      if (!callback.isArrow) {
-        thisOverride = createConstant(null, ObjectType);
+      if (!innerCall) {
+        throw new Error(
+          "setImmediate callback must be a single call expression to schedule",
+        );
       }
 
-      const previousThisOverride = this.currentThisOverride;
-      if (thisOverride) {
-        this.currentThisOverride = thisOverride;
+      // Only allow calls of the form `this.methodName(...)` with no args
+      const calleeExpr = innerCall.callee;
+      if (calleeExpr.kind !== ASTNodeKind.PropertyAccessExpression) {
+        throw new Error(
+          "setImmediate delayed scheduling only supports `this.method()` style callbacks",
+        );
       }
-      if (callback.body.kind === ASTNodeKind.BlockStatement) {
-        this.visitBlockStatement(callback.body as BlockStatementNode);
-      } else {
-        this.visitExpression(callback.body);
+      const propAccess = calleeExpr as PropertyAccessExpressionNode;
+      if (propAccess.object.kind !== ASTNodeKind.ThisExpression) {
+        throw new Error(
+          "setImmediate delayed scheduling only supports `this.method()` style callbacks",
+        );
       }
-      this.currentThisOverride = previousThisOverride;
-      this.symbolTable.exitScope();
+      if (innerCall.arguments.length !== 0) {
+        throw new Error(
+          "setImmediate delayed scheduling currently only supports zero-argument callbacks",
+        );
+      }
 
-      return createConstant(null, ObjectType);
+      const methodName = propAccess.property;
+      const classLayout = this.currentClassName
+        ? this.getUdonBehaviourLayout(this.currentClassName)
+        : null;
+      const methodLayout = classLayout?.get(methodName) ?? null;
+      const exportName = methodLayout?.exportMethodName ?? methodName;
+
+      const methodNameConst = createConstant(exportName, PrimitiveTypes.string);
+      const delayConst = createConstant(1, PrimitiveTypes.int32);
+      const externSig = this.requireExternSignature(
+        "UdonBehaviour",
+        "SendCustomEventDelayedFrames",
+        "method",
+        ["string", "int"],
+        "void",
+      );
+
+      // call on `this`
+      const thisOperand = createConstant(null, ObjectType);
+      this.instructions.push(
+        new CallInstruction(undefined, externSig, [
+          thisOperand,
+          methodNameConst,
+          delayConst,
+        ]),
+      );
+      return createConstant(0, PrimitiveTypes.void);
     }
     if (node.isNew && calleeName === "Set") {
       return emitSetConstructor(this, node);
