@@ -242,4 +242,112 @@ describe("collections support", () => {
       ),
     ).toBe(true);
   });
+
+  it("lowers Map to DataDictionary operations", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          const map: Map<string, number> = new Map<string, number>([
+            ["a", 1],
+            ["b", 2]
+          ]);
+          map.set("c", 3);
+          map.get("a");
+          map.has("a");
+          map.delete("b");
+          map.clear();
+          const size = map.size;
+          const keys = map.keys();
+          const values = map.values();
+          const entries = map.entries();
+          map.forEach((value, key, self) => {
+            const x: number = value;
+            const y: string = key;
+          });
+          for (const [k, v] of map) {
+            const k2: string = k;
+            const v2: number = v;
+          }
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const udonConverter = new TACToUdonConverter();
+    udonConverter.convert(tac);
+    const externs = udonConverter.getExternSignatures();
+
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__SetValue__VRCSDK3DataDataToken_VRCSDK3DataDataToken__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__GetValue__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__ContainsKey__VRCSDK3DataDataToken__SystemBoolean",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__Remove__VRCSDK3DataDataToken__SystemBoolean",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes("VRCSDK3DataDataDictionary.__Clear____SystemVoid"),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__GetKeys____VRCSDK3DataDataList",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__GetValues____VRCSDK3DataDataList",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes("VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList"),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+        ),
+      ),
+    ).toBe(true);
+  });
 });

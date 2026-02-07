@@ -92,6 +92,7 @@ export class DataDictionary {
   Remove(_key: DataToken): boolean {
     return false;
   }
+  Clear(): void {}
   GetKeys(): DataList {
     return new DataList();
   }

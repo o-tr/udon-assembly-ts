@@ -129,13 +129,20 @@ export class TypeMapper {
             this.mapTypeScriptType(args[1] ?? "object"),
           );
         case "Record":
-        case "Map":
           return ExternTypes.dataDictionary;
+        case "Map":
+        case "ReadonlyMap":
+          return new CollectionTypeSymbol(
+            ExternTypes.dataDictionary.name,
+            undefined,
+            this.mapTypeScriptType(args[0] ?? "object"),
+            this.mapTypeScriptType(args[1] ?? "object"),
+          );
         case "Set":
         case "ReadonlySet":
           return new CollectionTypeSymbol(
             ExternTypes.dataDictionary.name,
-            undefined,
+            this.mapTypeScriptType(args[0] ?? "object"),
             this.mapTypeScriptType(args[0] ?? "object"),
             PrimitiveTypes.boolean,
           );
@@ -201,9 +208,17 @@ export class TypeMapper {
       case "ReadonlySet":
         return new CollectionTypeSymbol(
           ExternTypes.dataDictionary.name,
-          undefined,
+          ObjectType,
           ObjectType,
           PrimitiveTypes.boolean,
+        );
+      case "Map":
+      case "ReadonlyMap":
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          undefined,
+          ObjectType,
+          ObjectType,
         );
       case "UdonByte":
         return PrimitiveTypes.byte;

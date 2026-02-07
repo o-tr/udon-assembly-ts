@@ -134,13 +134,20 @@ export function mapTypeWithGenerics(
           this.mapTypeWithGenerics(args[1] ?? "object"),
         );
       case "Record":
-      case "Map":
         return ExternTypes.dataDictionary;
+      case "Map":
+      case "ReadonlyMap":
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          undefined,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+          this.mapTypeWithGenerics(args[1] ?? "object"),
+        );
       case "Set":
       case "ReadonlySet":
         return new CollectionTypeSymbol(
           ExternTypes.dataDictionary.name,
-          undefined,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
           this.mapTypeWithGenerics(args[0] ?? "object"),
           PrimitiveTypes.boolean,
         );

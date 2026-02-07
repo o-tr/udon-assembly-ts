@@ -48,7 +48,10 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { isSetCollectionType } from "../helpers/collections.js";
+import {
+  isMapCollectionType,
+  isSetCollectionType,
+} from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
@@ -257,6 +260,94 @@ export function visitForStatement(
   this.instructions.push(new LabelInstruction(endLabel));
 }
 
+const emitMapEntriesList = (
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+): TACOperand => {
+  const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
+  const entriesResult = converter.newTemp(entriesType);
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.instructions.push(
+    new CallInstruction(entriesResult, listCtorSig, []),
+  );
+
+  const keysList = converter.newTemp(
+    new DataListTypeSymbol(ExternTypes.dataToken),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(keysList, mapOperand, "GetKeys", []),
+  );
+
+  const indexVar = converter.newTemp(PrimitiveTypes.int32);
+  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new AssignmentInstruction(
+      indexVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(
+    new PropertyGetInstruction(lengthVar, keysList, "Count"),
+  );
+
+  const loopStart = converter.newLabel("map_forof_entries_start");
+  const loopContinue = converter.newLabel("map_forof_entries_continue");
+  const loopEnd = converter.newLabel("map_forof_entries_end");
+
+  converter.instructions.push(new LabelInstruction(loopStart));
+  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+  );
+  converter.instructions.push(
+    new ConditionalJumpInstruction(condTemp, loopEnd),
+  );
+
+  const keyToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+  );
+  const valueToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
+  );
+
+  const pairList = converter.newTemp(
+    new DataListTypeSymbol(ExternTypes.dataToken),
+  );
+  converter.instructions.push(new CallInstruction(pairList, listCtorSig, []));
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
+  );
+  const pairToken = converter.wrapDataToken(pairList);
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
+  );
+
+  converter.instructions.push(new LabelInstruction(loopContinue));
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      indexVar,
+      indexVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+  converter.instructions.push(new LabelInstruction(loopEnd));
+
+  return entriesResult;
+};
+
 export function visitForOfStatement(
   this: ASTToTACConverter,
   node: ForOfStatementNode,
@@ -264,13 +355,21 @@ export function visitForOfStatement(
   let iterableOperand = this.visitExpression(node.iterable);
   const inferredIterableType = resolveTypeFromNode(this, node.iterable);
   const operandType = this.getOperandType(iterableOperand);
+  const inferredMapType = isMapCollectionType(operandType)
+    ? operandType
+    : isMapCollectionType(inferredIterableType)
+      ? inferredIterableType
+      : null;
   const inferredSetType = isSetCollectionType(operandType)
     ? operandType
     : isSetCollectionType(inferredIterableType)
       ? inferredIterableType
       : null;
 
-  if (inferredSetType) {
+  if (inferredMapType) {
+    const entriesList = emitMapEntriesList(this, iterableOperand);
+    iterableOperand = entriesList;
+  } else if (inferredSetType) {
     const elementType = inferredSetType.elementType ?? ObjectType;
     const listType = new DataListTypeSymbol(elementType);
     const listResult = this.newTemp(listType);
@@ -370,7 +469,8 @@ export function visitForOfStatement(
       ]),
     );
     const resolvedValue =
-      iterableType instanceof DataListTypeSymbol
+      iterableType instanceof DataListTypeSymbol &&
+      elementType.name !== ExternTypes.dataToken.name
         ? this.unwrapDataToken(tokenValue, elementType)
         : tokenValue;
     this.instructions.push(new CopyInstruction(elementVar, resolvedValue));
