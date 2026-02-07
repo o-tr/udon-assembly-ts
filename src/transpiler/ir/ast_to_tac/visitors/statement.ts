@@ -289,6 +289,11 @@ export function visitForOfStatement(
         : iterableType?.name === ExternTypes.dataList.name
           ? ObjectType
           : null;
+  // Only unwrap DataToken elements when we have a DataListTypeSymbol (e.g.,
+  // Set iteration via GetKeys() yields DataListTypeSymbol) so we can use the
+  // element type. When matching ExternTypes.dataList or UdonType.DataList by
+  // name, elements come from DataList.get_Item as raw DataToken and must stay
+  // unwrapped.
   const isDataList =
     iterableType instanceof DataListTypeSymbol ||
     iterableType.name === ExternTypes.dataList.name ||

@@ -58,6 +58,7 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { isSetCollectionType } from "../helpers/collections.js";
 
 function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
@@ -99,15 +100,6 @@ function resolvePropertyTypeFromType(
   if (prop) return prop.type;
 
   return null;
-}
-
-function isSetCollectionType(
-  type: TypeSymbol | null,
-): type is CollectionTypeSymbol {
-  return (
-    type instanceof CollectionTypeSymbol &&
-    type.name === ExternTypes.dataDictionary.name
-  );
 }
 
 export function resolveTypeFromNode(

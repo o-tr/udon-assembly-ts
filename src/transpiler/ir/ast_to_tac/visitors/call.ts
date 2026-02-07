@@ -1028,7 +1028,7 @@ function visitSetMethodCall(
         throw new Error("Set.entries expects no arguments.");
       }
       const keysList = emitSetKeysList(converter, setOperand, elementType);
-      const entriesType = new DataListTypeSymbol(ExternTypes.dataList);
+      const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
       const entriesResult = converter.newTemp(entriesType);
       const listCtorSig = converter.requireExternSignature(
         "DataList",
@@ -1071,18 +1071,17 @@ function visitSetMethodCall(
         new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
       );
 
-      const value = converter.unwrapDataToken(keyToken, elementType);
-      const valueToken = converter.wrapDataToken(value);
-
-      const pairList = converter.newTemp(new DataListTypeSymbol(elementType));
+      const pairList = converter.newTemp(
+        new DataListTypeSymbol(ExternTypes.dataToken),
+      );
       converter.instructions.push(
         new CallInstruction(pairList, listCtorSig, []),
       );
       converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
+        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
       );
       converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
+        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
       );
       const pairToken = converter.wrapDataToken(pairList);
       converter.instructions.push(
@@ -1188,7 +1187,7 @@ function visitSetMethodCall(
         );
       }
 
-      const previousThisOverride = converter.currentThisOverride ?? null;
+      const previousThisOverride = converter.currentThisOverride;
       if (thisOverride) {
         converter.currentThisOverride = thisOverride;
       }
