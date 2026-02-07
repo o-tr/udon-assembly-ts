@@ -346,11 +346,11 @@ export function visitCallExpression(
     if (calleeName === "parseInt") {
       const evaluatedArgs = getArgs();
       if (evaluatedArgs.length === 0) {
-          // No-arg parseInt: return a consistent int32 result (0).
-          // Full JS semantics (NaN) are not representable as int32; choose a
-          // consistent sentinel of 0 to keep the return type stable.
-          return createConstant(0, PrimitiveTypes.int32);
-        }
+        // No-arg parseInt: return a consistent int32 result (0).
+        // Full JS semantics (NaN) are not representable as int32; choose a
+        // consistent sentinel of 0 to keep the return type stable.
+        return createConstant(0, PrimitiveTypes.int32);
+      }
       if (evaluatedArgs.length > 2) {
         throw new Error("parseInt(...) expects one or two arguments.");
       }
@@ -361,6 +361,8 @@ export function visitCallExpression(
         );
       }
       const arg = evaluatedArgs[0];
+      // Int32.Parse is stricter than JS parseInt (e.g., throws on "3.14",
+      // "0xFF", whitespace). This intentionally diverges from JS semantics.
       // Use Int32.Parse extern for string->int conversion when possible.
       const result = this.newTemp(PrimitiveTypes.int32);
       const externSig = this.requireExternSignature(
@@ -382,7 +384,7 @@ export function visitCallExpression(
       if (evaluatedArgs.length !== 1) {
         throw new Error("parseFloat(...) expects one argument.");
       }
-      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.single);
+      const arg = evaluatedArgs[0];
       const castResult = this.newTemp(PrimitiveTypes.single);
       this.instructions.push(new CastInstruction(castResult, arg));
       return castResult;
