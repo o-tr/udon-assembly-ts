@@ -943,8 +943,10 @@ function emitSetPopulateFromIterable(
 
   const isDictionaryType =
     operandType === ExternTypes.dataDictionary ||
+    operandType.name === ExternTypes.dataDictionary.name ||
     operandType.udonType === UdonType.DataDictionary ||
     resolvedIterableType === ExternTypes.dataDictionary ||
+    resolvedIterableType?.name === ExternTypes.dataDictionary.name ||
     resolvedIterableType?.udonType === UdonType.DataDictionary;
 
   if (elementType === ObjectType) {
@@ -1102,8 +1104,10 @@ function emitMapPopulateFromIterable(
 
   const isDictionaryType =
     operandType === ExternTypes.dataDictionary ||
+    operandType.name === ExternTypes.dataDictionary.name ||
     operandType.udonType === UdonType.DataDictionary ||
     resolvedIterableType === ExternTypes.dataDictionary ||
+    resolvedIterableType?.name === ExternTypes.dataDictionary.name ||
     resolvedIterableType?.udonType === UdonType.DataDictionary;
 
   if (operandType instanceof ArrayTypeSymbol) {
