@@ -338,7 +338,7 @@ export function visitCallExpression(
       if (evaluatedArgs.length !== 1) {
         throw new Error("Number(...) expects one argument.");
       }
-      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.single);
+      const arg = evaluatedArgs[0];
       const argType = this.getOperandType(arg);
       if (argType.udonType === UdonType.Single) {
         return arg;
@@ -389,9 +389,18 @@ export function visitCallExpression(
         throw new Error("parseFloat(...) expects one argument.");
       }
       const arg = evaluatedArgs[0];
-      const castResult = this.newTemp(PrimitiveTypes.single);
-      this.instructions.push(new CastInstruction(castResult, arg));
-      return castResult;
+      // Use Single.Parse extern for string->float conversion, mirroring
+      // how parseInt uses Int32.Parse.
+      const result = this.newTemp(PrimitiveTypes.single);
+      const externSig = this.requireExternSignature(
+        "Single",
+        "Parse",
+        "method",
+        ["string"],
+        "float",
+      );
+      this.instructions.push(new CallInstruction(result, externSig, [arg]));
+      return result;
     }
     if (node.isNew) {
       const canInline =
@@ -457,6 +466,15 @@ export function visitCallExpression(
       return dictResult;
     }
     if (node.isNew && calleeName === "Array") {
+      if (rawArgs.length === 1 && rawArgs[0].kind === ASTNodeKind.Literal) {
+        const lit = rawArgs[0] as LiteralNode;
+        if (typeof lit.value === "number") {
+          throw new Error(
+            "new Array(n) for pre-allocating a fixed-length array is not supported. " +
+              "Use an array literal (e.g., [1, 2, 3]) instead.",
+          );
+        }
+      }
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;
@@ -469,15 +487,6 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
-      if (rawArgs.length === 1 && rawArgs[0].kind === ASTNodeKind.Literal) {
-        const lit = rawArgs[0] as LiteralNode;
-        if (typeof lit.value === "number") {
-          throw new Error(
-            "new Array(n) for pre-allocating a fixed-length array is not supported. " +
-              "Use an array literal (e.g., [1, 2, 3]) instead.",
-          );
-        }
-      }
       for (const arg of getArgs()) {
         const token = this.wrapDataToken(arg);
         this.instructions.push(

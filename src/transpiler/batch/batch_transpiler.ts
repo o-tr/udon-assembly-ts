@@ -100,9 +100,9 @@ export class BatchTranspiler {
     const includeExternal = options.includeExternalDependencies !== false;
     if (entryFiles.length > 0) {
       for (const entry of entryFiles) {
-        reachable.add(entry);
         try {
           const graph = resolver.buildGraph(entry);
+          reachable.add(entry);
           for (const [k, deps] of graph.entries()) {
             reachable.add(k);
             for (const d of deps) reachable.add(d);
