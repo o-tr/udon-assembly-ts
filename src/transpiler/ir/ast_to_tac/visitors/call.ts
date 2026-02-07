@@ -137,8 +137,63 @@ export function visitCallExpression(
   }
   const defaultResult = () => this.newTemp(ObjectType);
 
+  if (callee.kind === ASTNodeKind.SuperExpression) {
+    return createConstant(null, ObjectType);
+  }
+
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
+    if (calleeName === "setImmediate") {
+      if (rawArgs.length < 1) {
+        throw new Error("setImmediate expects a callback argument.");
+      }
+      const callbackNode = rawArgs[0];
+      if (callbackNode.kind !== ASTNodeKind.FunctionExpression) {
+        throw new Error(
+          "setImmediate currently requires an inline function or arrow callback.",
+        );
+      }
+      const callback = callbackNode as FunctionExpressionNode;
+
+      this.symbolTable.enterScope();
+      const paramVars = callback.parameters.map((param) => {
+        const paramType = param.type ?? ObjectType;
+        if (!this.symbolTable.hasInCurrentScope(param.name)) {
+          this.symbolTable.addSymbol(param.name, paramType, false, false);
+        }
+        return createVariable(param.name, paramType, { isLocal: true });
+      });
+
+      if (rawArgs.length > 1 && paramVars.length > 0) {
+        const argValues = rawArgs
+          .slice(1)
+          .map((arg) => this.visitExpression(arg));
+        for (let i = 0; i < paramVars.length && i < argValues.length; i += 1) {
+          this.instructions.push(
+            new CopyInstruction(paramVars[i], argValues[i]),
+          );
+        }
+      }
+
+      let thisOverride: TACOperand | null = null;
+      if (!callback.isArrow) {
+        thisOverride = createConstant(null, ObjectType);
+      }
+
+      const previousThisOverride = this.currentThisOverride;
+      if (thisOverride) {
+        this.currentThisOverride = thisOverride;
+      }
+      if (callback.body.kind === ASTNodeKind.BlockStatement) {
+        this.visitBlockStatement(callback.body as BlockStatementNode);
+      } else {
+        this.visitExpression(callback.body);
+      }
+      this.currentThisOverride = previousThisOverride;
+      this.symbolTable.exitScope();
+
+      return createConstant(null, ObjectType);
+    }
     if (node.isNew && calleeName === "Set") {
       return emitSetConstructor(this, node);
     }
@@ -156,6 +211,60 @@ export function visitCallExpression(
   };
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
+    const symbol = this.symbolTable.lookup(calleeName);
+    const initialValue = symbol?.initialValue as ASTNode | undefined;
+    if (initialValue?.kind === ASTNodeKind.PropertyAccessExpression) {
+      const access = initialValue as PropertyAccessExpressionNode;
+      if (access.object.kind === ASTNodeKind.Identifier) {
+        const objectName = (access.object as IdentifierNode).name;
+        const evaluatedArgs = getArgs();
+        if (objectName === "UdonTypeConverters") {
+          if (evaluatedArgs.length !== 1) {
+            throw new Error(
+              `UdonTypeConverters.${access.property} expects 1 argument`,
+            );
+          }
+          const targetType = this.getUdonTypeConverterTargetType(
+            access.property,
+          );
+          if (!targetType) {
+            throw new Error(
+              `Unsupported UdonTypeConverters method: ${access.property}`,
+            );
+          }
+          const castResult = this.newTemp(targetType);
+          this.instructions.push(
+            new CastInstruction(castResult, evaluatedArgs[0]),
+          );
+          return castResult;
+        }
+        const inlineResult = this.visitInlineStaticMethodCall(
+          objectName,
+          access.property,
+          evaluatedArgs,
+        );
+        if (inlineResult) return inlineResult;
+        const externSig = this.resolveStaticExtern(
+          objectName,
+          access.property,
+          "method",
+        );
+        if (externSig) {
+          const returnType = resolveExternReturnType(externSig) ?? ObjectType;
+          if (returnType === PrimitiveTypes.void) {
+            this.instructions.push(
+              new CallInstruction(undefined, externSig, evaluatedArgs),
+            );
+            return createConstant(0, PrimitiveTypes.void);
+          }
+          const callResult = this.newTemp(returnType);
+          this.instructions.push(
+            new CallInstruction(callResult, externSig, evaluatedArgs),
+          );
+          return callResult;
+        }
+      }
+    }
     if (calleeName === "Error") {
       const evaluatedArgs = getArgs();
       return evaluatedArgs[0] ?? createConstant("Error", PrimitiveTypes.string);
@@ -177,7 +286,66 @@ export function visitCallExpression(
       this.instructions.push(new CastInstruction(castResult, arg));
       return castResult;
     }
+    if (calleeName === "Number") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        return createConstant(0, PrimitiveTypes.single);
+      }
+      if (evaluatedArgs.length !== 1) {
+        throw new Error("Number(...) expects one argument.");
+      }
+      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.single);
+      const argType = this.getOperandType(arg);
+      if (argType.udonType === UdonType.Single) {
+        return arg;
+      }
+      const castResult = this.newTemp(PrimitiveTypes.single);
+      this.instructions.push(new CastInstruction(castResult, arg));
+      return castResult;
+    }
+    if (calleeName === "parseInt") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        return createConstant(0, PrimitiveTypes.int32);
+      }
+      if (evaluatedArgs.length > 2) {
+        throw new Error("parseInt(...) expects one or two arguments.");
+      }
+      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.int32);
+      const castResult = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CastInstruction(castResult, arg));
+      return castResult;
+    }
+    if (calleeName === "parseFloat") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        return createConstant(0, PrimitiveTypes.single);
+      }
+      if (evaluatedArgs.length !== 1) {
+        throw new Error("parseFloat(...) expects one argument.");
+      }
+      const arg = evaluatedArgs[0] ?? createConstant(0, PrimitiveTypes.single);
+      const castResult = this.newTemp(PrimitiveTypes.single);
+      this.instructions.push(new CastInstruction(castResult, arg));
+      return castResult;
+    }
     if (node.isNew && this.classMap.has(calleeName)) {
+      return this.visitInlineConstructor(calleeName, getArgs());
+    }
+    if (
+      node.isNew &&
+      this.classRegistry?.getClass(calleeName) &&
+      !this.classRegistry.isStub(calleeName) &&
+      !this.udonBehaviourClasses.has(calleeName)
+    ) {
+      return this.visitInlineConstructor(calleeName, getArgs());
+    }
+    if (
+      !node.isNew &&
+      this.classRegistry?.getClass(calleeName) &&
+      !this.classRegistry.isStub(calleeName) &&
+      !this.udonBehaviourClasses.has(calleeName)
+    ) {
       return this.visitInlineConstructor(calleeName, getArgs());
     }
     if (
@@ -233,7 +401,7 @@ export function visitCallExpression(
       this.instructions.push(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
-    if (node.isNew && calleeName === "Array" && getArgs().length > 0) {
+    if (calleeName === "Array") {
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;

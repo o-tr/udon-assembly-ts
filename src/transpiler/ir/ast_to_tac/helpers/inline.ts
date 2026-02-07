@@ -60,7 +60,18 @@ export function visitInlineConstructor(
     return fallback;
   }
 
-  const classNode = this.classMap.get(className);
+  let classNode = this.classMap.get(className);
+  if (!classNode && this.classRegistry) {
+    const meta = this.classRegistry.getClass(className);
+    if (
+      meta &&
+      !this.udonBehaviourClasses.has(className) &&
+      !this.classRegistry.isStub(className)
+    ) {
+      classNode = meta.node;
+      this.classMap.set(className, classNode);
+    }
+  }
   if (!classNode) {
     const fallback = this.newTemp(ObjectType);
     this.instructions.push(new CallInstruction(fallback, className, args));
@@ -124,7 +135,14 @@ export function visitInlineStaticMethodCall(
   if (this.inlineStaticMethodStack.has(inlineKey)) {
     return null;
   }
-  const classNode = this.classMap.get(className);
+  let classNode = this.classMap.get(className);
+  if (!classNode && this.classRegistry) {
+    const meta = this.classRegistry.getClass(className);
+    if (meta && !this.classRegistry.isStub(className)) {
+      classNode = meta.node;
+      this.classMap.set(className, classNode);
+    }
+  }
   if (!classNode) return null;
   const method = classNode.methods.find(
     (candidate) => candidate.name === methodName && candidate.isStatic,

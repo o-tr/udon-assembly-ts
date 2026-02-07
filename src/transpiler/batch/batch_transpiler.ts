@@ -56,6 +56,7 @@ export interface BatchTranspilerOptions {
   useStringBuilder?: boolean;
   verbose?: boolean;
   excludeDirs?: string[];
+  includeExternalDependencies?: boolean;
 }
 
 export interface BatchFileResult {
@@ -92,8 +93,11 @@ export class BatchTranspiler {
 
     const resolver = new DependencyResolver();
     const reachable = new Set<string>();
+    const fallbackDeps = new Set<string>();
+    const includeExternal = options.includeExternalDependencies !== false;
     if (entryFiles.length > 0) {
       for (const entry of entryFiles) {
+        reachable.add(entry);
         try {
           const graph = resolver.buildGraph(entry);
           for (const [k, deps] of graph.entries()) {
@@ -106,8 +110,25 @@ export class BatchTranspiler {
               `Failed to build dependency graph for ${entry}: ${e instanceof Error ? e.message : e}`,
             );
           }
+          if (includeExternal) {
+            try {
+              for (const dep of resolver.resolveImmediateDependencies(entry)) {
+                fallbackDeps.add(dep);
+              }
+            } catch (fallbackError) {
+              if (options?.verbose) {
+                console.warn(
+                  `Failed to resolve immediate dependencies for ${entry}: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`,
+                );
+              }
+            }
+          }
         }
       }
+    }
+
+    if (includeExternal && fallbackDeps.size > 0) {
+      for (const dep of fallbackDeps) reachable.add(dep);
     }
 
     const cacheFiles =
@@ -145,8 +166,12 @@ export class BatchTranspiler {
       }
     } else {
       const reachableFiles = reachable.size > 0 ? Array.from(reachable) : files;
-      const transpilableFiles = reachableFiles.filter(isTranspilableSource);
-      // Register only reachable files
+      const allTranspilableFiles = includeExternal
+        ? Array.from(new Set([...files, ...reachableFiles]))
+        : reachableFiles;
+      const transpilableFiles =
+        allTranspilableFiles.filter(isTranspilableSource);
+      // Register transpilable files so inline class detection is reliable.
       for (const filePath of transpilableFiles) {
         try {
           const source = fs.readFileSync(filePath, "utf8");
