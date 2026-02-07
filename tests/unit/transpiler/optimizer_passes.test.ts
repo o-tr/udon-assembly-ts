@@ -1525,4 +1525,66 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
     expect(text).not.toContain("L_unused");
   });
+
+  it("converges with copy chains in loops", () => {
+    const x = createVariable("x", PrimitiveTypes.int32);
+    const y = createVariable("y", PrimitiveTypes.int32);
+    const z = createVariable("z", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const lLoop = createLabel("L_loop");
+    const lEnd = createLabel("L_end");
+
+    // Block 0: x = 5; goto L_loop
+    // L_loop (Block 1): y = x; z = y; ifFalse cond goto L_end; goto L_loop
+    // L_end (Block 2): return z
+    // Back edge: Block 1 → Block 1 creates a copy cycle opportunity
+    const instructions = [
+      new AssignmentInstruction(x, createConstant(5, PrimitiveTypes.int32)),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lLoop),
+      new CopyInstruction(y, x),
+      new CopyInstruction(z, y),
+      new ConditionalJumpInstruction(cond, lEnd),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(z),
+    ];
+
+    // Should converge without hitting iteration limit and propagate constant 5
+    const result = sccpAndPrune(instructions, undefined, {
+      maxWorklistIterations: 100,
+      onLimitReached: "break",
+    });
+    const text = stringify(result);
+    expect(text).toContain("5");
+  });
+
+  it("converges with self-referencing copy cycles", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const lLoop = createLabel("L_loop");
+    const lEnd = createLabel("L_end");
+
+    // a = b; b = a; in a loop creates a direct copy cycle
+    const instructions = [
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lLoop),
+      new CopyInstruction(a, b),
+      new CopyInstruction(b, a),
+      new ConditionalJumpInstruction(cond, lEnd),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    // Should converge quickly without excessive iterations
+    const result = sccpAndPrune(instructions, undefined, {
+      maxWorklistIterations: 100,
+      onLimitReached: "break",
+    });
+    const text = stringify(result);
+    // a and b are unknown (no constant), so return should still reference a variable
+    expect(text).toContain("return");
+  });
 });

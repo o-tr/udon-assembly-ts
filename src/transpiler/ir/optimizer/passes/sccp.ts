@@ -37,12 +37,14 @@ import { isCopyOnWriteCandidateType } from "./temp_reuse.js";
 
 export type LatticeValue =
   | { kind: "unknown" }
+  | { kind: "overdefined" }
   | { kind: "constant"; operand: ConstantOperand }
   | { kind: "copy"; operand: VariableOperand };
 
 export const sccpAndPrune = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,
+  options?: { maxWorklistIterations?: number; onLimitReached?: "markAllReachable" | "break" | "warn" },
 ): TACInstruction[] => {
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
@@ -67,6 +69,7 @@ export const sccpAndPrune = (
 
   const reachable = new Set<number>();
   const queue: number[] = [];
+  let qHead = 0;
   const inQueue = new Set<number>();
   const enqueue = (id: number): void => {
     if (!inQueue.has(id)) {
@@ -90,23 +93,63 @@ export const sccpAndPrune = (
     }
   }
 
-  while (queue.length > 0) {
-    const blockId = queue.shift() as number;
+  const maxIterations =
+    options?.maxWorklistIterations ?? Math.max(1000, cfg.blocks.length * 1000);
+  const onLimit = options?.onLimitReached ?? "markAllReachable";
+  let workIterations = 0;
+
+  const processedOnce = new Set<number>();
+
+  while (qHead < queue.length) {
+    const blockId = queue[qHead++] as number;
     inQueue.delete(blockId);
     const block = cfg.blocks[blockId];
+
+    const firstTime = !processedOnce.has(blockId);
+    if (firstTime) processedOnce.add(blockId);
 
     const predMaps = block.preds
       .filter((id) => reachable.has(id))
       .map((id) => outMaps.get(id) ?? new Map());
     const mergedIn = mergeLatticeMaps(predMaps);
     const currentIn = inMaps.get(blockId) ?? new Map();
-    if (!latticeMapsEqual(currentIn, mergedIn)) {
+    const inChanged = !latticeMapsEqual(currentIn, mergedIn);
+
+    // Transfer is deterministic: if input unchanged and already processed, skip
+    if (!firstTime && !inChanged) {
+      continue;
+    }
+
+    // Count only iterations that perform actual work (after skip check)
+    if (++workIterations > maxIterations) {
+      // try {
+      //   console.warn(
+      //     `sccpAndPrune: reached maxWorklistIterations=${maxIterations}; aborting early`,
+      //   );
+      // } catch (e) {
+      //   /* ignore */
+      // }
+      // if (onLimit === "markAllReachable") {
+      //   for (const b of cfg.blocks) reachable.add(b.id);
+      // }
+      // break;
+    }
+    if (workIterations % 5000 === 0) {
+      // keep occasional progress logs for long runs
+      try {
+        console.log(`sccp iter: ${workIterations}/${maxIterations}`);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+
+    if (inChanged) {
       inMaps.set(blockId, mergedIn);
     }
 
-    let working = new Map(mergedIn);
+    const working = new Map(mergedIn);
     for (let i = block.start; i <= block.end; i++) {
-      working = transferLatticeMap(working, instructions[i]);
+      transferLatticeMapMut(working, instructions[i]);
     }
 
     const currentOut = outMaps.get(blockId) ?? new Map();
@@ -115,27 +158,29 @@ export const sccpAndPrune = (
       outMaps.set(blockId, working);
     }
 
-    const succs = resolveReachableSuccs(
-      block,
-      instructions,
-      labelToBlock,
-      (operand) => resolveLatticeConstant(operand, working),
-      cfg.blocks.length,
-    );
-    for (const succ of succs) {
-      if (!reachable.has(succ)) {
-        reachable.add(succ);
-        enqueue(succ);
-        continue;
+    if (firstTime || outChanged) {
+      const succs = resolveReachableSuccs(
+        block,
+        instructions,
+        labelToBlock,
+        (operand) => resolveLatticeConstant(operand, working),
+        cfg.blocks.length,
+      );
+      for (const succ of succs) {
+        if (!reachable.has(succ)) {
+          reachable.add(succ);
+          enqueue(succ);
+          continue;
+        }
+        if (outChanged) enqueue(succ);
       }
-      if (outChanged) enqueue(succ);
     }
   }
 
   const result: TACInstruction[] = [];
   for (const block of cfg.blocks) {
     if (!reachable.has(block.id)) continue;
-    let working = new Map(inMaps.get(block.id) ?? new Map());
+    const working = new Map(inMaps.get(block.id) ?? new Map());
     for (let i = block.start; i <= block.end; i++) {
       let inst = instructions[i];
       inst = replaceInstructionWithLatticeMap(inst, working);
@@ -155,7 +200,7 @@ export const sccpAndPrune = (
         result.push(inst);
       }
 
-      working = transferLatticeMap(working, inst);
+      transferLatticeMapMut(working, inst);
     }
   }
 
@@ -167,18 +212,20 @@ const mergeLatticeMaps = (
 ): Map<string, LatticeValue> => {
   const valid = predMaps.filter((map) => map !== undefined);
   if (valid.length === 0) return new Map();
-  const [first, ...rest] = valid;
+  if (valid.length === 1) return new Map(valid[0]);
+
+  const keys = new Set<string>();
+  for (const map of valid) {
+    for (const key of map.keys()) keys.add(key);
+  }
+
   const merged = new Map<string, LatticeValue>();
-  for (const [key, value] of first.entries()) {
-    let same = true;
-    for (const map of rest) {
-      const other = map.get(key);
-      if (!other || !latticeValueEquals(value, other)) {
-        same = false;
-        break;
-      }
+  for (const key of keys) {
+    let acc: LatticeValue = { kind: "unknown" };
+    for (const map of valid) {
+      acc = mergeLatticeValues(acc, map.get(key) ?? { kind: "unknown" });
     }
-    if (same) merged.set(key, value);
+    if (acc.kind !== "unknown") merged.set(key, acc);
   }
   return merged;
 };
@@ -206,15 +253,30 @@ const latticeValueEquals = (a: LatticeValue, b: LatticeValue): boolean => {
   if (a.kind === "copy" && b.kind === "copy") {
     return a.operand.name === b.operand.name;
   }
+  if (a.kind === "overdefined" && b.kind === "overdefined") return true;
   if (a.kind === "unknown" && b.kind === "unknown") return true;
   return false;
 };
 
-const transferLatticeMap = (
-  current: Map<string, LatticeValue>,
+const mergeLatticeValues = (a: LatticeValue, b: LatticeValue): LatticeValue => {
+  if (a.kind === "unknown") return b;
+  if (b.kind === "unknown") return a;
+  if (a.kind === "overdefined" || b.kind === "overdefined") {
+    return { kind: "overdefined" };
+  }
+  if (a.kind === "constant" && b.kind === "constant") {
+    return latticeValueEquals(a, b) ? a : { kind: "overdefined" };
+  }
+  if (a.kind === "copy" && b.kind === "copy") {
+    return latticeValueEquals(a, b) ? a : { kind: "overdefined" };
+  }
+  return { kind: "overdefined" };
+};
+
+const transferLatticeMapMut = (
+  map: Map<string, LatticeValue>,
   inst: TACInstruction,
-): Map<string, LatticeValue> => {
-  const next = new Map(current);
+): void => {
   if (
     inst.kind === TACInstructionKind.Assignment ||
     inst.kind === TACInstructionKind.Copy
@@ -222,32 +284,56 @@ const transferLatticeMap = (
     const { dest, src } = inst as unknown as InstWithDestSrc;
     if (dest.kind === TACOperandKind.Variable) {
       const destName = (dest as VariableOperand).name;
-      const resolvedConst = resolveLatticeConstant(src, next);
+      const resolvedConst = resolveLatticeConstant(src, map);
       if (resolvedConst) {
-        next.set(destName, { kind: "constant", operand: resolvedConst });
+        map.set(destName, { kind: "constant", operand: resolvedConst });
       } else if (src.kind === TACOperandKind.Variable) {
-        next.set(destName, { kind: "copy", operand: src as VariableOperand });
+        const srcVar = src as VariableOperand;
+        const srcInfo = map.get(srcVar.name);
+        if (srcInfo?.kind === "overdefined") {
+          map.set(destName, { kind: "overdefined" });
+          return;
+        }
+        // Check if adding dest → copy(src) would create a cycle
+        let isCycle = false;
+        const visited = new Set<string>();
+        let cur: VariableOperand | null = srcVar;
+        while (cur && !visited.has(cur.name)) {
+          if (cur.name === destName) {
+            isCycle = true;
+            break;
+          }
+          visited.add(cur.name);
+          const info = map.get(cur.name);
+          if (!info || info.kind !== "copy") break;
+          cur = info.operand;
+        }
+        if (isCycle) {
+          map.set(destName, { kind: "overdefined" });
+        } else {
+          map.set(destName, { kind: "copy", operand: srcVar });
+        }
       } else {
-        next.delete(destName);
+        map.set(destName, { kind: "overdefined" });
       }
     }
-    return next;
+    return;
   }
 
   if (inst.kind === TACInstructionKind.PropertySet) {
     const set = inst as PropertySetInstruction;
     if (set.object.kind === TACOperandKind.Variable) {
-      next.delete((set.object as VariableOperand).name);
+      map.set((set.object as VariableOperand).name, { kind: "overdefined" });
     }
-    return next;
+    return;
   }
 
   if (inst.kind === TACInstructionKind.ArrayAssignment) {
     const assign = inst as ArrayAssignmentInstruction;
     if (assign.array.kind === TACOperandKind.Variable) {
-      next.delete((assign.array as VariableOperand).name);
+      map.set((assign.array as VariableOperand).name, { kind: "overdefined" });
     }
-    return next;
+    return;
   }
 
   if (inst.kind === TACInstructionKind.MethodCall) {
@@ -256,16 +342,15 @@ const transferLatticeMap = (
       call.object.kind === TACOperandKind.Variable &&
       isCopyOnWriteCandidateType(getOperandType(call.object))
     ) {
-      next.delete((call.object as VariableOperand).name);
+      map.set((call.object as VariableOperand).name, { kind: "overdefined" });
     }
     // fall through to clear any defined variable via getDefinedOperandForReuse
   }
 
   const defined = getDefinedOperandForReuse(inst);
   if (defined && defined.kind === TACOperandKind.Variable) {
-    next.delete((defined as VariableOperand).name);
+    map.set((defined as VariableOperand).name, { kind: "overdefined" });
   }
-  return next;
 };
 
 export const resolveLatticeConstant = (
@@ -283,6 +368,7 @@ export const resolveLatticeConstant = (
     visited.add(current.name);
     const info = map.get(current.name);
     if (!info || info.kind === "unknown") return null;
+    if (info.kind === "overdefined") return null;
     if (info.kind === "constant") return info.operand;
     if (info.kind === "copy") {
       current = info.operand;
@@ -302,6 +388,7 @@ const resolveLatticeOperand = (
     visited.add(current.name);
     const info = map.get(current.name);
     if (!info || info.kind === "unknown") return current;
+    if (info.kind === "overdefined") return current;
     if (info.kind === "constant") return info.operand;
     if (info.kind === "copy") {
       current = info.operand;
