@@ -1,7 +1,5 @@
-import { ClassRegistry } from "./frontend/class_registry.js";
-import type {
-  UdonBehaviourLayouts,
-} from "./ir/udon_behaviour_layout.js";
+import type { ClassRegistry } from "./frontend/class_registry.js";
+import type { UdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
 
 export function computeExposedLabels(
   registry: ClassRegistry,
@@ -20,8 +18,6 @@ export function computeExposedLabels(
       if (layout) {
         const ml = layout.get(method.name);
         if (ml) exposed.add(ml.exportMethodName);
-      } else {
-        exposed.add(`__${method.name}_${cls.name}`);
       }
     }
   }

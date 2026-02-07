@@ -10,6 +10,10 @@ import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
 import { AggregateTranspileError } from "../errors/transpile_errors.js";
+import {
+  computeExportLabels,
+  computeExposedLabels,
+} from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
 import type { MethodInfo, PropertyInfo } from "../frontend/class_registry.js";
 import { ClassRegistry } from "../frontend/class_registry.js";
@@ -33,7 +37,6 @@ import {
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
-import { computeExposedLabels, computeExportLabels } from "../exposed_labels.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import {
   discoverEntryFilesUsingTS,

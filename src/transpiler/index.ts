@@ -6,6 +6,7 @@ import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
 import { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
+import { computeExportLabels, computeExposedLabels } from "./exposed_labels.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
@@ -24,7 +25,6 @@ import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
 import { TACOptimizer } from "./ir/optimizer/index.js";
 import { pruneProgramByMethodUsage } from "./ir/optimizer/ipa.js";
 import { buildUdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
-import { computeExposedLabels, computeExportLabels } from "./exposed_labels.js";
 
 /**
  * Transpiler options
