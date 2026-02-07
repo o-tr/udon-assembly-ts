@@ -78,7 +78,12 @@ export class DependencyResolver {
   private visitFile(filePath: string): void {
     if (this.graph.has(filePath)) return;
     if (this.visiting.has(filePath)) {
-      if (this.allowCircular) return;
+      if (this.allowCircular) {
+        // When circulars are allowed, ensure the node exists in the graph
+        // so dependency edges referencing it are not lost.
+        if (!this.graph.has(filePath)) this.graph.set(filePath, new Set());
+        return;
+      }
       throw new Error(`Circular dependency detected: ${filePath}`);
     }
     this.visiting.add(filePath);

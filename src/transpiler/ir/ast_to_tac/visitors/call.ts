@@ -346,9 +346,11 @@ export function visitCallExpression(
     if (calleeName === "parseInt") {
       const evaluatedArgs = getArgs();
       if (evaluatedArgs.length === 0) {
-        // No-arg parseInt -> NaN. Represent as single (float) NaN.
-        return createConstant(NaN, PrimitiveTypes.single);
-      }
+          // No-arg parseInt: return a consistent int32 result (0).
+          // Full JS semantics (NaN) are not representable as int32; choose a
+          // consistent sentinel of 0 to keep the return type stable.
+          return createConstant(0, PrimitiveTypes.int32);
+        }
       if (evaluatedArgs.length > 2) {
         throw new Error("parseInt(...) expects one or two arguments.");
       }
