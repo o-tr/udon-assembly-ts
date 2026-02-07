@@ -398,14 +398,6 @@ export function visitCallExpression(
     }
     if (
       node.isNew &&
-      this.classRegistry?.getClass(calleeName) &&
-      !this.classRegistry.isStub(calleeName) &&
-      !this.udonBehaviourClasses.has(calleeName)
-    ) {
-      return this.visitInlineConstructor(calleeName, getArgs());
-    }
-    if (
-      node.isNew &&
       (calleeName === "UdonList" ||
         calleeName === "UdonDictionary" ||
         calleeName === "UdonQueue" ||
