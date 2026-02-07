@@ -1105,14 +1105,16 @@ function emitMapPopulateFromIterable(
     resolvedIterableType?.udonType === UdonType.DataList;
 
   const isDictionaryType =
-    isMapCollectionType(operandType) ||
-    isMapCollectionType(resolvedIterableType) ||
-    operandType === ExternTypes.dataDictionary ||
-    operandType.name === ExternTypes.dataDictionary.name ||
-    operandType.udonType === UdonType.DataDictionary ||
-    resolvedIterableType === ExternTypes.dataDictionary ||
-    resolvedIterableType?.name === ExternTypes.dataDictionary.name ||
-    resolvedIterableType?.udonType === UdonType.DataDictionary;
+    (isMapCollectionType(operandType) ||
+      isMapCollectionType(resolvedIterableType) ||
+      operandType === ExternTypes.dataDictionary ||
+      operandType.name === ExternTypes.dataDictionary.name ||
+      operandType.udonType === UdonType.DataDictionary ||
+      resolvedIterableType === ExternTypes.dataDictionary ||
+      resolvedIterableType?.name === ExternTypes.dataDictionary.name ||
+      resolvedIterableType?.udonType === UdonType.DataDictionary) &&
+    !isSetCollectionType(operandType) &&
+    !isSetCollectionType(resolvedIterableType);
 
   if (operandType instanceof ArrayTypeSymbol) {
     pairElementType = operandType.elementType;
