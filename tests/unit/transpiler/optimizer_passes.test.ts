@@ -42,6 +42,7 @@ import {
   createLabel,
   createTemporary,
   createVariable,
+  TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
 
 const stringify = (insts: { toString(): string }[]) =>
@@ -1555,8 +1556,14 @@ describe("optimizer passes", () => {
       maxWorklistIterations: 100,
       onLimitReached: "break",
     });
-    const text = stringify(result);
-    expect(text).toContain("5");
+    // Ensure the return instruction contains the propagated constant 5
+    const retInst = result.find((inst) => inst.kind === "Return") as
+      | ReturnInstruction
+      | undefined;
+    expect(retInst).toBeDefined();
+    expect(retInst!.value).toBeDefined();
+    expect(retInst!.value!.kind).toBe(TACOperandKind.Constant);
+    expect((retInst!.value as any).value).toBe(5);
   });
 
   it("converges with self-referencing copy cycles", () => {
@@ -1583,8 +1590,12 @@ describe("optimizer passes", () => {
       maxWorklistIterations: 100,
       onLimitReached: "break",
     });
-    const text = stringify(result);
-    // a and b are unknown (no constant), so return should still reference a variable
-    expect(text).toContain("return");
+    // a and b are unknown (no constant), so return should reference a variable
+    const retInst2 = result.find((inst) => inst.kind === "Return") as
+      | ReturnInstruction
+      | undefined;
+    expect(retInst2).toBeDefined();
+    expect(retInst2!.value).toBeDefined();
+    expect(retInst2!.value!.kind).toBe(TACOperandKind.Variable);
   });
 });

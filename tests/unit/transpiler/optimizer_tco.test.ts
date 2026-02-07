@@ -9,6 +9,7 @@ import {
   createConstant,
   createTemporary,
 } from "../../../src/transpiler/ir/tac_operand";
+import { TACOperandKind } from "../../../src/transpiler/ir/tac_operand";
 
 describe("tail-call optimization", () => {
   it("marks call+return as tail call and preserves return", () => {

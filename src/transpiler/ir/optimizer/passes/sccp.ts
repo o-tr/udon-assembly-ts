@@ -35,6 +35,10 @@ import { getOperandType } from "./constant_folding.js";
 import { resolveReachableSuccs } from "./jumps.js";
 import { isCopyOnWriteCandidateType } from "./temp_reuse.js";
 
+// Threshold for compacting the array-backed worklist queue. Keeps memory
+// bounded for oscillating/non-converging graphs.
+const WORKLIST_COMPACT_THRESHOLD = 1024;
+
 export type LatticeValue =
   | { kind: "unknown" }
   | { kind: "overdefined" }
@@ -106,6 +110,13 @@ export const sccpAndPrune = (
   while (qHead < queue.length) {
     const blockId = queue[qHead++] as number;
     inQueue.delete(blockId);
+    // Prevent unbounded queue growth: periodically compact the array-backed
+    // queue when the head advances far enough. This avoids memory growth on
+    // oscillating graphs while preserving existing `inQueue` semantics.
+    if (qHead > WORKLIST_COMPACT_THRESHOLD) {
+      queue.splice(0, qHead);
+      qHead = 0;
+    }
     const block = cfg.blocks[blockId];
 
     const firstTime = !processedOnce.has(blockId);
