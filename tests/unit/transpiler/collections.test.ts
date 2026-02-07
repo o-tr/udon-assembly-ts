@@ -154,4 +154,92 @@ describe("collections support", () => {
       ),
     ).toBe(true);
   });
+
+  it("lowers Set to DataDictionary operations", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          const set: Set<string> = new Set<string>(["a", "b"]);
+          set.add("c");
+          set.has("a");
+          set.delete("b");
+          const size = set.size;
+          const values = set.values();
+          const entries = set.entries();
+          set.forEach((value, value2, self) => {
+            const x: string = value;
+          });
+          for (const v of set) {
+            const y: string = v;
+          }
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const udonConverter = new TACToUdonConverter();
+    udonConverter.convert(tac);
+    const externs = udonConverter.getExternSignatures();
+
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__ctor____VRCSDK3DataDataDictionary",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__SetValue__VRCSDK3DataDataToken_VRCSDK3DataDataToken__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__ContainsKey__VRCSDK3DataDataToken__SystemBoolean",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__Remove__VRCSDK3DataDataToken__SystemBoolean",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__GetKeys____VRCSDK3DataDataList",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes("VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList"),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+        ),
+      ),
+    ).toBe(true);
+  });
 });

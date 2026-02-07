@@ -23,6 +23,7 @@ import {
   CallInstruction,
   CopyInstruction,
   MethodCallInstruction,
+  PropertyGetInstruction,
   PropertySetInstruction,
 } from "../../tac_instruction.js";
 import {
@@ -230,6 +231,58 @@ export function wrapDataToken(
   );
   this.instructions.push(new CallInstruction(token, externSig, [value]));
   return token;
+}
+
+export function unwrapDataToken(
+  this: ASTToTACConverter,
+  token: TACOperand,
+  targetType: TypeSymbol,
+): TACOperand {
+  const tokenType = this.getOperandType(token);
+  if (tokenType.name !== ExternTypes.dataToken.name) {
+    return token;
+  }
+
+  let property = "Reference";
+  switch (targetType.udonType) {
+    case UdonType.String:
+      property = "String";
+      break;
+    case UdonType.Boolean:
+      property = "Boolean";
+      break;
+    case UdonType.Int32:
+    case UdonType.Int16:
+    case UdonType.UInt16:
+    case UdonType.UInt32:
+    case UdonType.Byte:
+    case UdonType.SByte:
+      property = "Int";
+      break;
+    case UdonType.Int64:
+    case UdonType.UInt64:
+      property = "Long";
+      break;
+    case UdonType.Single:
+      property = "Float";
+      break;
+    case UdonType.Double:
+      property = "Double";
+      break;
+    case UdonType.DataList:
+      property = "DataList";
+      break;
+    case UdonType.DataDictionary:
+      property = "DataDictionary";
+      break;
+    default:
+      property = "Reference";
+      break;
+  }
+
+  const result = this.newTemp(targetType);
+  this.instructions.push(new PropertyGetInstruction(result, token, property));
+  return result;
 }
 
 export function getOperandType(

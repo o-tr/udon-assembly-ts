@@ -136,6 +136,12 @@ export function mapTypeWithGenerics(
       case "Record":
       case "Map":
         return ExternTypes.dataDictionary;
+      case "Set":
+      case "ReadonlySet":
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          this.mapTypeWithGenerics(args[0] ?? "object"),
+        );
     }
   }
 

@@ -101,6 +101,15 @@ function resolvePropertyTypeFromType(
   return null;
 }
 
+function isSetCollectionType(
+  type: TypeSymbol | null,
+): type is CollectionTypeSymbol {
+  return (
+    type instanceof CollectionTypeSymbol &&
+    type.name === ExternTypes.dataDictionary.name
+  );
+}
+
 export function resolveTypeFromNode(
   converter: ASTToTACConverter,
   node: ASTNode,
@@ -261,6 +270,10 @@ export function visitExpression(
       return this.visitArrayAccessExpression(node as ArrayAccessExpressionNode);
     case ASTNodeKind.ThisExpression:
       return this.visitThisExpression(node as ThisExpressionNode);
+    case ASTNodeKind.FunctionExpression:
+      throw new Error(
+        "Function expressions are only supported as Set.forEach callbacks.",
+      );
     default:
       throw new Error(`Unsupported expression kind: ${node.kind}`);
   }
@@ -942,11 +955,14 @@ export function visitArrayAccessExpression(
       arrayType instanceof DataListTypeSymbol
         ? arrayType.elementType
         : ObjectType;
-    const result = this.newTemp(elementType);
+    const tokenResult = this.newTemp(ExternTypes.dataToken);
     this.instructions.push(
-      new MethodCallInstruction(result, array, "get_Item", [index]),
+      new MethodCallInstruction(tokenResult, array, "get_Item", [index]),
     );
-    return result;
+    if (arrayType instanceof DataListTypeSymbol) {
+      return this.unwrapDataToken(tokenResult, elementType);
+    }
+    return tokenResult;
   }
 
   let elementType = this.getArrayElementType(array);
@@ -1065,6 +1081,16 @@ export function visitPropertyAccessExpression(
 
     const object = this.visitExpression(node.object);
     const objectType = this.getOperandType(object);
+    const resolvedBaseType = resolveTypeFromNode(this, node.object);
+    const isSet =
+      isSetCollectionType(objectType) || isSetCollectionType(resolvedBaseType);
+    if (isSet && node.property === "size") {
+      const result = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, "Count"),
+      );
+      return result;
+    }
     let resultType: TypeSymbol | undefined;
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
@@ -1119,6 +1145,9 @@ export function visitThisExpression(
   this: ASTToTACConverter,
   _node: ThisExpressionNode,
 ): TACOperand {
+  if (this.currentThisOverride) {
+    return this.currentThisOverride;
+  }
   const classType = this.currentClassName
     ? this.typeMapper.mapTypeScriptType(this.currentClassName)
     : ObjectType;

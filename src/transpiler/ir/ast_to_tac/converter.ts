@@ -38,6 +38,7 @@ import {
   getOperandType,
   isNullableType,
   isStatementNode,
+  unwrapDataToken,
   visitAssignmentExpression,
   visitUpdateExpression,
   wrapDataToken,
@@ -170,6 +171,7 @@ export class ASTToTACConverter {
     returnVar: TACOperand;
     returnLabel: TACOperand;
   }> = [];
+  currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;
   typeMapper: TypeMapper;
   enumRegistry: EnumRegistry;
@@ -372,6 +374,7 @@ export class ASTToTACConverter {
   coerceConstantToType = coerceConstantToType;
   getArrayElementType = getArrayElementType;
   wrapDataToken = wrapDataToken;
+  unwrapDataToken = unwrapDataToken;
   getOperandType = getOperandType;
   isNullableType = isNullableType;
   isStatementNode = isStatementNode;

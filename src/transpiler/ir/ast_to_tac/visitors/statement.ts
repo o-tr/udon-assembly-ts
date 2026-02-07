@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   ObjectType,
@@ -22,6 +23,7 @@ import {
   type SwitchStatementNode,
   type ThrowStatementNode,
   type TryCatchStatementNode,
+  UdonType,
   type VariableDeclarationNode,
   type WhileStatementNode,
 } from "../../../frontend/types.js";
@@ -48,6 +50,12 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { resolveTypeFromNode } from "./expression.js";
+
+const isSetCollectionType = (
+  type: TypeSymbol | null,
+): type is CollectionTypeSymbol =>
+  type instanceof CollectionTypeSymbol &&
+  type.name === ExternTypes.dataDictionary.name;
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
@@ -259,16 +267,38 @@ export function visitForOfStatement(
   this: ASTToTACConverter,
   node: ForOfStatementNode,
 ): void {
-  const iterableOperand = this.visitExpression(node.iterable);
+  let iterableOperand = this.visitExpression(node.iterable);
   const inferredIterableType = resolveTypeFromNode(this, node.iterable);
+  const operandType = this.getOperandType(iterableOperand);
+  const inferredSetType = isSetCollectionType(operandType)
+    ? operandType
+    : isSetCollectionType(inferredIterableType)
+      ? inferredIterableType
+      : null;
+
+  if (inferredSetType) {
+    const elementType = inferredSetType.elementType ?? ObjectType;
+    const listType = new DataListTypeSymbol(elementType);
+    const listResult = this.newTemp(listType);
+    this.instructions.push(
+      new MethodCallInstruction(listResult, iterableOperand, "GetKeys", []),
+    );
+    iterableOperand = listResult;
+  }
+
+  const iterableType = this.getOperandType(iterableOperand);
   const inferredElementType =
-    inferredIterableType instanceof ArrayTypeSymbol
-      ? inferredIterableType.elementType
-      : inferredIterableType instanceof DataListTypeSymbol
-        ? inferredIterableType.elementType
-        : inferredIterableType?.name === ExternTypes.dataList.name
+    iterableType instanceof ArrayTypeSymbol
+      ? iterableType.elementType
+      : iterableType instanceof DataListTypeSymbol
+        ? iterableType.elementType
+        : iterableType?.name === ExternTypes.dataList.name
           ? ObjectType
           : null;
+  const isDataList =
+    iterableType instanceof DataListTypeSymbol ||
+    iterableType.name === ExternTypes.dataList.name ||
+    iterableType.udonType === UdonType.DataList;
   const indexVar = this.newTemp(PrimitiveTypes.int32);
   const lengthVar = this.newTemp(PrimitiveTypes.int32);
 
@@ -305,9 +335,7 @@ export function visitForOfStatement(
     new PropertyGetInstruction(
       lengthVar,
       iterableOperand,
-      this.getOperandType(iterableOperand).name === ExternTypes.dataList.name
-        ? "Count"
-        : "length",
+      isDataList ? "Count" : "length",
     ),
   );
 
@@ -327,9 +355,23 @@ export function visitForOfStatement(
   );
   this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
 
-  this.instructions.push(
-    new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
-  );
+  if (isDataList) {
+    const tokenValue = this.newTemp(ExternTypes.dataToken);
+    this.instructions.push(
+      new MethodCallInstruction(tokenValue, iterableOperand, "get_Item", [
+        indexVar,
+      ]),
+    );
+    const resolvedValue =
+      iterableType instanceof DataListTypeSymbol
+        ? this.unwrapDataToken(tokenValue, elementType)
+        : tokenValue;
+    this.instructions.push(new CopyInstruction(elementVar, resolvedValue));
+  } else {
+    this.instructions.push(
+      new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
+    );
+  }
   if (isDestructured) {
     const names = node.variable as string[];
     for (let i = 0; i < names.length; i += 1) {

@@ -83,6 +83,7 @@ export enum ASTNodeKind {
   ContinueStatement = "ContinueStatement",
   BlockStatement = "BlockStatement",
   FunctionDeclaration = "FunctionDeclaration",
+  FunctionExpression = "FunctionExpression",
   ClassDeclaration = "ClassDeclaration",
   MethodDeclaration = "MethodDeclaration",
   PropertyDeclaration = "PropertyDeclaration",
@@ -360,6 +361,16 @@ export interface FunctionDeclarationNode extends ASTNode {
   parameters: Array<{ name: string; type: TypeSymbol }>;
   returnType: TypeSymbol;
   body: BlockStatementNode;
+}
+
+/**
+ * Function expression / arrow function
+ */
+export interface FunctionExpressionNode extends ASTNode {
+  kind: ASTNodeKind.FunctionExpression;
+  parameters: Array<{ name: string; type: TypeSymbol }>;
+  body: ASTNode | BlockStatementNode;
+  isArrow: boolean;
 }
 
 /**

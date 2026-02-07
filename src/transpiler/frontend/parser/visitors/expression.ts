@@ -10,6 +10,7 @@ import {
   type CallExpressionNode,
   type ConditionalExpressionNode,
   type DeleteExpressionNode,
+  type FunctionExpressionNode,
   type IdentifierNode,
   type LiteralNode,
   type NameofExpressionNode,
@@ -112,7 +113,9 @@ export function visitExpression(
       return this.visitSuperExpression();
     case ts.SyntaxKind.ArrowFunction:
     case ts.SyntaxKind.FunctionExpression:
-      return this.visitFunctionLiteralExpression();
+      return this.visitFunctionLiteralExpression(
+        node as ts.ArrowFunction | ts.FunctionExpression,
+      );
     default:
       this.reportUnsupportedNode(
         node,
@@ -228,11 +231,25 @@ export function visitUpdateExpression(
 
 export function visitFunctionLiteralExpression(
   this: TypeScriptParser,
-): LiteralNode {
+  node: ts.ArrowFunction | ts.FunctionExpression,
+): FunctionExpressionNode {
+  const parameters = node.parameters.map((param) => {
+    const name = param.name.getText();
+    const type = param.type
+      ? this.mapTypeWithGenerics(param.type.getText(), param.type)
+      : this.typeMapper.mapTypeScriptType("object");
+    return { name, type };
+  });
+
+  const body = ts.isBlock(node.body)
+    ? this.visitBlock(node.body)
+    : this.visitExpression(node.body as ts.Expression);
+
   return {
-    kind: ASTNodeKind.Literal,
-    value: 0,
-    type: this.typeMapper.mapTypeScriptType("object"),
+    kind: ASTNodeKind.FunctionExpression,
+    parameters,
+    body,
+    isArrow: ts.isArrowFunction(node),
   };
 }
 

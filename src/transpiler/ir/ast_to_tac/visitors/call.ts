@@ -4,20 +4,25 @@ import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
+  type ASTNode,
   ASTNodeKind,
+  type BlockStatementNode,
   type CallExpressionNode,
+  type FunctionExpressionNode,
   type IdentifierNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   UdonType,
 } from "../../../frontend/types.js";
 import {
+  ArrayAccessInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -32,26 +37,69 @@ import {
 import {
   type ConstantOperand,
   createConstant,
+  createVariable,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { resolveTypeFromNode } from "./expression.js";
+
+const isSetCollectionType = (
+  type: TypeSymbol | null,
+): type is CollectionTypeSymbol =>
+  type instanceof CollectionTypeSymbol &&
+  type.name === ExternTypes.dataDictionary.name;
+
+const resolveSetElementType = (
+  setType: TypeSymbol | null,
+  fallback?: TypeSymbol,
+): TypeSymbol => {
+  if (setType instanceof CollectionTypeSymbol && setType.elementType) {
+    return setType.elementType;
+  }
+  return fallback ?? ObjectType;
+};
+
+const emitSetKeysList = (
+  converter: ASTToTACConverter,
+  setOperand: TACOperand,
+  elementType: TypeSymbol,
+): TACOperand => {
+  const listType = new DataListTypeSymbol(elementType);
+  const listResult = converter.newTemp(listType);
+  converter.instructions.push(
+    new MethodCallInstruction(listResult, setOperand, "GetKeys", []),
+  );
+  return listResult;
+};
 
 export function visitCallExpression(
   this: ASTToTACConverter,
   node: CallExpressionNode,
 ): TACOperand {
   const callee = node.callee;
+  const rawArgs = node.arguments;
   if (isTsOnlyCallExpression(node)) {
     return createConstant(null, ObjectType);
   }
-
-  const args = node.arguments.map((arg) => this.visitExpression(arg));
   const defaultResult = () => this.newTemp(ObjectType);
+
+  if (callee.kind === ASTNodeKind.PropertyAccessExpression) {
+    const propAccess = callee as PropertyAccessExpressionNode;
+    const setResult = visitSetMethodCall(this, propAccess, rawArgs);
+    if (setResult) {
+      return setResult;
+    }
+  }
+
+  const args = rawArgs.map((arg) => this.visitExpression(arg));
   if (callee.kind === ASTNodeKind.Identifier) {
     const calleeName = (callee as IdentifierNode).name;
     if (calleeName === "Error") {
       return args[0] ?? createConstant("Error", PrimitiveTypes.string);
+    }
+    if (node.isNew && calleeName === "Set") {
+      return emitSetConstructor(this, node);
     }
     if (calleeName === "BigInt") {
       if (args.length !== 1) {
@@ -685,6 +733,475 @@ export function visitCallExpression(
   }
 
   throw new Error(`Unsupported call target kind: ${callee.kind}`);
+}
+
+function emitSetConstructor(
+  converter: ASTToTACConverter,
+  node: CallExpressionNode,
+): TACOperand {
+  const typeArgText = node.typeArguments?.length
+    ? `Set<${node.typeArguments.join(", ")}>`
+    : "Set";
+  const setType = converter.typeMapper.mapTypeScriptType(typeArgText);
+  const setResult = converter.newTemp(setType);
+  const ctorSig = converter.requireExternSignature(
+    "DataDictionary",
+    "ctor",
+    "method",
+    [],
+    "DataDictionary",
+  );
+  converter.instructions.push(new CallInstruction(setResult, ctorSig, []));
+
+  if (node.arguments.length > 0) {
+    if (node.arguments.length !== 1) {
+      throw new Error("Set constructor expects at most one iterable argument.");
+    }
+    const iterableNode = node.arguments[0];
+    const iterableOperand = converter.visitExpression(iterableNode);
+    emitSetPopulateFromIterable(
+      converter,
+      setResult,
+      setType,
+      iterableNode,
+      iterableOperand,
+    );
+  }
+
+  return setResult;
+}
+
+function emitSetPopulateFromIterable(
+  converter: ASTToTACConverter,
+  setOperand: TACOperand,
+  setType: TypeSymbol,
+  iterableNode: ASTNode,
+  iterableOperand: TACOperand,
+): void {
+  const resolvedIterableType = resolveTypeFromNode(converter, iterableNode);
+  const operandType = converter.getOperandType(iterableOperand);
+  let elementType = resolveSetElementType(setType);
+
+  let listOperand = iterableOperand;
+  let isDataList = false;
+
+  const isArrayType =
+    operandType instanceof ArrayTypeSymbol ||
+    operandType.udonType === UdonType.Array ||
+    resolvedIterableType instanceof ArrayTypeSymbol ||
+    resolvedIterableType?.udonType === UdonType.Array;
+
+  const isDataListType =
+    operandType instanceof DataListTypeSymbol ||
+    operandType.name === ExternTypes.dataList.name ||
+    operandType.udonType === UdonType.DataList ||
+    resolvedIterableType instanceof DataListTypeSymbol ||
+    resolvedIterableType?.name === ExternTypes.dataList.name ||
+    resolvedIterableType?.udonType === UdonType.DataList;
+
+  const isDictionaryType =
+    operandType.name === ExternTypes.dataDictionary.name ||
+    resolvedIterableType?.name === ExternTypes.dataDictionary.name;
+
+  if (elementType === ObjectType) {
+    if (resolvedIterableType instanceof ArrayTypeSymbol) {
+      elementType = resolvedIterableType.elementType;
+    } else if (resolvedIterableType instanceof DataListTypeSymbol) {
+      elementType = resolvedIterableType.elementType;
+    }
+  }
+
+  if (isArrayType) {
+    // Array iterable, keep listOperand as-is.
+  } else if (isDictionaryType) {
+    listOperand = emitSetKeysList(converter, iterableOperand, elementType);
+    isDataList = true;
+  } else if (isDataListType) {
+    isDataList = true;
+  } else {
+    throw new Error(
+      "Set constructor expects an Array, DataList, or Set iterable.",
+    );
+  }
+
+  const indexVar = converter.newTemp(PrimitiveTypes.int32);
+  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new AssignmentInstruction(
+      indexVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(
+    new PropertyGetInstruction(
+      lengthVar,
+      listOperand,
+      isDataList ? "Count" : "length",
+    ),
+  );
+
+  const loopStart = converter.newLabel("set_ctor_start");
+  const loopContinue = converter.newLabel("set_ctor_continue");
+  const loopEnd = converter.newLabel("set_ctor_end");
+
+  converter.instructions.push(new LabelInstruction(loopStart));
+  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+  );
+  converter.instructions.push(
+    new ConditionalJumpInstruction(condTemp, loopEnd),
+  );
+
+  let keyToken: TACOperand;
+  if (isDataList) {
+    keyToken = converter.newTemp(ExternTypes.dataToken);
+    converter.instructions.push(
+      new MethodCallInstruction(keyToken, listOperand, "get_Item", [indexVar]),
+    );
+  } else {
+    const elementValue = converter.newTemp(elementType);
+    converter.instructions.push(
+      new ArrayAccessInstruction(elementValue, listOperand, indexVar),
+    );
+    keyToken = converter.wrapDataToken(elementValue);
+  }
+
+  const valueToken = converter.wrapDataToken(
+    createConstant(true, PrimitiveTypes.boolean),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, setOperand, "SetValue", [
+      keyToken,
+      valueToken,
+    ]),
+  );
+
+  converter.instructions.push(new LabelInstruction(loopContinue));
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      indexVar,
+      indexVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+  converter.instructions.push(new LabelInstruction(loopEnd));
+}
+
+function visitSetMethodCall(
+  converter: ASTToTACConverter,
+  propAccess: PropertyAccessExpressionNode,
+  rawArgs: ASTNode[],
+): TACOperand | null {
+  const resolvedType = resolveTypeFromNode(converter, propAccess.object);
+  const setOperand = converter.visitExpression(propAccess.object);
+  const operandType = converter.getOperandType(setOperand);
+  const setType = isSetCollectionType(operandType)
+    ? operandType
+    : isSetCollectionType(resolvedType)
+      ? resolvedType
+      : null;
+  if (!setType) {
+    return null;
+  }
+
+  const elementType = resolveSetElementType(setType);
+
+  switch (propAccess.property) {
+    case "add": {
+      if (rawArgs.length !== 1) {
+        throw new Error("Set.add expects one argument.");
+      }
+      const value = converter.visitExpression(rawArgs[0]);
+      const keyToken = converter.wrapDataToken(value);
+      const valueToken = converter.wrapDataToken(
+        createConstant(true, PrimitiveTypes.boolean),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, setOperand, "SetValue", [
+          keyToken,
+          valueToken,
+        ]),
+      );
+      return setOperand;
+    }
+    case "has": {
+      if (rawArgs.length !== 1) {
+        throw new Error("Set.has expects one argument.");
+      }
+      const value = converter.visitExpression(rawArgs[0]);
+      const keyToken = converter.wrapDataToken(value);
+      const result = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new MethodCallInstruction(result, setOperand, "ContainsKey", [
+          keyToken,
+        ]),
+      );
+      return result;
+    }
+    case "delete": {
+      if (rawArgs.length !== 1) {
+        throw new Error("Set.delete expects one argument.");
+      }
+      const value = converter.visitExpression(rawArgs[0]);
+      const keyToken = converter.wrapDataToken(value);
+      const result = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new MethodCallInstruction(result, setOperand, "Remove", [keyToken]),
+      );
+      return result;
+    }
+    case "clear": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Set.clear expects no arguments.");
+      }
+      const keysList = emitSetKeysList(converter, setOperand, elementType);
+      const indexVar = converter.newTemp(PrimitiveTypes.int32);
+      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+      converter.instructions.push(
+        new AssignmentInstruction(
+          indexVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(
+        new PropertyGetInstruction(lengthVar, keysList, "Count"),
+      );
+
+      const loopStart = converter.newLabel("set_clear_start");
+      const loopContinue = converter.newLabel("set_clear_continue");
+      const loopEnd = converter.newLabel("set_clear_end");
+
+      converter.instructions.push(new LabelInstruction(loopStart));
+      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+      );
+      converter.instructions.push(
+        new ConditionalJumpInstruction(condTemp, loopEnd),
+      );
+
+      const keyToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, setOperand, "Remove", [keyToken]),
+      );
+
+      converter.instructions.push(new LabelInstruction(loopContinue));
+      converter.instructions.push(
+        new BinaryOpInstruction(
+          indexVar,
+          indexVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      converter.instructions.push(new LabelInstruction(loopEnd));
+      return createConstant(0, PrimitiveTypes.void);
+    }
+    case "values":
+    case "keys": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Set.values/keys expects no arguments.");
+      }
+      return emitSetKeysList(converter, setOperand, elementType);
+    }
+    case "entries": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Set.entries expects no arguments.");
+      }
+      const keysList = emitSetKeysList(converter, setOperand, elementType);
+      const entriesType = new DataListTypeSymbol(ExternTypes.dataList);
+      const entriesResult = converter.newTemp(entriesType);
+      const listCtorSig = converter.requireExternSignature(
+        "DataList",
+        "ctor",
+        "method",
+        [],
+        "DataList",
+      );
+      converter.instructions.push(
+        new CallInstruction(entriesResult, listCtorSig, []),
+      );
+
+      const indexVar = converter.newTemp(PrimitiveTypes.int32);
+      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+      converter.instructions.push(
+        new AssignmentInstruction(
+          indexVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(
+        new PropertyGetInstruction(lengthVar, keysList, "Count"),
+      );
+
+      const loopStart = converter.newLabel("set_entries_start");
+      const loopContinue = converter.newLabel("set_entries_continue");
+      const loopEnd = converter.newLabel("set_entries_end");
+
+      converter.instructions.push(new LabelInstruction(loopStart));
+      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+      );
+      converter.instructions.push(
+        new ConditionalJumpInstruction(condTemp, loopEnd),
+      );
+
+      const keyToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+      );
+
+      const pairList = converter.newTemp(new DataListTypeSymbol(elementType));
+      converter.instructions.push(
+        new CallInstruction(pairList, listCtorSig, []),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+      );
+      const pairToken = converter.wrapDataToken(pairList);
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
+      );
+
+      converter.instructions.push(new LabelInstruction(loopContinue));
+      converter.instructions.push(
+        new BinaryOpInstruction(
+          indexVar,
+          indexVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      converter.instructions.push(new LabelInstruction(loopEnd));
+
+      return entriesResult;
+    }
+    case "forEach": {
+      if (rawArgs.length < 1) {
+        throw new Error("Set.forEach expects a callback argument.");
+      }
+      const callbackNode = rawArgs[0];
+      if (callbackNode.kind !== ASTNodeKind.FunctionExpression) {
+        throw new Error(
+          "Set.forEach currently requires an inline function or arrow callback.",
+        );
+      }
+      const callback = callbackNode as FunctionExpressionNode;
+      let thisOverride: TACOperand | null = null;
+      if (!callback.isArrow) {
+        if (rawArgs.length >= 2) {
+          const thisArg = converter.visitExpression(rawArgs[1]);
+          const thisArgTemp = converter.newTemp(
+            converter.getOperandType(thisArg),
+          );
+          converter.instructions.push(
+            new CopyInstruction(thisArgTemp, thisArg),
+          );
+          thisOverride = thisArgTemp;
+        } else {
+          thisOverride = createConstant(null, ObjectType);
+        }
+      }
+
+      const keysList = emitSetKeysList(converter, setOperand, elementType);
+      const indexVar = converter.newTemp(PrimitiveTypes.int32);
+      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+      converter.instructions.push(
+        new AssignmentInstruction(
+          indexVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(
+        new PropertyGetInstruction(lengthVar, keysList, "Count"),
+      );
+
+      const loopStart = converter.newLabel("set_foreach_start");
+      const loopContinue = converter.newLabel("set_foreach_continue");
+      const loopEnd = converter.newLabel("set_foreach_end");
+
+      converter.symbolTable.enterScope();
+      const paramVars = callback.parameters.map((param, index) => {
+        let paramType = param.type ?? ObjectType;
+        if (index === 0 || index === 1) {
+          paramType = elementType;
+        } else if (index === 2) {
+          paramType = setType;
+        }
+        if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+          converter.symbolTable.addSymbol(param.name, paramType, false, false);
+        }
+        return createVariable(param.name, paramType, { isLocal: true });
+      });
+
+      converter.instructions.push(new LabelInstruction(loopStart));
+      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+      );
+      converter.instructions.push(
+        new ConditionalJumpInstruction(condTemp, loopEnd),
+      );
+
+      const keyToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+      );
+      const value = converter.unwrapDataToken(keyToken, elementType);
+
+      if (paramVars[0]) {
+        converter.instructions.push(new CopyInstruction(paramVars[0], value));
+      }
+      if (paramVars[1]) {
+        converter.instructions.push(new CopyInstruction(paramVars[1], value));
+      }
+      if (paramVars[2]) {
+        converter.instructions.push(
+          new CopyInstruction(paramVars[2], setOperand),
+        );
+      }
+
+      const previousThisOverride = converter.currentThisOverride ?? null;
+      if (thisOverride) {
+        converter.currentThisOverride = thisOverride;
+      }
+      if (callback.body.kind === ASTNodeKind.BlockStatement) {
+        converter.visitBlockStatement(callback.body as BlockStatementNode);
+      } else {
+        converter.visitExpression(callback.body);
+      }
+      converter.currentThisOverride = previousThisOverride;
+
+      converter.instructions.push(new LabelInstruction(loopContinue));
+      converter.instructions.push(
+        new BinaryOpInstruction(
+          indexVar,
+          indexVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      converter.instructions.push(new LabelInstruction(loopEnd));
+      converter.symbolTable.exitScope();
+
+      return createConstant(0, PrimitiveTypes.void);
+    }
+    default:
+      return null;
+  }
 }
 
 const resolveExternReturnType = (externSig: string): TypeSymbol | null => {
