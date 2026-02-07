@@ -942,8 +942,10 @@ function emitSetPopulateFromIterable(
     resolvedIterableType?.udonType === UdonType.DataList;
 
   const isDictionaryType =
-    operandType.name === ExternTypes.dataDictionary.name ||
-    resolvedIterableType?.name === ExternTypes.dataDictionary.name;
+    operandType === ExternTypes.dataDictionary ||
+    operandType.udonType === UdonType.DataDictionary ||
+    resolvedIterableType === ExternTypes.dataDictionary ||
+    resolvedIterableType?.udonType === UdonType.DataDictionary;
 
   if (elementType === ObjectType) {
     if (resolvedIterableType instanceof ArrayTypeSymbol) {
@@ -1099,8 +1101,10 @@ function emitMapPopulateFromIterable(
     resolvedIterableType?.udonType === UdonType.DataList;
 
   const isDictionaryType =
-    operandType.name === ExternTypes.dataDictionary.name ||
-    resolvedIterableType?.name === ExternTypes.dataDictionary.name;
+    operandType === ExternTypes.dataDictionary ||
+    operandType.udonType === UdonType.DataDictionary ||
+    resolvedIterableType === ExternTypes.dataDictionary ||
+    resolvedIterableType?.udonType === UdonType.DataDictionary;
 
   if (operandType instanceof ArrayTypeSymbol) {
     pairElementType = operandType.elementType;
@@ -1389,8 +1393,9 @@ function visitSetMethodCall(
       converter.instructions.push(
         new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
       );
+      const valueToken = keyToken;
       converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
       );
       const pairToken = converter.wrapDataToken(pairList);
       converter.instructions.push(

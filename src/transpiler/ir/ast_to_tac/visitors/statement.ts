@@ -369,9 +369,7 @@ export function visitForOfStatement(
   if (inferredMapType) {
     const entriesList = emitMapEntriesList(this, iterableOperand);
     iterableOperand = entriesList;
-  }
-
-  if (inferredSetType) {
+  } else if (inferredSetType) {
     const elementType = inferredSetType.elementType ?? ObjectType;
     const listType = new DataListTypeSymbol(elementType);
     const listResult = this.newTemp(listType);
