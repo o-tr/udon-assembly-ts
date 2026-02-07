@@ -372,7 +372,8 @@ export function visitCallExpression(
     if (calleeName === "parseFloat") {
       const evaluatedArgs = getArgs();
       if (evaluatedArgs.length === 0) {
-        return createConstant(0, PrimitiveTypes.single);
+        // No-arg parseFloat -> NaN
+        return createConstant(NaN, PrimitiveTypes.single);
       }
       if (evaluatedArgs.length !== 1) {
         throw new Error("parseFloat(...) expects one argument.");
@@ -454,7 +455,7 @@ export function visitCallExpression(
       this.instructions.push(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
-    if (calleeName === "Array") {
+    if (node.isNew && calleeName === "Array") {
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;
