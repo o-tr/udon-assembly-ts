@@ -44,10 +44,7 @@ export type LatticeValue =
 export const sccpAndPrune = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,
-  options?: {
-    maxWorklistIterations?: number;
-    onLimitReached?: "markAllReachable" | "break" | "warn";
-  },
+  options?: { maxWorklistIterations?: number; onLimitReached?: "markAllReachable" | "break" | "warn" },
 ): TACInstruction[] => {
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
@@ -98,7 +95,7 @@ export const sccpAndPrune = (
 
   const maxIterations =
     options?.maxWorklistIterations ?? Math.max(1000, cfg.blocks.length * 1000);
-  const _onLimit = options?.onLimitReached ?? "markAllReachable";
+  const onLimit = options?.onLimitReached ?? "markAllReachable";
   let workIterations = 0;
 
   const processedOnce = new Set<number>();
@@ -125,25 +122,19 @@ export const sccpAndPrune = (
 
     // Count only iterations that perform actual work (after skip check)
     if (++workIterations > maxIterations) {
-      // try {
-      //   console.warn(
-      //     `sccpAndPrune: reached maxWorklistIterations=${maxIterations}; aborting early`,
-      //   );
-      // } catch (e) {
-      //   /* ignore */
-      // }
-      // if (onLimit === "markAllReachable") {
-      //   for (const b of cfg.blocks) reachable.add(b.id);
-      // }
-      // break;
-    }
-    if (workIterations % 5000 === 0) {
-      // keep occasional progress logs for long runs
-      try {
-        console.log(`sccp iter: ${workIterations}/${maxIterations}`);
-      } catch (_e) {
-        /* ignore */
+      if (onLimit === "warn") {
+        try {
+          console.warn(
+            `sccpAndPrune: reached maxWorklistIterations=${maxIterations}; aborting early`,
+          );
+        } catch (e) {
+          /* ignore */
+        }
       }
+      if (onLimit === "markAllReachable") {
+        for (const b of cfg.blocks) reachable.add(b.id);
+      }
+      break;
     }
 
     if (inChanged) {
