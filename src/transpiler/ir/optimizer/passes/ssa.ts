@@ -251,9 +251,16 @@ const computeDominanceFrontiers = (
     const stop = idom.get(block.id) ?? null;
     for (const pred of block.preds) {
       let runner: number | null = pred;
+      const visited = new Set<number>();
       while (runner !== null && runner !== stop) {
+        // Prevent infinite loop if idom chain has a cycle or self-reference
+        if (visited.has(runner)) break;
+        visited.add(runner);
         frontiers.get(runner)?.add(block.id);
-        runner = idom.get(runner) ?? null;
+        const next = idom.get(runner);
+        // Break if idom is undefined or self-referencing
+        if (next === undefined || next === runner) break;
+        runner = next;
       }
     }
   }

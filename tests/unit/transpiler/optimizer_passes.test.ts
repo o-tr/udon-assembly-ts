@@ -38,10 +38,12 @@ import {
   UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
+  type ConstantOperand,
   createConstant,
   createLabel,
   createTemporary,
   createVariable,
+  TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
 
 const stringify = (insts: { toString(): string }[]) =>
@@ -1524,5 +1526,78 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
     expect(text).not.toContain("L_unused");
+  });
+
+  it("converges with copy chains in loops", () => {
+    const x = createVariable("x", PrimitiveTypes.int32);
+    const y = createVariable("y", PrimitiveTypes.int32);
+    const z = createVariable("z", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const lLoop = createLabel("L_loop");
+    const lEnd = createLabel("L_end");
+
+    // Block 0: x = 5; goto L_loop
+    // L_loop (Block 1): y = x; z = y; ifFalse cond goto L_end; goto L_loop
+    // L_end (Block 2): return z
+    // Back edge: Block 1 → Block 1 creates a copy cycle opportunity
+    const instructions = [
+      new AssignmentInstruction(x, createConstant(5, PrimitiveTypes.int32)),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lLoop),
+      new CopyInstruction(y, x),
+      new CopyInstruction(z, y),
+      new ConditionalJumpInstruction(cond, lEnd),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(z),
+    ];
+
+    // Should converge without hitting iteration limit and propagate constant 5
+    const result = sccpAndPrune(instructions, undefined, {
+      maxWorklistIterations: 100,
+      onLimitReached: "break",
+    });
+    // Ensure the return instruction contains the propagated constant 5
+    const retInst = result.find((inst) => inst.kind === "Return") as
+      | ReturnInstruction
+      | undefined;
+    expect(retInst).toBeDefined();
+    if (!retInst || !retInst.value) return;
+    expect(retInst.value.kind).toBe(TACOperandKind.Constant);
+    const constOp = retInst.value as ConstantOperand;
+    expect(constOp.value).toBe(5);
+  });
+
+  it("converges with self-referencing copy cycles", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const lLoop = createLabel("L_loop");
+    const lEnd = createLabel("L_end");
+
+    // a = b; b = a; in a loop creates a direct copy cycle
+    const instructions = [
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lLoop),
+      new CopyInstruction(a, b),
+      new CopyInstruction(b, a),
+      new ConditionalJumpInstruction(cond, lEnd),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    // Should converge quickly without excessive iterations
+    const result = sccpAndPrune(instructions, undefined, {
+      maxWorklistIterations: 100,
+      onLimitReached: "break",
+    });
+    // a and b are unknown (no constant), so return should reference a variable
+    const retInst2 = result.find((inst) => inst.kind === "Return") as
+      | ReturnInstruction
+      | undefined;
+    expect(retInst2).toBeDefined();
+    if (!retInst2 || !retInst2.value) return;
+    expect(retInst2.value.kind).toBe(TACOperandKind.Variable);
   });
 });
