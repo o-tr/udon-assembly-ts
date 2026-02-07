@@ -42,6 +42,7 @@ import {
   createLabel,
   createTemporary,
   createVariable,
+  ConstantOperand,
   TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
 
@@ -1561,9 +1562,10 @@ describe("optimizer passes", () => {
       | ReturnInstruction
       | undefined;
     expect(retInst).toBeDefined();
-    expect(retInst!.value).toBeDefined();
-    expect(retInst!.value!.kind).toBe(TACOperandKind.Constant);
-    expect((retInst!.value as any).value).toBe(5);
+    if (!retInst || !retInst.value) return;
+    expect(retInst.value.kind).toBe(TACOperandKind.Constant);
+    const constOp = retInst.value as ConstantOperand;
+    expect(constOp.value).toBe(5);
   });
 
   it("converges with self-referencing copy cycles", () => {
@@ -1595,7 +1597,7 @@ describe("optimizer passes", () => {
       | ReturnInstruction
       | undefined;
     expect(retInst2).toBeDefined();
-    expect(retInst2!.value).toBeDefined();
-    expect(retInst2!.value!.kind).toBe(TACOperandKind.Variable);
+    if (!retInst2 || !retInst2.value) return;
+    expect(retInst2.value.kind).toBe(TACOperandKind.Variable);
   });
 });

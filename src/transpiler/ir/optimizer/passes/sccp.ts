@@ -106,6 +106,7 @@ export const sccpAndPrune = (
   let workIterations = 0;
 
   const processedOnce = new Set<number>();
+  const succsProcessed = new Set<number>();
 
   while (qHead < queue.length) {
     const blockId = queue[qHead++] as number;
@@ -121,6 +122,10 @@ export const sccpAndPrune = (
 
     const firstTime = !processedOnce.has(blockId);
     if (firstTime) processedOnce.add(blockId);
+
+    // Ensure successors are processed at least once for reachable blocks.
+    // This prevents exposed labels (pre-marked reachable) from having their
+    // successors never explored when `out` doesn't change.
 
     const predMaps = block.preds
       .filter((id) => reachable.has(id))
@@ -166,7 +171,8 @@ export const sccpAndPrune = (
       outMaps.set(blockId, working);
     }
 
-    if (firstTime || outChanged) {
+    const needSuccs = firstTime || outChanged || !succsProcessed.has(blockId);
+    if (needSuccs) {
       const succs = resolveReachableSuccs(
         block,
         instructions,
@@ -182,6 +188,7 @@ export const sccpAndPrune = (
         }
         if (outChanged) enqueue(succ);
       }
+      succsProcessed.add(blockId);
     }
   }
 
