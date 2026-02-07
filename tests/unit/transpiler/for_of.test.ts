@@ -11,7 +11,7 @@ describe("for...of", () => {
   it("should lower for...of into array access and loop control", () => {
     const parser = new TypeScriptParser();
     const source = `
-      const tiles: number[] = new Array<number>(3);
+      const tiles: number[] = [1, 2, 3];
       for (const tile of tiles) {
         let x: number = tile;
       }
@@ -38,7 +38,7 @@ describe("for...of", () => {
   it("should support break and continue inside for...of", () => {
     const parser = new TypeScriptParser();
     const source = `
-      const tiles: number[] = new Array<number>(2);
+      const tiles: number[] = [1, 2];
       for (const tile of tiles) {
         if (tile > 0) {
           continue;

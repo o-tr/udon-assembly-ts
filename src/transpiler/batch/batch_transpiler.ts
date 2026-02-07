@@ -56,6 +56,7 @@ export interface BatchTranspilerOptions {
   useStringBuilder?: boolean;
   verbose?: boolean;
   excludeDirs?: string[];
+  allowCircular?: boolean;
   includeExternalDependencies?: boolean;
 }
 
@@ -91,7 +92,9 @@ export class BatchTranspiler {
       .map((f) => fs.realpathSync(f))
       .filter((f) => fileSet.has(f));
 
-    const resolver = new DependencyResolver();
+    const resolver = new DependencyResolver(options.sourceDir, {
+      allowCircular: options.allowCircular,
+    });
     const reachable = new Set<string>();
     const fallbackDeps = new Set<string>();
     const includeExternal = options.includeExternalDependencies !== false;

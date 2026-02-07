@@ -17,6 +17,7 @@ import {
   type CallExpressionNode,
   type FunctionExpressionNode,
   type IdentifierNode,
+  type LiteralNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   UdonType,
@@ -47,6 +48,8 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
+
+const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 
 const resolveSetElementType = (
   setType: TypeSymbol | null,
@@ -197,7 +200,8 @@ export function visitCallExpression(
       }
       if (innerCall.arguments.length !== 0) {
         throw new Error(
-          "setImmediate delayed scheduling currently only supports zero-argument callbacks",
+          "setImmediate delayed scheduling only supports zero-argument callbacks. " +
+            "Move arguments into class fields and read them in the target method instead.",
         );
       }
 
@@ -295,7 +299,7 @@ export function visitCallExpression(
             this.instructions.push(
               new CallInstruction(undefined, externSig, evaluatedArgs),
             );
-            return createConstant(0, PrimitiveTypes.void);
+            return VOID_RETURN;
           }
           const callResult = this.newTemp(returnType);
           this.instructions.push(
@@ -389,16 +393,15 @@ export function visitCallExpression(
       this.instructions.push(new CastInstruction(castResult, arg));
       return castResult;
     }
-    if (node.isNew && this.classMap.has(calleeName)) {
-      return this.visitInlineConstructor(calleeName, getArgs());
-    }
-    if (
-      node.isNew &&
-      this.classRegistry?.getClass(calleeName) &&
-      !this.classRegistry.isStub(calleeName) &&
-      !this.udonBehaviourClasses.has(calleeName)
-    ) {
-      return this.visitInlineConstructor(calleeName, getArgs());
+    if (node.isNew) {
+      const canInline =
+        (this.classMap.has(calleeName) ||
+          this.classRegistry?.getClass(calleeName)) &&
+        !this.classRegistry?.isStub(calleeName) &&
+        !this.udonBehaviourClasses.has(calleeName);
+      if (canInline) {
+        return this.visitInlineConstructor(calleeName, getArgs());
+      }
     }
     if (
       node.isNew &&
@@ -466,6 +469,15 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
+      if (rawArgs.length === 1 && rawArgs[0].kind === ASTNodeKind.Literal) {
+        const lit = rawArgs[0] as LiteralNode;
+        if (typeof lit.value === "number") {
+          throw new Error(
+            "new Array(n) for pre-allocating a fixed-length array is not supported. " +
+              "Use an array literal (e.g., [1, 2, 3]) instead.",
+          );
+        }
+      }
       for (const arg of getArgs()) {
         const token = this.wrapDataToken(arg);
         this.instructions.push(
@@ -676,7 +688,7 @@ export function visitCallExpression(
           this.instructions.push(
             new CallInstruction(undefined, externSig, evaluatedArgs),
           );
-          return createConstant(0, PrimitiveTypes.void);
+          return VOID_RETURN;
         }
         const callResult = this.newTemp(returnType);
         this.instructions.push(
@@ -727,7 +739,7 @@ export function visitCallExpression(
         this.instructions.push(
           new CallInstruction(undefined, externName, evaluatedArgs),
         );
-        return createConstant(0, PrimitiveTypes.void); // Console methods return void
+        return VOID_RETURN; // Console methods return void
       }
     }
 
@@ -785,7 +797,7 @@ export function visitCallExpression(
       this.instructions.push(
         new CallInstruction(undefined, externSig, [object, evaluatedArgs[0]]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     if (
       propAccess.property === "SendCustomNetworkEvent" &&
@@ -805,7 +817,7 @@ export function visitCallExpression(
           evaluatedArgs[1],
         ]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     if (
       this.isUdonBehaviourType(objectType) &&
@@ -874,7 +886,7 @@ export function visitCallExpression(
         return returnTemp;
       }
 
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     if (objectType.name === ExternTypes.dataList.name) {
       if (propAccess.property === "Add" && evaluatedArgs.length === 1) {
@@ -882,7 +894,7 @@ export function visitCallExpression(
         this.instructions.push(
           new MethodCallInstruction(undefined, object, "Add", [token]),
         );
-        return createConstant(0, PrimitiveTypes.void);
+        return VOID_RETURN;
       }
       if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
@@ -903,7 +915,7 @@ export function visitCallExpression(
             valueToken,
           ]),
         );
-        return createConstant(0, PrimitiveTypes.void);
+        return VOID_RETURN;
       }
       if (
         (propAccess.property === "ContainsKey" ||
@@ -1002,7 +1014,7 @@ export function visitCallExpression(
       this.instructions.push(
         new CallInstruction(undefined, externSig, [object]),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     let resolvedReturnType: TypeSymbol | null = null;
     if (this.classRegistry) {
@@ -1038,7 +1050,7 @@ export function visitCallExpression(
           evaluatedArgs,
         ),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
 
     const callResult = this.newTemp(resolvedReturnType ?? ObjectType);
@@ -1557,7 +1569,7 @@ function visitSetMethodCall(
       converter.instructions.push(
         new MethodCallInstruction(undefined, setOperand, "Clear", []),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     case "values":
     case "keys": {
@@ -1755,7 +1767,7 @@ function visitSetMethodCall(
       converter.instructions.push(new LabelInstruction(loopEnd));
       converter.symbolTable.exitScope();
 
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     default:
       return null;
@@ -1843,7 +1855,7 @@ function visitMapMethodCall(
       converter.instructions.push(
         new MethodCallInstruction(undefined, mapOperand, "Clear", []),
       );
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     case "keys": {
       if (rawArgs.length !== 0) {
@@ -2065,7 +2077,7 @@ function visitMapMethodCall(
       converter.instructions.push(new LabelInstruction(loopEnd));
       converter.symbolTable.exitScope();
 
-      return createConstant(0, PrimitiveTypes.void);
+      return VOID_RETURN;
     }
     default:
       return null;

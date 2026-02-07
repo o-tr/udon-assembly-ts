@@ -151,7 +151,7 @@ describe("Udon Code Generation", () => {
     const parser = new TypeScriptParser();
     const source = `
       let arr: number[] = [];
-      arr = new Array<number>(2);
+      arr = [1, 2];
       let x: number = arr[1];
     `;
     const ast = parser.parse(source);
