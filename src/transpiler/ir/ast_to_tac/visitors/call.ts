@@ -42,7 +42,10 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { isSetCollectionType } from "../helpers/collections.js";
+import {
+  isMapCollectionType,
+  isSetCollectionType,
+} from "../helpers/collections.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const resolveSetElementType = (
@@ -60,6 +63,30 @@ const resolveSetElementType = (
   return fallback ?? ObjectType;
 };
 
+const resolveMapKeyType = (
+  mapType: TypeSymbol | null,
+  fallback?: TypeSymbol,
+): TypeSymbol => {
+  if (mapType instanceof CollectionTypeSymbol) {
+    return (
+      (mapType.keyType as TypeSymbol | undefined) ?? fallback ?? ObjectType
+    );
+  }
+  return fallback ?? ObjectType;
+};
+
+const resolveMapValueType = (
+  mapType: TypeSymbol | null,
+  fallback?: TypeSymbol,
+): TypeSymbol => {
+  if (mapType instanceof CollectionTypeSymbol) {
+    return (
+      (mapType.valueType as TypeSymbol | undefined) ?? fallback ?? ObjectType
+    );
+  }
+  return fallback ?? ObjectType;
+};
+
 const emitSetKeysList = (
   converter: ASTToTACConverter,
   setOperand: TACOperand,
@@ -69,6 +96,32 @@ const emitSetKeysList = (
   const listResult = converter.newTemp(listType);
   converter.instructions.push(
     new MethodCallInstruction(listResult, setOperand, "GetKeys", []),
+  );
+  return listResult;
+};
+
+const emitMapKeysList = (
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  keyType: TypeSymbol,
+): TACOperand => {
+  const listType = new DataListTypeSymbol(keyType);
+  const listResult = converter.newTemp(listType);
+  converter.instructions.push(
+    new MethodCallInstruction(listResult, mapOperand, "GetKeys", []),
+  );
+  return listResult;
+};
+
+const emitMapValuesList = (
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  valueType: TypeSymbol,
+): TACOperand => {
+  const listType = new DataListTypeSymbol(valueType);
+  const listResult = converter.newTemp(listType);
+  converter.instructions.push(
+    new MethodCallInstruction(listResult, mapOperand, "GetValues", []),
   );
   return listResult;
 };
@@ -88,6 +141,9 @@ export function visitCallExpression(
     const calleeName = (callee as IdentifierNode).name;
     if (node.isNew && calleeName === "Set") {
       return emitSetConstructor(this, node);
+    }
+    if (node.isNew && calleeName === "Map") {
+      return emitMapConstructor(this, node);
     }
   }
 
@@ -241,6 +297,11 @@ export function visitCallExpression(
       : isSetCollectionType(resolvedType)
         ? resolvedType
         : null;
+    const mapType = isMapCollectionType(objectType)
+      ? objectType
+      : isMapCollectionType(resolvedType)
+        ? resolvedType
+        : null;
     if (setType) {
       const setResult = visitSetMethodCall(
         this,
@@ -251,6 +312,18 @@ export function visitCallExpression(
       );
       if (setResult) {
         return setResult;
+      }
+    }
+    if (mapType) {
+      const mapResult = visitMapMethodCall(
+        this,
+        object,
+        mapType,
+        propAccess,
+        rawArgs,
+      );
+      if (mapResult) {
+        return mapResult;
       }
     }
 
@@ -959,6 +1032,237 @@ function emitSetPopulateFromIterable(
   converter.instructions.push(new LabelInstruction(loopEnd));
 }
 
+function emitMapConstructor(
+  converter: ASTToTACConverter,
+  node: CallExpressionNode,
+): TACOperand {
+  const typeArgText = node.typeArguments?.length
+    ? `Map<${node.typeArguments.join(", ")}>`
+    : "Map";
+  const mapType = converter.typeMapper.mapTypeScriptType(typeArgText);
+  const mapResult = converter.newTemp(mapType);
+  const ctorSig = converter.requireExternSignature(
+    "DataDictionary",
+    "ctor",
+    "method",
+    [],
+    "DataDictionary",
+  );
+  converter.instructions.push(new CallInstruction(mapResult, ctorSig, []));
+
+  if (node.arguments.length > 0) {
+    if (node.arguments.length !== 1) {
+      throw new Error("Map constructor expects at most one iterable argument.");
+    }
+    const iterableNode = node.arguments[0];
+    const iterableOperand = converter.visitExpression(iterableNode);
+    emitMapPopulateFromIterable(
+      converter,
+      mapResult,
+      mapType,
+      iterableNode,
+      iterableOperand,
+    );
+  }
+
+  return mapResult;
+}
+
+function emitMapPopulateFromIterable(
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  mapType: TypeSymbol,
+  iterableNode: ASTNode,
+  iterableOperand: TACOperand,
+): void {
+  const resolvedIterableType = resolveTypeFromNode(converter, iterableNode);
+  const operandType = converter.getOperandType(iterableOperand);
+  const keyType = resolveMapKeyType(mapType);
+  const valueType = resolveMapValueType(mapType);
+
+  let listOperand = iterableOperand;
+  let isDataList = false;
+  let pairElementType: TypeSymbol | null = null;
+
+  const isArrayType =
+    operandType instanceof ArrayTypeSymbol ||
+    operandType.udonType === UdonType.Array ||
+    resolvedIterableType instanceof ArrayTypeSymbol ||
+    resolvedIterableType?.udonType === UdonType.Array;
+
+  const isDataListType =
+    operandType instanceof DataListTypeSymbol ||
+    operandType.name === ExternTypes.dataList.name ||
+    operandType.udonType === UdonType.DataList ||
+    resolvedIterableType instanceof DataListTypeSymbol ||
+    resolvedIterableType?.name === ExternTypes.dataList.name ||
+    resolvedIterableType?.udonType === UdonType.DataList;
+
+  const isDictionaryType =
+    operandType.name === ExternTypes.dataDictionary.name ||
+    resolvedIterableType?.name === ExternTypes.dataDictionary.name;
+
+  if (operandType instanceof ArrayTypeSymbol) {
+    pairElementType = operandType.elementType;
+  } else if (resolvedIterableType instanceof ArrayTypeSymbol) {
+    pairElementType = resolvedIterableType.elementType;
+  } else if (operandType instanceof DataListTypeSymbol) {
+    pairElementType = operandType.elementType;
+  } else if (resolvedIterableType instanceof DataListTypeSymbol) {
+    pairElementType = resolvedIterableType.elementType;
+  }
+
+  if (isDictionaryType) {
+    listOperand = emitMapKeysList(converter, iterableOperand, keyType);
+    isDataList = true;
+  } else if (isArrayType) {
+    // Array iterable of [key, value] pairs, keep listOperand as-is.
+  } else if (isDataListType) {
+    isDataList = true;
+  } else {
+    throw new Error(
+      "Map constructor expects an Array, DataList, or Map iterable.",
+    );
+  }
+
+  const indexVar = converter.newTemp(PrimitiveTypes.int32);
+  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new AssignmentInstruction(
+      indexVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(
+    new PropertyGetInstruction(
+      lengthVar,
+      listOperand,
+      isDataList ? "Count" : "length",
+    ),
+  );
+
+  const loopStart = converter.newLabel("map_ctor_start");
+  const loopContinue = converter.newLabel("map_ctor_continue");
+  const loopEnd = converter.newLabel("map_ctor_end");
+
+  converter.instructions.push(new LabelInstruction(loopStart));
+  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+  );
+  converter.instructions.push(
+    new ConditionalJumpInstruction(condTemp, loopEnd),
+  );
+
+  let keyToken: TACOperand;
+  let valueToken: TACOperand;
+
+  if (isDictionaryType) {
+    const dictKeyToken = converter.newTemp(ExternTypes.dataToken);
+    converter.instructions.push(
+      new MethodCallInstruction(dictKeyToken, listOperand, "get_Item", [
+        indexVar,
+      ]),
+    );
+    const dictValueToken = converter.newTemp(ExternTypes.dataToken);
+    converter.instructions.push(
+      new MethodCallInstruction(dictValueToken, iterableOperand, "GetValue", [
+        dictKeyToken,
+      ]),
+    );
+    keyToken = dictKeyToken;
+    valueToken = dictValueToken;
+  } else if (isDataList) {
+    const pairToken = converter.newTemp(ExternTypes.dataToken);
+    converter.instructions.push(
+      new MethodCallInstruction(pairToken, listOperand, "get_Item", [indexVar]),
+    );
+    const pairList = converter.unwrapDataToken(pairToken, ExternTypes.dataList);
+    const pairKeyToken = converter.newTemp(ExternTypes.dataToken);
+    const pairValueToken = converter.newTemp(ExternTypes.dataToken);
+    converter.instructions.push(
+      new MethodCallInstruction(pairKeyToken, pairList, "get_Item", [
+        createConstant(0, PrimitiveTypes.int32),
+      ]),
+    );
+    converter.instructions.push(
+      new MethodCallInstruction(pairValueToken, pairList, "get_Item", [
+        createConstant(1, PrimitiveTypes.int32),
+      ]),
+    );
+    keyToken = pairKeyToken;
+    valueToken = pairValueToken;
+  } else {
+    const pairValue = converter.newTemp(pairElementType ?? ObjectType);
+    converter.instructions.push(
+      new ArrayAccessInstruction(pairValue, listOperand, indexVar),
+    );
+    const pairValueType =
+      pairElementType ?? converter.getOperandType(pairValue);
+    if (pairValueType instanceof ArrayTypeSymbol) {
+      const keyValue = converter.newTemp(keyType);
+      const valueValue = converter.newTemp(valueType);
+      converter.instructions.push(
+        new ArrayAccessInstruction(
+          keyValue,
+          pairValue,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(
+        new ArrayAccessInstruction(
+          valueValue,
+          pairValue,
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      keyToken = converter.wrapDataToken(keyValue);
+      valueToken = converter.wrapDataToken(valueValue);
+    } else if (
+      pairValueType instanceof DataListTypeSymbol ||
+      pairValueType.name === ExternTypes.dataList.name
+    ) {
+      const pairKeyToken = converter.newTemp(ExternTypes.dataToken);
+      const pairValueToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(pairKeyToken, pairValue, "get_Item", [
+          createConstant(0, PrimitiveTypes.int32),
+        ]),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(pairValueToken, pairValue, "get_Item", [
+          createConstant(1, PrimitiveTypes.int32),
+        ]),
+      );
+      keyToken = pairKeyToken;
+      valueToken = pairValueToken;
+    } else {
+      throw new Error(
+        "Map constructor expects iterable of [key, value] pairs.",
+      );
+    }
+  }
+
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, mapOperand, "SetValue", [
+      keyToken,
+      valueToken,
+    ]),
+  );
+
+  converter.instructions.push(new LabelInstruction(loopContinue));
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      indexVar,
+      indexVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+  converter.instructions.push(new LabelInstruction(loopEnd));
+}
+
 function visitSetMethodCall(
   converter: ASTToTACConverter,
   setOperand: TACOperand,
@@ -1189,6 +1493,316 @@ function visitSetMethodCall(
       if (paramVars[2]) {
         converter.instructions.push(
           new CopyInstruction(paramVars[2], setOperand),
+        );
+      }
+
+      const previousThisOverride = converter.currentThisOverride;
+      if (thisOverride) {
+        converter.currentThisOverride = thisOverride;
+      }
+      if (callback.body.kind === ASTNodeKind.BlockStatement) {
+        converter.visitBlockStatement(callback.body as BlockStatementNode);
+      } else {
+        converter.visitExpression(callback.body);
+      }
+      converter.currentThisOverride = previousThisOverride;
+
+      converter.instructions.push(new LabelInstruction(loopContinue));
+      converter.instructions.push(
+        new BinaryOpInstruction(
+          indexVar,
+          indexVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      converter.instructions.push(new LabelInstruction(loopEnd));
+      converter.symbolTable.exitScope();
+
+      return createConstant(0, PrimitiveTypes.void);
+    }
+    default:
+      return null;
+  }
+}
+
+function visitMapMethodCall(
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  mapType: CollectionTypeSymbol,
+  propAccess: PropertyAccessExpressionNode,
+  rawArgs: ASTNode[],
+): TACOperand | null {
+  const keyType = resolveMapKeyType(mapType);
+  const valueType = resolveMapValueType(mapType);
+  const unwrapToken = (
+    token: TACOperand,
+    targetType: TypeSymbol,
+  ): TACOperand =>
+    targetType.name === ExternTypes.dataToken.name
+      ? token
+      : converter.unwrapDataToken(token, targetType);
+
+  switch (propAccess.property) {
+    case "set": {
+      if (rawArgs.length !== 2) {
+        throw new Error("Map.set expects two arguments.");
+      }
+      const keyValue = converter.visitExpression(rawArgs[0]);
+      const valueValue = converter.visitExpression(rawArgs[1]);
+      const keyToken = converter.wrapDataToken(keyValue);
+      const valueToken = converter.wrapDataToken(valueValue);
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, mapOperand, "SetValue", [
+          keyToken,
+          valueToken,
+        ]),
+      );
+      return mapOperand;
+    }
+    case "get": {
+      if (rawArgs.length !== 1) {
+        throw new Error("Map.get expects one argument.");
+      }
+      const keyValue = converter.visitExpression(rawArgs[0]);
+      const keyToken = converter.wrapDataToken(keyValue);
+      const valueToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
+          keyToken,
+        ]),
+      );
+      return unwrapToken(valueToken, valueType);
+    }
+    case "has": {
+      if (rawArgs.length !== 1) {
+        throw new Error("Map.has expects one argument.");
+      }
+      const keyValue = converter.visitExpression(rawArgs[0]);
+      const keyToken = converter.wrapDataToken(keyValue);
+      const result = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new MethodCallInstruction(result, mapOperand, "ContainsKey", [
+          keyToken,
+        ]),
+      );
+      return result;
+    }
+    case "delete": {
+      if (rawArgs.length !== 1) {
+        throw new Error("Map.delete expects one argument.");
+      }
+      const keyValue = converter.visitExpression(rawArgs[0]);
+      const keyToken = converter.wrapDataToken(keyValue);
+      const result = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new MethodCallInstruction(result, mapOperand, "Remove", [keyToken]),
+      );
+      return result;
+    }
+    case "clear": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Map.clear expects no arguments.");
+      }
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, mapOperand, "Clear", []),
+      );
+      return createConstant(0, PrimitiveTypes.void);
+    }
+    case "keys": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Map.keys expects no arguments.");
+      }
+      return emitMapKeysList(converter, mapOperand, keyType);
+    }
+    case "values": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Map.values expects no arguments.");
+      }
+      return emitMapValuesList(converter, mapOperand, valueType);
+    }
+    case "entries": {
+      if (rawArgs.length !== 0) {
+        throw new Error("Map.entries expects no arguments.");
+      }
+      const keysList = emitMapKeysList(converter, mapOperand, keyType);
+      const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
+      const entriesResult = converter.newTemp(entriesType);
+      const listCtorSig = converter.requireExternSignature(
+        "DataList",
+        "ctor",
+        "method",
+        [],
+        "DataList",
+      );
+      converter.instructions.push(
+        new CallInstruction(entriesResult, listCtorSig, []),
+      );
+
+      const indexVar = converter.newTemp(PrimitiveTypes.int32);
+      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+      converter.instructions.push(
+        new AssignmentInstruction(
+          indexVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(
+        new PropertyGetInstruction(lengthVar, keysList, "Count"),
+      );
+
+      const loopStart = converter.newLabel("map_entries_start");
+      const loopContinue = converter.newLabel("map_entries_continue");
+      const loopEnd = converter.newLabel("map_entries_end");
+
+      converter.instructions.push(new LabelInstruction(loopStart));
+      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+      );
+      converter.instructions.push(
+        new ConditionalJumpInstruction(condTemp, loopEnd),
+      );
+
+      const keyToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+      );
+      const valueToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
+          keyToken,
+        ]),
+      );
+
+      const pairList = converter.newTemp(
+        new DataListTypeSymbol(ExternTypes.dataToken),
+      );
+      converter.instructions.push(
+        new CallInstruction(pairList, listCtorSig, []),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+      );
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
+      );
+      const pairToken = converter.wrapDataToken(pairList);
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
+      );
+
+      converter.instructions.push(new LabelInstruction(loopContinue));
+      converter.instructions.push(
+        new BinaryOpInstruction(
+          indexVar,
+          indexVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      converter.instructions.push(new LabelInstruction(loopEnd));
+
+      return entriesResult;
+    }
+    case "forEach": {
+      if (rawArgs.length < 1) {
+        throw new Error("Map.forEach expects a callback argument.");
+      }
+      const callbackNode = rawArgs[0];
+      if (callbackNode.kind !== ASTNodeKind.FunctionExpression) {
+        throw new Error(
+          "Map.forEach currently requires an inline function or arrow callback.",
+        );
+      }
+      const callback = callbackNode as FunctionExpressionNode;
+      let thisOverride: TACOperand | null = null;
+      if (!callback.isArrow) {
+        if (rawArgs.length >= 2) {
+          const thisArg = converter.visitExpression(rawArgs[1]);
+          const thisArgTemp = converter.newTemp(
+            converter.getOperandType(thisArg),
+          );
+          converter.instructions.push(
+            new CopyInstruction(thisArgTemp, thisArg),
+          );
+          thisOverride = thisArgTemp;
+        } else {
+          thisOverride = createConstant(null, ObjectType);
+        }
+      }
+
+      const keysList = emitMapKeysList(converter, mapOperand, keyType);
+      const indexVar = converter.newTemp(PrimitiveTypes.int32);
+      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+      converter.instructions.push(
+        new AssignmentInstruction(
+          indexVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.instructions.push(
+        new PropertyGetInstruction(lengthVar, keysList, "Count"),
+      );
+
+      const loopStart = converter.newLabel("map_foreach_start");
+      const loopContinue = converter.newLabel("map_foreach_continue");
+      const loopEnd = converter.newLabel("map_foreach_end");
+
+      converter.symbolTable.enterScope();
+      const paramVars = callback.parameters.map((param, index) => {
+        let paramType = param.type ?? ObjectType;
+        if (index === 0) {
+          paramType = valueType;
+        } else if (index === 1) {
+          paramType = keyType;
+        } else if (index === 2) {
+          paramType = mapType;
+        }
+        if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+          converter.symbolTable.addSymbol(param.name, paramType, false, false);
+        }
+        return createVariable(param.name, paramType, { isLocal: true });
+      });
+
+      converter.instructions.push(new LabelInstruction(loopStart));
+      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+      );
+      converter.instructions.push(
+        new ConditionalJumpInstruction(condTemp, loopEnd),
+      );
+
+      const keyToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+      );
+      const valueToken = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
+          keyToken,
+        ]),
+      );
+
+      const keyValue = unwrapToken(keyToken, keyType);
+      const valueValue = unwrapToken(valueToken, valueType);
+
+      if (paramVars[0]) {
+        converter.instructions.push(
+          new CopyInstruction(paramVars[0], valueValue),
+        );
+      }
+      if (paramVars[1]) {
+        converter.instructions.push(
+          new CopyInstruction(paramVars[1], keyValue),
+        );
+      }
+      if (paramVars[2]) {
+        converter.instructions.push(
+          new CopyInstruction(paramVars[2], mapOperand),
         );
       }
 

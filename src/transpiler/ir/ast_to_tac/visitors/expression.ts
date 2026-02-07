@@ -58,7 +58,10 @@ import {
   type TACOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { isSetCollectionType } from "../helpers/collections.js";
+import {
+  isMapCollectionType,
+  isSetCollectionType,
+} from "../helpers/collections.js";
 
 function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
@@ -1076,7 +1079,9 @@ export function visitPropertyAccessExpression(
     const resolvedBaseType = resolveTypeFromNode(this, node.object);
     const isSet =
       isSetCollectionType(objectType) || isSetCollectionType(resolvedBaseType);
-    if (isSet && node.property === "size") {
+    const isMap =
+      isMapCollectionType(objectType) || isMapCollectionType(resolvedBaseType);
+    if ((isSet || isMap) && node.property === "size") {
       const result = this.newTemp(PrimitiveTypes.int32);
       this.instructions.push(
         new PropertyGetInstruction(result, object, "Count"),

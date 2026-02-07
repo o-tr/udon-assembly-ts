@@ -8,4 +8,12 @@ export const isSetCollectionType = (
   type: TypeSymbol | null,
 ): type is CollectionTypeSymbol =>
   type instanceof CollectionTypeSymbol &&
-  type.name === ExternTypes.dataDictionary.name;
+  type.name === ExternTypes.dataDictionary.name &&
+  type.elementType !== undefined;
+
+export const isMapCollectionType = (
+  type: TypeSymbol | null,
+): type is CollectionTypeSymbol =>
+  type instanceof CollectionTypeSymbol &&
+  type.name === ExternTypes.dataDictionary.name &&
+  type.elementType === undefined;
