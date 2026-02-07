@@ -29,18 +29,5 @@ export function computeExportLabels(
   udonBehaviourLayouts: UdonBehaviourLayouts,
   entryClassName?: string | null,
 ): Set<string> {
-  const exportLabels = computeExposedLabels(
-    registry,
-    udonBehaviourLayouts,
-    entryClassName,
-  );
-  if (entryClassName) {
-    const entryLayout = udonBehaviourLayouts.get(entryClassName);
-    if (entryLayout) {
-      for (const layout of entryLayout.values()) {
-        if (layout.isPublic) exportLabels.add(layout.exportMethodName);
-      }
-    }
-  }
-  return exportLabels;
+  return computeExposedLabels(registry, udonBehaviourLayouts, entryClassName);
 }
