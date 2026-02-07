@@ -170,9 +170,7 @@ export function visitCallExpression(
         }
         const stmt = block.statements[0];
         if (stmt.kind === ASTNodeKind.CallExpression) {
-          const expr = stmt as ASTNode;
-          if (expr.kind === ASTNodeKind.CallExpression)
-            innerCall = expr as CallExpressionNode;
+          innerCall = stmt as CallExpressionNode;
         }
       } else if (callback.body.kind === ASTNodeKind.CallExpression) {
         innerCall = callback.body as CallExpressionNode;
@@ -360,8 +358,7 @@ export function visitCallExpression(
           "parseInt with radix is not supported by the transpiler",
         );
       }
-      const arg =
-        evaluatedArgs[0] ?? createConstant("0", PrimitiveTypes.string);
+      const arg = evaluatedArgs[0];
       // Use Int32.Parse extern for string->int conversion when possible.
       const result = this.newTemp(PrimitiveTypes.int32);
       const externSig = this.requireExternSignature(
@@ -400,7 +397,7 @@ export function visitCallExpression(
       return this.visitInlineConstructor(calleeName, getArgs());
     }
     if (
-      !node.isNew &&
+      node.isNew &&
       this.classRegistry?.getClass(calleeName) &&
       !this.classRegistry.isStub(calleeName) &&
       !this.udonBehaviourClasses.has(calleeName)
