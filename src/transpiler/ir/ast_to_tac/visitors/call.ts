@@ -17,7 +17,6 @@ import {
   type CallExpressionNode,
   type FunctionExpressionNode,
   type IdentifierNode,
-  type LiteralNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   UdonType,
@@ -140,8 +139,10 @@ export function visitCallExpression(
   }
   const defaultResult = () => this.newTemp(ObjectType);
 
+  // super() constructor calls are handled by the class constructor visitor;
+  // if one reaches here, treat it as void (matching VOID_RETURN semantics).
   if (callee.kind === ASTNodeKind.SuperExpression) {
-    return createConstant(null, ObjectType);
+    return VOID_RETURN;
   }
 
   if (callee.kind === ASTNodeKind.Identifier) {
@@ -340,6 +341,9 @@ export function visitCallExpression(
       }
       const arg = evaluatedArgs[0];
       const argType = this.getOperandType(arg);
+      // Udon only supports Single (float32), not 64-bit double.
+      // Integer values > 2^24 will lose precision — this is an Udon
+      // platform limitation, not a transpiler bug.
       if (argType.udonType === UdonType.Single) {
         return arg;
       }
@@ -466,14 +470,15 @@ export function visitCallExpression(
       return dictResult;
     }
     if (node.isNew && calleeName === "Array") {
-      if (rawArgs.length === 1 && rawArgs[0].kind === ASTNodeKind.Literal) {
-        const lit = rawArgs[0] as LiteralNode;
-        if (typeof lit.value === "number") {
-          throw new Error(
-            "new Array(n) for pre-allocating a fixed-length array is not supported. " +
-              "Use an array literal (e.g., [1, 2, 3]) instead.",
-          );
-        }
+      if (rawArgs.length === 1) {
+        // Reject any single-argument new Array(x). In JS, new Array(n)
+        // creates a sparse array of length n, but Udon has no sparse arrays
+        // so the semantics diverge. Reject regardless of whether the
+        // argument is a literal, identifier, or expression.
+        throw new Error(
+          "new Array(n) for pre-allocating a fixed-length array is not supported. " +
+            "Use an array literal (e.g., [1, 2, 3]) instead.",
+        );
       }
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
@@ -678,14 +683,7 @@ export function visitCallExpression(
       if (inlineResult) return inlineResult;
     }
 
-    if (
-      propAccess.object.kind === ASTNodeKind.Identifier &&
-      this.resolveStaticExtern(
-        (propAccess.object as IdentifierNode).name,
-        propAccess.property,
-        "method",
-      )
-    ) {
+    if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const externSig = this.resolveStaticExtern(
         (propAccess.object as IdentifierNode).name,
         propAccess.property,
