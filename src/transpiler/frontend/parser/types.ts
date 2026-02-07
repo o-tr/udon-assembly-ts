@@ -140,7 +140,9 @@ export function mapTypeWithGenerics(
       case "ReadonlySet":
         return new CollectionTypeSymbol(
           ExternTypes.dataDictionary.name,
+          undefined,
           this.mapTypeWithGenerics(args[0] ?? "object"),
+          PrimitiveTypes.boolean,
         );
     }
   }

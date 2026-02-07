@@ -303,7 +303,7 @@ export function visitForOfStatement(
 
   const isDestructured = Array.isArray(node.variable);
   const isObjectDestructured = !!node.destructureProperties?.length;
-  const elementType = isDestructured
+  let elementType = isDestructured
     ? ExternTypes.dataList
     : isObjectDestructured
       ? ObjectType
@@ -312,6 +312,14 @@ export function visitForOfStatement(
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
           : PrimitiveTypes.single));
+
+  // If we're iterating an untyped `DataList` (matched by name/udonType), the
+  // elements we get are raw `DataToken`s — force the loop variable to be a
+  // `DataToken` so copies are well-typed. Only unwrap to concrete element
+  // types when we have a `DataListTypeSymbol` carrying elementType info.
+  if (isDataList && !(iterableType instanceof DataListTypeSymbol)) {
+    elementType = ExternTypes.dataToken;
+  }
 
   let elementVar: TACOperand;
   if (isDestructured) {

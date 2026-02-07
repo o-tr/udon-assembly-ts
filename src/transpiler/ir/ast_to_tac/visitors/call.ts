@@ -49,8 +49,13 @@ const resolveSetElementType = (
   setType: TypeSymbol | null,
   fallback?: TypeSymbol,
 ): TypeSymbol => {
-  if (setType instanceof CollectionTypeSymbol && setType.elementType) {
-    return setType.elementType;
+  if (setType instanceof CollectionTypeSymbol) {
+    return (
+      (setType.keyType as TypeSymbol | undefined) ??
+      setType.elementType ??
+      fallback ??
+      ObjectType
+    );
   }
   return fallback ?? ObjectType;
 };

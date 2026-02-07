@@ -135,7 +135,9 @@ export class TypeMapper {
         case "ReadonlySet":
           return new CollectionTypeSymbol(
             ExternTypes.dataDictionary.name,
+            undefined,
             this.mapTypeScriptType(args[0] ?? "object"),
+            PrimitiveTypes.boolean,
           );
         case "WeakSet":
         case "Iterator":
@@ -199,7 +201,9 @@ export class TypeMapper {
       case "ReadonlySet":
         return new CollectionTypeSymbol(
           ExternTypes.dataDictionary.name,
+          undefined,
           ObjectType,
+          PrimitiveTypes.boolean,
         );
       case "UdonByte":
         return PrimitiveTypes.byte;
