@@ -518,78 +518,182 @@ export const eliminateSingleUseTemporaries = (
 export const reuseTemporaries = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
-  const tempInfo = new Map<
-    number,
-    { start: number; end: number; typeKey: string }
-  >();
+  const cfg = buildCFG(instructions);
+  if (cfg.blocks.length === 0) return instructions;
 
-  const recordTemp = (operand: TACOperand | undefined, index: number) => {
-    if (!operand || operand.kind !== TACOperandKind.Temporary) return;
-    const temp = operand as TemporaryOperand;
-    const typeKey = String(temp.type?.udonType ?? "Object");
-    const existing = tempInfo.get(temp.id);
-    if (!existing) {
-      tempInfo.set(temp.id, { start: index, end: index, typeKey });
-    } else {
-      existing.start = Math.min(existing.start, index);
-      existing.end = Math.max(existing.end, index);
-    }
-  };
-
-  for (let i = 0; i < instructions.length; i++) {
-    const inst = instructions[i];
-    const used = getUsedOperandsForReuse(inst);
-    for (const op of used) recordTemp(op, i);
-    const defined = getDefinedOperandForReuse(inst);
-    recordTemp(defined, i);
+  // Collect all temp ids and their types
+  const tempTypes = new Map<number, string>();
+  for (const inst of instructions) {
+    const collectTemp = (operand: TACOperand | undefined) => {
+      if (!operand || operand.kind !== TACOperandKind.Temporary) return;
+      const temp = operand as TemporaryOperand;
+      if (!tempTypes.has(temp.id)) {
+        tempTypes.set(temp.id, String(temp.type?.udonType ?? "Object"));
+      }
+    };
+    for (const op of getUsedOperandsForReuse(inst)) collectTemp(op);
+    collectTemp(getDefinedOperandForReuse(inst));
   }
 
-  if (tempInfo.size === 0) return instructions;
+  if (tempTypes.size === 0) return instructions;
 
-  const intervals = Array.from(tempInfo.entries())
-    .map(([id, info]) => ({
-      id,
-      start: info.start,
-      end: info.end,
-      typeKey: info.typeKey,
-    }))
-    .sort((a, b) => a.start - b.start || a.end - b.end);
+  // 1. Compute def/use sets per block
+  // def[b] = temps defined in block b before any use
+  // use[b] = temps used in block b before any definition
+  const blockDef: Map<number, Set<number>> = new Map();
+  const blockUse: Map<number, Set<number>> = new Map();
 
-  const freeByType = new Map<string, number[]>();
-  const active: Array<{ end: number; newId: number; typeKey: string }> = [];
+  for (const block of cfg.blocks) {
+    const def = new Set<number>();
+    const use = new Set<number>();
+
+    for (let i = block.start; i <= block.end; i++) {
+      const inst = instructions[i];
+
+      // Record uses first (before def kills them)
+      for (const op of getUsedOperandsForReuse(inst)) {
+        if (op.kind === TACOperandKind.Temporary) {
+          const id = (op as TemporaryOperand).id;
+          if (!def.has(id)) use.add(id);
+        }
+      }
+
+      // Then record def
+      const defined = getDefinedOperandForReuse(inst);
+      if (defined?.kind === TACOperandKind.Temporary) {
+        const id = (defined as TemporaryOperand).id;
+        def.add(id);
+      }
+    }
+
+    blockDef.set(block.id, def);
+    blockUse.set(block.id, use);
+  }
+
+  // 2. Backward dataflow: compute liveIn/liveOut per block
+  const liveIn: Map<number, Set<number>> = new Map();
+  const liveOut: Map<number, Set<number>> = new Map();
+  for (const block of cfg.blocks) {
+    liveIn.set(block.id, new Set());
+    liveOut.set(block.id, new Set());
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    // Process blocks in reverse order for faster convergence
+    for (let bi = cfg.blocks.length - 1; bi >= 0; bi--) {
+      const block = cfg.blocks[bi];
+
+      // liveOut[b] = ∪ liveIn[s] for s in succs[b]
+      const newLiveOut = new Set<number>();
+      for (const succId of block.succs) {
+        for (const id of liveIn.get(succId)!) {
+          newLiveOut.add(id);
+        }
+      }
+
+      // liveIn[b] = use[b] ∪ (liveOut[b] - def[b])
+      const def = blockDef.get(block.id)!;
+      const use = blockUse.get(block.id)!;
+      const newLiveIn = new Set(use);
+      for (const id of newLiveOut) {
+        if (!def.has(id)) newLiveIn.add(id);
+      }
+
+      const oldLiveIn = liveIn.get(block.id)!;
+      const oldLiveOut = liveOut.get(block.id)!;
+      if (newLiveIn.size !== oldLiveIn.size || newLiveOut.size !== oldLiveOut.size) {
+        changed = true;
+        liveIn.set(block.id, newLiveIn);
+        liveOut.set(block.id, newLiveOut);
+      } else {
+        // Check actual content change
+        for (const id of newLiveIn) {
+          if (!oldLiveIn.has(id)) { changed = true; break; }
+        }
+        if (!changed) {
+          for (const id of newLiveOut) {
+            if (!oldLiveOut.has(id)) { changed = true; break; }
+          }
+        }
+        if (changed) {
+          liveIn.set(block.id, newLiveIn);
+          liveOut.set(block.id, newLiveOut);
+        }
+      }
+    }
+  }
+
+  // 3. Build interference graph: two temps interfere if simultaneously live
+  // Walk through each block instruction-by-instruction, tracking the live set
+  const interference = new Map<number, Set<number>>();
+  for (const id of tempTypes.keys()) {
+    interference.set(id, new Set());
+  }
+
+  for (const block of cfg.blocks) {
+    // Start with liveOut of the block, walk backward
+    const live = new Set(liveOut.get(block.id)!);
+
+    for (let i = block.end; i >= block.start; i--) {
+      const inst = instructions[i];
+
+      // At a definition point, the defined temp interferes with all currently live temps
+      const defined = getDefinedOperandForReuse(inst);
+      if (defined?.kind === TACOperandKind.Temporary) {
+        const defId = (defined as TemporaryOperand).id;
+        // The defined temp interferes with all live temps (except itself)
+        for (const liveId of live) {
+          if (liveId !== defId) {
+            interference.get(defId)?.add(liveId);
+            interference.get(liveId)?.add(defId);
+          }
+        }
+        // Remove defined temp from live (it's dead above this point unless used)
+        live.delete(defId);
+      }
+
+      // Add used temps to live set
+      for (const op of getUsedOperandsForReuse(inst)) {
+        if (op.kind === TACOperandKind.Temporary) {
+          live.add((op as TemporaryOperand).id);
+        }
+      }
+    }
+  }
+
+  // 4. Greedy graph coloring: assign temps of the same type to reusable slots
+  // Sort temps by number of interferences (most constrained first)
+  const tempIds = Array.from(tempTypes.keys()).sort((a, b) => {
+    const aSize = interference.get(a)?.size ?? 0;
+    const bSize = interference.get(b)?.size ?? 0;
+    return bSize - aSize || a - b;
+  });
+
   const oldToNew = new Map<number, number>();
   let nextId = 0;
 
-  const expireActive = (start: number) => {
-    for (let i = active.length - 1; i >= 0; i--) {
-      if (active[i].end < start) {
-        const expired = active[i];
-        active.splice(i, 1);
-        const list = freeByType.get(expired.typeKey);
-        if (list) list.push(expired.newId);
-        else freeByType.set(expired.typeKey, [expired.newId]);
+  for (const tempId of tempIds) {
+    const typeKey = tempTypes.get(tempId)!;
+    const neighbors = interference.get(tempId)!;
+
+    // Collect colors used by neighbors of the same type
+    const usedColors = new Set<number>();
+    for (const neighborId of neighbors) {
+      if (tempTypes.get(neighborId) === typeKey) {
+        const color = oldToNew.get(neighborId);
+        if (color !== undefined) usedColors.add(color);
       }
     }
-  };
 
-  for (const interval of intervals) {
-    expireActive(interval.start);
+    // Find the smallest available color
+    let color = 0;
+    while (usedColors.has(color)) color++;
 
-    const freeList = freeByType.get(interval.typeKey);
-    let newId: number;
-    if (freeList && freeList.length > 0) {
-      newId = freeList.pop() as number;
-    } else {
-      newId = nextId++;
-    }
-
-    oldToNew.set(interval.id, newId);
-    active.push({
-      end: interval.end,
-      newId,
-      typeKey: interval.typeKey,
-    });
-    active.sort((a, b) => a.end - b.end);
+    // Track the global nextId
+    if (color >= nextId) nextId = color + 1;
+    oldToNew.set(tempId, color);
   }
 
   const rewriteTemp = (operand: TACOperand): TACOperand => {
@@ -610,74 +714,177 @@ export const reuseTemporaries = (
 export const reuseLocalVariables = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
-  const varInfo = new Map<
-    string,
-    { start: number; end: number; typeKey: string }
-  >();
+  const cfg = buildCFG(instructions);
+  if (cfg.blocks.length === 0) return instructions;
+
+  // Collect eligible variables and their types, plus reserved names
+  const varTypes = new Map<string, string>();
   const eligibility = new Map<string, boolean>();
   const reservedNames = new Set<string>();
 
-  const recordVar = (operand: TACOperand | undefined, index: number) => {
-    if (!operand || operand.kind !== TACOperandKind.Variable) return;
-    const variable = operand as VariableOperand;
-    const name = variable.name;
-    reservedNames.add(name);
+  for (const inst of instructions) {
+    const processOperand = (operand: TACOperand | undefined) => {
+      if (!operand || operand.kind !== TACOperandKind.Variable) return;
+      const variable = operand as VariableOperand;
+      const name = variable.name;
+      reservedNames.add(name);
 
-    const isEligible = isEligibleLocalVariable(variable);
-    const existingEligibility = eligibility.get(name);
-    if (existingEligibility === false) return;
-    if (!isEligible) {
-      eligibility.set(name, false);
-      varInfo.delete(name);
-      return;
-    }
+      const existingEligibility = eligibility.get(name);
+      if (existingEligibility === false) return;
 
-    const typeKey = String(variable.type?.udonType ?? "Object");
-    const existing = varInfo.get(name);
-    if (!existing) {
+      if (!isEligibleLocalVariable(variable)) {
+        eligibility.set(name, false);
+        varTypes.delete(name);
+        return;
+      }
+
+      const typeKey = String(variable.type?.udonType ?? "Object");
+      const existingType = varTypes.get(name);
+      if (existingType !== undefined && existingType !== typeKey) {
+        eligibility.set(name, false);
+        varTypes.delete(name);
+        return;
+      }
+
       eligibility.set(name, true);
-      varInfo.set(name, { start: index, end: index, typeKey });
-      return;
-    }
+      varTypes.set(name, typeKey);
+    };
 
-    if (existing.typeKey !== typeKey) {
-      eligibility.set(name, false);
-      varInfo.delete(name);
-      return;
-    }
-
-    existing.start = Math.min(existing.start, index);
-    existing.end = Math.max(existing.end, index);
-  };
-
-  for (let i = 0; i < instructions.length; i++) {
-    const inst = instructions[i];
-    const used = getUsedOperandsForReuse(inst);
-    for (const op of used) recordVar(op, i);
-    const defined = getDefinedOperandForReuse(inst);
-    recordVar(defined, i);
+    for (const op of getUsedOperandsForReuse(inst)) processOperand(op);
+    processOperand(getDefinedOperandForReuse(inst));
   }
 
-  const intervals = Array.from(varInfo.entries())
-    .filter(([name]) => eligibility.get(name) === true)
-    .map(([name, info]) => ({
-      name,
-      start: info.start,
-      end: info.end,
-      typeKey: info.typeKey,
-    }))
-    .sort(
-      (a, b) =>
-        a.start - b.start || a.end - b.end || a.name.localeCompare(b.name),
-    );
+  const eligibleVars = new Set(
+    Array.from(eligibility.entries())
+      .filter(([, v]) => v)
+      .map(([k]) => k),
+  );
 
-  if (intervals.length === 0) return instructions;
+  if (eligibleVars.size === 0) return instructions;
 
-  const freeByType = new Map<string, string[]>();
-  const active: Array<{ end: number; newName: string; typeKey: string }> = [];
-  const oldToNew = new Map<string, string>();
+  // 1. Compute def/use sets per block for eligible variables
+  const blockDef: Map<number, Set<string>> = new Map();
+  const blockUse: Map<number, Set<string>> = new Map();
+
+  for (const block of cfg.blocks) {
+    const def = new Set<string>();
+    const use = new Set<string>();
+
+    for (let i = block.start; i <= block.end; i++) {
+      const inst = instructions[i];
+
+      for (const op of getUsedOperandsForReuse(inst)) {
+        if (op.kind === TACOperandKind.Variable) {
+          const name = (op as VariableOperand).name;
+          if (eligibleVars.has(name) && !def.has(name)) use.add(name);
+        }
+      }
+
+      const defined = getDefinedOperandForReuse(inst);
+      if (defined?.kind === TACOperandKind.Variable) {
+        const name = (defined as VariableOperand).name;
+        if (eligibleVars.has(name)) def.add(name);
+      }
+    }
+
+    blockDef.set(block.id, def);
+    blockUse.set(block.id, use);
+  }
+
+  // 2. Backward dataflow: compute liveIn/liveOut per block
+  const liveIn: Map<number, Set<string>> = new Map();
+  const liveOut: Map<number, Set<string>> = new Map();
+  for (const block of cfg.blocks) {
+    liveIn.set(block.id, new Set());
+    liveOut.set(block.id, new Set());
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let bi = cfg.blocks.length - 1; bi >= 0; bi--) {
+      const block = cfg.blocks[bi];
+
+      const newLiveOut = new Set<string>();
+      for (const succId of block.succs) {
+        for (const name of liveIn.get(succId)!) {
+          newLiveOut.add(name);
+        }
+      }
+
+      const def = blockDef.get(block.id)!;
+      const use = blockUse.get(block.id)!;
+      const newLiveIn = new Set(use);
+      for (const name of newLiveOut) {
+        if (!def.has(name)) newLiveIn.add(name);
+      }
+
+      const oldLiveIn = liveIn.get(block.id)!;
+      const oldLiveOut = liveOut.get(block.id)!;
+      if (newLiveIn.size !== oldLiveIn.size || newLiveOut.size !== oldLiveOut.size) {
+        changed = true;
+        liveIn.set(block.id, newLiveIn);
+        liveOut.set(block.id, newLiveOut);
+      } else {
+        for (const name of newLiveIn) {
+          if (!oldLiveIn.has(name)) { changed = true; break; }
+        }
+        if (!changed) {
+          for (const name of newLiveOut) {
+            if (!oldLiveOut.has(name)) { changed = true; break; }
+          }
+        }
+        if (changed) {
+          liveIn.set(block.id, newLiveIn);
+          liveOut.set(block.id, newLiveOut);
+        }
+      }
+    }
+  }
+
+  // 3. Build interference graph
+  const interference = new Map<string, Set<string>>();
+  for (const name of eligibleVars) {
+    interference.set(name, new Set());
+  }
+
+  for (const block of cfg.blocks) {
+    const live = new Set(liveOut.get(block.id)!);
+
+    for (let i = block.end; i >= block.start; i--) {
+      const inst = instructions[i];
+
+      const defined = getDefinedOperandForReuse(inst);
+      if (defined?.kind === TACOperandKind.Variable) {
+        const defName = (defined as VariableOperand).name;
+        if (eligibleVars.has(defName)) {
+          for (const liveName of live) {
+            if (liveName !== defName) {
+              interference.get(defName)?.add(liveName);
+              interference.get(liveName)?.add(defName);
+            }
+          }
+          live.delete(defName);
+        }
+      }
+
+      for (const op of getUsedOperandsForReuse(inst)) {
+        if (op.kind === TACOperandKind.Variable) {
+          const name = (op as VariableOperand).name;
+          if (eligibleVars.has(name)) live.add(name);
+        }
+      }
+    }
+  }
+
+  // 4. Greedy graph coloring
+  const sortedVars = Array.from(eligibleVars).sort((a, b) => {
+    const aSize = interference.get(a)?.size ?? 0;
+    const bSize = interference.get(b)?.size ?? 0;
+    return bSize - aSize || a.localeCompare(b);
+  });
+
   let nextId = 0;
-
   const allocateName = (): string => {
     let candidate = `__l${nextId++}`;
     while (reservedNames.has(candidate)) {
@@ -687,32 +894,49 @@ export const reuseLocalVariables = (
     return candidate;
   };
 
-  const expireActive = (start: number) => {
-    for (let i = active.length - 1; i >= 0; i--) {
-      if (active[i].end < start) {
-        const expired = active[i];
-        active.splice(i, 1);
-        const list = freeByType.get(expired.typeKey);
-        if (list) list.push(expired.newName);
-        else freeByType.set(expired.typeKey, [expired.newName]);
+  const oldToNew = new Map<string, string>();
+  const colorToName = new Map<string, Map<number, string>>(); // typeKey -> (color -> name)
+
+  for (const varName of sortedVars) {
+    const typeKey = varTypes.get(varName)!;
+    const neighbors = interference.get(varName)!;
+
+    // Collect colors used by neighbors of the same type
+    const usedColors = new Set<number>();
+    for (const neighborName of neighbors) {
+      if (varTypes.get(neighborName) === typeKey) {
+        const neighborMapping = oldToNew.get(neighborName);
+        if (neighborMapping !== undefined) {
+          // Find color for this neighbor
+          const typeColors = colorToName.get(typeKey);
+          if (typeColors) {
+            for (const [color, name] of typeColors) {
+              if (name === neighborMapping) {
+                usedColors.add(color);
+                break;
+              }
+            }
+          }
+        }
       }
     }
-  };
 
-  for (const interval of intervals) {
-    expireActive(interval.start);
+    let color = 0;
+    while (usedColors.has(color)) color++;
 
-    const freeList = freeByType.get(interval.typeKey);
-    let newName: string;
-    if (freeList && freeList.length > 0) {
-      newName = freeList.pop() as string;
-    } else {
-      newName = allocateName();
+    let typeColors = colorToName.get(typeKey);
+    if (!typeColors) {
+      typeColors = new Map();
+      colorToName.set(typeKey, typeColors);
     }
 
-    oldToNew.set(interval.name, newName);
-    active.push({ end: interval.end, newName, typeKey: interval.typeKey });
-    active.sort((a, b) => a.end - b.end);
+    let assignedName = typeColors.get(color);
+    if (!assignedName) {
+      assignedName = allocateName();
+      typeColors.set(color, assignedName);
+    }
+
+    oldToNew.set(varName, assignedName);
   }
 
   const rewriteVar = (operand: TACOperand): TACOperand => {
@@ -736,7 +960,12 @@ export const isEligibleLocalVariable = (operand: VariableOperand): boolean => {
   const name = operand.name;
   if (name === "this" || name === "__this") return false;
   if (name === "__returnValue_return") return false;
-  if (name.startsWith("__")) return false;
+  // Exclude specific __ patterns that must not be reused
+  if (name.startsWith("__inst_")) return false;
+  if (name.startsWith("__recursionStack_")) return false;
+  if (name.startsWith("__prev_")) return false;
+  if (name === "__gameObject" || name === "__transform") return false;
+  // Other __ variables (scoped locals like __0_*, __l*) are eligible
   return true;
 };
 
