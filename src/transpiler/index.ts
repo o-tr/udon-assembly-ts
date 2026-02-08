@@ -17,7 +17,7 @@ import {
   type ProgramNode,
 } from "./frontend/types.js";
 import {
-  buildHeapUsageBreakdown,
+  buildHeapUsageTreeBreakdown,
   computeHeapUsage,
   UASM_HEAP_LIMIT,
 } from "./heap_limits.js";
@@ -132,10 +132,8 @@ export class TypeScriptToUdonTranspiler {
     // Phase 4: Convert TAC to Udon instructions
     const udonConverter = new TACToUdonConverter();
     const entryClassName = this.pickEntryClassName(program);
-    const inlineClassNames = this.collectInlineClassNames(
-      program,
-      entryClassName,
-    );
+    const { inlineClassNames, callAnalyzer, registry: classRegistry } =
+      this.collectInlineClassNamesWithContext(program, entryClassName);
     const udonInstructions = udonConverter.convert(tacInstructions, {
       entryClassName: entryClassName ?? undefined,
       inlineClassNames,
@@ -170,7 +168,8 @@ export class TypeScriptToUdonTranspiler {
       entryClassName,
       dataSectionWithTypes,
       udonConverter.getHeapUsageByClass(),
-      inlineClassNames,
+      callAnalyzer,
+      classRegistry,
     );
 
     return {
@@ -183,19 +182,24 @@ export class TypeScriptToUdonTranspiler {
     entryClassName: string | null,
     dataSection: Array<[string, number, string, unknown]>,
     usageByClass: Map<string, number>,
-    inlineClassNames?: Set<string>,
+    callAnalyzer: CallAnalyzer | null,
+    registry: ClassRegistry | null,
   ): void {
     const heapLimit = UASM_HEAP_LIMIT;
     const heapUsage = computeHeapUsage(dataSection);
     if (heapUsage <= heapLimit) return;
 
     const entryKey = entryClassName ?? "<global>";
-    const breakdown = buildHeapUsageBreakdown(
-      usageByClass,
-      heapUsage,
-      entryKey,
-      inlineClassNames,
-    );
+    const breakdown =
+      callAnalyzer && registry
+        ? buildHeapUsageTreeBreakdown(
+            usageByClass,
+            heapUsage,
+            entryKey,
+            callAnalyzer,
+            registry,
+          )
+        : "";
     const entryLabel = entryClassName ? ` for ${entryClassName}` : "";
     const message = [
       `UASM heap usage ${heapUsage} exceeds limit ${heapLimit}${entryLabel}.`,
@@ -216,18 +220,25 @@ export class TypeScriptToUdonTranspiler {
     return entryPoint ?? null;
   }
 
-  private collectInlineClassNames(
+  private collectInlineClassNamesWithContext(
     program: ProgramNode,
     entryClassName: string | null,
-  ): Set<string> {
-    if (!entryClassName) return new Set();
+  ): {
+    inlineClassNames: Set<string>;
+    callAnalyzer: CallAnalyzer | null;
+    registry: ClassRegistry | null;
+  } {
+    if (!entryClassName)
+      return { inlineClassNames: new Set(), callAnalyzer: null, registry: null };
     const registry = new ClassRegistry();
     registry.registerFromProgram(
       program,
       TypeScriptToUdonTranspiler.INLINE_SOURCE_ID,
     );
-    const analyzer = new CallAnalyzer(registry);
-    return analyzer.analyzeClass(entryClassName).inlineClasses;
+    const callAnalyzer = new CallAnalyzer(registry);
+    const inlineClassNames =
+      callAnalyzer.analyzeClass(entryClassName).inlineClasses;
+    return { inlineClassNames, callAnalyzer, registry };
   }
 
   private appendReflectionData(

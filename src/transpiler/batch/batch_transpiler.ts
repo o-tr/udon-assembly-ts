@@ -30,7 +30,7 @@ import {
   type ProgramNode,
 } from "../frontend/types.js";
 import {
-  buildHeapUsageBreakdown,
+  buildHeapUsageTreeBreakdown,
   computeHeapUsage,
   UASM_HEAP_LIMIT,
 } from "../heap_limits.js";
@@ -360,6 +360,8 @@ export class BatchTranspiler {
         entryPoint.name,
         dataSectionWithTypes,
         udonConverter.getHeapUsageByClass(),
+        callAnalyzer,
+        registry,
         inlineClassNameSet,
         splitCandidates,
         heapUsage,
@@ -384,6 +386,8 @@ export class BatchTranspiler {
     entryPointName: string,
     dataSection: Array<[string, number, string, unknown]>,
     usageByClass: Map<string, number>,
+    callAnalyzer: CallAnalyzer,
+    registry: ClassRegistry,
     inlineClassNames?: Set<string>,
     splitCandidates?: Map<string, number>,
     heapUsage?: number,
@@ -392,11 +396,12 @@ export class BatchTranspiler {
     const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
     if (resolvedUsage <= heapLimit) return;
 
-    const breakdown = buildHeapUsageBreakdown(
+    const breakdown = buildHeapUsageTreeBreakdown(
       usageByClass,
       resolvedUsage,
       entryPointName,
-      inlineClassNames,
+      callAnalyzer,
+      registry,
     );
     const messageParts = [
       `UASM heap usage ${resolvedUsage} exceeds limit ${heapLimit} for ${entryPointName}.`,
