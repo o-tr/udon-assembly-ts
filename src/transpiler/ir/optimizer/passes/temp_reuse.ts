@@ -685,26 +685,33 @@ export const reuseTemporaries = (
 
   const oldToNew = new Map<number, number>();
   let nextId = 0;
+  // Maps each allocated color to the type it was first assigned to.
+  // A color must not be shared across different types.
+  const colorType = new Map<number, string>();
 
   for (const tempId of tempIds) {
     const typeKey = tempTypes.get(tempId) ?? "Object";
     const neighbors = interference.get(tempId) ?? new Set<number>();
 
-    // Collect colors used by neighbors of the same type
+    // Collect colors that cannot be reused: those held by interfering neighbors
     const usedColors = new Set<number>();
     for (const neighborId of neighbors) {
-      if (tempTypes.get(neighborId) === typeKey) {
-        const color = oldToNew.get(neighborId);
-        if (color !== undefined) usedColors.add(color);
-      }
+      const color = oldToNew.get(neighborId);
+      if (color !== undefined) usedColors.add(color);
     }
 
-    // Find the smallest available color
+    // Find the smallest color that is (a) not used by a neighbor and
+    // (b) not already assigned to a different type.
     let color = 0;
-    while (usedColors.has(color)) color++;
+    while (
+      usedColors.has(color) ||
+      (colorType.has(color) && colorType.get(color) !== typeKey)
+    ) {
+      color++;
+    }
 
-    // Track the global nextId
     if (color >= nextId) nextId = color + 1;
+    colorType.set(color, typeKey);
     oldToNew.set(tempId, color);
   }
 
