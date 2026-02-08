@@ -575,10 +575,9 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
-      // If called as a constructor (`new Array(n)`), the single-argument
-      // numeric-length semantics apply. When called as a function
-      // (`Array(x)`), a single argument always produces a single-element list.
-      if (rawArgs.length === 1 && node.isNew) {
+      // Single-argument numeric-length semantics: Array(n) and new Array(n)
+      // are equivalent in JS and both produce a length-n array.
+      if (rawArgs.length === 1) {
         const argOperand = evaluatedArgs[0];
         const argType = this.getOperandType(argOperand);
         const isNumericLength =
@@ -653,14 +652,6 @@ export function visitCallExpression(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
         }
-        return listResult;
-      }
-      if (rawArgs.length === 1 && !node.isNew) {
-        // Called as `Array(x)` — always treat single arg as an element.
-        const token = this.wrapDataToken(evaluatedArgs[0]);
-        this.instructions.push(
-          new MethodCallInstruction(undefined, listResult, "Add", [token]),
-        );
         return listResult;
       }
       for (const arg of evaluatedArgs) {
@@ -2443,13 +2434,18 @@ export function visitArrayStaticCall(
         sourceType.udonType === UdonType.Array;
 
       if (isListOrArrayType) {
+        const isArraySource =
+          sourceType instanceof ArrayTypeSymbol ||
+          sourceType.udonType === UdonType.Array;
         const isDataListLike =
           sourceType instanceof DataListTypeSymbol ||
           sourceType.name === ExternTypes.dataList.name ||
           sourceType.udonType === UdonType.DataList;
 
         const elementType = isDataListLike
-          ? ExternTypes.dataToken
+          ? sourceType instanceof DataListTypeSymbol
+            ? sourceType.elementType
+            : ExternTypes.dataToken
           : sourceType instanceof ArrayTypeSymbol
             ? sourceType.elementType
             : ObjectType;
@@ -2476,12 +2472,7 @@ export function visitArrayStaticCall(
         );
 
         // Use Count for DataList, length for Array
-        const lengthProp = !(
-          sourceType instanceof ArrayTypeSymbol ||
-          sourceType.udonType === UdonType.Array
-        )
-          ? "Count"
-          : "length";
+        const lengthProp = !isArraySource ? "Count" : "length";
         this.instructions.push(
           new PropertyGetInstruction(lengthVar, source, lengthProp),
         );
@@ -2499,12 +2490,7 @@ export function visitArrayStaticCall(
           new ConditionalJumpInstruction(condTemp, loopEnd),
         );
 
-        if (
-          !(
-            sourceType instanceof ArrayTypeSymbol ||
-            sourceType.udonType === UdonType.Array
-          )
-        ) {
+        if (!isArraySource) {
           const itemToken = this.newTemp(ExternTypes.dataToken);
           this.instructions.push(
             new MethodCallInstruction(itemToken, source, "get_Item", [
