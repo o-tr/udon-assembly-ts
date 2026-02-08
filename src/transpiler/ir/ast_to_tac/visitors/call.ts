@@ -89,6 +89,12 @@ const resolveMapValueType = (
   return fallback ?? ObjectType;
 };
 
+const isLiteralRadix10 = (operand: TACOperand): boolean => {
+  if (operand.kind !== TACOperandKind.Constant) return false;
+  const constant = operand as ConstantOperand;
+  return typeof constant.value === "number" && constant.value === 10;
+};
+
 const emitSetKeysList = (
   converter: ASTToTACConverter,
   setOperand: TACOperand,
@@ -363,10 +369,13 @@ export function visitCallExpression(
         throw new Error("parseInt(...) expects one or two arguments.");
       }
       if (evaluatedArgs.length === 2) {
-        // Radix-aware parseInt not implemented in transpiler.
-        throw new Error(
-          "parseInt with radix is not supported by the transpiler",
-        );
+        const radix = evaluatedArgs[1];
+        if (!isLiteralRadix10(radix)) {
+          // Radix-aware parseInt not implemented in transpiler.
+          throw new Error(
+            "parseInt with radix is not supported by the transpiler",
+          );
+        }
       }
       const arg = evaluatedArgs[0];
       // Int32.Parse is stricter than JS parseInt (e.g., throws on "3.14",
@@ -2225,6 +2234,17 @@ export function visitNumberStaticCall(
     }
     case "parseInt": {
       if (args.length === 0) return null;
+      if (args.length > 2) {
+        throw new Error("Number.parseInt(...) expects one or two arguments.");
+      }
+      if (args.length === 2) {
+        const radix = args[1];
+        if (!isLiteralRadix10(radix)) {
+          throw new Error(
+            "parseInt with radix is not supported by the transpiler",
+          );
+        }
+      }
       const value = args[0];
       const result = this.newTemp(PrimitiveTypes.int32);
       const externSig = this.requireExternSignature(
