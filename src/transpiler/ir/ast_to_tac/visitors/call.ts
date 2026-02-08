@@ -575,7 +575,10 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
-      if (rawArgs.length === 1) {
+      // If called as a constructor (`new Array(n)`), the single-argument
+      // numeric-length semantics apply. When called as a function
+      // (`Array(x)`), a single argument always produces a single-element list.
+      if (rawArgs.length === 1 && node.isNew) {
         const argOperand = evaluatedArgs[0];
         const argType = this.getOperandType(argOperand);
         const isNumericLength =
@@ -650,6 +653,14 @@ export function visitCallExpression(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
         }
+        return listResult;
+      }
+      if (rawArgs.length === 1 && !node.isNew) {
+        // Called as `Array(x)` — always treat single arg as an element.
+        const token = this.wrapDataToken(evaluatedArgs[0]);
+        this.instructions.push(
+          new MethodCallInstruction(undefined, listResult, "Add", [token]),
+        );
         return listResult;
       }
       for (const arg of evaluatedArgs) {
@@ -2432,12 +2443,16 @@ export function visitArrayStaticCall(
         sourceType.udonType === UdonType.Array;
 
       if (isListOrArrayType) {
-        const elementType =
-          sourceType instanceof DataListTypeSymbol
+        const isDataListLike =
+          sourceType instanceof DataListTypeSymbol ||
+          sourceType.name === ExternTypes.dataList.name ||
+          sourceType.udonType === UdonType.DataList;
+
+        const elementType = isDataListLike
+          ? ExternTypes.dataToken
+          : sourceType instanceof ArrayTypeSymbol
             ? sourceType.elementType
-            : sourceType instanceof ArrayTypeSymbol
-              ? sourceType.elementType
-              : ObjectType;
+            : ObjectType;
 
         const listResult = this.newTemp(new DataListTypeSymbol(elementType));
         const listCtorSig = this.requireExternSignature(
