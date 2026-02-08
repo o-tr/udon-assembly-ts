@@ -523,17 +523,25 @@ export const reuseTemporaries = (
 
   // Collect all temp ids and their types
   const tempTypes = new Map<number, string>();
+  const ineligible = new Set<number>();
   for (const inst of instructions) {
     const collectTemp = (operand: TACOperand | undefined) => {
       if (!operand || operand.kind !== TACOperandKind.Temporary) return;
       const temp = operand as TemporaryOperand;
-      if (!tempTypes.has(temp.id)) {
-        tempTypes.set(temp.id, String(temp.type?.udonType ?? "Object"));
+      const typeKey = String(temp.type?.udonType ?? "Object");
+      const existing = tempTypes.get(temp.id);
+      if (existing !== undefined) {
+        if (existing !== typeKey) ineligible.add(temp.id);
+      } else {
+        tempTypes.set(temp.id, typeKey);
       }
     };
     for (const op of getUsedOperandsForReuse(inst)) collectTemp(op);
     collectTemp(getDefinedOperandForReuse(inst));
   }
+
+  // Remove temps with inconsistent types across occurrences
+  for (const id of ineligible) tempTypes.delete(id);
 
   if (tempTypes.size === 0) return instructions;
 
@@ -606,33 +614,32 @@ export const reuseTemporaries = (
 
       const oldLiveIn = liveIn.get(block.id) ?? new Set<number>();
       const oldLiveOut = liveOut.get(block.id) ?? new Set<number>();
+      let blockChanged = false;
       if (
         newLiveIn.size !== oldLiveIn.size ||
         newLiveOut.size !== oldLiveOut.size
       ) {
-        changed = true;
-        liveIn.set(block.id, newLiveIn);
-        liveOut.set(block.id, newLiveOut);
+        blockChanged = true;
       } else {
-        // Check actual content change
         for (const id of newLiveIn) {
           if (!oldLiveIn.has(id)) {
-            changed = true;
+            blockChanged = true;
             break;
           }
         }
-        if (!changed) {
+        if (!blockChanged) {
           for (const id of newLiveOut) {
             if (!oldLiveOut.has(id)) {
-              changed = true;
+              blockChanged = true;
               break;
             }
           }
         }
-        if (changed) {
-          liveIn.set(block.id, newLiveIn);
-          liveOut.set(block.id, newLiveOut);
-        }
+      }
+      if (blockChanged) {
+        changed = true;
+        liveIn.set(block.id, newLiveIn);
+        liveOut.set(block.id, newLiveOut);
       }
     }
   }
@@ -727,7 +734,7 @@ export const reuseTemporaries = (
     rewriteOperands(inst, rewriteTemp);
   }
 
-  return instructions;
+  return [...instructions];
 };
 
 export const reuseLocalVariables = (
@@ -843,32 +850,32 @@ export const reuseLocalVariables = (
 
       const oldLiveIn = liveIn.get(block.id) ?? new Set<string>();
       const oldLiveOut = liveOut.get(block.id) ?? new Set<string>();
+      let blockChanged = false;
       if (
         newLiveIn.size !== oldLiveIn.size ||
         newLiveOut.size !== oldLiveOut.size
       ) {
-        changed = true;
-        liveIn.set(block.id, newLiveIn);
-        liveOut.set(block.id, newLiveOut);
+        blockChanged = true;
       } else {
         for (const name of newLiveIn) {
           if (!oldLiveIn.has(name)) {
-            changed = true;
+            blockChanged = true;
             break;
           }
         }
-        if (!changed) {
+        if (!blockChanged) {
           for (const name of newLiveOut) {
             if (!oldLiveOut.has(name)) {
-              changed = true;
+              blockChanged = true;
               break;
             }
           }
         }
-        if (changed) {
-          liveIn.set(block.id, newLiveIn);
-          liveOut.set(block.id, newLiveOut);
-        }
+      }
+      if (blockChanged) {
+        changed = true;
+        liveIn.set(block.id, newLiveIn);
+        liveOut.set(block.id, newLiveOut);
       }
     }
   }
@@ -926,29 +933,19 @@ export const reuseLocalVariables = (
   };
 
   const oldToNew = new Map<string, string>();
+  const oldToColor = new Map<string, number>();
   const colorToName = new Map<string, Map<number, string>>(); // typeKey -> (color -> name)
 
   for (const varName of sortedVars) {
     const typeKey = varTypes.get(varName) ?? "Object";
     const neighbors = interference.get(varName) ?? new Set<string>();
 
-    // Collect colors used by neighbors of the same type
+    // Collect colors used by same-type neighbors via direct lookup
     const usedColors = new Set<number>();
     for (const neighborName of neighbors) {
       if (varTypes.get(neighborName) === typeKey) {
-        const neighborMapping = oldToNew.get(neighborName);
-        if (neighborMapping !== undefined) {
-          // Find color for this neighbor
-          const typeColors = colorToName.get(typeKey);
-          if (typeColors) {
-            for (const [color, name] of typeColors) {
-              if (name === neighborMapping) {
-                usedColors.add(color);
-                break;
-              }
-            }
-          }
-        }
+        const neighborColor = oldToColor.get(neighborName);
+        if (neighborColor !== undefined) usedColors.add(neighborColor);
       }
     }
 
@@ -967,6 +964,7 @@ export const reuseLocalVariables = (
       typeColors.set(color, assignedName);
     }
 
+    oldToColor.set(varName, color);
     oldToNew.set(varName, assignedName);
   }
 
@@ -982,7 +980,7 @@ export const reuseLocalVariables = (
     rewriteOperands(inst, rewriteVar);
   }
 
-  return instructions;
+  return [...instructions];
 };
 
 export const isEligibleLocalVariable = (operand: VariableOperand): boolean => {
