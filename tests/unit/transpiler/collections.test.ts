@@ -333,6 +333,13 @@ describe("collections support", () => {
     ).toBe(true);
     expect(
       externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataDictionary.__GetValues____VRCSDK3DataDataList",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
         sig.includes("VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList"),
       ),
     ).toBe(true);

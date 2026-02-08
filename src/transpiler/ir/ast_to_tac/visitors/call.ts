@@ -134,6 +134,89 @@ const emitMapValuesList = (
   return listResult;
 };
 
+const emitMapEntriesList = (
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  keyType: TypeSymbol,
+): TACOperand => {
+  const keysList = emitMapKeysList(converter, mapOperand, keyType);
+  const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
+  const entriesResult = converter.newTemp(entriesType);
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.instructions.push(
+    new CallInstruction(entriesResult, listCtorSig, []),
+  );
+
+  const indexVar = converter.newTemp(PrimitiveTypes.int32);
+  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new AssignmentInstruction(
+      indexVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(
+    new PropertyGetInstruction(lengthVar, keysList, "Count"),
+  );
+
+  const loopStart = converter.newLabel("map_entries_start");
+  const loopContinue = converter.newLabel("map_entries_continue");
+  const loopEnd = converter.newLabel("map_entries_end");
+
+  converter.instructions.push(new LabelInstruction(loopStart));
+  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+  );
+  converter.instructions.push(
+    new ConditionalJumpInstruction(condTemp, loopEnd),
+  );
+
+  const keyToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+  );
+  const valueToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
+  );
+
+  const pairList = converter.newTemp(
+    new DataListTypeSymbol(ExternTypes.dataToken),
+  );
+  converter.instructions.push(new CallInstruction(pairList, listCtorSig, []));
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
+  );
+  const pairToken = converter.wrapDataToken(pairList);
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
+  );
+
+  converter.instructions.push(new LabelInstruction(loopContinue));
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      indexVar,
+      indexVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+  converter.instructions.push(new LabelInstruction(loopEnd));
+
+  return entriesResult;
+};
+
 export function visitCallExpression(
   this: ASTToTACConverter,
   node: CallExpressionNode,
@@ -493,7 +576,8 @@ export function visitCallExpression(
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
       if (rawArgs.length === 1) {
-        const argType = this.getOperandType(evaluatedArgs[0]);
+        const argOperand = evaluatedArgs[0];
+        const argType = this.getOperandType(argOperand);
         const isNumericLength =
           argType.udonType === UdonType.Int16 ||
           argType.udonType === UdonType.UInt16 ||
@@ -501,12 +585,16 @@ export function visitCallExpression(
           argType.udonType === UdonType.UInt32 ||
           argType.udonType === UdonType.Int64 ||
           argType.udonType === UdonType.UInt64 ||
-          argType.udonType === UdonType.Single ||
-          argType.udonType === UdonType.Double ||
           argType.udonType === UdonType.Byte ||
           argType.udonType === UdonType.SByte;
-        if (!isNumericLength) {
-          const token = this.wrapDataToken(evaluatedArgs[0]);
+        const isConstantIntegerLength =
+          argOperand.kind === TACOperandKind.Constant &&
+          (argType.udonType === UdonType.Single ||
+            argType.udonType === UdonType.Double) &&
+          typeof (argOperand as ConstantOperand).value === "number" &&
+          Number.isInteger((argOperand as ConstantOperand).value);
+        if (!isNumericLength && !isConstantIntegerLength) {
+          const token = this.wrapDataToken(argOperand);
           this.instructions.push(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
@@ -1901,86 +1989,7 @@ function visitMapMethodCall(
       if (rawArgs.length !== 0) {
         throw new Error("Map.entries expects no arguments.");
       }
-      const keysList = emitMapKeysList(converter, mapOperand, keyType);
-      const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
-      const entriesResult = converter.newTemp(entriesType);
-      const listCtorSig = converter.requireExternSignature(
-        "DataList",
-        "ctor",
-        "method",
-        [],
-        "DataList",
-      );
-      converter.instructions.push(
-        new CallInstruction(entriesResult, listCtorSig, []),
-      );
-
-      const indexVar = converter.newTemp(PrimitiveTypes.int32);
-      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-      converter.instructions.push(
-        new AssignmentInstruction(
-          indexVar,
-          createConstant(0, PrimitiveTypes.int32),
-        ),
-      );
-      converter.instructions.push(
-        new PropertyGetInstruction(lengthVar, keysList, "Count"),
-      );
-
-      const loopStart = converter.newLabel("map_entries_start");
-      const loopContinue = converter.newLabel("map_entries_continue");
-      const loopEnd = converter.newLabel("map_entries_end");
-
-      converter.instructions.push(new LabelInstruction(loopStart));
-      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
-        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-      );
-      converter.instructions.push(
-        new ConditionalJumpInstruction(condTemp, loopEnd),
-      );
-
-      const keyToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
-      );
-      const valueToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
-          keyToken,
-        ]),
-      );
-
-      const pairList = converter.newTemp(
-        new DataListTypeSymbol(ExternTypes.dataToken),
-      );
-      converter.instructions.push(
-        new CallInstruction(pairList, listCtorSig, []),
-      );
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
-      );
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
-      );
-      const pairToken = converter.wrapDataToken(pairList);
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
-      );
-
-      converter.instructions.push(new LabelInstruction(loopContinue));
-      converter.instructions.push(
-        new BinaryOpInstruction(
-          indexVar,
-          indexVar,
-          "+",
-          createConstant(1, PrimitiveTypes.int32),
-        ),
-      );
-      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      converter.instructions.push(new LabelInstruction(loopEnd));
-
-      return entriesResult;
+      return emitMapEntriesList(converter, mapOperand, keyType);
     }
     case "forEach": {
       if (rawArgs.length < 1) {
@@ -2347,15 +2356,15 @@ export function visitArrayStaticCall(
         sourceType instanceof CollectionTypeSymbol &&
         sourceType.name === ExternTypes.dataDictionary.name
       ) {
-        const valueType = sourceType.valueType ?? ObjectType;
-        return emitMapValuesList(this, source, valueType);
+        const keyType = sourceType.keyType ?? ObjectType;
+        return emitMapEntriesList(this, source, keyType);
       }
       if (
         sourceType === ExternTypes.dataDictionary ||
         sourceType.name === ExternTypes.dataDictionary.name ||
         sourceType.udonType === UdonType.DataDictionary
       ) {
-        return emitMapValuesList(this, source, ObjectType);
+        return emitMapEntriesList(this, source, ObjectType);
       }
       return source;
     }
