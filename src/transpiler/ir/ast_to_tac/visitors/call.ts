@@ -919,7 +919,7 @@ export function visitCallExpression(
       const lengthResult = this.newTemp(PrimitiveTypes.int32);
       const arrayType = this.getOperandType(object);
       const lengthProp =
-        arrayType.name === ExternTypes.dataList.name ? "Count" : "length";
+        arrayType.name === ExternTypes.dataList.name ? "Count" : "Length";
       this.instructions.push(
         new PropertyGetInstruction(lengthResult, object, lengthProp),
       );
@@ -2466,8 +2466,8 @@ export function visitArrayStaticCall(
           ),
         );
 
-        // Use Count for DataList, length for Array
-        const lengthProp = !isArraySource ? "Count" : "length";
+        // Use Count for DataList, Length for native Array
+        const lengthProp = !isArraySource ? "Count" : "Length";
         this.instructions.push(
           new PropertyGetInstruction(lengthVar, source, lengthProp),
         );
