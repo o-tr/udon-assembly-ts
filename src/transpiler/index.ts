@@ -132,8 +132,11 @@ export class TypeScriptToUdonTranspiler {
     // Phase 4: Convert TAC to Udon instructions
     const udonConverter = new TACToUdonConverter();
     const entryClassName = this.pickEntryClassName(program);
-    const { inlineClassNames, callAnalyzer, registry: classRegistry } =
-      this.collectInlineClassNamesWithContext(program, entryClassName);
+    const {
+      inlineClassNames,
+      callAnalyzer,
+      registry: classRegistry,
+    } = this.collectInlineClassNamesWithContext(program, entryClassName);
     const udonInstructions = udonConverter.convert(tacInstructions, {
       entryClassName: entryClassName ?? undefined,
       inlineClassNames,
@@ -229,7 +232,11 @@ export class TypeScriptToUdonTranspiler {
     registry: ClassRegistry | null;
   } {
     if (!entryClassName)
-      return { inlineClassNames: new Set(), callAnalyzer: null, registry: null };
+      return {
+        inlineClassNames: new Set(),
+        callAnalyzer: null,
+        registry: null,
+      };
     const registry = new ClassRegistry();
     registry.registerFromProgram(
       program,

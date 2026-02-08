@@ -388,7 +388,7 @@ export class BatchTranspiler {
     usageByClass: Map<string, number>,
     callAnalyzer: CallAnalyzer,
     registry: ClassRegistry,
-    inlineClassNames?: Set<string>,
+    _inlineClassNames?: Set<string>,
     splitCandidates?: Map<string, number>,
     heapUsage?: number,
   ): void {

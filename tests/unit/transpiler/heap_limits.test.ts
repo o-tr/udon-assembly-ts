@@ -17,17 +17,13 @@ function createMockRegistry(
       const entry = classes.get(className);
       if (!entry) return undefined;
       return {
-        decorators: entry.isUdonBehaviour
-          ? [{ name: "UdonBehaviour" }]
-          : [],
+        decorators: entry.isUdonBehaviour ? [{ name: "UdonBehaviour" }] : [],
       };
     },
   } as unknown as ClassRegistry;
 }
 
-function createMockCallAnalyzer(
-  deps: Map<string, Set<string>>,
-): CallAnalyzer {
+function createMockCallAnalyzer(deps: Map<string, Set<string>>): CallAnalyzer {
   return {
     analyzeClass(className: string) {
       return {
@@ -193,13 +189,11 @@ describe("buildHeapTree", () => {
 
     expect(claimed).toEqual(new Set(["Root", "ChildA", "ChildB", "Shared"]));
     // Shared should appear under exactly one child
-    const sharedCount =
-      tree.children.reduce(
-        (count, child) =>
-          count +
-          child.children.filter((c) => c.className === "Shared").length,
-        0,
-      );
+    const sharedCount = tree.children.reduce(
+      (count, child) =>
+        count + child.children.filter((c) => c.className === "Shared").length,
+      0,
+    );
     expect(sharedCount).toBe(1);
   });
 
@@ -228,9 +222,7 @@ describe("buildHeapTree", () => {
       ["Large", 100],
       ["Medium", 50],
     ]);
-    const deps = new Map([
-      ["Root", new Set(["Small", "Large", "Medium"])],
-    ]);
+    const deps = new Map([["Root", new Set(["Small", "Large", "Medium"])]]);
     const classes = new Map([
       ["Root", { isStub: false, isUdonBehaviour: false }],
       ["Small", { isStub: false, isUdonBehaviour: false }],
