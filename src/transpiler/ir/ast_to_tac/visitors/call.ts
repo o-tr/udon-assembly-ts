@@ -134,6 +134,89 @@ const emitMapValuesList = (
   return listResult;
 };
 
+const emitMapEntriesList = (
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  keyType: TypeSymbol,
+): TACOperand => {
+  const keysList = emitMapKeysList(converter, mapOperand, keyType);
+  const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
+  const entriesResult = converter.newTemp(entriesType);
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.instructions.push(
+    new CallInstruction(entriesResult, listCtorSig, []),
+  );
+
+  const indexVar = converter.newTemp(PrimitiveTypes.int32);
+  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new AssignmentInstruction(
+      indexVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(
+    new PropertyGetInstruction(lengthVar, keysList, "Count"),
+  );
+
+  const loopStart = converter.newLabel("map_entries_start");
+  const loopContinue = converter.newLabel("map_entries_continue");
+  const loopEnd = converter.newLabel("map_entries_end");
+
+  converter.instructions.push(new LabelInstruction(loopStart));
+  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+  );
+  converter.instructions.push(
+    new ConditionalJumpInstruction(condTemp, loopEnd),
+  );
+
+  const keyToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+  );
+  const valueToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
+  );
+
+  const pairList = converter.newTemp(
+    new DataListTypeSymbol(ExternTypes.dataToken),
+  );
+  converter.instructions.push(new CallInstruction(pairList, listCtorSig, []));
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
+  );
+  const pairToken = converter.wrapDataToken(pairList);
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
+  );
+
+  converter.instructions.push(new LabelInstruction(loopContinue));
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      indexVar,
+      indexVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+  converter.instructions.push(new LabelInstruction(loopEnd));
+
+  return entriesResult;
+};
+
 export function visitCallExpression(
   this: ASTToTACConverter,
   node: CallExpressionNode,
@@ -478,17 +561,8 @@ export function visitCallExpression(
       this.instructions.push(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
-    if (node.isNew && calleeName === "Array") {
-      if (rawArgs.length === 1) {
-        // Reject any single-argument new Array(x). In JS, new Array(n)
-        // creates a sparse array of length n, but Udon has no sparse arrays
-        // so the semantics diverge. Reject regardless of whether the
-        // argument is a literal, identifier, or expression.
-        throw new Error(
-          "new Array(n) for pre-allocating a fixed-length array is not supported. " +
-            "Use an array literal (e.g., [1, 2, 3]) instead.",
-        );
-      }
+    if (calleeName === "Array") {
+      const evaluatedArgs = getArgs();
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;
@@ -501,7 +575,86 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
-      for (const arg of getArgs()) {
+      // Single-argument numeric-length semantics: Array(n) and new Array(n)
+      // are equivalent in JS and both produce a length-n array.
+      if (rawArgs.length === 1) {
+        const argOperand = evaluatedArgs[0];
+        const argType = this.getOperandType(argOperand);
+        const isNumericLength =
+          argType.udonType === UdonType.Int16 ||
+          argType.udonType === UdonType.UInt16 ||
+          argType.udonType === UdonType.Int32 ||
+          argType.udonType === UdonType.UInt32 ||
+          argType.udonType === UdonType.Int64 ||
+          argType.udonType === UdonType.UInt64 ||
+          argType.udonType === UdonType.Byte ||
+          argType.udonType === UdonType.SByte;
+
+        const isConstantIntegerLength =
+          argOperand.kind === TACOperandKind.Constant &&
+          (argType.udonType === UdonType.Single ||
+            argType.udonType === UdonType.Double) &&
+          typeof (argOperand as ConstantOperand).value === "number" &&
+          Number.isInteger((argOperand as ConstantOperand).value);
+
+        const isFloatType =
+          argType.udonType === UdonType.Single ||
+          argType.udonType === UdonType.Double;
+        const isNonConstFloat =
+          isFloatType && argOperand.kind !== TACOperandKind.Constant;
+
+        // For non-constant floats we can't decide statically whether the
+        // runtime value will be an integer. Generate a runtime check:
+        // if (floor(arg) == arg) -> treat as numeric length, else treat as single element.
+        if (isNonConstFloat) {
+          const floorValue = this.visitMathStaticCall("floor", [argOperand]);
+          if (!floorValue) {
+            // If Math.floor isn't available for some reason, fall back to
+            // treating the argument as a single element.
+            const token = this.wrapDataToken(argOperand);
+            this.instructions.push(
+              new MethodCallInstruction(undefined, listResult, "Add", [token]),
+            );
+            return listResult;
+          }
+
+          const isIntTemp = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(isIntTemp, argOperand, "==", floorValue),
+          );
+
+          const nonIntLabel = this.newLabel("array_non_int_length");
+          const doneLabel = this.newLabel("array_length_done");
+
+          // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
+          // If `isIntTemp` is false (non-integer), jump to `nonIntLabel` to add the element.
+          this.instructions.push(
+            new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
+          );
+
+          // Integer-case: do nothing (create empty list), jump to done.
+          this.instructions.push(new UnconditionalJumpInstruction(doneLabel));
+
+          // Non-integer case: add the single value as element.
+          this.instructions.push(new LabelInstruction(nonIntLabel));
+          const token = this.wrapDataToken(argOperand);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [token]),
+          );
+          this.instructions.push(new LabelInstruction(doneLabel));
+
+          return listResult;
+        }
+
+        if (!isNumericLength && !isConstantIntegerLength) {
+          const token = this.wrapDataToken(argOperand);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [token]),
+          );
+        }
+        return listResult;
+      }
+      for (const arg of evaluatedArgs) {
         const token = this.wrapDataToken(arg);
         this.instructions.push(
           new MethodCallInstruction(undefined, listResult, "Add", [token]),
@@ -626,7 +779,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (objectResult) return objectResult;
+      if (objectResult != null) return objectResult;
     }
 
     if (
@@ -637,7 +790,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (numberResult) return numberResult;
+      if (numberResult != null) return numberResult;
     }
 
     if (
@@ -648,7 +801,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (mathResult) return mathResult;
+      if (mathResult != null) return mathResult;
     }
 
     if (
@@ -659,7 +812,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (arrayResult) return arrayResult;
+      if (arrayResult != null) return arrayResult;
     }
 
     if (
@@ -689,7 +842,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (inlineResult) return inlineResult;
+      if (inlineResult != null) return inlineResult;
     }
 
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
@@ -766,7 +919,7 @@ export function visitCallExpression(
       const lengthResult = this.newTemp(PrimitiveTypes.int32);
       const arrayType = this.getOperandType(object);
       const lengthProp =
-        arrayType.name === ExternTypes.dataList.name ? "Count" : "length";
+        arrayType.name === ExternTypes.dataList.name ? "Count" : "Length";
       this.instructions.push(
         new PropertyGetInstruction(lengthResult, object, lengthProp),
       );
@@ -1100,6 +1253,8 @@ export function visitCallExpression(
     const nullLabel = this.newLabel("opt_call_null");
     const endLabel = this.newLabel("opt_call_end");
     const callResult = this.newTemp(ObjectType);
+    // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
+    // If `isNotNull` is false (object is null), jump to `nullLabel` to set the result to null.
     this.instructions.push(
       new ConditionalJumpInstruction(isNotNull, nullLabel),
     );
@@ -1889,86 +2044,7 @@ function visitMapMethodCall(
       if (rawArgs.length !== 0) {
         throw new Error("Map.entries expects no arguments.");
       }
-      const keysList = emitMapKeysList(converter, mapOperand, keyType);
-      const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
-      const entriesResult = converter.newTemp(entriesType);
-      const listCtorSig = converter.requireExternSignature(
-        "DataList",
-        "ctor",
-        "method",
-        [],
-        "DataList",
-      );
-      converter.instructions.push(
-        new CallInstruction(entriesResult, listCtorSig, []),
-      );
-
-      const indexVar = converter.newTemp(PrimitiveTypes.int32);
-      const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-      converter.instructions.push(
-        new AssignmentInstruction(
-          indexVar,
-          createConstant(0, PrimitiveTypes.int32),
-        ),
-      );
-      converter.instructions.push(
-        new PropertyGetInstruction(lengthVar, keysList, "Count"),
-      );
-
-      const loopStart = converter.newLabel("map_entries_start");
-      const loopContinue = converter.newLabel("map_entries_continue");
-      const loopEnd = converter.newLabel("map_entries_end");
-
-      converter.instructions.push(new LabelInstruction(loopStart));
-      const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
-        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-      );
-      converter.instructions.push(
-        new ConditionalJumpInstruction(condTemp, loopEnd),
-      );
-
-      const keyToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
-      );
-      const valueToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
-          keyToken,
-        ]),
-      );
-
-      const pairList = converter.newTemp(
-        new DataListTypeSymbol(ExternTypes.dataToken),
-      );
-      converter.instructions.push(
-        new CallInstruction(pairList, listCtorSig, []),
-      );
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
-      );
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
-      );
-      const pairToken = converter.wrapDataToken(pairList);
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
-      );
-
-      converter.instructions.push(new LabelInstruction(loopContinue));
-      converter.instructions.push(
-        new BinaryOpInstruction(
-          indexVar,
-          indexVar,
-          "+",
-          createConstant(1, PrimitiveTypes.int32),
-        ),
-      );
-      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      converter.instructions.push(new LabelInstruction(loopEnd));
-
-      return entriesResult;
+      return emitMapEntriesList(converter, mapOperand, keyType);
     }
     case "forEach": {
       if (rawArgs.length < 1) {
@@ -2327,8 +2403,131 @@ export function visitArrayStaticCall(
   args: TACOperand[],
 ): TACOperand | null {
   switch (methodName) {
-    case "from":
-      return args.length >= 1 ? args[0] : null;
+    case "from": {
+      if (args.length < 1) return null;
+      const source = args[0];
+      const sourceType = this.getOperandType(source);
+      if (
+        sourceType instanceof CollectionTypeSymbol &&
+        sourceType.name === ExternTypes.dataDictionary.name
+      ) {
+        const keyType = sourceType.keyType ?? ObjectType;
+        return emitMapEntriesList(this, source, keyType);
+      }
+      if (
+        sourceType === ExternTypes.dataDictionary ||
+        sourceType.name === ExternTypes.dataDictionary.name ||
+        sourceType.udonType === UdonType.DataDictionary
+      ) {
+        return emitMapEntriesList(this, source, ObjectType);
+      }
+
+      // If source is a DataList or an Array, Array.from should produce a new
+      // DataList with copied elements (JS semantics). Detect DataList/Array
+      // operands and emit a copy loop that constructs a new DataList and adds
+      // each element.
+      const isListOrArrayType =
+        sourceType instanceof DataListTypeSymbol ||
+        sourceType.name === ExternTypes.dataList.name ||
+        sourceType.udonType === UdonType.DataList ||
+        sourceType instanceof ArrayTypeSymbol ||
+        sourceType.udonType === UdonType.Array;
+
+      if (isListOrArrayType) {
+        const isArraySource =
+          sourceType instanceof ArrayTypeSymbol ||
+          sourceType.udonType === UdonType.Array;
+
+        const elementType =
+          "elementType" in sourceType
+            ? sourceType.elementType
+            : isArraySource
+              ? ObjectType
+              : ExternTypes.dataToken;
+
+        const listResult = this.newTemp(new DataListTypeSymbol(elementType));
+        const listCtorSig = this.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
+        this.instructions.push(
+          new CallInstruction(listResult, listCtorSig, []),
+        );
+
+        const indexVar = this.newTemp(PrimitiveTypes.int32);
+        const lengthVar = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new AssignmentInstruction(
+            indexVar,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+
+        // Use Count for DataList, Length for native Array
+        const lengthProp = !isArraySource ? "Count" : "Length";
+        this.instructions.push(
+          new PropertyGetInstruction(lengthVar, source, lengthProp),
+        );
+
+        const loopStart = this.newLabel("array_from_start");
+        const loopContinue = this.newLabel("array_from_continue");
+        const loopEnd = this.newLabel("array_from_end");
+
+        this.instructions.push(new LabelInstruction(loopStart));
+        const condTemp = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+        );
+        this.instructions.push(
+          new ConditionalJumpInstruction(condTemp, loopEnd),
+        );
+
+        if (!isArraySource) {
+          const itemToken = this.newTemp(ExternTypes.dataToken);
+          this.instructions.push(
+            new MethodCallInstruction(itemToken, source, "get_Item", [
+              indexVar,
+            ]),
+          );
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [
+              itemToken,
+            ]),
+          );
+        } else {
+          const elementValue = this.newTemp(elementType);
+          this.instructions.push(
+            new ArrayAccessInstruction(elementValue, source, indexVar),
+          );
+          const token = this.wrapDataToken(elementValue);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [token]),
+          );
+        }
+
+        this.instructions.push(new LabelInstruction(loopContinue));
+        this.instructions.push(
+          new BinaryOpInstruction(
+            indexVar,
+            indexVar,
+            "+",
+            createConstant(1, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new UnconditionalJumpInstruction(loopStart));
+        this.instructions.push(new LabelInstruction(loopEnd));
+
+        return listResult;
+      }
+
+      // Unsupported iterable type for Array.from
+      throw new Error(
+        `Array.from expects an Array, DataList, or DataDictionary iterable; received ${sourceType?.name ?? String(sourceType)}`,
+      );
+    }
     case "isArray": {
       if (args.length !== 1) return null;
       const target = args[0];

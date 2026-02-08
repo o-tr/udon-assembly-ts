@@ -260,6 +260,7 @@ describe("collections support", () => {
           const size = map.size;
           const keys = map.keys();
           const values = map.values();
+          const valuesArray = Array.from(map.values());
           const entries = map.entries();
           map.forEach((value, key, self) => {
             const x: number = value;
@@ -323,6 +324,7 @@ describe("collections support", () => {
         ),
       ),
     ).toBe(true);
+
     expect(
       externs.some((sig) =>
         sig.includes(
@@ -346,6 +348,48 @@ describe("collections support", () => {
       externs.some((sig) =>
         sig.includes(
           "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("Array.from(DataList) produces a copy with ctor and Add", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          const original: DataList = new DataList();
+          original.Add(1);
+          const copy = Array.from(original);
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+    const tacText = tac.map((i) => i.toString()).join("\n");
+
+    const udonConverter = new TACToUdonConverter();
+    udonConverter.convert(tac);
+    const externs = udonConverter.getExternSignatures();
+
+    // Should emit a copy loop with a new ctor, get_Item, and Add
+    expect(tacText).toContain("array_from_start");
+    expect(tacText).toContain("get_Item");
+
+    // The copy must call ctor (for the new list) and Add (to populate it)
+    expect(
+      externs.some((sig) =>
+        sig.includes("VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList"),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
         ),
       ),
     ).toBe(true);
