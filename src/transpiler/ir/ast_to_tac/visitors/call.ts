@@ -626,9 +626,9 @@ export function visitCallExpression(
 
           // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
           // If `isIntTemp` is false (non-integer), jump to `nonIntLabel` to add the element.
-            this.instructions.push(
-              new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
-            );
+          this.instructions.push(
+            new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
+          );
 
           // Integer-case: do nothing (create empty list), jump to done.
           this.instructions.push(new UnconditionalJumpInstruction(doneLabel));
@@ -2424,20 +2424,21 @@ export function visitArrayStaticCall(
       // DataList with copied elements (JS semantics). Detect DataList/Array
       // operands and emit a copy loop that constructs a new DataList and adds
       // each element.
-      const isDataListType =
+      const isListOrArrayType =
         sourceType instanceof DataListTypeSymbol ||
         sourceType.name === ExternTypes.dataList.name ||
+        sourceType.name === ExternTypes.dataList.name ||
         sourceType.udonType === UdonType.DataList ||
-        (sourceType instanceof ArrayTypeSymbol) ||
+        sourceType instanceof ArrayTypeSymbol ||
         sourceType.udonType === UdonType.Array;
 
-      if (isDataListType) {
+      if (isListOrArrayType) {
         const elementType =
           sourceType instanceof DataListTypeSymbol
             ? sourceType.elementType
             : sourceType instanceof ArrayTypeSymbol
-            ? sourceType.elementType
-            : ObjectType;
+              ? sourceType.elementType
+              : ObjectType;
 
         const listResult = this.newTemp(new DataListTypeSymbol(elementType));
         const listCtorSig = this.requireExternSignature(
@@ -2487,14 +2488,19 @@ export function visitArrayStaticCall(
         if (
           sourceType instanceof DataListTypeSymbol ||
           sourceType.name === ExternTypes.dataList.name ||
+          sourceType.name === ExternTypes.dataList.name ||
           sourceType.udonType === UdonType.DataList
         ) {
           const itemToken = this.newTemp(ExternTypes.dataToken);
           this.instructions.push(
-            new MethodCallInstruction(itemToken, source, "get_Item", [indexVar]),
+            new MethodCallInstruction(itemToken, source, "get_Item", [
+              indexVar,
+            ]),
           );
           this.instructions.push(
-            new MethodCallInstruction(undefined, listResult, "Add", [itemToken]),
+            new MethodCallInstruction(undefined, listResult, "Add", [
+              itemToken,
+            ]),
           );
         } else {
           const elementValue = this.newTemp(elementType);
@@ -2522,7 +2528,10 @@ export function visitArrayStaticCall(
         return listResult;
       }
 
-      return source;
+      // Unsupported iterable type for Array.from
+      throw new Error(
+        `Array.from expects an Array, DataList, or DataDictionary iterable; received ${sourceType?.name ?? String(sourceType)}`,
+      );
     }
     case "isArray": {
       if (args.length !== 1) return null;
