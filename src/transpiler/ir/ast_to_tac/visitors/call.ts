@@ -2427,7 +2427,6 @@ export function visitArrayStaticCall(
       const isListOrArrayType =
         sourceType instanceof DataListTypeSymbol ||
         sourceType.name === ExternTypes.dataList.name ||
-        sourceType.name === ExternTypes.dataList.name ||
         sourceType.udonType === UdonType.DataList ||
         sourceType instanceof ArrayTypeSymbol ||
         sourceType.udonType === UdonType.Array;
@@ -2487,7 +2486,6 @@ export function visitArrayStaticCall(
 
         if (
           sourceType instanceof DataListTypeSymbol ||
-          sourceType.name === ExternTypes.dataList.name ||
           sourceType.name === ExternTypes.dataList.name ||
           sourceType.udonType === UdonType.DataList
         ) {
