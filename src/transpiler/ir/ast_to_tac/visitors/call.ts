@@ -587,12 +587,62 @@ export function visitCallExpression(
           argType.udonType === UdonType.UInt64 ||
           argType.udonType === UdonType.Byte ||
           argType.udonType === UdonType.SByte;
+
         const isConstantIntegerLength =
           argOperand.kind === TACOperandKind.Constant &&
           (argType.udonType === UdonType.Single ||
             argType.udonType === UdonType.Double) &&
           typeof (argOperand as ConstantOperand).value === "number" &&
           Number.isInteger((argOperand as ConstantOperand).value);
+
+        const isFloatType =
+          argType.udonType === UdonType.Single ||
+          argType.udonType === UdonType.Double;
+        const isNonConstFloat =
+          isFloatType && argOperand.kind !== TACOperandKind.Constant;
+
+        // For non-constant floats we can't decide statically whether the
+        // runtime value will be an integer. Generate a runtime check:
+        // if (floor(arg) == arg) -> treat as numeric length, else treat as single element.
+        if (isNonConstFloat) {
+          const floorValue = this.visitMathStaticCall("floor", [argOperand]);
+          if (!floorValue) {
+            // If Math.floor isn't available for some reason, fall back to
+            // treating the argument as a single element.
+            const token = this.wrapDataToken(argOperand);
+            this.instructions.push(
+              new MethodCallInstruction(undefined, listResult, "Add", [token]),
+            );
+            return listResult;
+          }
+
+          const isIntTemp = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(isIntTemp, argOperand, "==", floorValue),
+          );
+
+          const nonIntLabel = this.newLabel("array_non_int_length");
+          const doneLabel = this.newLabel("array_length_done");
+
+          // If isIntTemp is false, jump to nonIntLabel to add the element.
+          this.instructions.push(
+            new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
+          );
+
+          // Integer-case: do nothing (create empty list), jump to done.
+          this.instructions.push(new UnconditionalJumpInstruction(doneLabel));
+
+          // Non-integer case: add the single value as element.
+          this.instructions.push(new LabelInstruction(nonIntLabel));
+          const token = this.wrapDataToken(argOperand);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [token]),
+          );
+          this.instructions.push(new LabelInstruction(doneLabel));
+
+          return listResult;
+        }
+
         if (!isNumericLength && !isConstantIntegerLength) {
           const token = this.wrapDataToken(argOperand);
           this.instructions.push(
