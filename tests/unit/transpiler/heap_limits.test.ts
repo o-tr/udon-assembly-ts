@@ -197,6 +197,41 @@ describe("buildHeapTree", () => {
     expect(sharedCount).toBe(1);
   });
 
+  it("should treat unregistered class as unclaimed root entry", () => {
+    // "Unregistered" is referenced by Root but not in the ClassRegistry,
+    // so isSkippableClass returns true and it stays unclaimed.
+    const usageByClass = new Map([
+      ["Root", 10],
+      ["Unregistered", 40],
+    ]);
+    const deps = new Map([["Root", new Set(["Unregistered"])]]);
+    // Only Root is in the registry; Unregistered is absent.
+    const classes = new Map([
+      ["Root", { isStub: false, isUdonBehaviour: false }],
+    ]);
+
+    const { tree, claimed } = buildHeapTree(
+      "Root",
+      usageByClass,
+      createMockCallAnalyzer(deps),
+      createMockRegistry(classes),
+    );
+
+    expect(tree.children).toHaveLength(0);
+    expect(claimed).not.toContain("Unregistered");
+
+    // Verify it shows as unclaimed root entry in the breakdown
+    const result = buildHeapUsageTreeBreakdown(
+      usageByClass,
+      50,
+      "Root",
+      createMockCallAnalyzer(deps),
+      createMockRegistry(classes),
+    );
+    const lines = result.split("\n");
+    expect(lines).toContain("  - Unregistered: 40");
+  });
+
   it("should skip children not present in usageByClass", () => {
     const usageByClass = new Map([["Root", 10]]);
     const deps = new Map([["Root", new Set(["Missing"])]]);
@@ -215,19 +250,23 @@ describe("buildHeapTree", () => {
     expect(tree.children).toHaveLength(0);
   });
 
-  it("should sort children by selfUsage descending", () => {
+  it("should sort children by totalUsage (subtree) descending", () => {
+    // SmallSelf has low selfUsage but large subtree via DeepChild
     const usageByClass = new Map([
       ["Root", 10],
-      ["Small", 20],
-      ["Large", 100],
-      ["Medium", 50],
+      ["SmallSelf", 5],
+      ["DeepChild", 200],
+      ["LargeSelf", 100],
     ]);
-    const deps = new Map([["Root", new Set(["Small", "Large", "Medium"])]]);
+    const deps = new Map([
+      ["Root", new Set(["SmallSelf", "LargeSelf"])],
+      ["SmallSelf", new Set(["DeepChild"])],
+    ]);
     const classes = new Map([
       ["Root", { isStub: false, isUdonBehaviour: false }],
-      ["Small", { isStub: false, isUdonBehaviour: false }],
-      ["Large", { isStub: false, isUdonBehaviour: false }],
-      ["Medium", { isStub: false, isUdonBehaviour: false }],
+      ["SmallSelf", { isStub: false, isUdonBehaviour: false }],
+      ["DeepChild", { isStub: false, isUdonBehaviour: false }],
+      ["LargeSelf", { isStub: false, isUdonBehaviour: false }],
     ]);
 
     const { tree } = buildHeapTree(
@@ -237,11 +276,14 @@ describe("buildHeapTree", () => {
       createMockRegistry(classes),
     );
 
+    // SmallSelf totalUsage = 5 + 200 = 205 > LargeSelf totalUsage = 100
     expect(tree.children.map((c) => c.className)).toEqual([
-      "Large",
-      "Medium",
-      "Small",
+      "SmallSelf",
+      "LargeSelf",
     ]);
+    expect(tree.children[0]?.totalUsage).toBe(205);
+    expect(tree.children[1]?.totalUsage).toBe(100);
+    expect(tree.totalUsage).toBe(315);
   });
 });
 
@@ -374,7 +416,7 @@ describe("buildHeapUsageTreeBreakdown", () => {
     expect(lines[3]).toBe("  - <extern>: 10");
   });
 
-  it("should handle empty usageByClass", () => {
+  it("should not create phantom entry when usageByClass is empty", () => {
     const usageByClass = new Map<string, number>();
     const deps = new Map<string, Set<string>>([["Root", new Set()]]);
     const classes = new Map([
@@ -389,6 +431,7 @@ describe("buildHeapUsageTreeBreakdown", () => {
       createMockRegistry(classes),
     );
 
-    expect(result).toBe("  - Root: 50");
+    // Root has 0 usage since it wasn't in the original map and no deficit is assigned
+    expect(result).toBe("  - Root: 0");
   });
 });

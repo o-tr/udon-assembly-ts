@@ -11,8 +11,32 @@ export type HeapDataEntry = [string, number, string, unknown];
 export interface HeapTreeNode {
   className: string;
   selfUsage: number;
+  totalUsage: number;
   children: HeapTreeNode[];
 }
+
+/**
+ * Assign the gap between tracked per-class totals and actual heap usage to
+ * defaultClass. Only adds the deficit when there is already real tracked
+ * usage (totalUsage > 0) or when defaultClass already has an entry, so we
+ * don't create a phantom entry from an empty map.
+ */
+const assignHeapDeficit = (
+  usageByClass: Map<string, number>,
+  heapUsage: number,
+  defaultClass: string,
+): void => {
+  const totalUsage = Array.from(usageByClass.values()).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+  if (totalUsage >= heapUsage) return;
+  if (totalUsage === 0 && !usageByClass.has(defaultClass)) return;
+  usageByClass.set(
+    defaultClass,
+    (usageByClass.get(defaultClass) ?? 0) + (heapUsage - totalUsage),
+  );
+};
 
 export const computeHeapUsage = (dataSection: HeapDataEntry[]): number => {
   if (dataSection.length === 0) {
@@ -39,16 +63,7 @@ export const buildHeapUsageBreakdown = (
       }
     }
   }
-  const totalUsage = Array.from(updatedUsage.values()).reduce(
-    (sum, count) => sum + count,
-    0,
-  );
-  if (totalUsage < heapUsage) {
-    updatedUsage.set(
-      defaultClass,
-      (updatedUsage.get(defaultClass) ?? 0) + (heapUsage - totalUsage),
-    );
-  }
+  assignHeapDeficit(updatedUsage, heapUsage, defaultClass);
 
   return Array.from(updatedUsage.entries())
     .sort((a, b) => b[1] - a[1])
@@ -56,6 +71,12 @@ export const buildHeapUsageBreakdown = (
     .join("\n");
 };
 
+/**
+ * Returns true for classes that should not appear as tree children.
+ * Unregistered classes (getClass returns undefined) are treated as skippable
+ * so they surface as unclaimed root-level entries in the breakdown rather
+ * than being nested under a parent that may not actually depend on them.
+ */
 const isSkippableClass = (
   className: string,
   registry: ClassRegistry,
@@ -88,11 +109,16 @@ const buildTreeNode = (
     );
   }
 
-  children.sort((a, b) => b.selfUsage - a.selfUsage);
+  children.sort((a, b) => b.totalUsage - a.totalUsage);
+
+  const selfUsage = usageByClass.get(className) ?? 0;
+  const totalUsage =
+    selfUsage + children.reduce((sum, child) => sum + child.totalUsage, 0);
 
   return {
     className,
-    selfUsage: usageByClass.get(className) ?? 0,
+    selfUsage,
+    totalUsage,
     children,
   };
 };
@@ -134,16 +160,7 @@ export const buildHeapUsageTreeBreakdown = (
   registry: ClassRegistry,
 ): string => {
   const updatedUsage = new Map(usageByClass);
-  const totalUsage = Array.from(updatedUsage.values()).reduce(
-    (sum, count) => sum + count,
-    0,
-  );
-  if (totalUsage < heapUsage) {
-    updatedUsage.set(
-      entryClassName,
-      (updatedUsage.get(entryClassName) ?? 0) + (heapUsage - totalUsage),
-    );
-  }
+  assignHeapDeficit(updatedUsage, heapUsage, entryClassName);
 
   const { tree, claimed } = buildHeapTree(
     entryClassName,
