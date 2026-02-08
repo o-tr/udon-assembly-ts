@@ -18,6 +18,7 @@ import {
 } from "./frontend/types.js";
 import {
   buildHeapUsageBreakdown,
+  buildHeapUsageTreeBreakdown,
   computeHeapUsage,
   UASM_HEAP_LIMIT,
 } from "./heap_limits.js";
@@ -67,6 +68,7 @@ export class TypeScriptToUdonTranspiler {
       const usage = new MethodUsageAnalyzer(registry).analyze();
       program = pruneProgramByMethodUsage(program, usage);
     }
+    const entryClassName = this.pickEntryClassName(registry);
     const udonBehaviourClasses = new Set(
       program.statements
         .filter(
@@ -117,7 +119,6 @@ export class TypeScriptToUdonTranspiler {
     // Phase 3: Optimize TAC (only when explicitly enabled)
     if (options.optimize === true) {
       const optimizer = new TACOptimizer();
-      const entryClassName = this.pickEntryClassName(program);
       const exposedLabels = computeExposedLabels(
         registry,
         udonBehaviourLayouts,
@@ -131,11 +132,8 @@ export class TypeScriptToUdonTranspiler {
 
     // Phase 4: Convert TAC to Udon instructions
     const udonConverter = new TACToUdonConverter();
-    const entryClassName = this.pickEntryClassName(program);
-    const inlineClassNames = this.collectInlineClassNames(
-      program,
-      entryClassName,
-    );
+    const { inlineClassNames, callAnalyzer } =
+      this.collectInlineClassNamesWithContext(registry, entryClassName);
     const udonInstructions = udonConverter.convert(tacInstructions, {
       entryClassName: entryClassName ?? undefined,
       inlineClassNames,
@@ -150,11 +148,10 @@ export class TypeScriptToUdonTranspiler {
     }
 
     // Phase 5: Generate .uasm file
-    const entryClassNameForExport = this.pickEntryClassName(program);
     const exportLabels = computeExportLabels(
       registry,
       udonBehaviourLayouts,
-      entryClassNameForExport,
+      entryClassName,
     );
     const assembler = new UdonAssembler();
     const uasm = assembler.assemble(
@@ -170,7 +167,8 @@ export class TypeScriptToUdonTranspiler {
       entryClassName,
       dataSectionWithTypes,
       udonConverter.getHeapUsageByClass(),
-      inlineClassNames,
+      callAnalyzer,
+      registry,
     );
 
     return {
@@ -183,19 +181,24 @@ export class TypeScriptToUdonTranspiler {
     entryClassName: string | null,
     dataSection: Array<[string, number, string, unknown]>,
     usageByClass: Map<string, number>,
-    inlineClassNames?: Set<string>,
+    callAnalyzer: CallAnalyzer | null,
+    registry: ClassRegistry | null,
   ): void {
     const heapLimit = UASM_HEAP_LIMIT;
     const heapUsage = computeHeapUsage(dataSection);
     if (heapUsage <= heapLimit) return;
 
     const entryKey = entryClassName ?? "<global>";
-    const breakdown = buildHeapUsageBreakdown(
-      usageByClass,
-      heapUsage,
-      entryKey,
-      inlineClassNames,
-    );
+    const breakdown =
+      entryClassName && callAnalyzer && registry
+        ? buildHeapUsageTreeBreakdown(
+            usageByClass,
+            heapUsage,
+            entryClassName,
+            callAnalyzer,
+            registry,
+          )
+        : buildHeapUsageBreakdown(usageByClass, heapUsage, entryKey);
     const entryLabel = entryClassName ? ` for ${entryClassName}` : "";
     const message = [
       `UASM heap usage ${heapUsage} exceeds limit ${heapLimit}${entryLabel}.`,
@@ -205,29 +208,25 @@ export class TypeScriptToUdonTranspiler {
     console.warn(message);
   }
 
-  private pickEntryClassName(program: ProgramNode): string | null {
-    const registry = new ClassRegistry();
-    registry.registerFromProgram(
-      program,
-      TypeScriptToUdonTranspiler.INLINE_SOURCE_ID,
-    );
+  private pickEntryClassName(registry: ClassRegistry): string | null {
     const entryPoint =
       registry.getEntryPoints()[0]?.name ?? registry.getAllClasses()[0]?.name;
     return entryPoint ?? null;
   }
 
-  private collectInlineClassNames(
-    program: ProgramNode,
+  private collectInlineClassNamesWithContext(
+    registry: ClassRegistry,
     entryClassName: string | null,
-  ): Set<string> {
-    if (!entryClassName) return new Set();
-    const registry = new ClassRegistry();
-    registry.registerFromProgram(
-      program,
-      TypeScriptToUdonTranspiler.INLINE_SOURCE_ID,
-    );
-    const analyzer = new CallAnalyzer(registry);
-    return analyzer.analyzeClass(entryClassName).inlineClasses;
+  ): {
+    inlineClassNames: Set<string>;
+    callAnalyzer: CallAnalyzer | null;
+  } {
+    if (!entryClassName)
+      return { inlineClassNames: new Set(), callAnalyzer: null };
+    const callAnalyzer = new CallAnalyzer(registry);
+    const inlineClassNames =
+      callAnalyzer.analyzeClass(entryClassName).inlineClasses;
+    return { inlineClassNames, callAnalyzer };
   }
 
   private appendReflectionData(
