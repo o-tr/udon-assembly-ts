@@ -624,10 +624,11 @@ export function visitCallExpression(
           const nonIntLabel = this.newLabel("array_non_int_length");
           const doneLabel = this.newLabel("array_length_done");
 
-          // If isIntTemp is false, jump to nonIntLabel to add the element.
-          this.instructions.push(
-            new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
-          );
+          // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
+          // If `isIntTemp` is false (non-integer), jump to `nonIntLabel` to add the element.
+            this.instructions.push(
+              new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
+            );
 
           // Integer-case: do nothing (create empty list), jump to done.
           this.instructions.push(new UnconditionalJumpInstruction(doneLabel));
@@ -1250,6 +1251,8 @@ export function visitCallExpression(
     const nullLabel = this.newLabel("opt_call_null");
     const endLabel = this.newLabel("opt_call_end");
     const callResult = this.newTemp(ObjectType);
+    // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
+    // If `isNotNull` is false (object is null), jump to `nullLabel` to set the result to null.
     this.instructions.push(
       new ConditionalJumpInstruction(isNotNull, nullLabel),
     );
@@ -2416,6 +2419,109 @@ export function visitArrayStaticCall(
       ) {
         return emitMapEntriesList(this, source, ObjectType);
       }
+
+      // If source is a DataList or an Array, Array.from should produce a new
+      // DataList with copied elements (JS semantics). Detect DataList/Array
+      // operands and emit a copy loop that constructs a new DataList and adds
+      // each element.
+      const isDataListType =
+        sourceType instanceof DataListTypeSymbol ||
+        sourceType.name === ExternTypes.dataList.name ||
+        sourceType.udonType === UdonType.DataList ||
+        (sourceType instanceof ArrayTypeSymbol) ||
+        sourceType.udonType === UdonType.Array;
+
+      if (isDataListType) {
+        const elementType =
+          sourceType instanceof DataListTypeSymbol
+            ? sourceType.elementType
+            : sourceType instanceof ArrayTypeSymbol
+            ? sourceType.elementType
+            : ObjectType;
+
+        const listResult = this.newTemp(new DataListTypeSymbol(elementType));
+        const listCtorSig = this.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
+        this.instructions.push(
+          new CallInstruction(listResult, listCtorSig, []),
+        );
+
+        const indexVar = this.newTemp(PrimitiveTypes.int32);
+        const lengthVar = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new AssignmentInstruction(
+            indexVar,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+
+        // Use Count for DataList, length for Array
+        const lengthProp =
+          sourceType instanceof DataListTypeSymbol ||
+          sourceType.name === ExternTypes.dataList.name ||
+          sourceType.udonType === UdonType.DataList
+            ? "Count"
+            : "length";
+        this.instructions.push(
+          new PropertyGetInstruction(lengthVar, source, lengthProp),
+        );
+
+        const loopStart = this.newLabel("array_from_start");
+        const loopContinue = this.newLabel("array_from_continue");
+        const loopEnd = this.newLabel("array_from_end");
+
+        this.instructions.push(new LabelInstruction(loopStart));
+        const condTemp = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
+        );
+        this.instructions.push(
+          new ConditionalJumpInstruction(condTemp, loopEnd),
+        );
+
+        if (
+          sourceType instanceof DataListTypeSymbol ||
+          sourceType.name === ExternTypes.dataList.name ||
+          sourceType.udonType === UdonType.DataList
+        ) {
+          const itemToken = this.newTemp(ExternTypes.dataToken);
+          this.instructions.push(
+            new MethodCallInstruction(itemToken, source, "get_Item", [indexVar]),
+          );
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [itemToken]),
+          );
+        } else {
+          const elementValue = this.newTemp(elementType);
+          this.instructions.push(
+            new ArrayAccessInstruction(elementValue, source, indexVar),
+          );
+          const token = this.wrapDataToken(elementValue);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [token]),
+          );
+        }
+
+        this.instructions.push(new LabelInstruction(loopContinue));
+        this.instructions.push(
+          new BinaryOpInstruction(
+            indexVar,
+            indexVar,
+            "+",
+            createConstant(1, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new UnconditionalJumpInstruction(loopStart));
+        this.instructions.push(new LabelInstruction(loopEnd));
+
+        return listResult;
+      }
+
       return source;
     }
     case "isArray": {
