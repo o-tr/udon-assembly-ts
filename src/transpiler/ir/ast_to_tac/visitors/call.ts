@@ -2461,12 +2461,12 @@ export function visitArrayStaticCall(
         );
 
         // Use Count for DataList, length for Array
-        const lengthProp =
-          sourceType instanceof DataListTypeSymbol ||
-          sourceType.name === ExternTypes.dataList.name ||
-          sourceType.udonType === UdonType.DataList
-            ? "Count"
-            : "length";
+        const lengthProp = !(
+          sourceType instanceof ArrayTypeSymbol ||
+          sourceType.udonType === UdonType.Array
+        )
+          ? "Count"
+          : "length";
         this.instructions.push(
           new PropertyGetInstruction(lengthVar, source, lengthProp),
         );
@@ -2485,9 +2485,10 @@ export function visitArrayStaticCall(
         );
 
         if (
-          sourceType instanceof DataListTypeSymbol ||
-          sourceType.name === ExternTypes.dataList.name ||
-          sourceType.udonType === UdonType.DataList
+          !(
+            sourceType instanceof ArrayTypeSymbol ||
+            sourceType.udonType === UdonType.Array
+          )
         ) {
           const itemToken = this.newTemp(ExternTypes.dataToken);
           this.instructions.push(
