@@ -588,33 +588,45 @@ export const reuseTemporaries = (
       // liveOut[b] = ∪ liveIn[s] for s in succs[b]
       const newLiveOut = new Set<number>();
       for (const succId of block.succs) {
-        for (const id of liveIn.get(succId)!) {
-          newLiveOut.add(id);
+        const succLiveIn = liveIn.get(succId);
+        if (succLiveIn) {
+          for (const id of succLiveIn) {
+            newLiveOut.add(id);
+          }
         }
       }
 
       // liveIn[b] = use[b] ∪ (liveOut[b] - def[b])
-      const def = blockDef.get(block.id)!;
-      const use = blockUse.get(block.id)!;
+      const def = blockDef.get(block.id) ?? new Set<number>();
+      const use = blockUse.get(block.id) ?? new Set<number>();
       const newLiveIn = new Set(use);
       for (const id of newLiveOut) {
         if (!def.has(id)) newLiveIn.add(id);
       }
 
-      const oldLiveIn = liveIn.get(block.id)!;
-      const oldLiveOut = liveOut.get(block.id)!;
-      if (newLiveIn.size !== oldLiveIn.size || newLiveOut.size !== oldLiveOut.size) {
+      const oldLiveIn = liveIn.get(block.id) ?? new Set<number>();
+      const oldLiveOut = liveOut.get(block.id) ?? new Set<number>();
+      if (
+        newLiveIn.size !== oldLiveIn.size ||
+        newLiveOut.size !== oldLiveOut.size
+      ) {
         changed = true;
         liveIn.set(block.id, newLiveIn);
         liveOut.set(block.id, newLiveOut);
       } else {
         // Check actual content change
         for (const id of newLiveIn) {
-          if (!oldLiveIn.has(id)) { changed = true; break; }
+          if (!oldLiveIn.has(id)) {
+            changed = true;
+            break;
+          }
         }
         if (!changed) {
           for (const id of newLiveOut) {
-            if (!oldLiveOut.has(id)) { changed = true; break; }
+            if (!oldLiveOut.has(id)) {
+              changed = true;
+              break;
+            }
           }
         }
         if (changed) {
@@ -634,7 +646,7 @@ export const reuseTemporaries = (
 
   for (const block of cfg.blocks) {
     // Start with liveOut of the block, walk backward
-    const live = new Set(liveOut.get(block.id)!);
+    const live = new Set(liveOut.get(block.id) ?? []);
 
     for (let i = block.end; i >= block.start; i--) {
       const inst = instructions[i];
@@ -675,8 +687,8 @@ export const reuseTemporaries = (
   let nextId = 0;
 
   for (const tempId of tempIds) {
-    const typeKey = tempTypes.get(tempId)!;
-    const neighbors = interference.get(tempId)!;
+    const typeKey = tempTypes.get(tempId) ?? "Object";
+    const neighbors = interference.get(tempId) ?? new Set<number>();
 
     // Collect colors used by neighbors of the same type
     const usedColors = new Set<number>();
@@ -807,31 +819,43 @@ export const reuseLocalVariables = (
 
       const newLiveOut = new Set<string>();
       for (const succId of block.succs) {
-        for (const name of liveIn.get(succId)!) {
-          newLiveOut.add(name);
+        const succLiveIn = liveIn.get(succId);
+        if (succLiveIn) {
+          for (const name of succLiveIn) {
+            newLiveOut.add(name);
+          }
         }
       }
 
-      const def = blockDef.get(block.id)!;
-      const use = blockUse.get(block.id)!;
+      const def = blockDef.get(block.id) ?? new Set<string>();
+      const use = blockUse.get(block.id) ?? new Set<string>();
       const newLiveIn = new Set(use);
       for (const name of newLiveOut) {
         if (!def.has(name)) newLiveIn.add(name);
       }
 
-      const oldLiveIn = liveIn.get(block.id)!;
-      const oldLiveOut = liveOut.get(block.id)!;
-      if (newLiveIn.size !== oldLiveIn.size || newLiveOut.size !== oldLiveOut.size) {
+      const oldLiveIn = liveIn.get(block.id) ?? new Set<string>();
+      const oldLiveOut = liveOut.get(block.id) ?? new Set<string>();
+      if (
+        newLiveIn.size !== oldLiveIn.size ||
+        newLiveOut.size !== oldLiveOut.size
+      ) {
         changed = true;
         liveIn.set(block.id, newLiveIn);
         liveOut.set(block.id, newLiveOut);
       } else {
         for (const name of newLiveIn) {
-          if (!oldLiveIn.has(name)) { changed = true; break; }
+          if (!oldLiveIn.has(name)) {
+            changed = true;
+            break;
+          }
         }
         if (!changed) {
           for (const name of newLiveOut) {
-            if (!oldLiveOut.has(name)) { changed = true; break; }
+            if (!oldLiveOut.has(name)) {
+              changed = true;
+              break;
+            }
           }
         }
         if (changed) {
@@ -849,7 +873,7 @@ export const reuseLocalVariables = (
   }
 
   for (const block of cfg.blocks) {
-    const live = new Set(liveOut.get(block.id)!);
+    const live = new Set(liveOut.get(block.id) ?? []);
 
     for (let i = block.end; i >= block.start; i--) {
       const inst = instructions[i];
@@ -898,8 +922,8 @@ export const reuseLocalVariables = (
   const colorToName = new Map<string, Map<number, string>>(); // typeKey -> (color -> name)
 
   for (const varName of sortedVars) {
-    const typeKey = varTypes.get(varName)!;
-    const neighbors = interference.get(varName)!;
+    const typeKey = varTypes.get(varName) ?? "Object";
+    const neighbors = interference.get(varName) ?? new Set<string>();
 
     // Collect colors used by neighbors of the same type
     const usedColors = new Set<number>();
