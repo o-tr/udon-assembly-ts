@@ -17,6 +17,7 @@ import {
   type ProgramNode,
 } from "./frontend/types.js";
 import {
+  buildHeapUsageBreakdown,
   buildHeapUsageTreeBreakdown,
   computeHeapUsage,
   UASM_HEAP_LIMIT,
@@ -202,7 +203,7 @@ export class TypeScriptToUdonTranspiler {
             callAnalyzer,
             registry,
           )
-        : "";
+        : buildHeapUsageBreakdown(usageByClass, heapUsage, entryKey);
     const entryLabel = entryClassName ? ` for ${entryClassName}` : "";
     const message = [
       `UASM heap usage ${heapUsage} exceeds limit ${heapLimit}${entryLabel}.`,

@@ -75,7 +75,6 @@ const buildTreeNode = (
   registry: ClassRegistry,
   claimed: Set<string>,
 ): HeapTreeNode => {
-  claimed.add(className);
   const analysis = callAnalyzer.analyzeClass(className);
   const children: HeapTreeNode[] = [];
 
@@ -83,6 +82,7 @@ const buildTreeNode = (
     if (claimed.has(childName)) continue;
     if (isSkippableClass(childName, registry)) continue;
     if (!usageByClass.has(childName)) continue;
+    claimed.add(childName);
     children.push(
       buildTreeNode(childName, usageByClass, callAnalyzer, registry, claimed),
     );
@@ -103,7 +103,7 @@ export const buildHeapTree = (
   callAnalyzer: CallAnalyzer,
   registry: ClassRegistry,
 ): { tree: HeapTreeNode; claimed: Set<string> } => {
-  const claimed = new Set<string>();
+  const claimed = new Set<string>([entryClassName]);
   const tree = buildTreeNode(
     entryClassName,
     usageByClass,
