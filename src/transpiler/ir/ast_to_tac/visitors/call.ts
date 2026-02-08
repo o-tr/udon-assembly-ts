@@ -2443,8 +2443,9 @@ export function visitArrayStaticCall(
           sourceType.udonType === UdonType.DataList;
 
         const elementType = isDataListLike
-          ? ("elementType" in sourceType && sourceType.elementType) ||
-            ExternTypes.dataToken
+          ? "elementType" in sourceType
+            ? sourceType.elementType
+            : ExternTypes.dataToken
           : sourceType instanceof ArrayTypeSymbol
             ? sourceType.elementType
             : ObjectType;
