@@ -2437,18 +2437,13 @@ export function visitArrayStaticCall(
         const isArraySource =
           sourceType instanceof ArrayTypeSymbol ||
           sourceType.udonType === UdonType.Array;
-        const isDataListLike =
-          sourceType instanceof DataListTypeSymbol ||
-          sourceType.name === ExternTypes.dataList.name ||
-          sourceType.udonType === UdonType.DataList;
 
-        const elementType = isDataListLike
-          ? "elementType" in sourceType
+        const elementType =
+          "elementType" in sourceType
             ? sourceType.elementType
-            : ExternTypes.dataToken
-          : sourceType instanceof ArrayTypeSymbol
-            ? sourceType.elementType
-            : ObjectType;
+            : isArraySource
+              ? ObjectType
+              : ExternTypes.dataToken;
 
         const listResult = this.newTemp(new DataListTypeSymbol(elementType));
         const listCtorSig = this.requireExternSignature(
