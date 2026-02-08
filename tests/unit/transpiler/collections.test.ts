@@ -260,6 +260,7 @@ describe("collections support", () => {
           const size = map.size;
           const keys = map.keys();
           const values = map.values();
+          const valuesArray = Array.from(map.values());
           const entries = map.entries();
           map.forEach((value, key, self) => {
             const x: number = value;

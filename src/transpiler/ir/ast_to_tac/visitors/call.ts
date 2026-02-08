@@ -478,17 +478,8 @@ export function visitCallExpression(
       this.instructions.push(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
-    if (node.isNew && calleeName === "Array") {
-      if (rawArgs.length === 1) {
-        // Reject any single-argument new Array(x). In JS, new Array(n)
-        // creates a sparse array of length n, but Udon has no sparse arrays
-        // so the semantics diverge. Reject regardless of whether the
-        // argument is a literal, identifier, or expression.
-        throw new Error(
-          "new Array(n) for pre-allocating a fixed-length array is not supported. " +
-            "Use an array literal (e.g., [1, 2, 3]) instead.",
-        );
-      }
+    if (calleeName === "Array") {
+      const evaluatedArgs = getArgs();
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
         : ObjectType;
@@ -501,7 +492,28 @@ export function visitCallExpression(
         "DataList",
       );
       this.instructions.push(new CallInstruction(listResult, externSig, []));
-      for (const arg of getArgs()) {
+      if (rawArgs.length === 1) {
+        const argType = this.getOperandType(evaluatedArgs[0]);
+        const isNumericLength =
+          argType.udonType === UdonType.Int16 ||
+          argType.udonType === UdonType.UInt16 ||
+          argType.udonType === UdonType.Int32 ||
+          argType.udonType === UdonType.UInt32 ||
+          argType.udonType === UdonType.Int64 ||
+          argType.udonType === UdonType.UInt64 ||
+          argType.udonType === UdonType.Single ||
+          argType.udonType === UdonType.Double ||
+          argType.udonType === UdonType.Byte ||
+          argType.udonType === UdonType.SByte;
+        if (!isNumericLength) {
+          const token = this.wrapDataToken(evaluatedArgs[0]);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listResult, "Add", [token]),
+          );
+        }
+        return listResult;
+      }
+      for (const arg of evaluatedArgs) {
         const token = this.wrapDataToken(arg);
         this.instructions.push(
           new MethodCallInstruction(undefined, listResult, "Add", [token]),
@@ -626,7 +638,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (objectResult) return objectResult;
+      if (objectResult != null) return objectResult;
     }
 
     if (
@@ -637,7 +649,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (numberResult) return numberResult;
+      if (numberResult != null) return numberResult;
     }
 
     if (
@@ -648,7 +660,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (mathResult) return mathResult;
+      if (mathResult != null) return mathResult;
     }
 
     if (
@@ -659,7 +671,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (arrayResult) return arrayResult;
+      if (arrayResult != null) return arrayResult;
     }
 
     if (
@@ -689,7 +701,7 @@ export function visitCallExpression(
         propAccess.property,
         evaluatedArgs,
       );
-      if (inlineResult) return inlineResult;
+      if (inlineResult != null) return inlineResult;
     }
 
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
@@ -2327,8 +2339,26 @@ export function visitArrayStaticCall(
   args: TACOperand[],
 ): TACOperand | null {
   switch (methodName) {
-    case "from":
-      return args.length >= 1 ? args[0] : null;
+    case "from": {
+      if (args.length < 1) return null;
+      const source = args[0];
+      const sourceType = this.getOperandType(source);
+      if (
+        sourceType instanceof CollectionTypeSymbol &&
+        sourceType.name === ExternTypes.dataDictionary.name
+      ) {
+        const valueType = sourceType.valueType ?? ObjectType;
+        return emitMapValuesList(this, source, valueType);
+      }
+      if (
+        sourceType === ExternTypes.dataDictionary ||
+        sourceType.name === ExternTypes.dataDictionary.name ||
+        sourceType.udonType === UdonType.DataDictionary
+      ) {
+        return emitMapValuesList(this, source, ObjectType);
+      }
+      return source;
+    }
     case "isArray": {
       if (args.length !== 1) return null;
       const target = args[0];
