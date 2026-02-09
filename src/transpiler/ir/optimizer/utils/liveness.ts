@@ -17,3 +17,19 @@ export const livenessKey = (operand: TACOperand | undefined): string | null => {
   }
   return null;
 };
+
+export const livenessKeyWithSSA = (
+  operand: TACOperand | undefined,
+): string | null => {
+  if (!operand) return null;
+  const ssaVersion = (operand as { ssaVersion?: number }).ssaVersion;
+  if (operand.kind === TACOperandKind.Variable) {
+    const variable = operand as VariableOperand;
+    return `v:${variable.name}:${ssaVersion ?? ""}`;
+  }
+  if (operand.kind === TACOperandKind.Temporary) {
+    const temp = operand as TemporaryOperand;
+    return `t:${temp.id}:${ssaVersion ?? ""}`;
+  }
+  return null;
+};

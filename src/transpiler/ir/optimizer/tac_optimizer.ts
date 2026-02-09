@@ -27,7 +27,7 @@ import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { performPRE } from "./passes/pre.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
-import { applySSA } from "./passes/ssa.js";
+import { buildSSA, deconstructSSA } from "./passes/ssa.js";
 import { optimizeStringConcatenation } from "./passes/string_optimization.js";
 import { mergeTails } from "./passes/tail_merging.js";
 import { optimizeTailCalls } from "./passes/tco.js";
@@ -90,14 +90,11 @@ export class TACOptimizer {
       // Reassociate partially-constant binary operations
       next = reassociate(next);
 
-      // Convert to SSA and back to enable SSA-aware analyses
-      next = applySSA(next);
-
-      // Partial redundancy elimination
-      next = performPRE(next);
-
-      // Apply global value numbering / CSE across blocks
-      next = globalValueNumbering(next);
+      // SSA window: build SSA, run SSA-aware passes, then deconstruct
+      next = buildSSA(next);
+      next = performPRE(next, { useSSA: true });
+      next = globalValueNumbering(next, { useSSA: true });
+      next = deconstructSSA(next);
 
       // Optimize tail calls (call followed immediately by return)
       next = optimizeTailCalls(next);

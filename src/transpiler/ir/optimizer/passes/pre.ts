@@ -21,8 +21,8 @@ import {
   getUsedOperandsForReuse,
 } from "../utils/instructions.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
-import { livenessKey } from "../utils/liveness.js";
-import { operandKey } from "../utils/operands.js";
+import { livenessKey, livenessKeyWithSSA } from "../utils/liveness.js";
+import { operandKey, operandKeyWithSSA } from "../utils/operands.js";
 import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { getOperandType } from "./constant_folding.js";
 
@@ -39,10 +39,13 @@ const isCommutativeOperator = (op: string): boolean => {
   return op === "+" || op === "*" || op === "==" || op === "!=";
 };
 
-const binaryExprKey = (inst: BinaryOpInstruction): string => {
+const binaryExprKey = (
+  inst: BinaryOpInstruction,
+  keyForOperand: (operand: TACOperand) => string,
+): string => {
   const typeKey = getOperandType(inst.dest).udonType;
-  let leftKey = operandKey(inst.left);
-  let rightKey = operandKey(inst.right);
+  let leftKey = keyForOperand(inst.left);
+  let rightKey = keyForOperand(inst.right);
   const commutative =
     inst.operator === "+" && typeKey === PrimitiveTypes.string.udonType
       ? false
@@ -55,14 +58,18 @@ const binaryExprKey = (inst: BinaryOpInstruction): string => {
   return `bin|${inst.operator}|${leftKey}|${rightKey}|${typeKey}|`;
 };
 
-const castExprKey = (inst: CastInstruction): string => {
+const castExprKey = (
+  inst: CastInstruction,
+  keyForOperand: (operand: TACOperand) => string,
+): string => {
   const typeKey = getOperandType(inst.dest).udonType;
-  const srcKey = operandKey(inst.src);
+  const srcKey = keyForOperand(inst.src);
   return `cast|${srcKey}|${typeKey}|`;
 };
 
 const propertyGetExprKeyForPRE = (
   inst: PropertyGetInstruction,
+  keyForOperand: (operand: TACOperand) => string,
 ): string | null => {
   const objectTypeName = getOperandType(inst.object).name;
   const returnTypeName = getOperandType(inst.dest).name;
@@ -75,15 +82,18 @@ const propertyGetExprKeyForPRE = (
   );
   if (!signature || !isIdempotentMethod(signature)) return null;
   const typeKey = getOperandType(inst.dest).udonType;
-  const objectKeyStr = operandKey(inst.object);
+  const objectKeyStr = keyForOperand(inst.object);
   return `propget_idem|${objectKeyStr}|${inst.property}|${typeKey}|`;
 };
 
-const callExprKeyForPRE = (inst: CallInstruction): string | null => {
+const callExprKeyForPRE = (
+  inst: CallInstruction,
+  keyForOperand: (operand: TACOperand) => string,
+): string | null => {
   if (!inst.dest) return null;
   if (!pureExternEvaluators.has(inst.func)) return null;
   const typeKey = getOperandType(inst.dest).udonType;
-  const argKeys = inst.args.map((arg) => operandKey(arg)).join("|");
+  const argKeys = inst.args.map((arg) => keyForOperand(arg)).join("|");
   return `purecall|${inst.func}|${argKeys}|${typeKey}|`;
 };
 
@@ -91,16 +101,22 @@ const callExprKeyForPRE = (inst: CallInstruction): string | null => {
  * Compute a PRE-compatible expression key for an instruction, or null
  * if the instruction is not a PRE candidate.
  */
-const exprKey = (inst: TACInstruction): string | null => {
+const exprKey = (
+  inst: TACInstruction,
+  keyForOperand: (operand: TACOperand) => string,
+): string | null => {
   switch (inst.kind) {
     case TACInstructionKind.BinaryOp:
-      return binaryExprKey(inst as BinaryOpInstruction);
+      return binaryExprKey(inst as BinaryOpInstruction, keyForOperand);
     case TACInstructionKind.Cast:
-      return castExprKey(inst as CastInstruction);
+      return castExprKey(inst as CastInstruction, keyForOperand);
     case TACInstructionKind.PropertyGet:
-      return propertyGetExprKeyForPRE(inst as PropertyGetInstruction);
+      return propertyGetExprKeyForPRE(
+        inst as PropertyGetInstruction,
+        keyForOperand,
+      );
     case TACInstructionKind.Call:
-      return callExprKeyForPRE(inst as CallInstruction);
+      return callExprKeyForPRE(inst as CallInstruction, keyForOperand);
     default:
       return null;
   }
@@ -169,10 +185,14 @@ type ExprValue = { key: string; inst: TACInstruction };
 
 const computeAvailableMaps = (
   instructions: TACInstruction[],
+  options?: { useSSA?: boolean },
 ): {
   inMaps: Map<number, Map<string, ExprValue>>;
   outMaps: Map<number, Map<string, ExprValue>>;
 } => {
+  const useSSA = options?.useSSA === true;
+  const keyForOperand = useSSA ? operandKeyWithSSA : operandKey;
+  const liveKey = useSSA ? livenessKeyWithSSA : livenessKey;
   const cfg = buildCFG(instructions);
   const inMaps = new Map<number, Map<string, ExprValue>>();
   const outMaps = new Map<number, Map<string, ExprValue>>();
@@ -211,7 +231,7 @@ const computeAvailableMaps = (
           continue;
         }
         const def = getDefinedOperandForReuse(inst);
-        const defKey = def ? livenessKey(def) : null;
+        const defKey = def ? liveKey(def) : null;
         if (defKey) {
           for (const key of Array.from(working.keys())) {
             if (key.includes(`|${defKey}|`)) {
@@ -219,7 +239,7 @@ const computeAvailableMaps = (
             }
           }
         }
-        const ek = exprKey(inst);
+        const ek = exprKey(inst, keyForOperand);
         if (ek) {
           working.set(ek, { key: ek, inst });
         }
@@ -267,24 +287,33 @@ const isTerminator = (inst: TACInstruction): boolean => {
   );
 };
 
-const usesOperandKey = (inst: TACInstruction, key: string): boolean => {
-  return getUsedOperandsForReuse(inst).some((op) => livenessKey(op) === key);
+const usesOperandKey = (
+  inst: TACInstruction,
+  key: string,
+  liveKey: (operand: TACOperand | undefined) => string | null,
+): boolean => {
+  return getUsedOperandsForReuse(inst).some((op) => liveKey(op) === key);
 };
 
-const definesOperandKey = (inst: TACInstruction, key: string): boolean => {
+const definesOperandKey = (
+  inst: TACInstruction,
+  key: string,
+  liveKey: (operand: TACOperand | undefined) => string | null,
+): boolean => {
   const def = getDefinedOperandForReuse(inst);
-  return !!def && livenessKey(def) === key;
+  return !!def && liveKey(def) === key;
 };
 
 const isTempLocalToBlock = (
   block: { start: number; end: number },
   instructions: TACInstruction[],
   tempKey: string,
+  liveKey: (operand: TACOperand | undefined) => string | null,
 ): boolean => {
   for (let i = 0; i < instructions.length; i += 1) {
     if (i >= block.start && i <= block.end) continue;
-    if (usesOperandKey(instructions[i], tempKey)) return false;
-    if (definesOperandKey(instructions[i], tempKey)) return false;
+    if (usesOperandKey(instructions[i], tempKey, liveKey)) return false;
+    if (definesOperandKey(instructions[i], tempKey, liveKey)) return false;
   }
   return true;
 };
@@ -293,6 +322,7 @@ const isOperandAvailableInBlock = (
   block: { start: number; end: number },
   instructions: TACInstruction[],
   operand: TACOperand,
+  liveKey: (operand: TACOperand | undefined) => string | null,
 ): boolean => {
   // Constants and labels always available
   if (operand.kind === TACOperandKind.Constant) return true;
@@ -301,11 +331,11 @@ const isOperandAvailableInBlock = (
   if (operand.kind === TACOperandKind.Variable) return true;
   // Temporaries must be defined in the predecessor block to be available
   if (operand.kind === TACOperandKind.Temporary) {
-    const key = livenessKey(operand);
+    const key = liveKey(operand);
     if (!key) return false;
     for (let i = block.start; i <= block.end; i += 1) {
       const def = getDefinedOperandForReuse(instructions[i]);
-      if (def && livenessKey(def) === key) return true;
+      if (def && liveKey(def) === key) return true;
     }
     return false;
   }
@@ -316,10 +346,11 @@ const findEquivalentExpr = (
   block: { start: number; end: number },
   instructions: TACInstruction[],
   targetExprKey: string,
+  keyForOperand: (operand: TACOperand) => string,
 ): TACInstruction | null => {
   for (let i = block.start; i <= block.end; i += 1) {
     const inst = instructions[i];
-    const ek = exprKey(inst);
+    const ek = exprKey(inst, keyForOperand);
     if (ek === targetExprKey) return inst;
   }
   return null;
@@ -327,11 +358,15 @@ const findEquivalentExpr = (
 
 export const performPRE = (
   instructions: TACInstruction[],
+  options?: { useSSA?: boolean },
 ): TACInstruction[] => {
+  const useSSA = options?.useSSA === true;
+  const keyForOperand = useSSA ? operandKeyWithSSA : operandKey;
+  const liveKey = useSSA ? livenessKeyWithSSA : livenessKey;
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  const { inMaps } = computeAvailableMaps(instructions);
+  const { inMaps } = computeAvailableMaps(instructions, options);
   const inserts = new Map<
     number,
     Array<{ order: number; insts: TACInstruction[] }>
@@ -343,7 +378,7 @@ export const performPRE = (
     const inMap = inMaps.get(block.id) ?? new Map();
     for (let i = block.start; i <= block.end; i += 1) {
       const inst = instructions[i];
-      const ek = exprKey(inst);
+      const ek = exprKey(inst, keyForOperand);
       if (!ek) continue;
 
       const dest = getExprDest(inst);
@@ -351,17 +386,17 @@ export const performPRE = (
       if (inMap.has(ek)) continue;
       if (block.preds.length < 2) continue;
 
-      const destKey = livenessKey(dest);
+      const destKey = liveKey(dest);
       if (!destKey) continue;
       let usedBefore = false;
       for (let j = block.start; j < i; j += 1) {
-        if (usesOperandKey(instructions[j], destKey)) {
+        if (usesOperandKey(instructions[j], destKey, liveKey)) {
           usedBefore = true;
           break;
         }
       }
       if (usedBefore) continue;
-      if (!isTempLocalToBlock(block, instructions, destKey)) continue;
+      if (!isTempLocalToBlock(block, instructions, destKey, liveKey)) continue;
 
       const exprOps = getExprOperands(inst);
 
@@ -371,7 +406,7 @@ export const performPRE = (
         const predBlock = cfg.blocks[predId];
         if (
           exprOps.some(
-            (op) => !isOperandAvailableInBlock(predBlock, instructions, op),
+            (op) => !isOperandAvailableInBlock(predBlock, instructions, op, liveKey),
           )
         ) {
           canInsertAll = false;
@@ -379,8 +414,8 @@ export const performPRE = (
         }
         for (let j = predBlock.start; j <= predBlock.end; j += 1) {
           if (
-            usesOperandKey(instructions[j], destKey) ||
-            definesOperandKey(instructions[j], destKey)
+            usesOperandKey(instructions[j], destKey, liveKey) ||
+            definesOperandKey(instructions[j], destKey, liveKey)
           ) {
             canInsertAll = false;
             break;
@@ -394,10 +429,10 @@ export const performPRE = (
           break;
         }
         const insts: TACInstruction[] = [];
-        let existing = findEquivalentExpr(predBlock, instructions, ek);
+        let existing = findEquivalentExpr(predBlock, instructions, ek, keyForOperand);
         if (existing) {
           const existDest = getExprDest(existing);
-          const existDestKey = existDest ? livenessKey(existDest) : null;
+          const existDestKey = existDest ? liveKey(existDest) : null;
           if (existDestKey) {
             let found = false;
             for (let j = predBlock.start; j <= predBlock.end; j += 1) {
@@ -405,7 +440,10 @@ export const performPRE = (
                 found = true;
                 continue;
               }
-              if (found && definesOperandKey(instructions[j], existDestKey)) {
+              if (
+                found &&
+                definesOperandKey(instructions[j], existDestKey, liveKey)
+              ) {
                 existing = null;
                 break;
               }
@@ -414,7 +452,10 @@ export const performPRE = (
         }
         if (existing) {
           const existDest = getExprDest(existing);
-          if (existDest && operandKey(existDest) !== operandKey(dest)) {
+          if (
+            existDest &&
+            keyForOperand(existDest) !== keyForOperand(dest)
+          ) {
             insts.push(new CopyInstruction(dest, existDest));
           }
         } else {
