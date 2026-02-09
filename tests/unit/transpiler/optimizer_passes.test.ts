@@ -1612,7 +1612,7 @@ describe("optimizer passes", () => {
     expect(text).toContain("ifFalse");
   });
 
-  it("preserves idempotent property across non-pure calls", () => {
+  it("does not treat transform as idempotent across non-pure calls", () => {
     const obj = createVariable("obj", ExternTypes.component);
     const t0 = createTemporary(0, ExternTypes.transform);
     const t1 = createTemporary(1, PrimitiveTypes.int32);
@@ -1624,9 +1624,8 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
     const optimized = new TACOptimizer().optimize(instructions);
-    // transform on Component is idempotent, so second get should be eliminated
     expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
-      1,
+      2,
     );
   });
 
@@ -1827,6 +1826,32 @@ describe("optimizer passes", () => {
   it("hoists partially redundant idempotent PropertyGet via PRE", () => {
     const obj = createVariable("obj", ExternTypes.component);
     const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, ExternTypes.gameObject);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new PropertyGetInstruction(t0, obj, "gameObject"),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(t0),
+    ];
+    // gameObject on Component is idempotent; PRE should insert into else-branch
+    const optimized = performPRE(instructions);
+    const endLabelIdx = optimized.findIndex(
+      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
+    );
+    const hasGetAfterEnd = optimized
+      .slice(endLabelIdx)
+      .some((inst) => inst.kind === "PropertyGet");
+    expect(hasGetAfterEnd).toBe(false);
+  });
+
+  it("does not hoist transform PropertyGet via PRE", () => {
+    const obj = createVariable("obj", ExternTypes.component);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
     const t0 = createTemporary(0, ExternTypes.transform);
     const lElse = createLabel("L_else");
     const lEnd = createLabel("L_end");
@@ -1839,15 +1864,10 @@ describe("optimizer passes", () => {
       new LabelInstruction(lEnd),
       new ReturnInstruction(t0),
     ];
-    // transform on Component is idempotent; PRE should insert into else-branch
     const optimized = performPRE(instructions);
-    const endLabelIdx = optimized.findIndex(
-      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
-    );
-    const hasGetAfterEnd = optimized
-      .slice(endLabelIdx)
-      .some((inst) => inst.kind === "PropertyGet");
-    expect(hasGetAfterEnd).toBe(false);
+    expect(
+      optimized.filter((inst) => inst.kind === "PropertyGet").length,
+    ).toBe(1);
   });
 
   it("merges identical tails ending with unconditional jump", () => {
