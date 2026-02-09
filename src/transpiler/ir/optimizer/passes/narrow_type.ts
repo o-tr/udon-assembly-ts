@@ -136,6 +136,11 @@ export const narrowTypes = (
     let allUsesAreComparisons = true;
     let hasUses = false;
 
+    const candidateSrcType = getOperandType(candidate.srcOperand)
+      .udonType as UdonType;
+    const range = getIntegerRangeForUdonType(candidateSrcType);
+    if (!range) continue;
+
     for (const inst of instructions) {
       const usedOps = getUsedOperandsForReuse(inst);
       const usesCandidate = usedOps.some((op) => livenessKey(op) === destKey);
@@ -172,12 +177,6 @@ export const narrowTypes = (
       const constOp = otherOp as ConstantOperand;
       const otherType = getOperandType(otherOp).udonType as UdonType;
 
-      const candidateSrcType = getOperandType(candidate.srcOperand)
-        .udonType as UdonType;
-      if (otherType !== candidateSrcType) {
-        allUsesAreComparisons = false;
-        break;
-      }
       const rawVal = constOp.value;
       let constBigInt: bigint | null = null;
       if (typeof rawVal === "bigint") {
@@ -194,7 +193,6 @@ export const narrowTypes = (
         break;
       }
 
-      const range = getIntegerRangeForUdonType(candidateSrcType);
       if (!range) {
         allUsesAreComparisons = false;
         break;
