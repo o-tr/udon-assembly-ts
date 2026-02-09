@@ -193,6 +193,9 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
   const result: TACInstruction[] = [];
   const emitted = new Set<number>(sinkTargets.keys());
   for (let i = 0; i < instructions.length; i++) {
+    // Skip already-emitted and sunk instructions
+    if (emitted.has(i)) continue;
+
     // Insert sunk instructions after any labels at the target block start
     const pending = insertions.get(i);
     if (pending) {
@@ -220,9 +223,6 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
       result.push(instructions[i]);
       continue;
     }
-
-    // Skip already-emitted and sunk instructions
-    if (emitted.has(i)) continue;
 
     result.push(instructions[i]);
   }
