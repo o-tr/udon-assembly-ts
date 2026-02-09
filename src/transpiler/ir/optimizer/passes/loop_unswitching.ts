@@ -507,7 +507,6 @@ const performUnswitch = (
   const isTerminator = (inst: TACInstruction): boolean => {
     return (
       inst.kind === TACInstructionKind.UnconditionalJump ||
-      inst.kind === TACInstructionKind.ConditionalJump ||
       inst.kind === TACInstructionKind.Return
     );
   };
@@ -542,9 +541,9 @@ const performUnswitch = (
       for (const inst of cloneA) {
         result.push(inst);
       }
-      if (needsMergeJump) {
-        result.push(new UnconditionalJumpInstruction(mergeLabel));
-      }
+      // Always add an unconditional jump to the merge label after cloneA
+      // to prevent fallthrough into cloneB.
+      result.push(new UnconditionalJumpInstruction(mergeLabel));
       // Clone B (renamed loop)
       for (const inst of cloneB) {
         result.push(inst);
