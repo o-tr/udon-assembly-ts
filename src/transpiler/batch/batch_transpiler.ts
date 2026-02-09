@@ -227,7 +227,8 @@ export class BatchTranspiler {
         : null;
 
     const rawExt = options.outputExtension ?? "tasm";
-    const ext = rawExt.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const sanitized = rawExt.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const ext = sanitized.length > 0 ? sanitized : "tasm";
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 

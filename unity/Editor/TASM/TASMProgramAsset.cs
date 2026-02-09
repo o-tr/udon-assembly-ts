@@ -20,6 +20,10 @@ namespace VRC.Udon.Editor.ProgramSources
         private static void EnsureInitialized()
         {
             if (_initialized) return;
+            if (UdonEditorManager.Instance == null)
+                throw new InvalidOperationException(
+                    "[TASM] UdonEditorManager not ready. "
+                    + "Import may have been triggered too early.");
             UdonEditorManager.Instance.GetNodeRegistries();
             _editorInterface = new UdonEditorInterface();
             _editorInterface.AddTypeResolver(new UdonBehaviourTypeResolver());

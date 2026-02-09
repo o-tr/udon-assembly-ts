@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
+import { UASM_HEAP_LIMIT } from "../../../src/transpiler/heap_limits";
 
 describe("BatchTranspiler", () => {
   it("should generate output for entry point classes", () => {
@@ -50,7 +51,7 @@ describe("BatchTranspiler", () => {
     const outputDir = path.join(tempDir, "out");
     fs.mkdirSync(sourceDir, { recursive: true });
 
-    const overflowCount = 520;
+    const overflowCount = UASM_HEAP_LIMIT + 8;
     const filler = Array.from(
       { length: overflowCount },
       (_, i) => `let value${i}: number = ${i};`,
