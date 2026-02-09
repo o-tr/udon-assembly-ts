@@ -65,17 +65,42 @@ export class InheritanceValidator {
         return;
       }
 
-      current = this.registry.getClass(current.baseClass) ?? undefined;
+      const baseClassName: string = current.baseClass;
+      current = this.registry.getClass(baseClassName) ?? undefined;
       if (!current) {
         this.errorCollector.add(
           new TranspileError(
             "TypeError",
-            `Base class '${className}' inheritance chain is missing`,
+            `Base class '${baseClassName}' inheritance chain is missing`,
             { filePath: "<unknown>", line: 1, column: 1 },
             "Ensure base classes are included in the transpile scope.",
           ),
         );
         return;
+      }
+    }
+  }
+
+  validateUdonBehaviourInterfaceConsistency(
+    udonBehaviourInterfaces: Set<string>,
+  ): void {
+    for (const cls of this.registry.getAllClasses()) {
+      const isUdonBehaviour = cls.decorators.some(
+        (d) => d.name === "UdonBehaviour",
+      );
+      if (isUdonBehaviour) continue;
+      const impls = cls.node.implements ?? [];
+      for (const ifaceName of impls) {
+        if (udonBehaviourInterfaces.has(ifaceName)) {
+          this.errorCollector.add(
+            new TranspileError(
+              "TypeError",
+              `Class '${cls.name}' implements UdonBehaviour interface '${ifaceName}' but is not decorated with @UdonBehaviour`,
+              { filePath: cls.filePath, line: 1, column: 1 },
+              "Add the @UdonBehaviour decorator to this class or remove the interface implementation.",
+            ),
+          );
+        }
       }
     }
   }

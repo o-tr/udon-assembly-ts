@@ -196,6 +196,12 @@ export class BatchTranspiler {
     for (const entryPoint of registry.getEntryPoints()) {
       validator.validate(entryPoint.name);
     }
+    const udonBehaviourInterfaceNames = new Set(
+      registry.getUdonBehaviourInterfaces().keys(),
+    );
+    validator.validateUdonBehaviourInterfaceConsistency(
+      udonBehaviourInterfaceNames,
+    );
 
     if (errorCollector.hasErrors()) {
       throw new AggregateTranspileError(errorCollector.getErrors());
@@ -266,6 +272,21 @@ export class BatchTranspiler {
           )
           .map((cls) => cls.name),
       );
+      const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
+      const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
+        (iface) => ({
+          name: iface.name,
+          methods: iface.methods.map((m) => ({
+            name: m.name,
+            parameters: m.parameters.map((p) => ({
+              name: p.name,
+              type: typeMapper.mapTypeScriptType(p.type),
+            })),
+            returnType: typeMapper.mapTypeScriptType(m.returnType),
+          })),
+        }),
+      );
+      const classImplements = registry.getClassImplementsMap();
       const udonBehaviourLayouts = buildUdonBehaviourLayouts(
         registry.getAllClasses().map((cls) => ({
           name: cls.name,
@@ -282,6 +303,8 @@ export class BatchTranspiler {
             isPublic: method.isPublic,
           })),
         })),
+        interfaceLikes,
+        classImplements,
       );
       const tacConverter = new ASTToTACConverter(
         symbolTable,

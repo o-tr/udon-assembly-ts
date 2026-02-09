@@ -7,18 +7,29 @@ export function computeExposedLabels(
   entryClassName?: string | null,
 ): Set<string> {
   const exposed = new Set<string>();
+
+  // Collect interface export method names for each UdonBehaviour interface
+  const interfaceExportNames = new Set<string>();
+  for (const iface of registry.getAllInterfaces()) {
+    const ifaceLayout = udonBehaviourLayouts.get(iface.name);
+    if (!ifaceLayout) continue;
+    for (const ml of ifaceLayout.values()) {
+      interfaceExportNames.add(ml.exportMethodName);
+    }
+  }
+
   for (const cls of registry.getAllClasses()) {
+    const layout = udonBehaviourLayouts.get(cls.name);
+    if (!layout) continue;
+
     for (const method of cls.methods) {
-      if (
-        !method.isExported &&
-        !(cls.name === entryClassName && method.isPublic)
-      )
-        continue;
-      const layout = udonBehaviourLayouts.get(cls.name);
-      if (layout) {
-        const ml = layout.get(method.name);
-        if (ml) exposed.add(ml.exportMethodName);
-      }
+      const ml = layout.get(method.name);
+      if (!ml) continue;
+      const isEntryPublic = cls.name === entryClassName && method.isPublic;
+      // A method is an interface method if its export name matches an interface layout entry
+      const isInterfaceMethod = interfaceExportNames.has(ml.exportMethodName);
+      if (!method.isExported && !isEntryPublic && !isInterfaceMethod) continue;
+      exposed.add(ml.exportMethodName);
     }
   }
   return exposed;
