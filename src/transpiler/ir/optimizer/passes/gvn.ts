@@ -365,11 +365,8 @@ const invalidateExpressionsForSideEffect = (
 ): void => {
   if (inst.kind === TACInstructionKind.Call) {
     for (const key of Array.from(map.keys())) {
-      if (
-        key.startsWith("propget|") ||
-        key.startsWith("propget_idem|") ||
-        key.startsWith("arrayget|")
-      ) {
+      if (key.startsWith("propget_idem|")) continue;
+      if (key.startsWith("propget|") || key.startsWith("arrayget|")) {
         map.delete(key);
       }
     }
