@@ -12,6 +12,7 @@ import { ErrorCollector } from "../errors/error_collector.js";
 import {
   AggregateTranspileError,
   DuplicateTopLevelConstError,
+  TranspileError,
 } from "../errors/transpile_errors.js";
 import {
   computeExportLabels,
@@ -261,11 +262,26 @@ export class BatchTranspiler {
         );
       }
 
-      const topLevelConsts = this.collectAllTopLevelConsts(
-        entryPoint.filePath,
-        filteredInlineClassNames,
-        registry,
-      );
+      let topLevelConsts: TopLevelConstInfo[];
+      try {
+        topLevelConsts = this.collectAllTopLevelConsts(
+          entryPoint.filePath,
+          filteredInlineClassNames,
+          registry,
+        );
+      } catch (e) {
+        if (e instanceof DuplicateTopLevelConstError) {
+          errorCollector.add(
+            new TranspileError("InternalError", e.message, {
+              filePath: entryPoint.filePath,
+              line: 0,
+              column: 0,
+            }),
+          );
+          continue;
+        }
+        throw e;
+      }
       for (const tlc of topLevelConsts) {
         if (!symbolTable.hasInCurrentScope(tlc.name)) {
           symbolTable.addSymbol(
