@@ -915,7 +915,7 @@ export function visitIdentifier(
     throw new Error(`Undefined variable: ${node.name} in ${location}`);
   }
 
-  // Inline top-level literal constants
+  // Inline top-level literal constants using the declared type
   if (
     symbol.isConstant &&
     (symbol.scope ?? 0) === 0 &&
@@ -923,7 +923,7 @@ export function visitIdentifier(
     (symbol.initialValue as ASTNode).kind === ASTNodeKind.Literal
   ) {
     const literal = symbol.initialValue as LiteralNode;
-    return createConstant(literal.value, literal.type);
+    return createConstant(literal.value, symbol.type);
   }
 
   const exportName = this.currentParamExportMap.get(node.name);

@@ -321,22 +321,24 @@ export class ASTToTACConverter {
    * Generate _start entry point that jumps to the user's Start method
    */
   generateEntryPoint(program: ProgramNode): void {
-    let hasStartMethod = false;
-
+    // Check if an entry-point class has a Start method (which will become _start)
+    let entryClassHasStart = false;
     for (const stmt of program.statements) {
       if (stmt.kind === ASTNodeKind.ClassDeclaration) {
         const classDecl = stmt as ClassDeclarationNode;
-        const startMethod = classDecl.methods.find((m) => m.name === "Start");
-        if (startMethod) {
-          hasStartMethod = true;
+        if (
+          this.entryPointClasses.has(classDecl.name) &&
+          classDecl.methods.some((m) => m.name === "Start")
+        ) {
+          entryClassHasStart = true;
           break;
         }
       }
     }
 
-    // If Start method exists, non-literal inits will be injected
-    // at the beginning of that method in visitClassDeclaration
-    if (hasStartMethod) {
+    // If an entry-point class has Start, it will be labeled _start
+    // in visitClassDeclaration; non-literal inits are injected there
+    if (entryClassHasStart) {
       return;
     }
 

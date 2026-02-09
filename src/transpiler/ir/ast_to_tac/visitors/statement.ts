@@ -793,7 +793,12 @@ export function visitClassDeclaration(
     }
 
     // Inject non-literal top-level const initialization at the start of _start/Start
-    if (method.name === "Start" && this.pendingTopLevelInits.length > 0) {
+    // Only for entry-point classes whose Start becomes the actual _start label
+    if (
+      method.name === "Start" &&
+      this.pendingTopLevelInits.length > 0 &&
+      this.entryPointClasses.has(node.name)
+    ) {
       for (const tlc of this.pendingTopLevelInits) {
         this.visitVariableDeclaration(tlc);
       }
