@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 
 describe("Top-level const variables", () => {
   beforeAll(() => {
