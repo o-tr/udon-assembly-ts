@@ -9,13 +9,20 @@ import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
 import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
-import { AggregateTranspileError } from "../errors/transpile_errors.js";
+import {
+  AggregateTranspileError,
+  DuplicateTopLevelConstError,
+} from "../errors/transpile_errors.js";
 import {
   computeExportLabels,
   computeExposedLabels,
 } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
-import type { MethodInfo, PropertyInfo } from "../frontend/class_registry.js";
+import type {
+  MethodInfo,
+  PropertyInfo,
+  TopLevelConstInfo,
+} from "../frontend/class_registry.js";
 import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
@@ -166,7 +173,7 @@ export class BatchTranspiler {
       for (const filePath of files) {
         const source = fs.readFileSync(filePath, "utf8");
         const program = parser.parse(source, filePath);
-        registry.registerFromProgram(program, filePath);
+        registry.registerFromProgram(program, filePath, source);
       }
     } else {
       const reachableFiles = reachable.size > 0 ? Array.from(reachable) : files;
@@ -180,7 +187,7 @@ export class BatchTranspiler {
         try {
           const source = fs.readFileSync(filePath, "utf8");
           const program = parser.parse(source, filePath);
-          registry.registerFromProgram(program, filePath);
+          registry.registerFromProgram(program, filePath, source);
         } catch (e) {
           // parsing errors will be collected by parser's ErrorCollector
           // but file read or other unexpected errors should be logged for diagnostics
@@ -254,9 +261,17 @@ export class BatchTranspiler {
         );
       }
 
-      const topLevelConsts = registry.getTopLevelConstsForFile(
-        entryPoint.filePath,
-      );
+      let topLevelConsts: TopLevelConstInfo[];
+      try {
+        topLevelConsts = this.collectAllTopLevelConsts(
+          entryPoint.filePath,
+          filteredInlineClassNames,
+          registry,
+        );
+      } catch (e) {
+        if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
+        throw e;
+      }
       for (const tlc of topLevelConsts) {
         if (!symbolTable.hasInCurrentScope(tlc.name)) {
           symbolTable.addSymbol(
@@ -382,19 +397,24 @@ export class BatchTranspiler {
       let splitCandidates: Map<string, number> | undefined;
       const heapUsage = computeHeapUsage(dataSectionWithTypes);
       if (heapUsage > UASM_HEAP_LIMIT) {
-        splitCandidates = this.estimateSplitCandidates(
-          filteredInlineClassNames,
-          registry,
-          callAnalyzer,
-          parser,
-          typeMapper,
-          udonBehaviourLayouts,
-          udonBehaviourClasses,
-          options.optimize,
-          options.reflect,
-          options.useStringBuilder,
-          methodUsage,
-        );
+        try {
+          splitCandidates = this.estimateSplitCandidates(
+            filteredInlineClassNames,
+            registry,
+            callAnalyzer,
+            parser,
+            typeMapper,
+            udonBehaviourLayouts,
+            udonBehaviourClasses,
+            options.optimize,
+            options.reflect,
+            options.useStringBuilder,
+            methodUsage,
+          );
+        } catch (e) {
+          if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
+          throw e;
+        }
       }
 
       this.ensureHeapWithinLimit(
@@ -505,8 +525,12 @@ export class BatchTranspiler {
             methodUsage ?? null,
           ),
         );
-      } catch {
-        // If estimation fails, set to 0 rather than blocking the error message
+      } catch (e) {
+        // Rethrow duplicate-const errors from collectAllTopLevelConsts
+        if (e instanceof DuplicateTopLevelConstError) {
+          throw e;
+        }
+        // If estimation fails for other reasons, set to 0 rather than blocking the error message
         results.set(className, 0);
       }
     }
@@ -559,7 +583,11 @@ export class BatchTranspiler {
 
     const entryMeta = registry.getClass(entryPointName);
     const estTopLevelConsts = entryMeta
-      ? registry.getTopLevelConstsForFile(entryMeta.filePath)
+      ? this.collectAllTopLevelConsts(
+          entryMeta.filePath,
+          filteredInline,
+          registry,
+        )
       : [];
     for (const tlc of estTopLevelConsts) {
       if (!symbolTable.hasInCurrentScope(tlc.name)) {
@@ -687,6 +715,61 @@ export class BatchTranspiler {
     const reachable = usage.get(className);
     if (!reachable) return [];
     return methods.filter((method) => reachable.has(method.name));
+  }
+
+  private collectDuplicateConstErrors(
+    e: unknown,
+    errorCollector: ErrorCollector,
+  ): boolean {
+    if (e instanceof DuplicateTopLevelConstError) {
+      for (const te of e.toTranspileErrors()) {
+        errorCollector.add(te);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private collectAllTopLevelConsts(
+    entryFilePath: string,
+    inlineClassNames: string[],
+    registry: ClassRegistry,
+  ): TopLevelConstInfo[] {
+    const entryConsts = registry.getTopLevelConstsForFile(entryFilePath);
+    const constByName = new Map<string, TopLevelConstInfo>();
+    for (const tlc of entryConsts) {
+      constByName.set(tlc.name, tlc);
+    }
+    const allConsts = [...entryConsts];
+
+    const inlineFilePaths = new Set<string>();
+    for (const inlineName of inlineClassNames) {
+      const meta = registry.getClass(inlineName);
+      if (meta && meta.filePath !== entryFilePath) {
+        inlineFilePaths.add(meta.filePath);
+      }
+    }
+
+    for (const filePath of Array.from(inlineFilePaths).sort()) {
+      for (const tlc of registry.getTopLevelConstsForFile(filePath)) {
+        const existing = constByName.get(tlc.name);
+        if (existing) {
+          throw new DuplicateTopLevelConstError(
+            tlc.name,
+            {
+              filePath: existing.filePath,
+              line: existing.line,
+              column: existing.column,
+            },
+            { filePath: tlc.filePath, line: tlc.line, column: tlc.column },
+          );
+        }
+        constByName.set(tlc.name, tlc);
+        allConsts.push(tlc);
+      }
+    }
+
+    return allConsts;
   }
 
   private collectReachableInlineClasses(

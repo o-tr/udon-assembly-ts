@@ -33,6 +33,45 @@ export class TranspileError extends Error {
   }
 }
 
+export class DuplicateTopLevelConstError extends Error {
+  readonly constName: string;
+  readonly locationA: TranspileErrorLocation;
+  readonly locationB: TranspileErrorLocation;
+
+  constructor(
+    constName: string,
+    locationA: TranspileErrorLocation,
+    locationB: TranspileErrorLocation,
+  ) {
+    super(
+      `Top-level const "${constName}" is defined in both "${locationA.filePath}" and "${locationB.filePath}". Rename one to avoid ambiguity.`,
+    );
+    this.name = "DuplicateTopLevelConstError";
+    this.constName = constName;
+    this.locationA = locationA;
+    this.locationB = locationB;
+  }
+
+  toTranspileErrors(): [TranspileError, TranspileError] {
+    const msg = `Duplicate top-level const "${this.constName}"`;
+    const suggestion = "Rename one of the conflicting declarations";
+    return [
+      new TranspileError(
+        "TypeError",
+        `${msg} (also in "${this.locationB.filePath}")`,
+        this.locationA,
+        suggestion,
+      ),
+      new TranspileError(
+        "TypeError",
+        `${msg} (also in "${this.locationA.filePath}")`,
+        this.locationB,
+        suggestion,
+      ),
+    ];
+  }
+}
+
 export class AggregateTranspileError extends Error {
   readonly errors: TranspileError[];
 
