@@ -511,8 +511,12 @@ export class BatchTranspiler {
             methodUsage ?? null,
           ),
         );
-      } catch {
-        // If estimation fails, set to 0 rather than blocking the error message
+      } catch (e) {
+        // Rethrow duplicate-const errors from collectAllTopLevelConsts
+        if (e instanceof Error && e.message.includes("is defined in both")) {
+          throw e;
+        }
+        // If estimation fails for other reasons, set to 0 rather than blocking the error message
         results.set(className, 0);
       }
     }
