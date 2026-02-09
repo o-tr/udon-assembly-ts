@@ -80,6 +80,30 @@ export class InheritanceValidator {
     }
   }
 
+  validateUdonBehaviourInterfaceConsistency(
+    udonBehaviourInterfaces: Set<string>,
+  ): void {
+    for (const cls of this.registry.getAllClasses()) {
+      const isUdonBehaviour = cls.decorators.some(
+        (d) => d.name === "UdonBehaviour",
+      );
+      if (isUdonBehaviour) continue;
+      const impls = cls.node.implements ?? [];
+      for (const ifaceName of impls) {
+        if (udonBehaviourInterfaces.has(ifaceName)) {
+          this.errorCollector.add(
+            new TranspileError(
+              "TypeError",
+              `Class '${cls.name}' implements UdonBehaviour interface '${ifaceName}' but is not decorated with @UdonBehaviour`,
+              { filePath: cls.filePath, line: 1, column: 1 },
+              "Add the @UdonBehaviour decorator to this class or remove the interface implementation.",
+            ),
+          );
+        }
+      }
+    }
+  }
+
   private validateInterfaces(className: string, filePath: string): void {
     const classMeta = this.registry.getClass(className);
     const implementsList = classMeta?.node.implements ?? [];

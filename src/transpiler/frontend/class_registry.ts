@@ -213,6 +213,44 @@ export class ClassRegistry {
     }
   }
 
+  getAllInterfaces(): InterfaceMetadata[] {
+    return Array.from(this.interfaces.values());
+  }
+
+  getUdonBehaviourInterfaces(): Map<string, InterfaceMetadata> {
+    const result = new Map<string, InterfaceMetadata>();
+    for (const cls of this.classes.values()) {
+      const isUdonBehaviour = cls.decorators.some(
+        (d) => d.name === "UdonBehaviour",
+      );
+      if (!isUdonBehaviour) continue;
+      for (const ifaceName of cls.node.implements ?? []) {
+        const iface = this.interfaces.get(ifaceName);
+        if (iface && !result.has(ifaceName)) {
+          result.set(ifaceName, iface);
+        }
+      }
+    }
+    return result;
+  }
+
+  getImplementorsOfInterface(interfaceName: string): ClassMetadata[] {
+    return Array.from(this.classes.values()).filter((cls) =>
+      (cls.node.implements ?? []).includes(interfaceName),
+    );
+  }
+
+  getClassImplementsMap(): Map<string, string[]> {
+    const result = new Map<string, string[]>();
+    for (const cls of this.classes.values()) {
+      const impls = cls.node.implements ?? [];
+      if (impls.length > 0) {
+        result.set(cls.name, [...impls]);
+      }
+    }
+    return result;
+  }
+
   private toDecoratorInfo(decorator: DecoratorNode): DecoratorInfo {
     return {
       name: decorator.name,

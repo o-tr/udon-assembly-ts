@@ -31,7 +31,16 @@ export function isUdonBehaviourType(
       (decorator) => decorator.name === "UdonBehaviour",
     );
   }
-  return this.udonBehaviourClasses.has(type.name);
+  if (this.udonBehaviourClasses.has(type.name)) return true;
+  // Check if this is a UdonBehaviour interface (present in layouts but not in classMap)
+  if (
+    this.udonBehaviourLayouts.has(type.name) &&
+    !this.classMap.has(type.name) &&
+    this.classRegistry?.getInterface(type.name)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function getUdonBehaviourLayout(
