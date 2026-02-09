@@ -344,7 +344,8 @@ export class ClassRegistry {
     lineStarts: number[] | null,
   ): { line: number; column: number } {
     if (!sourceText || !lineStarts) return { line: 1, column: 1 };
-    const pattern = new RegExp(`\\bconst\\s+${name}\\b`);
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`\\bconst\\s+${escaped}\\b`);
     const match = pattern.exec(sourceText);
     if (!match) return { line: 1, column: 1 };
     const offset = match.index;
