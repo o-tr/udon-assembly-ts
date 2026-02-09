@@ -705,7 +705,10 @@ export class BatchTranspiler {
     registry: ClassRegistry,
   ): TopLevelConstInfo[] {
     const entryConsts = registry.getTopLevelConstsForFile(entryFilePath);
-    const seenNames = new Set(entryConsts.map((tlc) => tlc.name));
+    const constOrigin = new Map<string, string>();
+    for (const tlc of entryConsts) {
+      constOrigin.set(tlc.name, entryFilePath);
+    }
     const allConsts = [...entryConsts];
 
     const inlineFilePaths = new Set<string>();
@@ -718,10 +721,14 @@ export class BatchTranspiler {
 
     for (const filePath of inlineFilePaths) {
       for (const tlc of registry.getTopLevelConstsForFile(filePath)) {
-        if (!seenNames.has(tlc.name)) {
-          seenNames.add(tlc.name);
-          allConsts.push(tlc);
+        const existingFile = constOrigin.get(tlc.name);
+        if (existingFile) {
+          throw new Error(
+            `Top-level const "${tlc.name}" is defined in both "${existingFile}" and "${filePath}". Rename one to avoid ambiguity.`,
+          );
         }
+        constOrigin.set(tlc.name, filePath);
+        allConsts.push(tlc);
       }
     }
 
