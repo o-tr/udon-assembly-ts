@@ -88,13 +88,22 @@ export const deduplicateConstants = (
     // Remove non-canonical constant assignments
     if (inst.kind === TACInstructionKind.Assignment) {
       const assign = inst as unknown as AssignmentInstruction;
-      if (assign.src.kind !== TACOperandKind.Constant) {
-        // Only remove the original constant-defining assignment.
-      } else if (
-        assign.dest.kind === TACOperandKind.Temporary &&
-        removableAssignments.has((assign.dest as TemporaryOperand).id)
-      ) {
-        continue;
+      if (assign.src.kind === TACOperandKind.Constant) {
+        const destId =
+          assign.dest.kind === TACOperandKind.Temporary
+            ? (assign.dest as TemporaryOperand).id
+            : null;
+        if (destId !== null && removableAssignments.has(destId)) {
+          const info = tempInfo.get(destId);
+          if (info?.constOp) {
+            const expectedKey = `${stringifyConstant(info.constOp.value)}|${getOperandType(info.constOp).udonType}`;
+            const srcConst = assign.src as ConstantOperand;
+            const actualKey = `${stringifyConstant(srcConst.value)}|${getOperandType(srcConst).udonType}`;
+            if (expectedKey === actualKey) {
+              continue;
+            }
+          }
+        }
       }
     }
 

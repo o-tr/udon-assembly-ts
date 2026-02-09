@@ -170,6 +170,14 @@ export const narrowTypes = (
 
       // Ensure the constant is representable in the source (narrow) type
       const constOp = otherOp as ConstantOperand;
+      const otherType = getOperandType(otherOp).udonType as UdonType;
+
+      const candidateSrcType = getOperandType(candidate.srcOperand)
+        .udonType as UdonType;
+      if (otherType !== candidateSrcType) {
+        allUsesAreComparisons = false;
+        break;
+      }
       const rawVal = constOp.value;
       let constBigInt: bigint | null = null;
       if (typeof rawVal === "bigint") {
@@ -186,8 +194,6 @@ export const narrowTypes = (
         break;
       }
 
-      const candidateSrcType = getOperandType(candidate.srcOperand)
-        .udonType as UdonType;
       const range = getIntegerRangeForUdonType(candidateSrcType);
       if (!range) {
         allUsesAreComparisons = false;
