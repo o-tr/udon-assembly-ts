@@ -40,7 +40,7 @@ export const deduplicateConstants = (
     entry.defIndex = entry.defIndex ?? idx;
     // If this defining instruction is an assignment of a constant, record it
     if (inst.kind === TACInstructionKind.Assignment) {
-      const assign = inst as AssignmentInstruction;
+      const assign = inst as unknown as AssignmentInstruction;
       if (assign.src.kind === TACOperandKind.Constant) {
         entry.constOp = assign.src as ConstantOperand;
       }
@@ -91,7 +91,7 @@ export const deduplicateConstants = (
       inst.kind === TACInstructionKind.Assignment ||
       inst.kind === TACInstructionKind.Copy
     ) {
-      const assign = inst as AssignmentInstruction;
+      const assign = inst as unknown as AssignmentInstruction;
       if (
         assign.dest.kind === TACOperandKind.Temporary &&
         removableAssignments.has((assign.dest as TemporaryOperand).id)

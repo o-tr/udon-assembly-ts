@@ -428,8 +428,8 @@ const performUnswitch = (
   };
 
   // Build two copies of the loop body:
-  // Clone A: original loop body (jumped path)
-  // Clone B: cloned loop body (fallthrough path)
+  // Clone A: original loop body (fallthrough path)
+  // Clone B: cloned loop body (jumped path)
   const cloneA: TACInstruction[] = [];
   const cloneB: TACInstruction[] = [];
 
@@ -476,24 +476,26 @@ const performUnswitch = (
     });
   }
 
-  // Find the header label for clone B
+  // Find the header labels for clone A/B
   const headerBlock = cfg.blocks[loop.headerId];
   const headerInst = instructions[headerBlock.start];
   let cloneAHeaderLabel: string | null = null;
+  let cloneBHeaderLabel: string | null = null;
   if (headerInst.kind === TACInstructionKind.Label) {
     const labelInst = headerInst as LabelInstruction;
     if (labelInst.label.kind === TACOperandKind.Label) {
       cloneAHeaderLabel = (labelInst.label as LabelOperand).name;
+      cloneBHeaderLabel = cloneLabel(cloneAHeaderLabel);
     }
   }
 
-  if (!cloneAHeaderLabel) return instructions;
+  if (!cloneAHeaderLabel || !cloneBHeaderLabel) return instructions;
 
   // Build the result:
   // 1. Everything before the loop
-  // 2. ifFalse condition goto clone_A_header
-  // 3. Clone B (renamed loop)
-  // 4. Clone A (original loop)
+  // 2. ifFalse condition goto clone_B_header
+  // 3. Clone A (original loop)
+  // 4. Clone B (renamed loop)
   // 5. Everything after the loop
   const result: TACInstruction[] = [];
 
@@ -506,15 +508,15 @@ const performUnswitch = (
       result.push(
         new ConditionalJumpInstruction(
           condJump.condition,
-          createLabel(cloneAHeaderLabel),
+          createLabel(cloneBHeaderLabel),
         ),
       );
-      // Clone B (renamed loop)
-      for (const inst of cloneB) {
-        result.push(inst);
-      }
       // Clone A (original loop)
       for (const inst of cloneA) {
+        result.push(inst);
+      }
+      // Clone B (renamed loop)
+      for (const inst of cloneB) {
         result.push(inst);
       }
       inserted = true;
@@ -530,11 +532,11 @@ const performUnswitch = (
     result.push(
       new ConditionalJumpInstruction(
         condJump.condition,
-        createLabel(cloneAHeaderLabel),
+        createLabel(cloneBHeaderLabel),
       ),
     );
-    for (const inst of cloneB) result.push(inst);
     for (const inst of cloneA) result.push(inst);
+    for (const inst of cloneB) result.push(inst);
   }
 
   return result;

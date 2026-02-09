@@ -22,14 +22,14 @@ export const simplifyDiamondPatterns = (
   const labelUses = new Map<string, number>();
   for (const inst of instructions) {
     if (inst.kind === TACInstructionKind.ConditionalJump) {
-      const label = (inst as ConditionalJumpInstruction).label;
+      const label = (inst as unknown as ConditionalJumpInstruction).label;
       if (label.kind === TACOperandKind.Label) {
         const name = (label as LabelOperand).name;
         labelUses.set(name, (labelUses.get(name) ?? 0) + 1);
       }
     }
     if (inst.kind === TACInstructionKind.UnconditionalJump) {
-      const label = (inst as UnconditionalJumpInstruction).label;
+      const label = (inst as unknown as UnconditionalJumpInstruction).label;
       if (label.kind === TACOperandKind.Label) {
         const name = (label as LabelOperand).name;
         labelUses.set(name, (labelUses.get(name) ?? 0) + 1);
@@ -52,7 +52,7 @@ export const simplifyDiamondPatterns = (
       i++;
       continue;
     }
-    const condJump = inst as ConditionalJumpInstruction;
+    const condJump = inst as unknown as ConditionalJumpInstruction;
     if (condJump.label.kind !== TACOperandKind.Label) {
       result.push(inst);
       i++;
@@ -77,7 +77,8 @@ export const simplifyDiamondPatterns = (
       i++;
       continue;
     }
-    const joinLabel = (uncondJump as UnconditionalJumpInstruction).label;
+    const joinLabel = (uncondJump as unknown as UnconditionalJumpInstruction)
+      .label;
     if (joinLabel.kind !== TACOperandKind.Label) {
       result.push(inst);
       i++;
@@ -90,7 +91,8 @@ export const simplifyDiamondPatterns = (
       i++;
       continue;
     }
-    const elseLabelActual = (elseLabelInst as LabelInstruction).label;
+    const elseLabelActual = (elseLabelInst as unknown as LabelInstruction)
+      .label;
     if (elseLabelActual.kind !== TACOperandKind.Label) {
       result.push(inst);
       i++;
@@ -113,7 +115,8 @@ export const simplifyDiamondPatterns = (
       i++;
       continue;
     }
-    const joinLabelActual = (joinLabelInst as LabelInstruction).label;
+    const joinLabelActual = (joinLabelInst as unknown as LabelInstruction)
+      .label;
     if (joinLabelActual.kind !== TACOperandKind.Label) {
       result.push(inst);
       i++;

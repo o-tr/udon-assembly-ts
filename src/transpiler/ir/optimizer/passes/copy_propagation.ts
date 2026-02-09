@@ -61,7 +61,7 @@ export const propagateCopies = (
     // Track copy definitions (only explicit Copy instructions, not Assignment)
     // Only propagate temp-to-temp copies to avoid interfering with other passes
     if (inst.kind === TACInstructionKind.Copy) {
-      const typed = inst as CopyInstruction;
+      const typed = inst as unknown as CopyInstruction;
       if (typed.src.kind === TACOperandKind.Temporary) {
         const destKey = livenessKey(typed.dest);
         if (destKey && typed.dest.kind === TACOperandKind.Temporary) {
@@ -117,10 +117,10 @@ const resolve = (
 
 const getMutatedObjectKey = (inst: TACInstruction): string | null => {
   if (inst.kind === TACInstructionKind.PropertySet) {
-    return livenessKey((inst as PropertySetInstruction).object);
+    return livenessKey((inst as unknown as PropertySetInstruction).object);
   }
   if (inst.kind === TACInstructionKind.ArrayAssignment) {
-    return livenessKey((inst as ArrayAssignmentInstruction).array);
+    return livenessKey((inst as unknown as ArrayAssignmentInstruction).array);
   }
   return null;
 };
