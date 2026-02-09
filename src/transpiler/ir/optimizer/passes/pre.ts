@@ -15,12 +15,12 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
   getDefinedOperandForReuse,
   getMaxTempId,
   getUsedOperandsForReuse,
 } from "../utils/instructions.js";
-import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import { livenessKey, livenessKeyWithSSA } from "../utils/liveness.js";
 import { operandKey, operandKeyWithSSA } from "../utils/operands.js";
 import { pureExternEvaluators } from "../utils/pure_extern.js";
@@ -406,7 +406,8 @@ export const performPRE = (
         const predBlock = cfg.blocks[predId];
         if (
           exprOps.some(
-            (op) => !isOperandAvailableInBlock(predBlock, instructions, op, liveKey),
+            (op) =>
+              !isOperandAvailableInBlock(predBlock, instructions, op, liveKey),
           )
         ) {
           canInsertAll = false;
@@ -429,7 +430,12 @@ export const performPRE = (
           break;
         }
         const insts: TACInstruction[] = [];
-        let existing = findEquivalentExpr(predBlock, instructions, ek, keyForOperand);
+        let existing = findEquivalentExpr(
+          predBlock,
+          instructions,
+          ek,
+          keyForOperand,
+        );
         if (existing) {
           const existDest = getExprDest(existing);
           const existDestKey = existDest ? liveKey(existDest) : null;
@@ -452,10 +458,7 @@ export const performPRE = (
         }
         if (existing) {
           const existDest = getExprDest(existing);
-          if (
-            existDest &&
-            keyForOperand(existDest) !== keyForOperand(dest)
-          ) {
+          if (existDest && keyForOperand(existDest) !== keyForOperand(dest)) {
             insts.push(new CopyInstruction(dest, existDest));
           }
         } else {

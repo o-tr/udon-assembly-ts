@@ -1,28 +1,30 @@
+import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ConditionalJumpInstruction,
+  CopyInstruction,
   LabelInstruction,
+  type PhiInstruction,
   type TACInstruction,
   TACInstructionKind,
   UnconditionalJumpInstruction,
-  PhiInstruction,
-  CopyInstruction,
 } from "../../tac_instruction.js";
 import {
   createLabel,
-  type LabelOperand,
-  TACOperandKind,
   createTemporary,
+  type LabelOperand,
+  type TACOperand,
+  TACOperandKind,
+  type TemporaryOperand,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
   getDefinedOperandForReuse,
   getMaxTempId,
-  getUsedOperandsForReuse,
+  rewriteOperands,
 } from "../utils/instructions.js";
-import { rewriteOperands } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
-import { collectLoops } from "./licm.js";
 import { operandKey } from "../utils/operands.js";
+import { collectLoops } from "./licm.js";
 
 const MAX_LOOP_INSTRUCTIONS = 20;
 
@@ -84,10 +86,19 @@ export const unswitchLoops = (
       };
 
       const emitParallelCopies = (
-        plans: Array<{ dest: any; src: any }>,
+        plans: Array<{
+          dest: TACOperand & { type: TypeSymbol };
+          src: TACOperand & { type: TypeSymbol };
+        }>,
       ): { insts: TACInstruction[]; nextTempId: number } => {
         const insts: TACInstruction[] = [];
-        const pending = new Map<string, any>();
+        const pending = new Map<
+          string,
+          {
+            dest: TACOperand & { type: TypeSymbol };
+            src: TACOperand & { type: TypeSymbol };
+          }
+        >();
         const destKeys = new Set<string>();
         for (const p of plans) {
           const dk = operandKey(p.dest);
@@ -123,7 +134,10 @@ export const unswitchLoops = (
 
       for (const predId of headerBlock.preds) {
         const predBlock = cfg.blocks[predId];
-        const plans: Array<{ dest: any; src: any }> = [];
+        const plans: Array<{
+          dest: TACOperand & { type: TypeSymbol };
+          src: TACOperand & { type: TypeSymbol };
+        }> = [];
         for (const { inst: phi } of headerPhis) {
           const src = phi.sources.find((s) => s.pred === predId)?.value;
           if (!src) {
@@ -131,7 +145,10 @@ export const unswitchLoops = (
             inserts.clear();
             break;
           }
-          plans.push({ dest: phi.dest, src });
+          plans.push({
+            dest: phi.dest as TACOperand & { type: TypeSymbol },
+            src: src as TACOperand & { type: TypeSymbol },
+          });
         }
         if (inserts.size === 0 && plans.length !== headerPhis.length) break;
         if (plans.length === 0) continue;
@@ -149,7 +166,9 @@ export const unswitchLoops = (
 
       // Apply insertions into instructions array (splicing)
       // Sort insert indices descending to avoid shifting earlier indices
-      const insertEntries = Array.from(inserts.entries()).sort((a, b) => b[0] - a[0]);
+      const insertEntries = Array.from(inserts.entries()).sort(
+        (a, b) => b[0] - a[0],
+      );
       const work = instructions.slice();
       for (const [idx, insts] of insertEntries) {
         work.splice(idx + 1, 0, ...insts);
@@ -177,8 +196,7 @@ export const unswitchLoops = (
 
         // Check if condition is loop-invariant
         // It's invariant if it's a constant or defined outside the loop
-        const isConstant =
-          condJump.condition.kind === TACOperandKind.Constant;
+        const isConstant = condJump.condition.kind === TACOperandKind.Constant;
         const isInvariant =
           isConstant || (condKey !== null && !loopDefKeys.has(condKey));
 
@@ -206,13 +224,7 @@ export const unswitchLoops = (
         if (!targetInLoop) continue;
 
         // Found an unswitchable conditional. Perform the transformation.
-        return performUnswitch(
-          instructions,
-          loop,
-          cfg,
-          i,
-          condJump,
-        );
+        return performUnswitch(instructions, loop, cfg, i, condJump);
       }
     }
   }
@@ -223,8 +235,16 @@ export const unswitchLoops = (
 const performUnswitch = (
   instructions: TACInstruction[],
   loop: { headerId: number; blocks: Set<number>; preheaderId: number },
-  cfg: { blocks: Array<{ id: number; start: number; end: number; preds: number[]; succs: number[] }> },
-  condJumpIndex: number,
+  cfg: {
+    blocks: Array<{
+      id: number;
+      start: number;
+      end: number;
+      preds: number[];
+      succs: number[];
+    }>;
+  },
+  _condJumpIndex: number,
   condJump: ConditionalJumpInstruction,
 ): TACInstruction[] => {
   // Collect all loop instructions in order
@@ -283,9 +303,7 @@ const performUnswitch = (
       const jump = inst as UnconditionalJumpInstruction;
       if (jump.label.kind === TACOperandKind.Label) {
         const name = (jump.label as LabelOperand).name;
-        return new UnconditionalJumpInstruction(
-          createLabel(cloneLabel(name)),
-        );
+        return new UnconditionalJumpInstruction(createLabel(cloneLabel(name)));
       }
     }
     return inst;
@@ -325,13 +343,16 @@ const performUnswitch = (
   const tempMap = new Map<number, number>();
   let nextTempId = maxTempId + 1;
   for (const inst of cloneB) {
-    rewriteOperands(inst, (op: any) => {
+    rewriteOperands(inst, (op: TACOperand): TACOperand => {
       if (op && op.kind === TACOperandKind.Temporary) {
-        const oldId = op.id as number;
+        const oldId = (op as TemporaryOperand).id as number;
         if (!tempMap.has(oldId)) {
           tempMap.set(oldId, nextTempId++);
         }
-        return createTemporary(tempMap.get(oldId) as number, op.type);
+        return createTemporary(
+          tempMap.get(oldId) as number,
+          (op as TemporaryOperand).type,
+        );
       }
       return op;
     });
@@ -344,9 +365,7 @@ const performUnswitch = (
   if (headerInst.kind === TACInstructionKind.Label) {
     const labelInst = headerInst as LabelInstruction;
     if (labelInst.label.kind === TACOperandKind.Label) {
-      cloneBHeaderLabel = cloneLabel(
-        (labelInst.label as LabelOperand).name,
-      );
+      cloneBHeaderLabel = cloneLabel((labelInst.label as LabelOperand).name);
     }
   }
 

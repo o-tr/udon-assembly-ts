@@ -6,9 +6,9 @@ import {
   TACInstructionKind,
 } from "../../tac_instruction.js";
 import {
+  type ConstantOperand,
   type TACOperand,
   TACOperandKind,
-  type TemporaryOperand,
 } from "../../tac_operand.js";
 import {
   getDefinedOperandForReuse,
@@ -17,7 +17,6 @@ import {
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
 import { getOperandType } from "./constant_folding.js";
-import { type ConstantOperand } from "../../tac_operand.js";
 
 const TYPE_WIDTH: Partial<Record<UdonType, number>> = {
   [UdonType.Byte]: 8,
@@ -125,9 +124,7 @@ export const narrowTypes = (
 
     for (const inst of instructions) {
       const usedOps = getUsedOperandsForReuse(inst);
-      const usesCandidate = usedOps.some(
-        (op) => livenessKey(op) === destKey,
-      );
+      const usesCandidate = usedOps.some((op) => livenessKey(op) === destKey);
       if (!usesCandidate) continue;
       hasUses = true;
 
@@ -175,7 +172,8 @@ export const narrowTypes = (
         break;
       }
 
-      const candidateSrcType = getOperandType(candidate.srcOperand).udonType as UdonType;
+      const candidateSrcType = getOperandType(candidate.srcOperand)
+        .udonType as UdonType;
       const range = getIntegerRangeForUdonType(candidateSrcType);
       if (!range) {
         allUsesAreComparisons = false;

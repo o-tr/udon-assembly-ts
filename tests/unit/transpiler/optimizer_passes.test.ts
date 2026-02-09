@@ -6,22 +6,22 @@ import {
 } from "../../../src/transpiler/frontend/type_symbols";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
+import { sinkCode } from "../../../src/transpiler/ir/optimizer/passes/code_sinking";
 import { constantFolding } from "../../../src/transpiler/ir/optimizer/passes/constant_folding";
 import {
   deadCodeElimination,
   eliminateDeadStoresCFG,
 } from "../../../src/transpiler/ir/optimizer/passes/dead_code";
+import { simplifyDiamondPatterns } from "../../../src/transpiler/ir/optimizer/passes/diamond_simplification";
 import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
 import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
 import { optimizeInductionVariables } from "../../../src/transpiler/ir/optimizer/passes/induction";
 import { performLICM } from "../../../src/transpiler/ir/optimizer/passes/licm";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
+import { unswitchLoops } from "../../../src/transpiler/ir/optimizer/passes/loop_unswitching";
 import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
 import { sccpAndPrune } from "../../../src/transpiler/ir/optimizer/passes/sccp";
 import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
-import { sinkCode } from "../../../src/transpiler/ir/optimizer/passes/code_sinking";
-import { simplifyDiamondPatterns } from "../../../src/transpiler/ir/optimizer/passes/diamond_simplification";
-import { unswitchLoops } from "../../../src/transpiler/ir/optimizer/passes/loop_unswitching";
 import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
 import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
 import {
@@ -1792,12 +1792,11 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
     const optimized = new TACOptimizer().optimize(instructions);
-    const text = stringify(optimized);
+    const _text = stringify(optimized);
     // After dedup, t0 and t1 should reference the same temp
     // Dead code elimination removes the duplicate assignment
     const assignCount = optimized.filter(
-      (inst) =>
-        inst.kind === "Assignment" && inst.toString().includes("= 42"),
+      (inst) => inst.kind === "Assignment" && inst.toString().includes("= 42"),
     ).length;
     expect(assignCount).toBeLessThanOrEqual(1);
   });
@@ -1865,9 +1864,9 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
     const optimized = performPRE(instructions);
-    expect(
-      optimized.filter((inst) => inst.kind === "PropertyGet").length,
-    ).toBe(1);
+    expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
+      1,
+    );
   });
 
   it("merges identical tails ending with unconditional jump", () => {
@@ -1877,16 +1876,10 @@ describe("optimizer passes", () => {
     const lEnd = createLabel("L_end");
     const instructions = [
       new ConditionalJumpInstruction(cond, lElse),
-      new AssignmentInstruction(
-        a,
-        createConstant(1, PrimitiveTypes.int32),
-      ),
+      new AssignmentInstruction(a, createConstant(1, PrimitiveTypes.int32)),
       new UnconditionalJumpInstruction(lEnd),
       new LabelInstruction(lElse),
-      new AssignmentInstruction(
-        a,
-        createConstant(1, PrimitiveTypes.int32),
-      ),
+      new AssignmentInstruction(a, createConstant(1, PrimitiveTypes.int32)),
       new UnconditionalJumpInstruction(lEnd),
       new LabelInstruction(lEnd),
       new ReturnInstruction(a),
@@ -1912,13 +1905,33 @@ describe("optimizer passes", () => {
       new UnconditionalJumpInstruction(lLoop),
       new LabelInstruction(lLoop),
       new ConditionalJumpInstruction(flag, lElse),
-      new BinaryOpInstruction(a, a, "+", createConstant(1, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        a,
+        a,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
       new UnconditionalJumpInstruction(lEndIf),
       new LabelInstruction(lElse),
-      new BinaryOpInstruction(a, a, "+", createConstant(2, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        a,
+        a,
+        "+",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
       new LabelInstruction(lEndIf),
-      new BinaryOpInstruction(i, i, "+", createConstant(1, PrimitiveTypes.int32)),
-      new BinaryOpInstruction(cond, i, "<", createConstant(10, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        cond,
+        i,
+        "<",
+        createConstant(10, PrimitiveTypes.int32),
+      ),
       new ConditionalJumpInstruction(cond, lEnd),
       new UnconditionalJumpInstruction(lLoop),
       new LabelInstruction(lEnd),

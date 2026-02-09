@@ -62,14 +62,14 @@ export const globalValueNumbering = (
         changed = true;
       }
 
-        const simulated = simulateExpressionMap(
-          mergedIn,
-          instructions,
-          block.start,
-          block.end,
-          keyForOperand,
-          useSSA,
-        );
+      const simulated = simulateExpressionMap(
+        mergedIn,
+        instructions,
+        block.start,
+        block.end,
+        keyForOperand,
+        useSSA,
+      );
       const currentOut = outMaps.get(block.id) ?? new Map();
       if (!exprMapsEqual(currentOut, simulated)) {
         outMaps.set(block.id, simulated);

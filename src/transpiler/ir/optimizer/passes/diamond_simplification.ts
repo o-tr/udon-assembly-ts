@@ -4,8 +4,8 @@ import {
   type LabelInstruction,
   type TACInstruction,
   TACInstructionKind,
-  type UnconditionalJumpInstruction,
   UnaryOpInstruction,
+  type UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
@@ -160,9 +160,13 @@ export const simplifyDiamondPatterns = (
     // thenVal=true, elseVal=false → dest = condition
     // thenVal=false, elseVal=true → dest = !condition
     if (thenVal === true) {
-      result.push(new AssignmentInstruction(thenAssign.dest, condJump.condition));
+      result.push(
+        new AssignmentInstruction(thenAssign.dest, condJump.condition),
+      );
     } else {
-      result.push(new UnaryOpInstruction(thenAssign.dest, "!", condJump.condition));
+      result.push(
+        new UnaryOpInstruction(thenAssign.dest, "!", condJump.condition),
+      );
     }
     // Keep the join label in case something else references it
     result.push(joinLabelInst);

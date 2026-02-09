@@ -106,7 +106,9 @@ const resolve = (
   let resolved = original;
   while (copies.has(current) && !visited.has(current)) {
     visited.add(current);
-    resolved = copies.get(current)!;
+    const val = copies.get(current);
+    if (!val) break;
+    resolved = val;
     const nextKey = livenessKey(resolved);
     if (!nextKey) break;
     current = nextKey;
@@ -124,7 +126,7 @@ const getMutatedObjectKey = (inst: TACInstruction): string | null => {
   return null;
 };
 
-const isExportedVariable = (operand: TACOperand): boolean => {
+const _isExportedVariable = (operand: TACOperand): boolean => {
   if (operand.kind !== TACOperandKind.Variable) return false;
   return (operand as VariableOperand).isExported === true;
 };

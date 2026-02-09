@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
+import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
 import {
   buildSSA,
   deconstructSSA,
 } from "../../../src/transpiler/ir/optimizer/passes/ssa";
-import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
