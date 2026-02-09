@@ -17,6 +17,7 @@ import {
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
 import { getOperandType } from "./constant_folding.js";
+import { type ConstantOperand } from "../../tac_operand.js";
 
 const TYPE_WIDTH: Partial<Record<UdonType, number>> = {
   [UdonType.Byte]: 8,
@@ -38,6 +39,35 @@ const isComparisonOperator = (op: string): boolean => {
     op === "==" ||
     op === "!="
   );
+};
+
+const getIntegerRangeForUdonType = (
+  typeName: UdonType,
+): { min: bigint; max: bigint } | null => {
+  const width = TYPE_WIDTH[typeName as UdonType];
+  if (!width) return null;
+  const bits = BigInt(width);
+  switch (typeName) {
+    case UdonType.Byte:
+    case UdonType.UInt16:
+    case UdonType.UInt32:
+    case UdonType.UInt64: {
+      const min = 0n;
+      const max = (1n << bits) - 1n;
+      return { min, max };
+    }
+    case UdonType.SByte:
+    case UdonType.Int16:
+    case UdonType.Int32:
+    case UdonType.Int64: {
+      const half = bits - 1n;
+      const min = -(1n << half);
+      const max = (1n << half) - 1n;
+      return { min, max };
+    }
+    default:
+      return null;
+  }
 };
 
 /**
@@ -121,9 +151,37 @@ export const narrowTypes = (
       }
 
       // Find the "other" operand (the one that's not the cast result)
-      const otherOp =
-        livenessKey(bin.left) === destKey ? bin.right : bin.left;
+      const otherOp = livenessKey(bin.left) === destKey ? bin.right : bin.left;
       if (otherOp.kind !== TACOperandKind.Constant) {
+        allUsesAreComparisons = false;
+        break;
+      }
+
+      // Ensure the constant is representable in the source (narrow) type
+      const constOp = otherOp as ConstantOperand;
+      const rawVal = constOp.value;
+      let constBigInt: bigint | null = null;
+      if (typeof rawVal === "bigint") {
+        constBigInt = rawVal as bigint;
+      } else if (typeof rawVal === "number") {
+        if (!Number.isFinite(rawVal) || !Number.isInteger(rawVal)) {
+          allUsesAreComparisons = false;
+          break;
+        }
+        constBigInt = BigInt(Math.trunc(rawVal));
+      } else {
+        // Non-integer constant: unsafe
+        allUsesAreComparisons = false;
+        break;
+      }
+
+      const candidateSrcType = getOperandType(candidate.srcOperand).udonType as UdonType;
+      const range = getIntegerRangeForUdonType(candidateSrcType);
+      if (!range) {
+        allUsesAreComparisons = false;
+        break;
+      }
+      if (constBigInt < range.min || constBigInt > range.max) {
         allUsesAreComparisons = false;
         break;
       }

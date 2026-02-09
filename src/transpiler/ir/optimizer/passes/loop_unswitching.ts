@@ -211,10 +211,10 @@ const performUnswitch = (
   const result: TACInstruction[] = [];
 
   // Pre-loop instructions
+  let inserted = false;
   for (let i = 0; i < instructions.length; i++) {
-    if (loopIndexSet.has(i)) continue;
-    // Insert the unswitched conditional and clones before the first loop instruction
-    if (i === loopIndices[0]) {
+    // Insert the unswitched conditional and clones at the original loop position
+    if (!inserted && i === loopIndices[0]) {
       // Unswitch: check condition before entering the loop
       result.push(
         new ConditionalJumpInstruction(
@@ -230,7 +230,11 @@ const performUnswitch = (
       for (const inst of cloneB) {
         result.push(inst);
       }
+      inserted = true;
     }
+
+    if (loopIndexSet.has(i)) continue;
+
     result.push(instructions[i]);
   }
 
