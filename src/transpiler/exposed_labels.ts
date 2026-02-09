@@ -8,11 +8,13 @@ export function computeExposedLabels(
 ): Set<string> {
   const exposed = new Set<string>();
 
-  // Collect interface layout keys for quick lookup
-  const interfaceNames = new Set<string>();
+  // Collect interface export method names for each UdonBehaviour interface
+  const interfaceExportNames = new Set<string>();
   for (const iface of registry.getAllInterfaces()) {
-    if (udonBehaviourLayouts.has(iface.name)) {
-      interfaceNames.add(iface.name);
+    const ifaceLayout = udonBehaviourLayouts.get(iface.name);
+    if (!ifaceLayout) continue;
+    for (const ml of ifaceLayout.values()) {
+      interfaceExportNames.add(ml.exportMethodName);
     }
   }
 
@@ -20,27 +22,14 @@ export function computeExposedLabels(
     const layout = udonBehaviourLayouts.get(cls.name);
     if (!layout) continue;
 
-    // Check which interfaces this class implements
-    const classIfaces = cls.node.implements ?? [];
-    const implementedInterfaceMethodNames = new Set<string>();
-    for (const ifaceName of classIfaces) {
-      if (!interfaceNames.has(ifaceName)) continue;
-      const ifaceLayout = udonBehaviourLayouts.get(ifaceName);
-      if (ifaceLayout) {
-        for (const methodName of ifaceLayout.keys()) {
-          implementedInterfaceMethodNames.add(methodName);
-        }
-      }
-    }
-
     for (const method of cls.methods) {
-      const isEntryPublic = cls.name === entryClassName && method.isPublic;
-      const isInterfaceMethod = implementedInterfaceMethodNames.has(
-        method.name,
-      );
-      if (!method.isExported && !isEntryPublic && !isInterfaceMethod) continue;
       const ml = layout.get(method.name);
-      if (ml) exposed.add(ml.exportMethodName);
+      if (!ml) continue;
+      const isEntryPublic = cls.name === entryClassName && method.isPublic;
+      // A method is an interface method if its export name matches an interface layout entry
+      const isInterfaceMethod = interfaceExportNames.has(ml.exportMethodName);
+      if (!method.isExported && !isEntryPublic && !isInterfaceMethod) continue;
+      exposed.add(ml.exportMethodName);
     }
   }
   return exposed;

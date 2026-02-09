@@ -14,7 +14,7 @@ import { buildUdonBehaviourLayouts } from "../../../src/transpiler/ir/udon_behav
 
 function buildLayoutsFromSource(source: string) {
   const parser = new TypeScriptParser();
-  const ast = parser.parse(source);
+  const ast = parser.parse(source, "test.ts");
   const registry = new ClassRegistry();
   registry.registerFromProgram(ast, "test.ts");
 

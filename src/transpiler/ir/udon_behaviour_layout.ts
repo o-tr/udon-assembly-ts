@@ -140,16 +140,25 @@ export const buildUdonBehaviourLayouts = (
       // Check if this method is from an interface
       const ifaceInfo = ifaceMethodMap?.get(method.name);
       if (ifaceInfo) {
-        // Validate class method signature matches the interface
-        if (
-          method.parameters.length !== ifaceInfo.layout.parameterTypes.length
-        ) {
-          // Signature mismatch — fall through to counter-based naming
-        } else {
-          // Use the interface's unified naming; interface methods are always public
-          classLayout.set(method.name, ifaceInfo.layout);
-          continue;
+        const il = ifaceInfo.layout;
+        // Validate full signature: arity, param types, return type
+        const arityMatch =
+          method.parameters.length === il.parameterTypes.length;
+        const paramTypesMatch =
+          arityMatch &&
+          method.parameters.every(
+            (p, i) => p.type.udonType === il.parameterTypes[i].udonType,
+          );
+        const returnTypeMatch =
+          method.returnType.udonType === il.returnType.udonType;
+        if (!arityMatch || !paramTypesMatch || !returnTypeMatch) {
+          throw new Error(
+            `Class '${cls.name}' method '${method.name}' signature does not match interface '${ifaceInfo.ifaceName}'`,
+          );
         }
+        // Use the interface's unified naming; interface methods are always public
+        classLayout.set(method.name, il);
+        continue;
       }
 
       let methodName = method.name;

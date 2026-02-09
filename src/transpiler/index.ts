@@ -14,7 +14,6 @@ import { TypeScriptParser } from "./frontend/parser/index.js";
 import {
   ASTNodeKind,
   type ClassDeclarationNode,
-  type InterfaceDeclarationNode,
   type ProgramNode,
 } from "./frontend/types.js";
 import {
@@ -85,24 +84,17 @@ export class TypeScriptToUdonTranspiler {
     );
     const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
     const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
-      (iface) => {
-        const ifaceNode = program.statements.find(
-          (node): node is InterfaceDeclarationNode =>
-            node.kind === ASTNodeKind.InterfaceDeclaration &&
-            (node as InterfaceDeclarationNode).name === iface.name,
-        );
-        return {
-          name: iface.name,
-          methods: (ifaceNode?.methods ?? []).map((m) => ({
-            name: m.name,
-            parameters: m.parameters.map((p) => ({
-              name: p.name,
-              type: p.type,
-            })),
-            returnType: m.returnType,
+      (iface) => ({
+        name: iface.name,
+        methods: iface.node.methods.map((m) => ({
+          name: m.name,
+          parameters: m.parameters.map((p) => ({
+            name: p.name,
+            type: p.type,
           })),
-        };
-      },
+          returnType: m.returnType,
+        })),
+      }),
     );
     const classImplements = registry.getClassImplementsMap();
     const udonBehaviourLayouts = buildUdonBehaviourLayouts(
