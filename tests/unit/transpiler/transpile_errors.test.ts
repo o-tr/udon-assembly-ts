@@ -21,7 +21,11 @@ describe("DuplicateTopLevelConstError", () => {
       column: 1,
     };
 
-    const err = new DuplicateTopLevelConstError("MY_CONST", locationA, locationB);
+    const err = new DuplicateTopLevelConstError(
+      "MY_CONST",
+      locationA,
+      locationB,
+    );
     const [errA, errB] = err.toTranspileErrors();
 
     // Both errors should be TypeError
