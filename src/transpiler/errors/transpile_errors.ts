@@ -33,6 +33,15 @@ export class TranspileError extends Error {
   }
 }
 
+export class DuplicateTopLevelConstError extends Error {
+  constructor(name: string, fileA: string, fileB: string) {
+    super(
+      `Top-level const "${name}" is defined in both "${fileA}" and "${fileB}". Rename one to avoid ambiguity.`,
+    );
+    this.name = "DuplicateTopLevelConstError";
+  }
+}
+
 export class AggregateTranspileError extends Error {
   readonly errors: TranspileError[];
 

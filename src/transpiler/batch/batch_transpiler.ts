@@ -9,7 +9,10 @@ import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
 import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
-import { AggregateTranspileError } from "../errors/transpile_errors.js";
+import {
+  AggregateTranspileError,
+  DuplicateTopLevelConstError,
+} from "../errors/transpile_errors.js";
 import {
   computeExportLabels,
   computeExposedLabels,
@@ -513,7 +516,7 @@ export class BatchTranspiler {
         );
       } catch (e) {
         // Rethrow duplicate-const errors from collectAllTopLevelConsts
-        if (e instanceof Error && e.message.includes("is defined in both")) {
+        if (e instanceof DuplicateTopLevelConstError) {
           throw e;
         }
         // If estimation fails for other reasons, set to 0 rather than blocking the error message
@@ -727,9 +730,7 @@ export class BatchTranspiler {
       for (const tlc of registry.getTopLevelConstsForFile(filePath)) {
         const existingFile = constOrigin.get(tlc.name);
         if (existingFile) {
-          throw new Error(
-            `Top-level const "${tlc.name}" is defined in both "${existingFile}" and "${filePath}". Rename one to avoid ambiguity.`,
-          );
+          throw new DuplicateTopLevelConstError(tlc.name, existingFile, filePath);
         }
         constOrigin.set(tlc.name, filePath);
         allConsts.push(tlc);
