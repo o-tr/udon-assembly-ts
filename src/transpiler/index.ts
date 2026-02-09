@@ -11,6 +11,7 @@ import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "./frontend/parser/index.js";
+import { TypeMapper } from "./frontend/type_mapper.js";
 import {
   ASTNodeKind,
   type ClassDeclarationNode,
@@ -82,17 +83,18 @@ export class TypeScriptToUdonTranspiler {
         )
         .map((cls) => cls.name),
     );
+    const typeMapper = new TypeMapper(parser.getEnumRegistry());
     const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
     const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
       (iface) => ({
         name: iface.name,
-        methods: iface.node.methods.map((m) => ({
+        methods: iface.methods.map((m) => ({
           name: m.name,
           parameters: m.parameters.map((p) => ({
             name: p.name,
-            type: p.type,
+            type: typeMapper.mapTypeScriptType(p.type),
           })),
-          returnType: m.returnType,
+          returnType: typeMapper.mapTypeScriptType(m.returnType),
         })),
       }),
     );
