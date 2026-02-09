@@ -12,7 +12,6 @@ import { ErrorCollector } from "../errors/error_collector.js";
 import {
   AggregateTranspileError,
   DuplicateTopLevelConstError,
-  TranspileError,
 } from "../errors/transpile_errors.js";
 import {
   computeExportLabels,
@@ -271,13 +270,9 @@ export class BatchTranspiler {
         );
       } catch (e) {
         if (e instanceof DuplicateTopLevelConstError) {
-          errorCollector.add(
-            new TranspileError("InternalError", e.message, {
-              filePath: entryPoint.filePath,
-              line: 0,
-              column: 0,
-            }),
-          );
+          for (const te of e.toTranspileErrors()) {
+            errorCollector.add(te);
+          }
           continue;
         }
         throw e;
