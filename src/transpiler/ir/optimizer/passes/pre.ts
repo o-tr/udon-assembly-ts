@@ -175,7 +175,12 @@ const cloneExprWithDest = (
     }
     case TACInstructionKind.Call: {
       const call = inst as CallInstruction;
-      return new CallInstruction(newDest, call.func, [...call.args]);
+      return new CallInstruction(
+        newDest,
+        call.func,
+        [...call.args],
+        call.isTailCall,
+      );
     }
     default:
       return inst;
