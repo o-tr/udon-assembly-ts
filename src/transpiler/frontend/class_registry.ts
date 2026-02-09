@@ -176,7 +176,11 @@ export class ClassRegistry {
         (stmt as VariableDeclarationNode).isConst
       ) {
         const varNode = stmt as VariableDeclarationNode;
-        const loc = this.findConstLocation(varNode.name, sourceText, lineStarts);
+        const loc = this.findConstLocation(
+          varNode.name,
+          sourceText,
+          lineStarts,
+        );
         consts.push({
           name: varNode.name,
           type: varNode.type.name,

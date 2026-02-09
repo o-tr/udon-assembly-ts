@@ -402,19 +402,29 @@ export class BatchTranspiler {
       let splitCandidates: Map<string, number> | undefined;
       const heapUsage = computeHeapUsage(dataSectionWithTypes);
       if (heapUsage > UASM_HEAP_LIMIT) {
-        splitCandidates = this.estimateSplitCandidates(
-          filteredInlineClassNames,
-          registry,
-          callAnalyzer,
-          parser,
-          typeMapper,
-          udonBehaviourLayouts,
-          udonBehaviourClasses,
-          options.optimize,
-          options.reflect,
-          options.useStringBuilder,
-          methodUsage,
-        );
+        try {
+          splitCandidates = this.estimateSplitCandidates(
+            filteredInlineClassNames,
+            registry,
+            callAnalyzer,
+            parser,
+            typeMapper,
+            udonBehaviourLayouts,
+            udonBehaviourClasses,
+            options.optimize,
+            options.reflect,
+            options.useStringBuilder,
+            methodUsage,
+          );
+        } catch (e) {
+          if (e instanceof DuplicateTopLevelConstError) {
+            for (const te of e.toTranspileErrors()) {
+              errorCollector.add(te);
+            }
+            continue;
+          }
+          throw e;
+        }
       }
 
       this.ensureHeapWithinLimit(
@@ -743,7 +753,11 @@ export class BatchTranspiler {
         if (existing) {
           throw new DuplicateTopLevelConstError(
             tlc.name,
-            { filePath: existing.filePath, line: existing.line, column: existing.column },
+            {
+              filePath: existing.filePath,
+              line: existing.line,
+              column: existing.column,
+            },
             { filePath: tlc.filePath, line: tlc.line, column: tlc.column },
           );
         }
