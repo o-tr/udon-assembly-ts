@@ -13,7 +13,6 @@ import {
   TACOperandKind,
   createTemporary,
 } from "../../tac_operand.js";
-import { createTemporary } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import {
   getDefinedOperandForReuse,
