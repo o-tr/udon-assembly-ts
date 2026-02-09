@@ -10,6 +10,7 @@ import {
   isPureProducer,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
+import { computeDominators } from "./licm.js";
 
 /**
  * Code sinking: move pure computations closer to their only use.
@@ -39,6 +40,17 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
       instToBlock.set(i, block.id);
     }
   }
+
+  // Build def index map: liveness key -> definition index
+  const defIndex = new Map<string, number>();
+  for (let i = 0; i < instructions.length; i++) {
+    const def = getDefinedOperandForReuse(instructions[i]);
+    const key = def ? livenessKey(def) : null;
+    if (key) defIndex.set(key, i);
+  }
+
+  // Precompute dominators so we can conservatively check availability
+  const dominators = computeDominators(cfg);
 
   // Collect sink candidates: instruction index → target block id
   const sinkTargets = new Map<number, number>();
@@ -91,7 +103,8 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
       if (!block.succs.includes(targetBlockId)) continue;
 
       // Verify operands of the instruction are available in the target block
-      // Variables are always available; temps must be defined before the target block
+      // Variables and constants are always available; temps must be defined
+      // in a block that dominates the target block (conservative check).
       let operandsAvailable = true;
       for (const op of getUsedOperandsForReuse(inst)) {
         if (
@@ -123,11 +136,25 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
           }
         }
         if (!operandsAvailable) break;
-        // If defined in a predecessor or parameter, it's available
         if (!definedBeforeInBlock) {
-          // Check if defined in some other (preceding) block — assume available
-          // since the CFG guarantees dominance for well-formed TAC
-          continue;
+          // Look up the definition index and ensure its block dominates the
+          // target block. If we can't find a definition or dominance doesn't
+          // hold, conservatively reject sinking.
+          const defIdx = defIndex.get(opKey);
+          if (defIdx === undefined) {
+            operandsAvailable = false;
+            break;
+          }
+          const defBlock = instToBlock.get(defIdx);
+          if (defBlock === undefined) {
+            operandsAvailable = false;
+            break;
+          }
+          const domSet = dominators.get(targetBlockId);
+          if (!domSet || !domSet.has(defBlock)) {
+            operandsAvailable = false;
+            break;
+          }
         }
       }
       if (!operandsAvailable) continue;
