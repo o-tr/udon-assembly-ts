@@ -23,15 +23,12 @@ function buildLayoutsFromSource(source: string) {
       s.kind === ASTNodeKind.InterfaceDeclaration,
   );
   const classNodes = ast.statements.filter(
-    (s): s is ClassDeclarationNode =>
-      s.kind === ASTNodeKind.ClassDeclaration,
+    (s): s is ClassDeclarationNode => s.kind === ASTNodeKind.ClassDeclaration,
   );
 
   const classLikes = classNodes.map((cls) => ({
     name: cls.name,
-    isUdonBehaviour: cls.decorators.some(
-      (d) => d.name === "UdonBehaviour",
-    ),
+    isUdonBehaviour: cls.decorators.some((d) => d.name === "UdonBehaviour"),
     methods: cls.methods.map((m) => ({
       name: m.name,
       parameters: m.parameters.map((p) => ({
@@ -195,20 +192,20 @@ describe("interface-based polymorphic dispatch", () => {
     expect(swordLayout).toBeDefined();
     expect(bowLayout).toBeDefined();
 
-    const swordAttack = swordLayout!.get("attack");
-    const bowAttack = bowLayout!.get("attack");
+    const swordAttack = swordLayout?.get("attack");
+    const bowAttack = bowLayout?.get("attack");
     expect(swordAttack).toBeDefined();
     expect(bowAttack).toBeDefined();
 
     // Both should use the unified interface name
-    expect(swordAttack!.exportMethodName).toBe("IWeapon_attack");
-    expect(bowAttack!.exportMethodName).toBe("IWeapon_attack");
-    expect(swordAttack!.parameterExportNames[0]).toBe(
+    expect(swordAttack?.exportMethodName).toBe("IWeapon_attack");
+    expect(bowAttack?.exportMethodName).toBe("IWeapon_attack");
+    expect(swordAttack?.parameterExportNames[0]).toBe(
       "IWeapon_attack__param_0",
     );
-    expect(bowAttack!.parameterExportNames[0]).toBe("IWeapon_attack__param_0");
-    expect(swordAttack!.returnExportName).toBe("IWeapon_attack__ret");
-    expect(bowAttack!.returnExportName).toBe("IWeapon_attack__ret");
+    expect(bowAttack?.parameterExportNames[0]).toBe("IWeapon_attack__param_0");
+    expect(swordAttack?.returnExportName).toBe("IWeapon_attack__ret");
+    expect(bowAttack?.returnExportName).toBe("IWeapon_attack__ret");
   });
 
   it("preserves counter-based naming for non-interface methods", () => {
@@ -234,13 +231,13 @@ describe("interface-based polymorphic dispatch", () => {
     expect(swordLayout).toBeDefined();
 
     // Interface method uses interface naming
-    const attackLayout = swordLayout!.get("attack");
-    expect(attackLayout!.exportMethodName).toBe("IWeapon_attack");
+    const attackLayout = swordLayout?.get("attack");
+    expect(attackLayout?.exportMethodName).toBe("IWeapon_attack");
 
     // Non-interface method uses counter-based naming
-    const sharpenLayout = swordLayout!.get("sharpen");
+    const sharpenLayout = swordLayout?.get("sharpen");
     expect(sharpenLayout).toBeDefined();
-    expect(sharpenLayout!.exportMethodName).toBe("__0_sharpen");
+    expect(sharpenLayout?.exportMethodName).toBe("__0_sharpen");
   });
 
   it("reports error when non-UdonBehaviour class implements UdonBehaviour interface", () => {
@@ -307,8 +304,80 @@ describe("interface-based polymorphic dispatch", () => {
     // Interface itself should have a layout in the map
     const ifaceLayout = layouts.get("IWeapon");
     expect(ifaceLayout).toBeDefined();
-    const attackLayout = ifaceLayout!.get("attack");
+    const attackLayout = ifaceLayout?.get("attack");
     expect(attackLayout).toBeDefined();
-    expect(attackLayout!.exportMethodName).toBe("IWeapon_attack");
+    expect(attackLayout?.exportMethodName).toBe("IWeapon_attack");
+  });
+
+  it("throws on conflicting method signatures across multiple interfaces", () => {
+    const source = `
+      interface IWeapon {
+        doAction(power: number): void;
+      }
+
+      interface IItem {
+        doAction(name: string, count: number): number;
+      }
+
+      @UdonBehaviour()
+      class Sword extends UdonSharpBehaviour implements IWeapon, IItem {
+        doAction(power: number): void {
+          const x: number = power;
+        }
+      }
+    `;
+
+    expect(() => buildLayoutsFromSource(source)).toThrow(
+      /conflicting signatures/,
+    );
+  });
+
+  it("allows identical method signatures across multiple interfaces", () => {
+    const source = `
+      interface IWeapon {
+        doAction(): void;
+      }
+
+      interface IItem {
+        doAction(): void;
+      }
+
+      @UdonBehaviour()
+      class Sword extends UdonSharpBehaviour implements IWeapon, IItem {
+        doAction(): void {
+          const x: number = 1;
+        }
+      }
+    `;
+
+    const { layouts } = buildLayoutsFromSource(source);
+    const swordLayout = layouts.get("Sword");
+    expect(swordLayout).toBeDefined();
+
+    const doActionLayout = swordLayout?.get("doAction");
+    expect(doActionLayout).toBeDefined();
+    // First interface wins for naming
+    expect(doActionLayout?.exportMethodName).toBe("IWeapon_doAction");
+  });
+
+  it("preserves isPublic from interface layout (always true)", () => {
+    const source = `
+      interface IWeapon {
+        attack(): void;
+      }
+
+      @UdonBehaviour()
+      class Sword extends UdonSharpBehaviour implements IWeapon {
+        private attack(): void {
+          const x: number = 1;
+        }
+      }
+    `;
+
+    const { layouts } = buildLayoutsFromSource(source);
+    const swordLayout = layouts.get("Sword");
+    const attackLayout = swordLayout?.get("attack");
+    // Interface methods are always public for IPC dispatch
+    expect(attackLayout?.isPublic).toBe(true);
   });
 });

@@ -43,6 +43,19 @@ const getUniqueId = (lookup: Map<string, number>, id: string): string => {
   return `__${current}_${id}`;
 };
 
+const signaturesMatch = (
+  a: UdonBehaviourMethodLayout,
+  b: UdonBehaviourMethodLayout,
+): boolean => {
+  if (a.parameterTypes.length !== b.parameterTypes.length) return false;
+  if (a.returnType.udonType !== b.returnType.udonType) return false;
+  for (let i = 0; i < a.parameterTypes.length; i++) {
+    if (a.parameterTypes[i].udonType !== b.parameterTypes[i].udonType)
+      return false;
+  }
+  return true;
+};
+
 export const buildUdonBehaviourLayouts = (
   classes: ClassLike[],
   interfaces?: InterfaceLike[],
@@ -94,7 +107,16 @@ export const buildUdonBehaviourLayouts = (
         const ifaceLayout = interfaceLayouts.get(ifaceName);
         if (!ifaceLayout) continue;
         for (const [methodName, methodLayout] of ifaceLayout) {
-          if (!methodMap.has(methodName)) {
+          const existing = methodMap.get(methodName);
+          if (existing) {
+            // Multiple interfaces define the same method — validate signatures match
+            if (!signaturesMatch(existing.layout, methodLayout)) {
+              throw new Error(
+                `Class '${className}' implements interfaces '${existing.ifaceName}' and '${ifaceName}' with conflicting signatures for method '${methodName}'`,
+              );
+            }
+            // Signatures match — keep the first interface's naming
+          } else {
             methodMap.set(methodName, {
               ifaceName,
               layout: methodLayout,
@@ -118,12 +140,16 @@ export const buildUdonBehaviourLayouts = (
       // Check if this method is from an interface
       const ifaceInfo = ifaceMethodMap?.get(method.name);
       if (ifaceInfo) {
-        // Use the interface's unified naming
-        classLayout.set(method.name, {
-          ...ifaceInfo.layout,
-          isPublic: method.isPublic,
-        });
-        continue;
+        // Validate class method signature matches the interface
+        if (
+          method.parameters.length !== ifaceInfo.layout.parameterTypes.length
+        ) {
+          // Signature mismatch — fall through to counter-based naming
+        } else {
+          // Use the interface's unified naming; interface methods are always public
+          classLayout.set(method.name, ifaceInfo.layout);
+          continue;
+        }
       }
 
       let methodName = method.name;
