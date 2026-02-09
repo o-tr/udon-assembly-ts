@@ -1,5 +1,5 @@
 import {
-  AssignmentInstruction,
+  type AssignmentInstruction,
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";

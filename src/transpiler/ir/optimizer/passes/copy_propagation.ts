@@ -1,7 +1,7 @@
 import {
-  ArrayAssignmentInstruction,
-  CopyInstruction,
-  PropertySetInstruction,
+  type ArrayAssignmentInstruction,
+  type CopyInstruction,
+  type PropertySetInstruction,
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";

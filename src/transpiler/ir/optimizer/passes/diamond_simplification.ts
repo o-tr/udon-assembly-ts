@@ -1,11 +1,11 @@
 import {
   AssignmentInstruction,
+  type ConditionalJumpInstruction,
   type LabelInstruction,
   type TACInstruction,
   TACInstructionKind,
   UnaryOpInstruction,
-  ConditionalJumpInstruction,
-  UnconditionalJumpInstruction,
+  type UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
