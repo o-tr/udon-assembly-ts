@@ -11,6 +11,7 @@ import {
   type MethodDeclarationNode,
   type ProgramNode,
   type PropertyDeclarationNode,
+  type VariableDeclarationNode,
 } from "./types.js";
 
 export interface DecoratorInfo {
@@ -55,6 +56,13 @@ export interface ClassMetadata {
   behaviourSyncMode?: string;
 }
 
+export interface TopLevelConstInfo {
+  name: string;
+  type: string;
+  node: VariableDeclarationNode;
+  filePath: string;
+}
+
 export interface InterfaceMetadata {
   name: string;
   filePath: string;
@@ -70,6 +78,7 @@ export interface InterfaceMetadata {
 export class ClassRegistry {
   private classes: Map<string, ClassMetadata> = new Map();
   private interfaces: Map<string, InterfaceMetadata> = new Map();
+  private topLevelConsts: Map<string, TopLevelConstInfo[]> = new Map();
 
   register(classInfo: ClassMetadata): void {
     this.classes.set(classInfo.name, classInfo);
@@ -148,7 +157,30 @@ export class ClassRegistry {
     return Array.from(merged.values());
   }
 
+  getTopLevelConstsForFile(filePath: string): TopLevelConstInfo[] {
+    return this.topLevelConsts.get(filePath) ?? [];
+  }
+
   registerFromProgram(program: ProgramNode, filePath: string): void {
+    const consts: TopLevelConstInfo[] = [];
+    for (const stmt of program.statements) {
+      if (
+        stmt.kind === ASTNodeKind.VariableDeclaration &&
+        (stmt as VariableDeclarationNode).isConst
+      ) {
+        const varNode = stmt as VariableDeclarationNode;
+        consts.push({
+          name: varNode.name,
+          type: varNode.type.name,
+          node: varNode,
+          filePath,
+        });
+      }
+    }
+    if (consts.length > 0) {
+      this.topLevelConsts.set(filePath, consts);
+    }
+
     for (const stmt of program.statements) {
       if (stmt.kind === ASTNodeKind.InterfaceDeclaration) {
         const interfaceNode = stmt as InterfaceDeclarationNode;

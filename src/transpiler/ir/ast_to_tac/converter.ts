@@ -186,6 +186,7 @@ export class ASTToTACConverter {
   currentParamExportMap: Map<string, string> = new Map();
   currentMethodLayout: UdonBehaviourMethodLayout | null = null;
   inSerializeFieldInitializer = false;
+  pendingTopLevelInits: VariableDeclarationNode[] = [];
 
   constructor(
     symbolTable: SymbolTable,
@@ -240,8 +241,47 @@ export class ASTToTACConverter {
     this.classMap = new Map();
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
+    this.pendingTopLevelInits = [];
 
+    // Separate top-level const declarations from other statements
+    const topLevelConsts: VariableDeclarationNode[] = [];
+    const otherStatements: ASTNode[] = [];
     for (const statement of program.statements) {
+      if (
+        statement.kind === ASTNodeKind.VariableDeclaration &&
+        (statement as VariableDeclarationNode).isConst
+      ) {
+        topLevelConsts.push(statement as VariableDeclarationNode);
+      } else {
+        otherStatements.push(statement);
+      }
+    }
+
+    // Pre-register top-level consts in symbol table;
+    // literal consts will be inlined, non-literal consts need runtime init
+    for (const tlc of topLevelConsts) {
+      if (!this.symbolTable.hasInCurrentScope(tlc.name)) {
+        this.symbolTable.addSymbol(
+          tlc.name,
+          tlc.type,
+          false,
+          true,
+          tlc.initializer,
+        );
+      } else if (tlc.initializer) {
+        // Parser may have already registered the symbol without initializer;
+        // update it so that literal inlining in visitIdentifier works
+        this.symbolTable.updateInitialValueInCurrentScope(
+          tlc.name,
+          tlc.initializer,
+        );
+      }
+      if (!tlc.initializer || tlc.initializer.kind !== ASTNodeKind.Literal) {
+        this.pendingTopLevelInits.push(tlc);
+      }
+    }
+
+    for (const statement of otherStatements) {
       if (statement.kind === ASTNodeKind.ClassDeclaration) {
         const classNode = statement as ClassDeclarationNode;
         this.classMap.set(classNode.name, classNode);
@@ -270,7 +310,7 @@ export class ASTToTACConverter {
     // Generate entry point _start if a Start method exists
     this.generateEntryPoint(program);
 
-    for (const statement of program.statements) {
+    for (const statement of otherStatements) {
       this.visitStatement(statement);
     }
 
@@ -281,21 +321,34 @@ export class ASTToTACConverter {
    * Generate _start entry point that jumps to the user's Start method
    */
   generateEntryPoint(program: ProgramNode): void {
-    let startMethodLabel: string | undefined;
+    let hasStartMethod = false;
 
     for (const stmt of program.statements) {
       if (stmt.kind === ASTNodeKind.ClassDeclaration) {
         const classDecl = stmt as ClassDeclarationNode;
         const startMethod = classDecl.methods.find((m) => m.name === "Start");
         if (startMethod) {
-          startMethodLabel = `__Start_${classDecl.name}`;
+          hasStartMethod = true;
           break;
         }
       }
     }
 
-    // If Start method exists, it will act as _start directly
-    if (startMethodLabel) {
+    // If Start method exists, non-literal inits will be injected
+    // at the beginning of that method in visitClassDeclaration
+    if (hasStartMethod) {
+      return;
+    }
+
+    // No Start method: generate _start with non-literal const initialization
+    if (this.pendingTopLevelInits.length > 0) {
+      const startLabel = createLabel("_start");
+      this.instructions.push(new LabelInstruction(startLabel));
+      for (const tlc of this.pendingTopLevelInits) {
+        this.visitStatement(tlc);
+      }
+      this.pendingTopLevelInits = [];
+      this.instructions.push(new ReturnInstruction());
       return;
     }
 

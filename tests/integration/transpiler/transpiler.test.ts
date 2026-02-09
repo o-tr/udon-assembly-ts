@@ -162,8 +162,7 @@ describe("TypeScript to Udon Transpiler Integration", () => {
 
     const result = transpiler.transpile(source);
 
-    // Check TAC contains constants
-    expect(result.tac).toContain("PI");
+    // Literal const PI is inlined as 3.14 directly
     expect(result.tac).toContain("3.14");
 
     // Check .uasm is generated with proper operator name
