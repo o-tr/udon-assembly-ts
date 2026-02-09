@@ -43,3 +43,17 @@ export const operandKey = (operand: TACOperand): string => {
   }
   return "other";
 };
+
+export const operandKeyWithSSA = (operand: TACOperand): string => {
+  const ssaVersion = (operand as { ssaVersion?: number }).ssaVersion;
+  if (operand.kind === TACOperandKind.Variable) {
+    return `v:${(operand as unknown as { name: string }).name}:${ssaVersion ?? ""}`;
+  }
+  if (operand.kind === TACOperandKind.Constant) {
+    return `c:${stringifyConstant((operand as ConstantOperand).value)}`;
+  }
+  if (operand.kind === TACOperandKind.Temporary) {
+    return `t:${(operand as unknown as { id: number }).id}:${ssaVersion ?? ""}`;
+  }
+  return "other";
+};

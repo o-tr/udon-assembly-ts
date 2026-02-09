@@ -79,6 +79,21 @@ export const constantFolding = (
           continue;
         }
 
+        // For bitwise ops, only fold for 32-bit integer types (JS bitwise semantics truncate to int32)
+        if (
+          (binOp.operator === "<<" ||
+            binOp.operator === ">>" ||
+            binOp.operator === "&" ||
+            binOp.operator === "|" ||
+            binOp.operator === "^") &&
+          leftConst.type &&
+          leftConst.type.udonType !== "Int32" &&
+          leftConst.type.udonType !== "UInt32"
+        ) {
+          result.push(inst);
+          continue;
+        }
+
         // Evaluate the operation
         const foldedValue = evaluateBinaryOp(
           leftConst.value,
@@ -88,7 +103,18 @@ export const constantFolding = (
 
         if (foldedValue !== null) {
           // Replace with assignment of constant
-          const foldedType = ["+", "-", "*", "/"].includes(binOp.operator)
+          const foldedType = [
+            "+",
+            "-",
+            "*",
+            "/",
+            "<<",
+            ">>",
+            "&",
+            "|",
+            "^",
+            "%",
+          ].includes(binOp.operator)
             ? leftConst.type
             : PrimitiveTypes.boolean;
           const constantOperand = createConstant(foldedValue, foldedType);
@@ -263,13 +289,25 @@ export const evaluateBinaryOp = (
   if (typeof left === "number" && typeof right === "number") {
     switch (operator) {
       case "+":
-        return left + right;
+        return Number.isFinite(left + right) ? left + right : null;
       case "-":
-        return left - right;
+        return Number.isFinite(left - right) ? left - right : null;
       case "*":
-        return left * right;
+        return Number.isFinite(left * right) ? left * right : null;
       case "/":
-        return left / right;
+        return Number.isFinite(left / right) ? left / right : null;
+      case "<<":
+        return (left | 0) << ((right >>> 0) & 31);
+      case ">>":
+        return (left | 0) >> ((right >>> 0) & 31);
+      case "&":
+        return left & right;
+      case "|":
+        return left | right;
+      case "^":
+        return left ^ right;
+      case "%":
+        return Number.isFinite(left % right) ? left % right : null;
       case "<":
         return left < right;
       case ">":

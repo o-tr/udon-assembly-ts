@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
+import { globalValueNumbering } from "../../../src/transpiler/ir/optimizer/passes/gvn";
 import {
   buildSSA,
   deconstructSSA,
@@ -18,6 +19,7 @@ import {
   createLabel,
   createTemporary,
   createVariable,
+  type TACOperand,
 } from "../../../src/transpiler/ir/tac_operand";
 
 describe("ssa pass", () => {
@@ -51,5 +53,40 @@ describe("ssa pass", () => {
     expect(lowered.some((inst) => inst.kind === TACInstructionKind.Phi)).toBe(
       false,
     );
+  });
+
+  it("keeps SSA versions distinct in GVN", () => {
+    const a0 = {
+      ...createVariable("a", PrimitiveTypes.int32),
+      ssaVersion: 0,
+    } as TACOperand;
+    const a1 = {
+      ...createVariable("a", PrimitiveTypes.int32),
+      ssaVersion: 1,
+    } as TACOperand;
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        a0,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        a1,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t1),
+    ];
+
+    const optimized = globalValueNumbering(instructions, { useSSA: true });
+    const binCount = optimized.filter(
+      (inst) => inst.kind === TACInstructionKind.BinaryOp,
+    ).length;
+    expect(binCount).toBe(2);
   });
 });

@@ -10,7 +10,11 @@ import {
   TACInstructionKind,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
-import { createLabel, TACOperandKind } from "../../tac_operand.js";
+import {
+  createLabel,
+  type LabelOperand,
+  TACOperandKind,
+} from "../../tac_operand.js";
 import { operandKey } from "../utils/operands.js";
 
 type ReturnInfo = {
@@ -68,15 +72,15 @@ const instSignature = (inst: TACInstruction): string | null => {
   switch (inst.kind) {
     case TACInstructionKind.BinaryOp: {
       const b = inst as BinaryOpInstruction;
-      return `BinaryOp|${b.operator}|${operandKey(b.left)}|${operandKey(b.right)}`;
+      return `BinaryOp|${operandKey(b.dest)}|${b.operator}|${operandKey(b.left)}|${operandKey(b.right)}`;
     }
     case TACInstructionKind.Assignment: {
       const a = inst as AssignmentInstruction;
-      return `Assignment|${operandKey((a as AssignmentInstruction).src)}`;
+      return `Assignment|${operandKey(a.dest)}|${operandKey(a.src)}`;
     }
     case TACInstructionKind.Copy: {
       const c = inst as CopyInstruction;
-      return `Copy|${operandKey(c.src)}`;
+      return `Copy|${operandKey(c.dest)}|${operandKey(c.src)}`;
     }
     case TACInstructionKind.PropertySet: {
       const p = inst as PropertySetInstruction;
@@ -84,13 +88,20 @@ const instSignature = (inst: TACInstruction): string | null => {
     }
     case TACInstructionKind.PropertyGet: {
       const p = inst as PropertyGetInstruction;
-      return `PropertyGet|${operandKey(p.object)}|${p.property}`;
+      return `PropertyGet|${operandKey(p.dest)}|${operandKey(p.object)}|${p.property}`;
     }
     case TACInstructionKind.Label:
       return `Label`;
     case TACInstructionKind.Return: {
       const r = inst as ReturnInstruction;
       return `Return|${r.value ? operandKey(r.value) : "<void>"}`;
+    }
+    case TACInstructionKind.UnconditionalJump: {
+      const j = inst as UnconditionalJumpInstruction;
+      if (j.label.kind === TACOperandKind.Label) {
+        return `Jump|${(j.label as LabelOperand).name}`;
+      }
+      return null;
     }
     default:
       return null;
@@ -117,17 +128,31 @@ const buildTailSignature = (
   return parts.join("|");
 };
 
-const collectReturns = (instructions: TACInstruction[]): ReturnInfo[] => {
-  const returns: ReturnInfo[] = [];
+const collectTailEndpoints = (
+  instructions: TACInstruction[],
+  labelDefCount: Map<string, number>,
+): ReturnInfo[] => {
+  const endpoints: ReturnInfo[] = [];
   for (let i = 0; i < instructions.length; i += 1) {
     const inst = instructions[i];
-    if (inst.kind !== TACInstructionKind.Return) continue;
-    const ret = inst as ReturnInstruction;
-    const key = ret.value ? operandKey(ret.value) : "<void>";
-    const tailSig = buildTailSignature(instructions, i);
-    returns.push({ index: i, key, tailSig });
+    if (inst.kind === TACInstructionKind.Return) {
+      const ret = inst as ReturnInstruction;
+      const key = `ret|${ret.value ? operandKey(ret.value) : "<void>"}`;
+      const tailSig = buildTailSignature(instructions, i);
+      endpoints.push({ index: i, key, tailSig });
+    }
+    if (inst.kind === TACInstructionKind.UnconditionalJump) {
+      const jump = inst as UnconditionalJumpInstruction;
+      if (jump.label.kind !== TACOperandKind.Label) continue;
+      const targetName = (jump.label as LabelOperand).name;
+      // Skip jumps to multiply-defined labels to avoid mismerging
+      if ((labelDefCount.get(targetName) ?? 0) !== 1) continue;
+      const key = `jump|${targetName}`;
+      const tailSig = buildTailSignature(instructions, i);
+      endpoints.push({ index: i, key, tailSig });
+    }
   }
-  return returns;
+  return endpoints;
 };
 
 export const mergeTails = (
@@ -135,11 +160,23 @@ export const mergeTails = (
 ): TACInstruction[] => {
   if (instructions.length === 0) return instructions;
 
-  const returns = collectReturns(instructions);
-  if (returns.length < 2) return instructions;
+  // Count label definitions to ensure uniqueness for jump targets
+  const labelDefCount = new Map<string, number>();
+  for (const inst of instructions) {
+    if (inst.kind === TACInstructionKind.Label) {
+      const labelInst = inst as LabelInstruction;
+      if (labelInst.label.kind === TACOperandKind.Label) {
+        const name = (labelInst.label as LabelOperand).name;
+        labelDefCount.set(name, (labelDefCount.get(name) ?? 0) + 1);
+      }
+    }
+  }
+
+  const endpoints = collectTailEndpoints(instructions, labelDefCount);
+  if (endpoints.length < 2) return instructions;
 
   const groups = new Map<string, ReturnInfo[]>();
-  for (const info of returns) {
+  for (const info of endpoints) {
     if (!info.tailSig) continue;
     const groupKey = `${info.key}|${info.tailSig}`;
     const group = groups.get(groupKey) ?? [];

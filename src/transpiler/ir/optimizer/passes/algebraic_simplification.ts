@@ -99,28 +99,48 @@ export const trySimplifyBinaryOp = (
         createConstant(0, getOperandType(inst.dest)),
       );
     }
+    // Strength reduction: x * 2^n → x << n (for integer types)
+    if (isIntegerType(destUdonType)) {
+      const expRight = getPowerOfTwoExponent(right);
+      if (expRight !== null && expRight > 0) {
+        return new BinaryOpInstruction(
+          inst.dest,
+          left,
+          "<<",
+          createConstant(expRight, PrimitiveTypes.int32),
+        );
+      }
+      const expLeft = getPowerOfTwoExponent(left);
+      if (expLeft !== null && expLeft > 0) {
+        return new BinaryOpInstruction(
+          inst.dest,
+          right,
+          "<<",
+          createConstant(expLeft, PrimitiveTypes.int32),
+        );
+      }
+    }
   }
 
   if (inst.operator === "/") {
     if (isOneConstant(right)) {
       return new AssignmentInstruction(inst.dest, left);
     }
-    const powerOfTwo = getPowerOfTwoValue(right);
-    if (powerOfTwo !== null && isUnsignedIntegerType(destUdonType)) {
-      const shiftAmount = Math.log2(powerOfTwo);
+    const expDiv = getPowerOfTwoExponent(right);
+    if (expDiv !== null && isUnsignedIntegerType(destUdonType)) {
       return new BinaryOpInstruction(
         inst.dest,
         left,
         ">>",
-        createConstant(shiftAmount, PrimitiveTypes.int32),
+        createConstant(expDiv, PrimitiveTypes.int32),
       );
     }
   }
 
   if (inst.operator === "%") {
-    const powerOfTwo = getPowerOfTwoValue(right);
-    if (powerOfTwo !== null && isUnsignedIntegerType(destUdonType)) {
-      const mask = powerOfTwo - 1;
+    const expMask = getPowerOfTwoExponent(right);
+    if (expMask !== null && isUnsignedIntegerType(destUdonType)) {
+      const mask = 2 ** expMask - 1;
       return new BinaryOpInstruction(
         inst.dest,
         left,
@@ -243,7 +263,7 @@ export const isOneConstant = (operand: TACOperand): boolean => {
   );
 };
 
-const getPowerOfTwoValue = (operand: TACOperand): number | null => {
+const getPowerOfTwoExponent = (operand: TACOperand): number | null => {
   if (operand.kind !== TACOperandKind.Constant) return null;
   const value = (operand as ConstantOperand).value;
   if (typeof value !== "number") return null;
@@ -251,9 +271,14 @@ const getPowerOfTwoValue = (operand: TACOperand): number | null => {
   if (!Number.isInteger(value)) return null;
   if (!Number.isSafeInteger(value)) return null;
   if (value <= 0) return null;
-  const exponent = Math.log2(value);
-  if (!Number.isInteger(exponent)) return null;
-  return value;
+  let v = value;
+  let exp = 0;
+  while (v > 1 && v % 2 === 0) {
+    v = v / 2;
+    exp += 1;
+  }
+  if (v !== 1) return null;
+  return exp;
 };
 
 const isFloatingPointType = (udonType: UdonType): boolean => {
