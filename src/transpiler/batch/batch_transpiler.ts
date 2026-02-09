@@ -15,7 +15,7 @@ import {
   computeExposedLabels,
 } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
-import type { MethodInfo, PropertyInfo } from "../frontend/class_registry.js";
+import type { MethodInfo, PropertyInfo, TopLevelConstInfo } from "../frontend/class_registry.js";
 import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
@@ -254,8 +254,10 @@ export class BatchTranspiler {
         );
       }
 
-      const topLevelConsts = registry.getTopLevelConstsForFile(
+      const topLevelConsts = this.collectAllTopLevelConsts(
         entryPoint.filePath,
+        filteredInlineClassNames,
+        registry,
       );
       for (const tlc of topLevelConsts) {
         if (!symbolTable.hasInCurrentScope(tlc.name)) {
@@ -559,7 +561,7 @@ export class BatchTranspiler {
 
     const entryMeta = registry.getClass(entryPointName);
     const estTopLevelConsts = entryMeta
-      ? registry.getTopLevelConstsForFile(entryMeta.filePath)
+      ? this.collectAllTopLevelConsts(entryMeta.filePath, filteredInline, registry)
       : [];
     for (const tlc of estTopLevelConsts) {
       if (!symbolTable.hasInCurrentScope(tlc.name)) {
@@ -687,6 +689,35 @@ export class BatchTranspiler {
     const reachable = usage.get(className);
     if (!reachable) return [];
     return methods.filter((method) => reachable.has(method.name));
+  }
+
+  private collectAllTopLevelConsts(
+    entryFilePath: string,
+    inlineClassNames: string[],
+    registry: ClassRegistry,
+  ): TopLevelConstInfo[] {
+    const entryConsts = registry.getTopLevelConstsForFile(entryFilePath);
+    const seenNames = new Set(entryConsts.map((tlc) => tlc.name));
+    const allConsts = [...entryConsts];
+
+    const inlineFilePaths = new Set<string>();
+    for (const inlineName of inlineClassNames) {
+      const meta = registry.getClass(inlineName);
+      if (meta && meta.filePath !== entryFilePath) {
+        inlineFilePaths.add(meta.filePath);
+      }
+    }
+
+    for (const filePath of inlineFilePaths) {
+      for (const tlc of registry.getTopLevelConstsForFile(filePath)) {
+        if (!seenNames.has(tlc.name)) {
+          seenNames.add(tlc.name);
+          allConsts.push(tlc);
+        }
+      }
+    }
+
+    return allConsts;
   }
 
   private collectReachableInlineClasses(
