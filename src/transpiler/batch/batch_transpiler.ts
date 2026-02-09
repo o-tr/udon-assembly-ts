@@ -15,7 +15,11 @@ import {
   computeExposedLabels,
 } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
-import type { MethodInfo, PropertyInfo, TopLevelConstInfo } from "../frontend/class_registry.js";
+import type {
+  MethodInfo,
+  PropertyInfo,
+  TopLevelConstInfo,
+} from "../frontend/class_registry.js";
 import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
@@ -561,7 +565,11 @@ export class BatchTranspiler {
 
     const entryMeta = registry.getClass(entryPointName);
     const estTopLevelConsts = entryMeta
-      ? this.collectAllTopLevelConsts(entryMeta.filePath, filteredInline, registry)
+      ? this.collectAllTopLevelConsts(
+          entryMeta.filePath,
+          filteredInline,
+          registry,
+        )
       : [];
     for (const tlc of estTopLevelConsts) {
       if (!symbolTable.hasInCurrentScope(tlc.name)) {
