@@ -719,7 +719,7 @@ export class BatchTranspiler {
       }
     }
 
-    for (const filePath of inlineFilePaths) {
+    for (const filePath of Array.from(inlineFilePaths).sort()) {
       for (const tlc of registry.getTopLevelConstsForFile(filePath)) {
         const existingFile = constOrigin.get(tlc.name);
         if (existingFile) {
