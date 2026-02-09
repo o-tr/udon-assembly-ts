@@ -19,6 +19,9 @@ import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/pas
 import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
 import { sccpAndPrune } from "../../../src/transpiler/ir/optimizer/passes/sccp";
 import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
+import { sinkCode } from "../../../src/transpiler/ir/optimizer/passes/code_sinking";
+import { simplifyDiamondPatterns } from "../../../src/transpiler/ir/optimizer/passes/diamond_simplification";
+import { unswitchLoops } from "../../../src/transpiler/ir/optimizer/passes/loop_unswitching";
 import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
 import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
 import {
@@ -1528,6 +1531,157 @@ describe("optimizer passes", () => {
     expect(text).not.toContain("L_unused");
   });
 
+  it("simplifies diamond pattern with true/false to copy of condition", () => {
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const dest = createTemporary(0, PrimitiveTypes.boolean);
+    const lElse = createLabel("L_else");
+    const lJoin = createLabel("L_join");
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new AssignmentInstruction(
+        dest,
+        createConstant(true, PrimitiveTypes.boolean),
+      ),
+      new UnconditionalJumpInstruction(lJoin),
+      new LabelInstruction(lElse),
+      new AssignmentInstruction(
+        dest,
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
+      new LabelInstruction(lJoin),
+      new ReturnInstruction(dest),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).not.toContain("ifFalse");
+    expect(text).not.toContain("goto");
+    expect(text).toContain("t0 = cond");
+  });
+
+  it("simplifies diamond pattern with false/true to negation of condition", () => {
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const dest = createTemporary(0, PrimitiveTypes.boolean);
+    const lElse = createLabel("L_else");
+    const lJoin = createLabel("L_join");
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new AssignmentInstruction(
+        dest,
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
+      new UnconditionalJumpInstruction(lJoin),
+      new LabelInstruction(lElse),
+      new AssignmentInstruction(
+        dest,
+        createConstant(true, PrimitiveTypes.boolean),
+      ),
+      new LabelInstruction(lJoin),
+      new ReturnInstruction(dest),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).not.toContain("ifFalse");
+    expect(text).not.toContain("goto");
+  });
+
+  it("does not simplify diamond when labels have multiple uses", () => {
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const dest = createTemporary(0, PrimitiveTypes.boolean);
+    const lElse = createLabel("L_else");
+    const lJoin = createLabel("L_join");
+    const instructions = [
+      new UnconditionalJumpInstruction(lElse),
+      new ConditionalJumpInstruction(cond, lElse),
+      new AssignmentInstruction(
+        dest,
+        createConstant(true, PrimitiveTypes.boolean),
+      ),
+      new UnconditionalJumpInstruction(lJoin),
+      new LabelInstruction(lElse),
+      new AssignmentInstruction(
+        dest,
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
+      new LabelInstruction(lJoin),
+      new ReturnInstruction(dest),
+    ];
+    // Test the pass directly (not through full optimizer) to avoid other passes
+    // eliminating the extra jump and reducing label usage
+    const optimized = simplifyDiamondPatterns(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("ifFalse");
+  });
+
+  it("preserves idempotent property across non-pure calls", () => {
+    const obj = createVariable("obj", ExternTypes.component);
+    const t0 = createTemporary(0, ExternTypes.transform);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const t2 = createTemporary(2, ExternTypes.transform);
+    const instructions = [
+      new PropertyGetInstruction(t0, obj, "transform"),
+      new CallInstruction(t1, "SomeExtern", []),
+      new PropertyGetInstruction(t2, obj, "transform"),
+      new ReturnInstruction(t2),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    // transform on Component is idempotent, so second get should be eliminated
+    expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
+      1,
+    );
+  });
+
+  it("simplifies multiplication by power of two to left shift", () => {
+    const x = createVariable("x", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        x,
+        "*",
+        createConstant(8, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("x << 3");
+    expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
+  });
+
+  it("simplifies multiplication by 2 to left shift by 1", () => {
+    const x = createVariable("x", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        x,
+        "*",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("x << 1");
+  });
+
+  it("does not apply strength reduction for float multiplication", () => {
+    const x = createVariable("x", PrimitiveTypes.single);
+    const t0 = createTemporary(0, PrimitiveTypes.single);
+    const instructions = [
+      new BinaryOpInstruction(
+        t0,
+        x,
+        "*",
+        createConstant(4, PrimitiveTypes.single),
+      ),
+      new ReturnInstruction(t0),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).not.toContain("<<");
+  });
+
   it("converges with copy chains in loops", () => {
     const x = createVariable("x", PrimitiveTypes.int32);
     const y = createVariable("y", PrimitiveTypes.int32);
@@ -1599,5 +1753,180 @@ describe("optimizer passes", () => {
     expect(retInst2).toBeDefined();
     if (!retInst2 || !retInst2.value) return;
     expect(retInst2.value.kind).toBe(TACOperandKind.Variable);
+  });
+
+  it("propagates copy across multiple uses", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const instructions = [
+      new CopyInstruction(b, a),
+      new BinaryOpInstruction(
+        t0,
+        b,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new BinaryOpInstruction(
+        t1,
+        b,
+        "*",
+        createConstant(2, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    expect(text).not.toContain("b +");
+    expect(text).not.toContain("b *");
+  });
+
+  it("deduplicates temporaries with same constant value", () => {
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.int32);
+    const t2 = createTemporary(2, PrimitiveTypes.int32);
+    const instructions = [
+      new AssignmentInstruction(t0, createConstant(42, PrimitiveTypes.int32)),
+      new AssignmentInstruction(t1, createConstant(42, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(t2, t0, "+", t1),
+      new ReturnInstruction(t2),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    const text = stringify(optimized);
+    // After dedup, t0 and t1 should reference the same temp
+    // Dead code elimination removes the duplicate assignment
+    const assignCount = optimized.filter(
+      (inst) =>
+        inst.kind === "Assignment" && inst.toString().includes("= 42"),
+    ).length;
+    expect(assignCount).toBeLessThanOrEqual(1);
+  });
+
+  it("sinks computation into the only branch that uses it", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const lElse = createLabel("L_else");
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "+", b),
+      new ConditionalJumpInstruction(cond, lElse),
+      new ReturnInstruction(t0),
+      new LabelInstruction(lElse),
+      new ReturnInstruction(a),
+    ];
+    const optimized = sinkCode(instructions);
+    const text = stringify(optimized);
+    // t0 computation should be after the conditional jump, in the then-branch
+    const computeIdx = text.indexOf("t0 = a + b");
+    const condIdx = text.indexOf("ifFalse");
+    expect(computeIdx).toBeGreaterThan(condIdx);
+  });
+
+  it("hoists partially redundant idempotent PropertyGet via PRE", () => {
+    const obj = createVariable("obj", ExternTypes.component);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const t0 = createTemporary(0, ExternTypes.transform);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new PropertyGetInstruction(t0, obj, "transform"),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(t0),
+    ];
+    // transform on Component is idempotent; PRE should insert into else-branch
+    const optimized = performPRE(instructions);
+    const endLabelIdx = optimized.findIndex(
+      (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
+    );
+    const hasGetAfterEnd = optimized
+      .slice(endLabelIdx)
+      .some((inst) => inst.kind === "PropertyGet");
+    expect(hasGetAfterEnd).toBe(false);
+  });
+
+  it("merges identical tails ending with unconditional jump", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const lElse = createLabel("L_else");
+    const lEnd = createLabel("L_end");
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      new AssignmentInstruction(
+        a,
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lElse),
+      new AssignmentInstruction(
+        a,
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lEnd),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+    const optimized = mergeTails(instructions);
+    const text = stringify(optimized);
+    expect(text).toContain("tail_merge_");
+  });
+
+  it("unswitches loop-invariant conditional", () => {
+    const flag = createVariable("flag", PrimitiveTypes.boolean);
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const cond = createTemporary(0, PrimitiveTypes.boolean);
+    const lPre = createLabel("L_pre");
+    const lLoop = createLabel("L_loop");
+    const lElse = createLabel("L_else");
+    const lEndIf = createLabel("L_endif");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new LabelInstruction(lPre),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lLoop),
+      new ConditionalJumpInstruction(flag, lElse),
+      new BinaryOpInstruction(a, a, "+", createConstant(1, PrimitiveTypes.int32)),
+      new UnconditionalJumpInstruction(lEndIf),
+      new LabelInstruction(lElse),
+      new BinaryOpInstruction(a, a, "+", createConstant(2, PrimitiveTypes.int32)),
+      new LabelInstruction(lEndIf),
+      new BinaryOpInstruction(i, i, "+", createConstant(1, PrimitiveTypes.int32)),
+      new BinaryOpInstruction(cond, i, "<", createConstant(10, PrimitiveTypes.int32)),
+      new ConditionalJumpInstruction(cond, lEnd),
+      new UnconditionalJumpInstruction(lLoop),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(a),
+    ];
+
+    const optimized = unswitchLoops(instructions);
+    // After unswitching, the loop should be duplicated
+    // The original ifFalse flag should appear before the loops, not inside them
+    // There should be more instructions than before (duplication)
+    expect(optimized.length).toBeGreaterThan(instructions.length);
+  });
+
+  it("eliminates widening cast when result is only compared", () => {
+    const x = createVariable("x", PrimitiveTypes.byte);
+    const t0 = createTemporary(0, PrimitiveTypes.int32);
+    const t1 = createTemporary(1, PrimitiveTypes.boolean);
+    const instructions = [
+      new CastInstruction(t0, x),
+      new BinaryOpInstruction(
+        t1,
+        t0,
+        "<",
+        createConstant(10, PrimitiveTypes.int32),
+      ),
+      new ReturnInstruction(t1),
+    ];
+    const optimized = new TACOptimizer().optimize(instructions);
+    expect(optimized.filter((inst) => inst.kind === "Cast").length).toBe(0);
   });
 });

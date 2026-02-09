@@ -1,7 +1,11 @@
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   BinaryOpInstruction,
+  CallInstruction,
+  CastInstruction,
   CopyInstruction,
+  PropertyGetInstruction,
   type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
@@ -16,8 +20,10 @@ import {
   getMaxTempId,
   getUsedOperandsForReuse,
 } from "../utils/instructions.js";
+import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import { livenessKey } from "../utils/liveness.js";
 import { operandKey } from "../utils/operands.js";
+import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { getOperandType } from "./constant_folding.js";
 
 const isSideEffectBarrier = (inst: TACInstruction): boolean => {
@@ -49,7 +55,117 @@ const binaryExprKey = (inst: BinaryOpInstruction): string => {
   return `bin|${inst.operator}|${leftKey}|${rightKey}|${typeKey}|`;
 };
 
-type ExprValue = { key: string; inst: BinaryOpInstruction };
+const castExprKey = (inst: CastInstruction): string => {
+  const typeKey = getOperandType(inst.dest).udonType;
+  const srcKey = operandKey(inst.src);
+  return `cast|${srcKey}|${typeKey}|`;
+};
+
+const propertyGetExprKeyForPRE = (
+  inst: PropertyGetInstruction,
+): string | null => {
+  const objectTypeName = getOperandType(inst.object).name;
+  const returnTypeName = getOperandType(inst.dest).name;
+  const signature = resolveExternSignature(
+    objectTypeName,
+    inst.property,
+    "getter",
+    [],
+    returnTypeName,
+  );
+  if (!signature || !isIdempotentMethod(signature)) return null;
+  const typeKey = getOperandType(inst.dest).udonType;
+  const objectKeyStr = operandKey(inst.object);
+  return `propget_idem|${objectKeyStr}|${inst.property}|${typeKey}|`;
+};
+
+const callExprKeyForPRE = (inst: CallInstruction): string | null => {
+  if (!inst.dest) return null;
+  if (!pureExternEvaluators.has(inst.func)) return null;
+  const typeKey = getOperandType(inst.dest).udonType;
+  const argKeys = inst.args.map((arg) => operandKey(arg)).join("|");
+  return `purecall|${inst.func}|${argKeys}|${typeKey}|`;
+};
+
+/**
+ * Compute a PRE-compatible expression key for an instruction, or null
+ * if the instruction is not a PRE candidate.
+ */
+const exprKey = (inst: TACInstruction): string | null => {
+  switch (inst.kind) {
+    case TACInstructionKind.BinaryOp:
+      return binaryExprKey(inst as BinaryOpInstruction);
+    case TACInstructionKind.Cast:
+      return castExprKey(inst as CastInstruction);
+    case TACInstructionKind.PropertyGet:
+      return propertyGetExprKeyForPRE(inst as PropertyGetInstruction);
+    case TACInstructionKind.Call:
+      return callExprKeyForPRE(inst as CallInstruction);
+    default:
+      return null;
+  }
+};
+
+/**
+ * Get the read operands for a PRE-candidate expression.
+ */
+const getExprOperands = (inst: TACInstruction): TACOperand[] => {
+  switch (inst.kind) {
+    case TACInstructionKind.BinaryOp: {
+      const bin = inst as BinaryOpInstruction;
+      return [bin.left, bin.right];
+    }
+    case TACInstructionKind.Cast:
+      return [(inst as CastInstruction).src];
+    case TACInstructionKind.PropertyGet:
+      return [(inst as PropertyGetInstruction).object];
+    case TACInstructionKind.Call:
+      return [...(inst as CallInstruction).args];
+    default:
+      return [];
+  }
+};
+
+/**
+ * Get the dest operand for a PRE-candidate expression.
+ */
+const getExprDest = (inst: TACInstruction): TACOperand | undefined => {
+  return getDefinedOperandForReuse(inst);
+};
+
+/**
+ * Clone a PRE-candidate instruction with a new dest.
+ */
+const cloneExprWithDest = (
+  inst: TACInstruction,
+  newDest: TACOperand,
+): TACInstruction => {
+  switch (inst.kind) {
+    case TACInstructionKind.BinaryOp: {
+      const bin = inst as BinaryOpInstruction;
+      return new BinaryOpInstruction(
+        newDest,
+        bin.left,
+        bin.operator,
+        bin.right,
+      );
+    }
+    case TACInstructionKind.Cast:
+      return new CastInstruction(newDest, (inst as CastInstruction).src);
+    case TACInstructionKind.PropertyGet: {
+      const get = inst as PropertyGetInstruction;
+      return new PropertyGetInstruction(newDest, get.object, get.property);
+    }
+    case TACInstructionKind.Call: {
+      const call = inst as CallInstruction;
+      return new CallInstruction(newDest, call.func, [...call.args]);
+    }
+    default:
+      return inst;
+  }
+};
+
+type ExprValue = { key: string; inst: TACInstruction };
 
 const computeAvailableMaps = (
   instructions: TACInstruction[],
@@ -103,10 +219,9 @@ const computeAvailableMaps = (
             }
           }
         }
-        if (inst.kind === TACInstructionKind.BinaryOp) {
-          const bin = inst as BinaryOpInstruction;
-          const exprKey = binaryExprKey(bin);
-          working.set(exprKey, { key: exprKey, inst: bin });
+        const ek = exprKey(inst);
+        if (ek) {
+          working.set(ek, { key: ek, inst });
         }
       }
       const currentOut = outMaps.get(block.id) ?? new Map();
@@ -197,16 +312,15 @@ const isOperandAvailableInBlock = (
   return false;
 };
 
-const findEquivalentBinaryOp = (
+const findEquivalentExpr = (
   block: { start: number; end: number },
   instructions: TACInstruction[],
-  exprKey: string,
-): BinaryOpInstruction | null => {
+  targetExprKey: string,
+): TACInstruction | null => {
   for (let i = block.start; i <= block.end; i += 1) {
     const inst = instructions[i];
-    if (inst.kind !== TACInstructionKind.BinaryOp) continue;
-    const bin = inst as BinaryOpInstruction;
-    if (binaryExprKey(bin) === exprKey) return bin;
+    const ek = exprKey(inst);
+    if (ek === targetExprKey) return inst;
   }
   return null;
 };
@@ -229,14 +343,15 @@ export const performPRE = (
     const inMap = inMaps.get(block.id) ?? new Map();
     for (let i = block.start; i <= block.end; i += 1) {
       const inst = instructions[i];
-      if (inst.kind !== TACInstructionKind.BinaryOp) continue;
-      const bin = inst as BinaryOpInstruction;
-      if (bin.dest.kind !== TACOperandKind.Temporary) continue;
-      const exprKey = binaryExprKey(bin);
-      if (inMap.has(exprKey)) continue;
+      const ek = exprKey(inst);
+      if (!ek) continue;
+
+      const dest = getExprDest(inst);
+      if (!dest || dest.kind !== TACOperandKind.Temporary) continue;
+      if (inMap.has(ek)) continue;
       if (block.preds.length < 2) continue;
 
-      const destKey = livenessKey(bin.dest);
+      const destKey = livenessKey(dest);
       if (!destKey) continue;
       let usedBefore = false;
       for (let j = block.start; j < i; j += 1) {
@@ -248,13 +363,16 @@ export const performPRE = (
       if (usedBefore) continue;
       if (!isTempLocalToBlock(block, instructions, destKey)) continue;
 
+      const exprOps = getExprOperands(inst);
+
       let canInsertAll = true;
       const predPlans: Array<{ index: number; insts: TACInstruction[] }> = [];
       for (const predId of block.preds) {
         const predBlock = cfg.blocks[predId];
         if (
-          !isOperandAvailableInBlock(predBlock, instructions, bin.left) ||
-          !isOperandAvailableInBlock(predBlock, instructions, bin.right)
+          exprOps.some(
+            (op) => !isOperandAvailableInBlock(predBlock, instructions, op),
+          )
         ) {
           canInsertAll = false;
           break;
@@ -272,16 +390,14 @@ export const performPRE = (
 
         const insertIndex = insertBeforeTerminator(predBlock, instructions);
         if (insertIndex > predBlock.end) {
-          // Fallthrough predecessor: inserting here would place
-          // predecessor-specific instructions inside the successor block.
           canInsertAll = false;
           break;
         }
         const insts: TACInstruction[] = [];
-        let existing = findEquivalentBinaryOp(predBlock, instructions, exprKey);
+        let existing = findEquivalentExpr(predBlock, instructions, ek);
         if (existing) {
-          // Verify existing.dest is not redefined after the instruction
-          const existDestKey = livenessKey(existing.dest);
+          const existDest = getExprDest(existing);
+          const existDestKey = existDest ? livenessKey(existDest) : null;
           if (existDestKey) {
             let found = false;
             for (let j = predBlock.start; j <= predBlock.end; j += 1) {
@@ -297,15 +413,14 @@ export const performPRE = (
           }
         }
         if (existing) {
-          if (operandKey(existing.dest) !== operandKey(bin.dest)) {
-            insts.push(new CopyInstruction(bin.dest, existing.dest));
+          const existDest = getExprDest(existing);
+          if (existDest && operandKey(existDest) !== operandKey(dest)) {
+            insts.push(new CopyInstruction(dest, existDest));
           }
         } else {
-          const temp = createTemporary(nextTempId++, getOperandType(bin.dest));
-          insts.push(
-            new BinaryOpInstruction(temp, bin.left, bin.operator, bin.right),
-          );
-          insts.push(new CopyInstruction(bin.dest, temp));
+          const temp = createTemporary(nextTempId++, getOperandType(dest));
+          insts.push(cloneExprWithDest(inst, temp));
+          insts.push(new CopyInstruction(dest, temp));
         }
 
         if (insts.length > 0) {

@@ -88,7 +88,18 @@ export const constantFolding = (
 
         if (foldedValue !== null) {
           // Replace with assignment of constant
-          const foldedType = ["+", "-", "*", "/"].includes(binOp.operator)
+          const foldedType = [
+            "+",
+            "-",
+            "*",
+            "/",
+            "<<",
+            ">>",
+            "&",
+            "|",
+            "^",
+            "%",
+          ].includes(binOp.operator)
             ? leftConst.type
             : PrimitiveTypes.boolean;
           const constantOperand = createConstant(foldedValue, foldedType);
@@ -270,6 +281,18 @@ export const evaluateBinaryOp = (
         return left * right;
       case "/":
         return left / right;
+      case "<<":
+        return left << right;
+      case ">>":
+        return left >> right;
+      case "&":
+        return left & right;
+      case "|":
+        return left | right;
+      case "^":
+        return left ^ right;
+      case "%":
+        return left % right;
       case "<":
         return left < right;
       case ">":

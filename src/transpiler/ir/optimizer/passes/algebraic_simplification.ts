@@ -99,6 +99,29 @@ export const trySimplifyBinaryOp = (
         createConstant(0, getOperandType(inst.dest)),
       );
     }
+    // Strength reduction: x * 2^n → x << n (for integer types)
+    if (isIntegerType(destUdonType)) {
+      const powerRight = getPowerOfTwoValue(right);
+      if (powerRight !== null && powerRight > 1) {
+        const shiftAmount = Math.log2(powerRight);
+        return new BinaryOpInstruction(
+          inst.dest,
+          left,
+          "<<",
+          createConstant(shiftAmount, PrimitiveTypes.int32),
+        );
+      }
+      const powerLeft = getPowerOfTwoValue(left);
+      if (powerLeft !== null && powerLeft > 1) {
+        const shiftAmount = Math.log2(powerLeft);
+        return new BinaryOpInstruction(
+          inst.dest,
+          right,
+          "<<",
+          createConstant(shiftAmount, PrimitiveTypes.int32),
+        );
+      }
+    }
   }
 
   if (inst.operator === "/") {

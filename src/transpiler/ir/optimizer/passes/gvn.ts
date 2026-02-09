@@ -353,6 +353,7 @@ const invalidateExpressionsForSideEffect = (
 ): void => {
   if (inst.kind === TACInstructionKind.Call) {
     for (const key of Array.from(map.keys())) {
+      if (key.startsWith("propget_idem|")) continue; // idempotent properties are always safe
       if (key.startsWith("propget|") || key.startsWith("arrayget|")) {
         map.delete(key);
       }
