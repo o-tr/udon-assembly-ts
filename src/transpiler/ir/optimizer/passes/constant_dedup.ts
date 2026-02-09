@@ -27,7 +27,7 @@ export const deduplicateConstants = (
   // single-def constant assignments.
   const tempInfo = new Map<
     number,
-    { defCount: number; constOp?: ConstantOperand | null; defIndex?: number }
+    { defCount: number; constOp?: ConstantOperand | null }
   >();
 
   for (let idx = 0; idx < instructions.length; idx++) {
@@ -37,7 +37,6 @@ export const deduplicateConstants = (
     const tid = (def as TemporaryOperand).id;
     const entry = tempInfo.get(tid) ?? { defCount: 0, constOp: null };
     entry.defCount = entry.defCount + 1;
-    entry.defIndex = entry.defIndex ?? idx;
     // If this defining instruction is an assignment of a constant, record it
     if (inst.kind === TACInstructionKind.Assignment) {
       const assign = inst as unknown as AssignmentInstruction;
@@ -87,12 +86,11 @@ export const deduplicateConstants = (
   const result: TACInstruction[] = [];
   for (const inst of instructions) {
     // Remove non-canonical constant assignments
-    if (
-      inst.kind === TACInstructionKind.Assignment ||
-      inst.kind === TACInstructionKind.Copy
-    ) {
+    if (inst.kind === TACInstructionKind.Assignment) {
       const assign = inst as unknown as AssignmentInstruction;
-      if (
+      if (assign.src.kind !== TACOperandKind.Constant) {
+        // Only remove the original constant-defining assignment.
+      } else if (
         assign.dest.kind === TACOperandKind.Temporary &&
         removableAssignments.has((assign.dest as TemporaryOperand).id)
       ) {

@@ -24,13 +24,31 @@ export const propagateCopies = (
   for (const inst of instructions) {
     let insertedCopy = false;
     // Reset at block boundaries (labels and jumps)
+    if (inst.kind === TACInstructionKind.Label) {
+      copies = new Map();
+      result.push(inst);
+      continue;
+    }
     if (
-      inst.kind === TACInstructionKind.Label ||
       inst.kind === TACInstructionKind.ConditionalJump ||
       inst.kind === TACInstructionKind.UnconditionalJump
     ) {
-      copies = new Map();
+      const used = getUsedOperandsForReuse(inst);
+      for (const operand of used) {
+        const key = livenessKey(operand);
+        if (key) {
+          const resolved = resolve(copies, key, operand);
+          if (resolved !== operand) {
+            rewriteOperands(inst, (op) => {
+              const opKey = livenessKey(op);
+              if (opKey === key) return resolved;
+              return op;
+            });
+          }
+        }
+      }
       result.push(inst);
+      copies = new Map();
       continue;
     }
 

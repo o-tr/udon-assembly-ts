@@ -135,8 +135,10 @@ export const unswitchLoops = (
             if (progress) continue;
             // Cycle exists: break with temp
             const [[dk, p]] = Array.from(pending.entries());
-            const temp = createTemporary(nextTempId++, p.src.type);
-            insts.push(new CopyInstruction(temp, p.src));
+            const temp = createTemporary(nextTempId++, p.dest.type);
+            insts.push(new CopyInstruction(temp, p.dest));
+            pending.delete(dk);
+            destKeys.delete(dk);
             // replace any pending entry whose src equals p.dest with temp
             for (const [k, q] of Array.from(pending.entries())) {
               if (operandKey(q.src) === dk) {
@@ -427,20 +429,6 @@ const performUnswitch = (
     }
   };
 
-  // Build two copies of the loop body:
-  // Clone A: original loop body (fallthrough path)
-  // Clone B: cloned loop body (jumped path)
-  const cloneA: TACInstruction[] = [];
-  const cloneB: TACInstruction[] = [];
-
-  for (const idx of loopIndices) {
-    const inst = instructions[idx];
-    // In clone A, keep everything as-is (the conditional jump stays)
-    cloneA.push(inst);
-    // In clone B, rename labels
-    cloneB.push(cloneInstruction(inst));
-  }
-
   // Conservative safety: if the loop contains Phi or side-effectful
   // instructions (calls, method calls, property sets, array assignments),
   // skip unswitching to avoid complex SSA/Phi rewriting.
@@ -457,13 +445,35 @@ const performUnswitch = (
     }
   }
 
+  // Build two copies of the loop body:
+  // Clone A: original loop body (fallthrough path)
+  // Clone B: cloned loop body (jumped path)
+  const cloneA: TACInstruction[] = [];
+  const cloneB: TACInstruction[] = [];
+
+  for (const idx of loopIndices) {
+    const inst = instructions[idx];
+    // In clone A, keep everything as-is (the conditional jump stays)
+    cloneA.push(inst);
+    // In clone B, rename labels
+    cloneB.push(cloneInstruction(inst));
+  }
+
   // Remap temporaries inside cloneB so we don't create duplicate temp ids
   const tempMap = new Map<number, number>();
   let nextTempId = maxTempId + 1;
+  const loopDefinedTemps = new Set<number>();
+  for (const idx of loopIndices) {
+    const def = getDefinedOperandForReuse(instructions[idx]);
+    if (def && def.kind === TACOperandKind.Temporary) {
+      loopDefinedTemps.add((def as TemporaryOperand).id as number);
+    }
+  }
   for (const inst of cloneB) {
     rewriteOperands(inst, (op: TACOperand): TACOperand => {
       if (op && op.kind === TACOperandKind.Temporary) {
         const oldId = (op as TemporaryOperand).id as number;
+        if (!loopDefinedTemps.has(oldId)) return op;
         if (!tempMap.has(oldId)) {
           tempMap.set(oldId, nextTempId++);
         }
@@ -491,12 +501,29 @@ const performUnswitch = (
 
   if (!cloneAHeaderLabel || !cloneBHeaderLabel) return instructions;
 
+  const mergeLabelName = `${cloneAHeaderLabel}_us_merge${++maxTempId}`;
+  const mergeLabel = createLabel(mergeLabelName);
+  const mergeLabelInst = new LabelInstruction(mergeLabel);
+  const isTerminator = (inst: TACInstruction): boolean => {
+    return (
+      inst.kind === TACInstructionKind.UnconditionalJump ||
+      inst.kind === TACInstructionKind.ConditionalJump ||
+      inst.kind === TACInstructionKind.Return
+    );
+  };
+  const lastCloneA = [...cloneA]
+    .reverse()
+    .find((inst) => inst.kind !== TACInstructionKind.Label);
+  const needsMergeJump = !lastCloneA || !isTerminator(lastCloneA);
+
   // Build the result:
   // 1. Everything before the loop
   // 2. ifFalse condition goto clone_B_header
   // 3. Clone A (original loop)
-  // 4. Clone B (renamed loop)
-  // 5. Everything after the loop
+  // 4. jump to merge (if needed)
+  // 5. Clone B (renamed loop)
+  // 6. merge label
+  // 7. Everything after the loop
   const result: TACInstruction[] = [];
 
   // Pre-loop instructions
@@ -515,10 +542,14 @@ const performUnswitch = (
       for (const inst of cloneA) {
         result.push(inst);
       }
+      if (needsMergeJump) {
+        result.push(new UnconditionalJumpInstruction(mergeLabel));
+      }
       // Clone B (renamed loop)
       for (const inst of cloneB) {
         result.push(inst);
       }
+      result.push(mergeLabelInst);
       inserted = true;
     }
 
@@ -536,7 +567,11 @@ const performUnswitch = (
       ),
     );
     for (const inst of cloneA) result.push(inst);
+    if (needsMergeJump) {
+      result.push(new UnconditionalJumpInstruction(mergeLabel));
+    }
     for (const inst of cloneB) result.push(inst);
+    result.push(mergeLabelInst);
   }
 
   return result;

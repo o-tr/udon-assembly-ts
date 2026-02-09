@@ -15,6 +15,8 @@ import {
 } from "../../tac_operand.js";
 import { operandKey } from "../utils/operands.js";
 
+type InstWithDestSrc = { dest: TACOperand; src: TACOperand };
+
 export const simplifyDiamondPatterns = (
   instructions: TACInstruction[],
 ): TACInstruction[] => {
@@ -129,8 +131,8 @@ export const simplifyDiamondPatterns = (
     }
 
     // Check same destination
-    const thenAssign = thenInst as AssignmentInstruction;
-    const elseAssign = elseInst as AssignmentInstruction;
+    const thenAssign = thenInst as unknown as InstWithDestSrc;
+    const elseAssign = elseInst as unknown as InstWithDestSrc;
     if (operandKey(thenAssign.dest) !== operandKey(elseAssign.dest)) {
       result.push(inst);
       i++;
@@ -185,7 +187,7 @@ const isConstantAssignment = (inst: TACInstruction): boolean => {
   ) {
     return false;
   }
-  const assign = inst as AssignmentInstruction;
+  const assign = inst as unknown as InstWithDestSrc;
   return assign.src.kind === TACOperandKind.Constant;
 };
 

@@ -201,16 +201,20 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
         labelEnd < instructions.length &&
         instructions[labelEnd].kind === TACInstructionKind.Label
       ) {
-        result.push(instructions[labelEnd]);
         labelEnd++;
       }
-      // Insert sunk instructions after labels
-      result.push(...pending);
-      // Skip the labels we already pushed (back up by 1 because the for loop will increment)
       if (labelEnd > i) {
+        for (let j = i; j < labelEnd; j++) {
+          result.push(instructions[j]);
+        }
+        // Insert sunk instructions after labels
+        result.push(...pending);
+        // Skip the labels we already pushed (back up by 1 because the for loop will increment)
         i = labelEnd - 1;
         continue;
       }
+      // Insert sunk instructions when there are no leading labels
+      result.push(...pending);
     }
 
     // Skip sunk instructions from their original position
