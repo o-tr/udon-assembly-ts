@@ -66,6 +66,7 @@ export interface BatchTranspilerOptions {
   excludeDirs?: string[];
   allowCircular?: boolean;
   includeExternalDependencies?: boolean;
+  outputExtension?: string;
 }
 
 export interface BatchFileResult {
@@ -427,7 +428,8 @@ export class BatchTranspiler {
         heapUsage,
       );
 
-      const outPath = path.join(options.outputDir, `${entryPoint.name}.uasm`);
+      const ext = options.outputExtension ?? "tasm";
+      const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 

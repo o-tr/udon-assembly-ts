@@ -1,7 +1,7 @@
 import type { CallAnalyzer } from "./frontend/call_analyzer.js";
 import type { ClassRegistry } from "./frontend/class_registry.js";
 
-export const UASM_HEAP_LIMIT = 512;
+export const UASM_HEAP_LIMIT = 1048576;
 // Initial value for heap address reduction; allows empty data to evaluate to 0.
 export const HEAP_SIZE_INITIAL_VALUE = -1;
 
