@@ -269,12 +269,7 @@ export class BatchTranspiler {
           registry,
         );
       } catch (e) {
-        if (e instanceof DuplicateTopLevelConstError) {
-          for (const te of e.toTranspileErrors()) {
-            errorCollector.add(te);
-          }
-          continue;
-        }
+        if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
         throw e;
       }
       for (const tlc of topLevelConsts) {
@@ -417,12 +412,7 @@ export class BatchTranspiler {
             methodUsage,
           );
         } catch (e) {
-          if (e instanceof DuplicateTopLevelConstError) {
-            for (const te of e.toTranspileErrors()) {
-              errorCollector.add(te);
-            }
-            continue;
-          }
+          if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
           throw e;
         }
       }
@@ -725,6 +715,19 @@ export class BatchTranspiler {
     const reachable = usage.get(className);
     if (!reachable) return [];
     return methods.filter((method) => reachable.has(method.name));
+  }
+
+  private collectDuplicateConstErrors(
+    e: unknown,
+    errorCollector: ErrorCollector,
+  ): boolean {
+    if (e instanceof DuplicateTopLevelConstError) {
+      for (const te of e.toTranspileErrors()) {
+        errorCollector.add(te);
+      }
+      return true;
+    }
+    return false;
   }
 
   private collectAllTopLevelConsts(
