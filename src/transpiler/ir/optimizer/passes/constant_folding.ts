@@ -79,6 +79,17 @@ export const constantFolding = (
           continue;
         }
 
+        // For shifts, only fold for 32-bit integer types (JS <</>> semantics)
+        if (
+          (binOp.operator === "<<" || binOp.operator === ">>") &&
+          leftConst.type &&
+          leftConst.type.udonType !== "Int32" &&
+          leftConst.type.udonType !== "UInt32"
+        ) {
+          result.push(inst);
+          continue;
+        }
+
         // Evaluate the operation
         const foldedValue = evaluateBinaryOp(
           leftConst.value,

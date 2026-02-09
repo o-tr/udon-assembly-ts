@@ -94,7 +94,8 @@ const callExprKeyForPRE = (
   if (!pureExternEvaluators.has(inst.func)) return null;
   const typeKey = getOperandType(inst.dest).udonType;
   const argKeys = inst.args.map((arg) => keyForOperand(arg)).join("|");
-  return `purecall|${inst.func}|${argKeys}|${typeKey}|`;
+  const tailFlag = (inst as CallInstruction).isTailCall ? 1 : 0;
+  return `purecall|${inst.func}|${argKeys}|${typeKey}|tail:${tailFlag}|`;
 };
 
 /**
