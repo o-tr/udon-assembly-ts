@@ -173,7 +173,8 @@ export const simplifyDiamondPatterns = (
         new UnaryOpInstruction(thenAssign.dest, "!", condJump.condition),
       );
     }
-    // Keep the join label in case something else references it
+    // Keep both labels for consistency
+    result.push(elseLabelInst);
     result.push(joinLabelInst);
     i += 6;
   }
@@ -181,10 +182,7 @@ export const simplifyDiamondPatterns = (
 };
 
 const isConstantAssignment = (inst: TACInstruction): boolean => {
-  if (
-    inst.kind !== TACInstructionKind.Assignment &&
-    inst.kind !== TACInstructionKind.Copy
-  ) {
+  if (inst.kind !== TACInstructionKind.Assignment) {
     return false;
   }
   const assign = inst as unknown as InstWithDestSrc;

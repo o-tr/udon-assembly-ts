@@ -191,7 +191,7 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
 
   // Rebuild instruction list
   const result: TACInstruction[] = [];
-  const emitted = new Set<number>();
+  const emitted = new Set<number>(sinkTargets.keys());
   for (let i = 0; i < instructions.length; i++) {
     // Insert sunk instructions after any labels at the target block start
     const pending = insertions.get(i);
@@ -215,13 +215,14 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
         i = labelEnd - 1;
         continue;
       }
-      // Insert sunk instructions when there are no leading labels
+      // No leading labels: emit pending then the block-start instruction
       result.push(...pending);
+      result.push(instructions[i]);
+      continue;
     }
 
-    // Skip sunk instructions from their original position
+    // Skip already-emitted and sunk instructions
     if (emitted.has(i)) continue;
-    if (sinkTargets.has(i)) continue;
 
     result.push(instructions[i]);
   }

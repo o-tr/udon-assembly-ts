@@ -79,9 +79,13 @@ export const constantFolding = (
           continue;
         }
 
-        // For shifts, only fold for 32-bit integer types (JS <</>> semantics)
+        // For bitwise ops, only fold for 32-bit integer types (JS bitwise semantics truncate to int32)
         if (
-          (binOp.operator === "<<" || binOp.operator === ">>") &&
+          (binOp.operator === "<<" ||
+            binOp.operator === ">>" ||
+            binOp.operator === "&" ||
+            binOp.operator === "|" ||
+            binOp.operator === "^") &&
           leftConst.type &&
           leftConst.type.udonType !== "Int32" &&
           leftConst.type.udonType !== "UInt32"
