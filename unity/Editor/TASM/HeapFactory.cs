@@ -14,7 +14,7 @@ namespace jp.ootr.TASM.Editor
 
         public IUdonHeap ConstructUdonHeap(uint heapSize)
         {
-            return new UdonHeap(FactoryHeapSize);
+            return new UdonHeap(heapSize);
         }
     }
 }

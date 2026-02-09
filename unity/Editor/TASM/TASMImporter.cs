@@ -11,7 +11,6 @@ namespace VRC.Udon.Editor.ProgramSources
         public override void OnImportAsset(
             UnityEditor.AssetImporters.AssetImportContext ctx)
         {
-            Debug.Log("[TASM] Importing Udon Assembly Program");
             var asset = ScriptableObject.CreateInstance
                 <TASMProgramAsset>();
             var serialized = new SerializedObject(asset);
@@ -21,6 +20,8 @@ namespace VRC.Udon.Editor.ProgramSources
                 Debug.LogError(
                     "[TASM] Could not find 'udonAssembly' property. "
                     + "SDK may have changed.");
+                ctx.AddObjectToAsset("TASM Import Error", asset);
+                ctx.SetMainObject(asset);
                 return;
             }
             prop.stringValue = File.ReadAllText(ctx.assetPath);

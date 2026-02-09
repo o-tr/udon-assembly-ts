@@ -42,6 +42,7 @@ import {
   computeHeapUsage,
   TASM_HEAP_LIMIT,
   UASM_HEAP_LIMIT,
+  UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { TACOptimizer } from "../ir/optimizer/index.js";
@@ -225,7 +226,8 @@ export class BatchTranspiler {
         ? new MethodUsageAnalyzer(registry).analyze()
         : null;
 
-    const ext = options.outputExtension ?? "tasm";
+    const rawExt = options.outputExtension ?? "tasm";
+    const ext = rawExt.replace(/^\.+/, "").replace(/[/\\]/g, "");
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
@@ -462,6 +464,14 @@ export class BatchTranspiler {
   ): void {
     heapLimit = heapLimit ?? UASM_HEAP_LIMIT;
     const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
+    if (
+      resolvedUsage > UASM_RUNTIME_LIMIT &&
+      resolvedUsage <= heapLimit
+    ) {
+      console.warn(
+        `UASM heap usage ${resolvedUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPointName}.`,
+      );
+    }
     if (resolvedUsage <= heapLimit) return;
 
     const breakdown = buildHeapUsageTreeBreakdown(

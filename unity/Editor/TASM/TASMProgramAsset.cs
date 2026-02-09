@@ -11,6 +11,7 @@ namespace VRC.Udon.Editor.ProgramSources
     public class TASMProgramAsset : UdonAssemblyProgramAsset
     {
         private static UdonEditorInterface _editorInterface;
+        // Validated against VRC SDK 3.7.x; re-verify on major SDK updates.
         private static readonly FieldInfo _typeResolverGroupField =
             typeof(UdonEditorInterface).GetField("_typeResolverGroup",
                 BindingFlags.NonPublic | BindingFlags.Instance);
@@ -82,7 +83,6 @@ namespace VRC.Udon.Editor.ProgramSources
         internal static uint CalculateHeapSize(string uasmText)
         {
             uint dataVarCount = 0;
-            uint externCount = 0;
             bool inDataSection = false;
             foreach (string rawLine in uasmText.Split('\n'))
             {
@@ -94,9 +94,8 @@ namespace VRC.Udon.Editor.ProgramSources
                 int colonIdx = line.IndexOf(':');
                 if (colonIdx <= 0) continue;
                 dataVarCount++;
-                if (line.StartsWith("__extern_")) externCount++;
             }
-            return Math.Max(dataVarCount + externCount + 128, 512);
+            return Math.Max(dataVarCount + 128, 512);
         }
     }
 }
