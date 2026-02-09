@@ -118,6 +118,24 @@ export function visitVariableDeclaration(
   this: ASTToTACConverter,
   node: VariableDeclarationNode,
 ): void {
+  // Top-level literal constants are inlined at use-site; just register in symbol table
+  if (
+    node.isConst &&
+    this.symbolTable.getCurrentScope() === 0 &&
+    node.initializer?.kind === ASTNodeKind.Literal
+  ) {
+    if (!this.symbolTable.hasInCurrentScope(node.name)) {
+      this.symbolTable.addSymbol(
+        node.name,
+        node.type,
+        false,
+        true,
+        node.initializer,
+      );
+    }
+    return;
+  }
+
   const isObjectTypeSymbol = (type: TypeSymbol): boolean =>
     type.name === ObjectType.name && type.udonType === ObjectType.udonType;
   let destType: TypeSymbol = node.type;
@@ -142,7 +160,8 @@ export function visitVariableDeclaration(
     }
   }
 
-  const dest = createVariable(node.name, destType, { isLocal: true });
+  const isLocal = this.symbolTable.getCurrentScope() > 0;
+  const dest = createVariable(node.name, destType, { isLocal });
 
   if (!this.symbolTable.hasInCurrentScope(node.name)) {
     this.symbolTable.addSymbol(
@@ -771,6 +790,14 @@ export function visitClassDeclaration(
       recursionContext = { locals, depthVar, stackVars };
       this.currentRecursiveContext = recursionContext;
       this.emitRecursivePrologue();
+    }
+
+    // Inject non-literal top-level const initialization at the start of _start/Start
+    if (method.name === "Start" && this.pendingTopLevelInits.length > 0) {
+      for (const tlc of this.pendingTopLevelInits) {
+        this.visitVariableDeclaration(tlc);
+      }
+      this.pendingTopLevelInits = [];
     }
 
     this.visitBlockStatement(method.body);

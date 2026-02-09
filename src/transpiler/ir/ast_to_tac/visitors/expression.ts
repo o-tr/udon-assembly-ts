@@ -914,6 +914,18 @@ export function visitIdentifier(
       : "<unknown>";
     throw new Error(`Undefined variable: ${node.name} in ${location}`);
   }
+
+  // Inline top-level literal constants
+  if (
+    symbol.isConstant &&
+    (symbol.scope ?? 0) === 0 &&
+    symbol.initialValue &&
+    (symbol.initialValue as ASTNode).kind === ASTNodeKind.Literal
+  ) {
+    const literal = symbol.initialValue as LiteralNode;
+    return createConstant(literal.value, literal.type);
+  }
+
   const exportName = this.currentParamExportMap.get(node.name);
   const isParameter = symbol.isParameter === true;
   const isExported = !!exportName;

@@ -28,6 +28,7 @@ import {
   type ClassDeclarationNode,
   type DecoratorNode,
   type ProgramNode,
+  type VariableDeclarationNode,
 } from "../frontend/types.js";
 import {
   buildHeapUsageTreeBreakdown,
@@ -253,6 +254,22 @@ export class BatchTranspiler {
         );
       }
 
+      const topLevelConsts = registry.getTopLevelConstsForFile(
+        entryPoint.filePath,
+      );
+      for (const tlc of topLevelConsts) {
+        if (!symbolTable.hasInCurrentScope(tlc.name)) {
+          symbolTable.addSymbol(
+            tlc.name,
+            typeMapper.mapTypeScriptType(tlc.type),
+            false,
+            true,
+            tlc.node.initializer,
+          );
+        }
+      }
+
+      const topLevelConstNodes = topLevelConsts.map((tlc) => tlc.node);
       const methodProgram = this.classesToProgram(
         this.buildClassNodes(
           entryPoint.name,
@@ -261,6 +278,7 @@ export class BatchTranspiler {
           registry,
           methodUsage,
         ),
+        topLevelConstNodes,
       );
       const udonBehaviourClasses = new Set(
         registry
@@ -539,6 +557,23 @@ export class BatchTranspiler {
       );
     }
 
+    const entryMeta = registry.getClass(entryPointName);
+    const estTopLevelConsts = entryMeta
+      ? registry.getTopLevelConstsForFile(entryMeta.filePath)
+      : [];
+    for (const tlc of estTopLevelConsts) {
+      if (!symbolTable.hasInCurrentScope(tlc.name)) {
+        symbolTable.addSymbol(
+          tlc.name,
+          typeMapper.mapTypeScriptType(tlc.type),
+          false,
+          true,
+          tlc.node.initializer,
+        );
+      }
+    }
+
+    const estTopLevelConstNodes = estTopLevelConsts.map((tlc) => tlc.node);
     const methodProgram = this.classesToProgram(
       this.buildClassNodes(
         entryPointName,
@@ -547,6 +582,7 @@ export class BatchTranspiler {
         registry,
         methodUsage,
       ),
+      estTopLevelConstNodes,
     );
     const tacConverter = new ASTToTACConverter(
       symbolTable,
@@ -780,8 +816,11 @@ export class BatchTranspiler {
     } as ClassDeclarationNode;
   }
 
-  private classesToProgram(nodes: ClassDeclarationNode[]): ProgramNode {
-    const statements: ASTNode[] = nodes;
+  private classesToProgram(
+    nodes: ClassDeclarationNode[],
+    topLevelConstNodes?: VariableDeclarationNode[],
+  ): ProgramNode {
+    const statements: ASTNode[] = [...(topLevelConstNodes ?? []), ...nodes];
     return {
       kind: ASTNodeKind.Program,
       statements,
