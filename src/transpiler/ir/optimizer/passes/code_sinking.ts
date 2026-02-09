@@ -109,9 +109,24 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
       for (const op of getUsedOperandsForReuse(inst)) {
         if (
           op.kind === TACOperandKind.Constant ||
-          op.kind === TACOperandKind.Label ||
-          op.kind === TACOperandKind.Variable
+          op.kind === TACOperandKind.Label
         ) {
+          continue;
+        }
+        if (op.kind === TACOperandKind.Variable) {
+          const opKey = livenessKey(op);
+          if (!opKey) {
+            operandsAvailable = false;
+            break;
+          }
+          for (let j = i + 1; j <= block.end; j++) {
+            const jDef = getDefinedOperandForReuse(instructions[j]);
+            if (jDef && livenessKey(jDef) === opKey) {
+              operandsAvailable = false;
+              break;
+            }
+          }
+          if (!operandsAvailable) break;
           continue;
         }
         // For temps, check they're not defined in this block after or at current instruction

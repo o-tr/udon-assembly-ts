@@ -274,13 +274,13 @@ export const evaluateBinaryOp = (
   if (typeof left === "number" && typeof right === "number") {
     switch (operator) {
       case "+":
-        return left + right;
+        return Number.isFinite(left + right) ? left + right : null;
       case "-":
-        return left - right;
+        return Number.isFinite(left - right) ? left - right : null;
       case "*":
-        return left * right;
+        return Number.isFinite(left * right) ? left * right : null;
       case "/":
-        return left / right;
+        return Number.isFinite(left / right) ? left / right : null;
       case "<<":
         return left << right;
       case ">>":
@@ -292,7 +292,7 @@ export const evaluateBinaryOp = (
       case "^":
         return left ^ right;
       case "%":
-        return left % right;
+        return Number.isFinite(left % right) ? left % right : null;
       case "<":
         return left < right;
       case ">":

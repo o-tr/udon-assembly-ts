@@ -5,7 +5,7 @@ import {
   type PropertySetInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
-import type { TACOperand, VariableOperand } from "../../tac_operand.js";
+import type { TACOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import {
   getDefinedOperandForReuse,
@@ -22,6 +22,7 @@ export const propagateCopies = (
   let copies = new Map<string, TACOperand>();
 
   for (const inst of instructions) {
+    let insertedCopy = false;
     // Reset at block boundaries (labels and jumps)
     if (
       inst.kind === TACInstructionKind.Label ||
@@ -65,6 +66,7 @@ export const propagateCopies = (
         const destKey = livenessKey(typed.dest);
         if (destKey && typed.dest.kind === TACOperandKind.Temporary) {
           copies.set(destKey, typed.src);
+          insertedCopy = true;
         }
       }
     }
@@ -74,11 +76,8 @@ export const propagateCopies = (
     if (defined) {
       const defKey = livenessKey(defined);
       if (defKey) {
-        // Remove from copies map if redefined (unless we just set it above for Assignment/Copy)
-        if (
-          inst.kind !== TACInstructionKind.Assignment &&
-          inst.kind !== TACInstructionKind.Copy
-        ) {
+        // Remove from copies map if redefined (unless we just set it above)
+        if (!insertedCopy) {
           copies.delete(defKey);
         }
         // Remove any entries whose copy source points to this operand
@@ -124,9 +123,4 @@ const getMutatedObjectKey = (inst: TACInstruction): string | null => {
     return livenessKey((inst as ArrayAssignmentInstruction).array);
   }
   return null;
-};
-
-const _isExportedVariable = (operand: TACOperand): boolean => {
-  if (operand.kind !== TACOperandKind.Variable) return false;
-  return (operand as VariableOperand).isExported === true;
 };

@@ -29,6 +29,17 @@ const TYPE_WIDTH: Partial<Record<UdonType, number>> = {
   [UdonType.UInt64]: 64,
 };
 
+const SIGNED_TYPES = new Set<UdonType>([
+  UdonType.SByte,
+  UdonType.Int16,
+  UdonType.Int32,
+  UdonType.Int64,
+]);
+
+const isSigned = (typeName: UdonType): boolean => {
+  return SIGNED_TYPES.has(typeName);
+};
+
 const isComparisonOperator = (op: string): boolean => {
   return (
     op === "<" ||
@@ -94,6 +105,9 @@ export const narrowTypes = (
     const srcWidth = TYPE_WIDTH[srcType as UdonType];
     const destWidth = TYPE_WIDTH[destType as UdonType];
     if (!srcWidth || !destWidth || srcWidth >= destWidth) continue;
+    if (isSigned(srcType as UdonType) !== isSigned(destType as UdonType)) {
+      continue;
+    }
 
     const destKey = livenessKey(castInst.dest);
     if (!destKey) continue;

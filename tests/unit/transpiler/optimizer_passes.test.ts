@@ -1792,7 +1792,6 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
     const optimized = new TACOptimizer().optimize(instructions);
-    const _text = stringify(optimized);
     // After dedup, t0 and t1 should reference the same temp
     // Dead code elimination removes the duplicate assignment
     const assignCount = optimized.filter(
@@ -1946,7 +1945,7 @@ describe("optimizer passes", () => {
   });
 
   it("eliminates widening cast when result is only compared", () => {
-    const x = createVariable("x", PrimitiveTypes.byte);
+    const x = createVariable("x", PrimitiveTypes.sbyte);
     const t0 = createTemporary(0, PrimitiveTypes.int32);
     const t1 = createTemporary(1, PrimitiveTypes.boolean);
     const instructions = [
