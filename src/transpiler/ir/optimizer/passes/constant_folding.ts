@@ -282,9 +282,9 @@ export const evaluateBinaryOp = (
       case "/":
         return Number.isFinite(left / right) ? left / right : null;
       case "<<":
-        return left << right;
+        return (left | 0) << ((right >>> 0) & 31);
       case ">>":
-        return left >> right;
+        return (left | 0) >> ((right >>> 0) & 31);
       case "&":
         return left & right;
       case "|":
