@@ -52,8 +52,8 @@ export class DuplicateTopLevelConstError extends Error {
     const msg = `Duplicate top-level const "${this.constName}"`;
     const suggestion = `Rename one of the conflicting declarations`;
     return [
-      new TranspileError("TypeError", `${msg} (also in "${this.fileB}")`, { filePath: this.fileA, line: 0, column: 0 }, suggestion),
-      new TranspileError("TypeError", `${msg} (also in "${this.fileA}")`, { filePath: this.fileB, line: 0, column: 0 }, suggestion),
+      new TranspileError("TypeError", `${msg} (also in "${this.fileB}")`, { filePath: this.fileA, line: 1, column: 1 }, suggestion),
+      new TranspileError("TypeError", `${msg} (also in "${this.fileA}")`, { filePath: this.fileB, line: 1, column: 1 }, suggestion),
     ];
   }
 }
