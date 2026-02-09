@@ -8,6 +8,7 @@ import {
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
+  createConstant,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
@@ -241,10 +242,12 @@ export const narrowTypes = (
       const bin = inst as BinaryOpInstruction;
       if (isComparisonOperator(bin.operator)) {
         if (bin.left.kind === TACOperandKind.Constant) {
-          (bin.left as ConstantOperand).type = narrowType;
+          const c = bin.left as ConstantOperand;
+          bin.left = createConstant(c.value, narrowType);
         }
         if (bin.right.kind === TACOperandKind.Constant) {
-          (bin.right as ConstantOperand).type = narrowType;
+          const c = bin.right as ConstantOperand;
+          bin.right = createConstant(c.value, narrowType);
         }
       }
     }
