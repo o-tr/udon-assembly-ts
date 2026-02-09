@@ -61,6 +61,8 @@ export interface TopLevelConstInfo {
   type: string;
   node: VariableDeclarationNode;
   filePath: string;
+  line: number;
+  column: number;
 }
 
 export interface InterfaceMetadata {
@@ -161,19 +163,27 @@ export class ClassRegistry {
     return this.topLevelConsts.get(filePath) ?? [];
   }
 
-  registerFromProgram(program: ProgramNode, filePath: string): void {
+  registerFromProgram(
+    program: ProgramNode,
+    filePath: string,
+    sourceText?: string,
+  ): void {
     const consts: TopLevelConstInfo[] = [];
+    const lineStarts = sourceText ? this.computeLineStarts(sourceText) : null;
     for (const stmt of program.statements) {
       if (
         stmt.kind === ASTNodeKind.VariableDeclaration &&
         (stmt as VariableDeclarationNode).isConst
       ) {
         const varNode = stmt as VariableDeclarationNode;
+        const loc = this.findConstLocation(varNode.name, sourceText, lineStarts);
         consts.push({
           name: varNode.name,
           type: varNode.type.name,
           node: varNode,
           filePath,
+          line: loc.line,
+          column: loc.column,
         });
       }
     }
@@ -316,5 +326,35 @@ export class ClassRegistry {
       fieldChangeCallback: property.fieldChangeCallback,
       isSerializeField: property.isSerializeField,
     };
+  }
+
+  private computeLineStarts(sourceText: string): number[] {
+    const starts = [0];
+    for (let i = 0; i < sourceText.length; i++) {
+      if (sourceText[i] === "\n") {
+        starts.push(i + 1);
+      }
+    }
+    return starts;
+  }
+
+  private findConstLocation(
+    name: string,
+    sourceText: string | undefined,
+    lineStarts: number[] | null,
+  ): { line: number; column: number } {
+    if (!sourceText || !lineStarts) return { line: 1, column: 1 };
+    const pattern = new RegExp(`\\bconst\\s+${name}\\b`);
+    const match = pattern.exec(sourceText);
+    if (!match) return { line: 1, column: 1 };
+    const offset = match.index;
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return { line: lo + 1, column: offset - lineStarts[lo] + 1 };
   }
 }

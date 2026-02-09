@@ -173,7 +173,7 @@ export class BatchTranspiler {
       for (const filePath of files) {
         const source = fs.readFileSync(filePath, "utf8");
         const program = parser.parse(source, filePath);
-        registry.registerFromProgram(program, filePath);
+        registry.registerFromProgram(program, filePath, source);
       }
     } else {
       const reachableFiles = reachable.size > 0 ? Array.from(reachable) : files;
@@ -187,7 +187,7 @@ export class BatchTranspiler {
         try {
           const source = fs.readFileSync(filePath, "utf8");
           const program = parser.parse(source, filePath);
-          registry.registerFromProgram(program, filePath);
+          registry.registerFromProgram(program, filePath, source);
         } catch (e) {
           // parsing errors will be collected by parser's ErrorCollector
           // but file read or other unexpected errors should be logged for diagnostics
@@ -723,9 +723,9 @@ export class BatchTranspiler {
     registry: ClassRegistry,
   ): TopLevelConstInfo[] {
     const entryConsts = registry.getTopLevelConstsForFile(entryFilePath);
-    const constOrigin = new Map<string, string>();
+    const constByName = new Map<string, TopLevelConstInfo>();
     for (const tlc of entryConsts) {
-      constOrigin.set(tlc.name, entryFilePath);
+      constByName.set(tlc.name, tlc);
     }
     const allConsts = [...entryConsts];
 
@@ -739,11 +739,15 @@ export class BatchTranspiler {
 
     for (const filePath of Array.from(inlineFilePaths).sort()) {
       for (const tlc of registry.getTopLevelConstsForFile(filePath)) {
-        const existingFile = constOrigin.get(tlc.name);
-        if (existingFile) {
-          throw new DuplicateTopLevelConstError(tlc.name, existingFile, filePath);
+        const existing = constByName.get(tlc.name);
+        if (existing) {
+          throw new DuplicateTopLevelConstError(
+            tlc.name,
+            { filePath: existing.filePath, line: existing.line, column: existing.column },
+            { filePath: tlc.filePath, line: tlc.line, column: tlc.column },
+          );
         }
-        constOrigin.set(tlc.name, filePath);
+        constByName.set(tlc.name, tlc);
         allConsts.push(tlc);
       }
     }

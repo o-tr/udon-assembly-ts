@@ -35,25 +35,29 @@ export class TranspileError extends Error {
 
 export class DuplicateTopLevelConstError extends Error {
   readonly constName: string;
-  readonly fileA: string;
-  readonly fileB: string;
+  readonly locationA: TranspileErrorLocation;
+  readonly locationB: TranspileErrorLocation;
 
-  constructor(constName: string, fileA: string, fileB: string) {
+  constructor(
+    constName: string,
+    locationA: TranspileErrorLocation,
+    locationB: TranspileErrorLocation,
+  ) {
     super(
-      `Top-level const "${constName}" is defined in both "${fileA}" and "${fileB}". Rename one to avoid ambiguity.`,
+      `Top-level const "${constName}" is defined in both "${locationA.filePath}" and "${locationB.filePath}". Rename one to avoid ambiguity.`,
     );
     this.name = "DuplicateTopLevelConstError";
     this.constName = constName;
-    this.fileA = fileA;
-    this.fileB = fileB;
+    this.locationA = locationA;
+    this.locationB = locationB;
   }
 
   toTranspileErrors(): [TranspileError, TranspileError] {
     const msg = `Duplicate top-level const "${this.constName}"`;
-    const suggestion = `Rename one of the conflicting declarations`;
+    const suggestion = "Rename one of the conflicting declarations";
     return [
-      new TranspileError("TypeError", `${msg} (also in "${this.fileB}")`, { filePath: this.fileA, line: 1, column: 1 }, suggestion),
-      new TranspileError("TypeError", `${msg} (also in "${this.fileA}")`, { filePath: this.fileB, line: 1, column: 1 }, suggestion),
+      new TranspileError("TypeError", `${msg} (also in "${this.locationB.filePath}")`, this.locationA, suggestion),
+      new TranspileError("TypeError", `${msg} (also in "${this.locationA.filePath}")`, this.locationB, suggestion),
     ];
   }
 }
