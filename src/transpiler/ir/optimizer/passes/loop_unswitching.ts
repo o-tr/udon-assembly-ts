@@ -558,7 +558,7 @@ const performUnswitch = (
   }
 
   // If the loop was at the very end, we might have missed adding clones
-  if (!result.some((inst) => inst === cloneA[0])) {
+  if (!inserted) {
     result.push(
       new ConditionalJumpInstruction(
         condJump.condition,
