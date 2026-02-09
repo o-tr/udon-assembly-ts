@@ -175,7 +175,7 @@ export const narrowTypes = (
 
       // Ensure the constant is representable in the source (narrow) type
       const constOp = otherOp as ConstantOperand;
-      const otherType = getOperandType(otherOp).udonType as UdonType;
+      const _otherType = getOperandType(otherOp).udonType as UdonType;
 
       const rawVal = constOp.value;
       let constBigInt: bigint | null = null;
