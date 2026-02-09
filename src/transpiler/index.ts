@@ -21,6 +21,7 @@ import {
   buildHeapUsageBreakdown,
   buildHeapUsageTreeBreakdown,
   computeHeapUsage,
+  TASM_HEAP_LIMIT,
   UASM_HEAP_LIMIT,
 } from "./heap_limits.js";
 import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";

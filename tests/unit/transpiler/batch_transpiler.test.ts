@@ -7,10 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
-import { UASM_HEAP_LIMIT } from "../../../src/transpiler/heap_limits";
 
 describe("BatchTranspiler", () => {
-  it("should generate .uasm for entry point classes", () => {
+  it("should generate output for entry point classes", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mahjong-t2-batch-"));
     const sourceDir = path.join(tempDir, "src");
     const outputDir = path.join(tempDir, "out");
@@ -51,7 +50,7 @@ describe("BatchTranspiler", () => {
     const outputDir = path.join(tempDir, "out");
     fs.mkdirSync(sourceDir, { recursive: true });
 
-    const overflowCount = UASM_HEAP_LIMIT + 8;
+    const overflowCount = 520;
     const filler = Array.from(
       { length: overflowCount },
       (_, i) => `let value${i}: number = ${i};`,
@@ -75,6 +74,7 @@ describe("BatchTranspiler", () => {
       sourceDir,
       outputDir,
       excludeDirs: [],
+      outputExtension: "uasm",
     });
 
     expect(result.outputs).toHaveLength(1);

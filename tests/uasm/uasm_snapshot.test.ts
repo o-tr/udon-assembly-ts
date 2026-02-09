@@ -109,6 +109,7 @@ describe("UASM Snapshot Tests", () => {
           sourceDir,
           outputDir,
           excludeDirs: [],
+          outputExtension: "uasm",
         });
 
         for (const uasmFile of testCase.uasmFiles) {
