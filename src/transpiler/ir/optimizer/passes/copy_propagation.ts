@@ -1,8 +1,8 @@
-import type { TACInstruction } from "../../tac_instruction.js";
 import {
-  type ArrayAssignmentInstruction,
-  type CopyInstruction,
-  type PropertySetInstruction,
+  ArrayAssignmentInstruction,
+  CopyInstruction,
+  PropertySetInstruction,
+  type TACInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
 import type { TACOperand } from "../../tac_operand.js";

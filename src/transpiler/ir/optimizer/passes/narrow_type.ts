@@ -1,3 +1,4 @@
+import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
 import {
   type BinaryOpInstruction,
@@ -223,14 +224,30 @@ export const narrowTypes = (
     }
 
     // Rewrite operands: replace cast dest with cast src
+    let narrowType: TypeSymbol | null = null;
     rewriteOperands(inst, (op: TACOperand): TACOperand => {
       const key = livenessKey(op);
       if (key && eliminable.has(key)) {
         const candidate = castCandidates.get(key);
-        if (candidate) return candidate.srcOperand;
+        if (candidate) {
+          narrowType = getOperandType(candidate.srcOperand);
+          return candidate.srcOperand;
+        }
       }
       return op;
     });
+
+    if (narrowType && inst.kind === TACInstructionKind.BinaryOp) {
+      const bin = inst as BinaryOpInstruction;
+      if (isComparisonOperator(bin.operator)) {
+        if (bin.left.kind === TACOperandKind.Constant) {
+          (bin.left as ConstantOperand).type = narrowType;
+        }
+        if (bin.right.kind === TACOperandKind.Constant) {
+          (bin.right as ConstantOperand).type = narrowType;
+        }
+      }
+    }
 
     result.push(inst);
   }

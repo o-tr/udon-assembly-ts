@@ -217,8 +217,6 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
       }
       // Insert sunk instructions when there are no leading labels
       result.push(...pending);
-      // mark pending as emitted at this index so we don't re-emit
-      emitted.add(i);
     }
 
     // Skip sunk instructions from their original position
