@@ -4,7 +4,7 @@ import {
   ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
-  UnconditionalJumpInstruction,
+  type UnconditionalJumpInstruction,
 } from "../tac_instruction.js";
 import {
   createLabel,
@@ -96,20 +96,16 @@ export class TACOptimizer {
     if (missingLabels.length === 0) return instructions;
 
     const result = [...instructions];
-    const haltLabel = "__asm_halt";
-    let needsHaltStub = false;
 
+    // Emit each missing label followed by a void return (becomes JUMP 0xFFFFFFFC
+    // in Udon — return to caller). This is dead code that should never execute;
+    // the stub exists only to satisfy label resolution. Udon VM has no trap/abort
+    // instruction, so returning to caller is the safest fallback.
     for (const labelName of missingLabels) {
       console.warn(
         `Missing label definition for '${labelName}', inserting halt stub`,
       );
       result.push(new LabelInstruction(createLabel(labelName)));
-      result.push(new UnconditionalJumpInstruction(createLabel(haltLabel)));
-      needsHaltStub = true;
-    }
-
-    if (needsHaltStub && !definedLabels.has(haltLabel)) {
-      result.push(new LabelInstruction(createLabel(haltLabel)));
       result.push(new ReturnInstruction());
     }
 

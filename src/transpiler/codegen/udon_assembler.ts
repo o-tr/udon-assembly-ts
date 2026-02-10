@@ -297,7 +297,15 @@ export class UdonAssembler {
 
     const initInstructions: UdonInstruction[] = [];
 
-    for (const { name } of initEntries) {
+    for (const { name, udonType, value } of initEntries) {
+      if (value !== true) {
+        // Only boolean true init is implemented. If NULL_ONLY_TYPES is
+        // expanded to other types, add their init paths here.
+        console.warn(
+          `No runtime init path for restricted type value ${JSON.stringify(value)} on '${name}' (${udonType}); leaving as null`,
+        );
+        continue;
+      }
       // Boolean true: use (0 == 0) → true
       if (int32ZeroName === null) {
         int32ZeroName = "__asm_restrict_int32_0";
