@@ -19,10 +19,6 @@ import {
 } from "./udon_type_resolver.js";
 
 /**
- * Set of Udon type names that must be initialized to `null` in the data section.
- * VRChat's UASM assembler only accepts `null` (or `this`) for these types.
- */
-/**
  * Types that VRChat's UASM assembler only accepts as `null` (or `this`) in the
  * data section.  Currently only SystemBoolean is confirmed to cause assembler
  * errors.  Other integer types (SByte, Byte, Int16, UInt16, Int64, UInt64)
@@ -284,7 +280,8 @@ export class UdonAssembler {
       return { dataSection: mutData, instructions: mutInstructions };
     }
 
-    // Find max address in data section for new entries
+    // Data section addresses are dense sequential indices (allocated via
+    // nextAddress++ in TACToUdonConverter), so maxAddr + 1 is collision-free.
     let maxAddr = 0;
     for (const [, addr] of mutData) {
       if (addr > maxAddr) maxAddr = addr;
@@ -342,7 +339,9 @@ export class UdonAssembler {
     if (startIdx !== -1) {
       mutInstructions.splice(startIdx + 1, 0, ...initInstructions);
     } else {
-      // Fallback: prepend to beginning of instructions
+      console.warn(
+        "_start label not found; restricted-type init code prepended to instruction stream and may be dead code. Ensure the program has an explicit _start or event entry point.",
+      );
       mutInstructions.unshift(...initInstructions);
     }
 

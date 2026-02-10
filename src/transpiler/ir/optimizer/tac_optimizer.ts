@@ -76,11 +76,19 @@ export class TACOptimizer {
         const jumpInst = inst as ConditionalJumpInstruction;
         if (jumpInst.label.kind === TACOperandKind.Label) {
           referencedLabels.add((jumpInst.label as LabelOperand).name);
+        } else {
+          console.warn(
+            `ensureLabelIntegrity: ConditionalJump has non-label operand kind '${jumpInst.label.kind}'; skipping integrity check for this jump`,
+          );
         }
       } else if (inst.kind === TACInstructionKind.UnconditionalJump) {
         const jumpInst = inst as UnconditionalJumpInstruction;
         if (jumpInst.label.kind === TACOperandKind.Label) {
           referencedLabels.add((jumpInst.label as LabelOperand).name);
+        } else {
+          console.warn(
+            `ensureLabelIntegrity: UnconditionalJump has non-label operand kind '${jumpInst.label.kind}'; skipping integrity check for this jump`,
+          );
         }
       }
     }
