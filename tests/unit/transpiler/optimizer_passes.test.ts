@@ -1944,6 +1944,42 @@ describe("optimizer passes", () => {
     expect(optimized.length).toBeGreaterThan(instructions.length);
   });
 
+  it("keeps branch join code from ballooning during optimization", () => {
+    const cond = createVariable("cond", PrimitiveTypes.boolean);
+    const lElse = createLabel("L_else_repeat");
+    const lJoin = createLabel("L_join_repeat");
+    const vars = Array.from({ length: 24 }, (_, i) =>
+      createVariable(`v_repeat_${i}`, PrimitiveTypes.int32),
+    );
+    const result = createTemporary(999, PrimitiveTypes.int32);
+
+    const instructions = [
+      new ConditionalJumpInstruction(cond, lElse),
+      ...vars.map(
+        (v, i) =>
+          new AssignmentInstruction(v, createConstant(i, PrimitiveTypes.int32)),
+      ),
+      new UnconditionalJumpInstruction(lJoin),
+      new LabelInstruction(lElse),
+      ...vars.map(
+        (v, i) =>
+          new AssignmentInstruction(
+            v,
+            createConstant(i + 100, PrimitiveTypes.int32),
+          ),
+      ),
+      new LabelInstruction(lJoin),
+      new BinaryOpInstruction(result, vars[0], "+", vars[vars.length - 1]),
+      new ReturnInstruction(result),
+    ];
+
+    const optimizer = new TACOptimizer();
+    const optimized = optimizer.optimize(instructions);
+
+    const maxGrowth = instructions.length * 2;
+    expect(optimized.length).toBeLessThanOrEqual(maxGrowth);
+  });
+
   it("eliminates widening cast when result is only compared", () => {
     const x = createVariable("x", PrimitiveTypes.sbyte);
     const t0 = createTemporary(0, PrimitiveTypes.int32);
