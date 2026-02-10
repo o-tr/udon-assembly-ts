@@ -40,7 +40,9 @@ import {
 import {
   buildHeapUsageTreeBreakdown,
   computeHeapUsage,
+  TASM_HEAP_LIMIT,
   UASM_HEAP_LIMIT,
+  UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { TACOptimizer } from "../ir/optimizer/index.js";
@@ -66,6 +68,8 @@ export interface BatchTranspilerOptions {
   excludeDirs?: string[];
   allowCircular?: boolean;
   includeExternalDependencies?: boolean;
+  outputExtension?: string;
+  heapLimit?: number;
 }
 
 export interface BatchFileResult {
@@ -221,6 +225,18 @@ export class BatchTranspiler {
       options.optimize === true
         ? new MethodUsageAnalyzer(registry).analyze()
         : null;
+
+    const rawExt = options.outputExtension ?? "tasm";
+    const normalized = rawExt.trim().toLowerCase();
+    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const ext = sanitized.length > 0 ? sanitized : "tasm";
+    if (ext !== "tasm" && ext !== "uasm") {
+      throw new Error(
+        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
+      );
+    }
+    const heapLimit =
+      options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     for (const entryPoint of registry.getEntryPoints()) {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
@@ -396,7 +412,7 @@ export class BatchTranspiler {
       );
       let splitCandidates: Map<string, number> | undefined;
       const heapUsage = computeHeapUsage(dataSectionWithTypes);
-      if (heapUsage > UASM_HEAP_LIMIT) {
+      if (heapUsage > heapLimit) {
         try {
           splitCandidates = this.estimateSplitCandidates(
             filteredInlineClassNames,
@@ -425,9 +441,11 @@ export class BatchTranspiler {
         registry,
         splitCandidates,
         heapUsage,
+        heapLimit,
+        ext,
       );
 
-      const outPath = path.join(options.outputDir, `${entryPoint.name}.uasm`);
+      const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
@@ -450,9 +468,16 @@ export class BatchTranspiler {
     registry: ClassRegistry,
     splitCandidates?: Map<string, number>,
     heapUsage?: number,
+    heapLimit?: number,
+    outputExt?: string,
   ): void {
-    const heapLimit = UASM_HEAP_LIMIT;
+    heapLimit = heapLimit ?? UASM_HEAP_LIMIT;
     const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
+    if (outputExt === "uasm" && resolvedUsage > UASM_RUNTIME_LIMIT) {
+      console.warn(
+        `UASM heap usage ${resolvedUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPointName}.`,
+      );
+    }
     if (resolvedUsage <= heapLimit) return;
 
     const breakdown = buildHeapUsageTreeBreakdown(
@@ -462,8 +487,9 @@ export class BatchTranspiler {
       callAnalyzer,
       registry,
     );
+    const formatLabel = outputExt === "tasm" ? "TASM" : "UASM";
     const messageParts = [
-      `UASM heap usage ${resolvedUsage} exceeds limit ${heapLimit} for ${entryPointName}.`,
+      `${formatLabel} heap usage ${resolvedUsage} exceeds limit ${heapLimit} for ${entryPointName}.`,
       "Heap usage by class:",
       breakdown || "  - <no data>",
     ];

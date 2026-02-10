@@ -10,7 +10,7 @@ import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler"
 import { UASM_HEAP_LIMIT } from "../../../src/transpiler/heap_limits";
 
 describe("BatchTranspiler", () => {
-  it("should generate .uasm for entry point classes", () => {
+  it("should generate output for entry point classes", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mahjong-t2-batch-"));
     const sourceDir = path.join(tempDir, "src");
     const outputDir = path.join(tempDir, "out");
@@ -75,6 +75,7 @@ describe("BatchTranspiler", () => {
       sourceDir,
       outputDir,
       excludeDirs: [],
+      outputExtension: "uasm",
     });
 
     expect(result.outputs).toHaveLength(1);
