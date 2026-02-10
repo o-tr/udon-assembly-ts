@@ -1,15 +1,15 @@
 import {
+  type ConditionalJumpInstruction,
+  LabelInstruction,
+  ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
-  LabelInstruction,
   UnconditionalJumpInstruction,
-  ReturnInstruction,
-  type ConditionalJumpInstruction,
 } from "../tac_instruction.js";
 import {
+  createLabel,
   type LabelOperand,
   TACOperandKind,
-  createLabel,
 } from "../tac_operand.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { optimizeBlockLayout } from "./passes/block_layout.js";

@@ -5,12 +5,12 @@
 import { isVrcEventLabel } from "../vrc/event_registry.js";
 import type { UdonInstruction } from "./udon_instruction.js";
 import {
-  CopyInstruction as UdonCopyInstruction,
   ExternInstruction,
   type JumpIfFalseInstruction,
   type JumpInstruction,
   type LabelInstruction,
   PushInstruction,
+  CopyInstruction as UdonCopyInstruction,
   UdonInstructionKind,
 } from "./udon_instruction.js";
 import {
@@ -29,11 +29,7 @@ import {
  * can be added here once assembler errors are observed AND their runtime init
  * externs are verified to exist in Udon.
  */
-const NULL_ONLY_TYPES = new Set([
-  "Boolean",
-  "SystemBoolean",
-  "System.Boolean",
-]);
+const NULL_ONLY_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
 
 /**
  * Udon assembler - generates .uasm output
@@ -249,14 +245,21 @@ export class UdonAssembler {
   private lowerRestrictedTypes(
     dataSection: Array<[string, number, string, unknown]>,
     instructions: UdonInstruction[],
-  ): { dataSection: Array<[string, number, string, unknown]>; instructions: UdonInstruction[] } {
+  ): {
+    dataSection: Array<[string, number, string, unknown]>;
+    instructions: UdonInstruction[];
+  } {
     const mutData = dataSection.map(
       (entry) => [...entry] as [string, number, string, unknown],
     );
     const mutInstructions = [...instructions];
 
     // Collect restricted entries with non-null, non-default values
-    const initEntries: Array<{ name: string; udonType: string; value: unknown }> = [];
+    const initEntries: Array<{
+      name: string;
+      udonType: string;
+      value: unknown;
+    }> = [];
 
     for (const entry of mutData) {
       const [name, , type, value] = entry;
@@ -504,7 +507,9 @@ export class UdonAssembler {
               canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
             const byteAddr = labelAddresses.get(canonicalLabel);
             if (byteAddr !== undefined) {
-              lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`);
+              lines.push(
+                `    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`,
+              );
             } else {
               console.warn(
                 `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
