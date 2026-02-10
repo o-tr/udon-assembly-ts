@@ -226,7 +226,9 @@ function emitInlineDictionaryMerge(
 
   // Outer loop: iterate segments DataList
   const segCount = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(new PropertyGetInstruction(segCount, segments, "Count"));
+  this.instructions.push(
+    new PropertyGetInstruction(segCount, segments, "Count"),
+  );
   const segIdx = this.newTemp(PrimitiveTypes.int32);
   this.instructions.push(
     new AssignmentInstruction(segIdx, createConstant(0, PrimitiveTypes.int32)),

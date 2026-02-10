@@ -288,9 +288,7 @@ export class ASTToTACConverter {
         this.classMap.set(classNode.name, classNode);
         if (
           this.udonBehaviourClasses.has(classNode.name) ||
-          classNode.decorators.some(
-            (d) => d.name === "UdonBehaviour",
-          ) ||
+          classNode.decorators.some((d) => d.name === "UdonBehaviour") ||
           classNode.methods.some(
             (method) =>
               method.name === "Start" ||
