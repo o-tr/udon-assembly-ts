@@ -25,8 +25,9 @@ namespace VRC.Udon.Editor.ProgramSources
                     "[TASM] UdonEditorManager not ready. "
                     + "Import may have been triggered too early.");
             UdonEditorManager.Instance.GetNodeRegistries();
-            _editorInterface = new UdonEditorInterface();
-            _editorInterface.AddTypeResolver(new UdonBehaviourTypeResolver());
+            var iface = new UdonEditorInterface();
+            iface.AddTypeResolver(new UdonBehaviourTypeResolver());
+            _editorInterface = iface;
             _initialized = true;
         }
 
@@ -65,6 +66,8 @@ namespace VRC.Udon.Editor.ProgramSources
             string assembly, uint heapSize, IUAssemblyTypeResolver typeResolver)
         {
             const int maxRetries = 4;
+            const uint maxHeapSize = 1048576;
+            Exception lastException = null;
             for (int i = 0; i < maxRetries; i++)
             {
                 try
@@ -74,14 +77,26 @@ namespace VRC.Udon.Editor.ProgramSources
                     var assembler = new UAssemblyAssembler(factory, typeResolver);
                     return assembler.Assemble(assembly);
                 }
-                catch (IndexOutOfRangeException) when (i < maxRetries - 1)
+                catch (IndexOutOfRangeException ex)
                 {
-                    heapSize *= 2;
+                    lastException = ex;
+                    if (i >= maxRetries - 1)
+                    {
+                        break;
+                    }
+                    uint nextHeapSize = Math.Min(heapSize * 2, maxHeapSize);
+                    if (nextHeapSize == heapSize)
+                    {
+                        break;
+                    }
+                    heapSize = nextHeapSize;
                     Debug.LogWarning(
                         $"[TASM] Heap size insufficient, retrying with {heapSize}");
                 }
             }
-            throw new InvalidOperationException("Unreachable");
+            throw new InvalidOperationException(
+                "[TASM] Failed to assemble after retrying with larger heap.",
+                lastException);
         }
 
         internal static uint CalculateHeapSize(string uasmText)

@@ -227,7 +227,8 @@ export class BatchTranspiler {
         : null;
 
     const rawExt = options.outputExtension ?? "tasm";
-    const sanitized = rawExt.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const normalized = rawExt.trim().toLowerCase();
+    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
     const ext = sanitized.length > 0 ? sanitized : "tasm";
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
@@ -436,6 +437,7 @@ export class BatchTranspiler {
         splitCandidates,
         heapUsage,
         heapLimit,
+        ext,
       );
 
       const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
@@ -462,10 +464,15 @@ export class BatchTranspiler {
     splitCandidates?: Map<string, number>,
     heapUsage?: number,
     heapLimit?: number,
+    outputExt?: string,
   ): void {
     heapLimit = heapLimit ?? UASM_HEAP_LIMIT;
     const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
-    if (resolvedUsage > UASM_RUNTIME_LIMIT && resolvedUsage <= heapLimit) {
+    if (
+      outputExt === "uasm" &&
+      resolvedUsage > UASM_RUNTIME_LIMIT &&
+      resolvedUsage <= heapLimit
+    ) {
       console.warn(
         `UASM heap usage ${resolvedUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPointName}.`,
       );
