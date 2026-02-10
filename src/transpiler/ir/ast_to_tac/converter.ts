@@ -242,6 +242,7 @@ export class ASTToTACConverter {
     this.classMap = new Map();
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
+    this.inlineMethodStack = new Set();
     this.pendingTopLevelInits = [];
 
     // Separate top-level const declarations from other statements
