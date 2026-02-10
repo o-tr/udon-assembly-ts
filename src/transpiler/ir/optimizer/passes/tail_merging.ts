@@ -184,7 +184,24 @@ export const mergeTails = (
     groups.set(groupKey, group);
   }
 
+  // Scan for existing tail_merge_N labels to avoid duplicates across iterations
   let labelCounter = 0;
+  for (const inst of instructions) {
+    if (inst.kind === TACInstructionKind.Label) {
+      const labelInst = inst as LabelInstruction;
+      if (labelInst.label.kind === TACOperandKind.Label) {
+        const name = (labelInst.label as LabelOperand).name;
+        const match = /^tail_merge_(\d+)$/.exec(name);
+        if (match) {
+          const n = Number(match[1]);
+          if (n >= labelCounter) {
+            labelCounter = n + 1;
+          }
+        }
+      }
+    }
+  }
+
   const insertLabels = new Map<number, string>();
   const replaceWithJump = new Map<number, { label: string; end: number }>();
 

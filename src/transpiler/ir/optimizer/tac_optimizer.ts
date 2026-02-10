@@ -1,4 +1,16 @@
-import type { TACInstruction } from "../tac_instruction.js";
+import {
+  type TACInstruction,
+  TACInstructionKind,
+  LabelInstruction,
+  UnconditionalJumpInstruction,
+  ReturnInstruction,
+  type ConditionalJumpInstruction,
+} from "../tac_instruction.js";
+import {
+  type LabelOperand,
+  TACOperandKind,
+  createLabel,
+} from "../tac_operand.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
@@ -44,6 +56,66 @@ import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
  * TAC optimizer
  */
 export class TACOptimizer {
+  /**
+   * Ensure all labels referenced by jumps have corresponding definitions.
+   * Missing labels get a halt stub appended at the end of the instruction stream.
+   */
+  private ensureLabelIntegrity(
+    instructions: TACInstruction[],
+  ): TACInstruction[] {
+    const definedLabels = new Set<string>();
+    const referencedLabels = new Set<string>();
+
+    for (const inst of instructions) {
+      if (inst.kind === TACInstructionKind.Label) {
+        const labelInst = inst as LabelInstruction;
+        if (labelInst.label.kind === TACOperandKind.Label) {
+          definedLabels.add((labelInst.label as LabelOperand).name);
+        }
+      } else if (inst.kind === TACInstructionKind.ConditionalJump) {
+        const jumpInst = inst as ConditionalJumpInstruction;
+        if (jumpInst.label.kind === TACOperandKind.Label) {
+          referencedLabels.add((jumpInst.label as LabelOperand).name);
+        }
+      } else if (inst.kind === TACInstructionKind.UnconditionalJump) {
+        const jumpInst = inst as UnconditionalJumpInstruction;
+        if (jumpInst.label.kind === TACOperandKind.Label) {
+          referencedLabels.add((jumpInst.label as LabelOperand).name);
+        }
+      }
+    }
+
+    // Find missing labels
+    const missingLabels: string[] = [];
+    for (const label of referencedLabels) {
+      if (!definedLabels.has(label)) {
+        missingLabels.push(label);
+      }
+    }
+
+    if (missingLabels.length === 0) return instructions;
+
+    const result = [...instructions];
+    const haltLabel = "__asm_halt";
+    let needsHaltStub = false;
+
+    for (const labelName of missingLabels) {
+      console.warn(
+        `Missing label definition for '${labelName}', inserting halt stub`,
+      );
+      result.push(new LabelInstruction(createLabel(labelName)));
+      result.push(new UnconditionalJumpInstruction(createLabel(haltLabel)));
+      needsHaltStub = true;
+    }
+
+    if (needsHaltStub && !definedLabels.has(haltLabel)) {
+      result.push(new LabelInstruction(createLabel(haltLabel)));
+      result.push(new ReturnInstruction());
+    }
+
+    return result;
+  }
+
   /**
    * Apply all optimization passes
    */
@@ -160,6 +232,9 @@ export class TACOptimizer {
       if (before === after) break;
     }
 
+    // Ensure all referenced labels have definitions before temp-reuse passes
+    optimized = this.ensureLabelIntegrity(optimized);
+
     // Deduplicate temporaries holding the same constant value
     optimized = deduplicateConstants(optimized);
 
@@ -171,6 +246,9 @@ export class TACOptimizer {
 
     // Reuse local variables when lifetimes do not overlap
     optimized = reuseLocalVariables(optimized);
+
+    // Final label integrity check after all passes
+    optimized = this.ensureLabelIntegrity(optimized);
 
     return optimized;
   }

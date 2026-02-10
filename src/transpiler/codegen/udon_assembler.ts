@@ -5,16 +5,35 @@
 import { isVrcEventLabel } from "../vrc/event_registry.js";
 import type { UdonInstruction } from "./udon_instruction.js";
 import {
+  CopyInstruction as UdonCopyInstruction,
+  ExternInstruction,
   type JumpIfFalseInstruction,
   type JumpInstruction,
   type LabelInstruction,
-  type PushInstruction,
+  PushInstruction,
   UdonInstructionKind,
 } from "./udon_instruction.js";
 import {
   mapTypeScriptToCSharp,
   toUdonTypeNameWithArray,
 } from "./udon_type_resolver.js";
+
+/**
+ * Set of Udon type names that must be initialized to `null` in the data section.
+ * VRChat's UASM assembler only accepts `null` (or `this`) for these types.
+ */
+/**
+ * Types that VRChat's UASM assembler only accepts as `null` (or `this`) in the
+ * data section.  Currently only SystemBoolean is confirmed to cause assembler
+ * errors.  Other integer types (SByte, Byte, Int16, UInt16, Int64, UInt64)
+ * can be added here once assembler errors are observed AND their runtime init
+ * externs are verified to exist in Udon.
+ */
+const NULL_ONLY_TYPES = new Set([
+  "Boolean",
+  "SystemBoolean",
+  "System.Boolean",
+]);
 
 /**
  * Udon assembler - generates .uasm output
@@ -209,6 +228,117 @@ export class UdonAssembler {
   }
 
   /**
+   * Check if a type is a null-only type that cannot have literal values in the data section.
+   */
+  private isNullOnlyType(
+    type: string,
+    csharpType: string,
+    udonType: string,
+  ): boolean {
+    return (
+      NULL_ONLY_TYPES.has(type) ||
+      NULL_ONLY_TYPES.has(csharpType) ||
+      NULL_ONLY_TYPES.has(udonType)
+    );
+  }
+
+  /**
+   * Lower restricted types in the data section to `null` and generate init instructions
+   * that run after `_start` to set the correct values at runtime.
+   */
+  private lowerRestrictedTypes(
+    dataSection: Array<[string, number, string, unknown]>,
+    instructions: UdonInstruction[],
+  ): { dataSection: Array<[string, number, string, unknown]>; instructions: UdonInstruction[] } {
+    const mutData = dataSection.map(
+      (entry) => [...entry] as [string, number, string, unknown],
+    );
+    const mutInstructions = [...instructions];
+
+    // Collect restricted entries with non-null, non-default values
+    const initEntries: Array<{ name: string; udonType: string; value: unknown }> = [];
+
+    for (const entry of mutData) {
+      const [name, , type, value] = entry;
+      const csharpType = mapTypeScriptToCSharp(type);
+      const udonType = this.resolveUdonTypeName(type);
+
+      if (!this.isNullOnlyType(type, csharpType, udonType)) continue;
+      if (value === null) continue;
+
+      // For booleans, `false` is the default (null represents false in Udon VM)
+      const isDefault = value === false;
+
+      // Set data section value to null
+      entry[3] = null;
+
+      if (!isDefault) {
+        initEntries.push({ name, udonType, value });
+      }
+    }
+
+    if (initEntries.length === 0) {
+      return { dataSection: mutData, instructions: mutInstructions };
+    }
+
+    // Find max address in data section for new entries
+    let maxAddr = 0;
+    for (const [, addr] of mutData) {
+      if (addr > maxAddr) maxAddr = addr;
+    }
+    let nextAddr = maxAddr + 1;
+
+    // Track helper data entries to deduplicate (shared across all boolean true inits)
+    let int32ZeroName: string | null = null;
+    let eqExternName: string | null = null;
+
+    const initInstructions: UdonInstruction[] = [];
+
+    for (const { name } of initEntries) {
+      // Boolean true: use (0 == 0) → true
+      if (int32ZeroName === null) {
+        int32ZeroName = "__asm_restrict_int32_0";
+        mutData.push([int32ZeroName, nextAddr++, "Int32", 0]);
+      }
+      if (eqExternName === null) {
+        eqExternName = "__asm_restrict_eq_extern";
+        mutData.push([
+          eqExternName,
+          nextAddr++,
+          "String",
+          "SystemInt32.__op_Equality__SystemInt32_SystemInt32__SystemBoolean",
+        ]);
+      }
+      // PUSH int32_0, PUSH int32_0, EXTERN eq, PUSH target, COPY
+      initInstructions.push(new PushInstruction(int32ZeroName));
+      initInstructions.push(new PushInstruction(int32ZeroName));
+      initInstructions.push(new ExternInstruction(eqExternName, true));
+      initInstructions.push(new PushInstruction(name));
+      initInstructions.push(new UdonCopyInstruction());
+    }
+
+    if (initInstructions.length === 0) {
+      return { dataSection: mutData, instructions: mutInstructions };
+    }
+
+    // Find _start label and insert init instructions after it
+    const startIdx = mutInstructions.findIndex(
+      (inst) =>
+        inst.kind === UdonInstructionKind.Label &&
+        (inst as LabelInstruction).name === "_start",
+    );
+
+    if (startIdx !== -1) {
+      mutInstructions.splice(startIdx + 1, 0, ...initInstructions);
+    } else {
+      // Fallback: prepend to beginning of instructions
+      mutInstructions.unshift(...initInstructions);
+    }
+
+    return { dataSection: mutData, instructions: mutInstructions };
+  }
+
+  /**
    * Generate .uasm file content
    */
   assemble(
@@ -219,6 +349,15 @@ export class UdonAssembler {
     _behaviourSyncMode?: string,
     exportLabels?: Set<string>,
   ): string {
+    // Lower restricted types before assembly
+    let effectiveData = dataSection;
+    let effectiveInstructions = instructions;
+    if (dataSection && dataSection.length > 0) {
+      const lowered = this.lowerRestrictedTypes(dataSection, instructions);
+      effectiveData = lowered.dataSection;
+      effectiveInstructions = lowered.instructions;
+    }
+
     const lines: string[] = [];
 
     // Data section
@@ -226,9 +365,9 @@ export class UdonAssembler {
     lines.push("");
 
     // Data definitions (variables and constants)
-    if (dataSection && dataSection.length > 0) {
+    if (effectiveData && effectiveData.length > 0) {
       // Sort by address to ensure consistent output
-      const sortedData = [...dataSection].sort((a, b) => a[1] - b[1]);
+      const sortedData = [...effectiveData].sort((a, b) => a[1] - b[1]);
 
       for (const [name, _address, type, value] of sortedData) {
         // Variable declaration: name: %Type, initialValue
@@ -309,12 +448,12 @@ export class UdonAssembler {
     // behaviourSyncMode directive intentionally omitted
     // Resolve labels to byte addresses and canonical labels
     const { labelAddresses, canonicalLabels } = this.computeLabelAddressInfo(
-      instructions,
+      effectiveInstructions,
       exportLabels,
     );
 
     // Convert instructions to text, replacing label references with addresses
-    for (const inst of instructions) {
+    for (const inst of effectiveInstructions) {
       if (inst.kind === UdonInstructionKind.Label) {
         // Labels appear on their own line
         const labelName = (inst as LabelInstruction).name;
@@ -333,14 +472,22 @@ export class UdonAssembler {
       } else if (inst.kind === UdonInstructionKind.Jump) {
         const jumpInst = inst as JumpInstruction;
         if (typeof jumpInst.address === "string") {
-          // Replace label with byte address
-          const canonicalLabel =
-            canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
-          const byteAddr = labelAddresses.get(canonicalLabel);
-          if (byteAddr !== undefined) {
-            lines.push(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
-          } else {
+          if (/^0x[0-9A-Fa-f]+$/.test(jumpInst.address)) {
+            // Already a hex address (e.g. 0xFFFFFFFC halt address), pass through
             lines.push(inst.toString());
+          } else {
+            // Replace label with byte address
+            const canonicalLabel =
+              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+            const byteAddr = labelAddresses.get(canonicalLabel);
+            if (byteAddr !== undefined) {
+              lines.push(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
+            } else {
+              console.warn(
+                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+              );
+              lines.push("    JUMP, 0xFFFFFFFC");
+            }
           }
         } else {
           lines.push(inst.toString());
@@ -348,14 +495,22 @@ export class UdonAssembler {
       } else if (inst.kind === UdonInstructionKind.JumpIfFalse) {
         const jumpInst = inst as JumpIfFalseInstruction;
         if (typeof jumpInst.address === "string") {
-          // Replace label with byte address
-          const canonicalLabel =
-            canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
-          const byteAddr = labelAddresses.get(canonicalLabel);
-          if (byteAddr !== undefined) {
-            lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`);
-          } else {
+          if (/^0x[0-9A-Fa-f]+$/.test(jumpInst.address)) {
+            // Already a hex address, pass through
             lines.push(inst.toString());
+          } else {
+            // Replace label with byte address
+            const canonicalLabel =
+              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+            const byteAddr = labelAddresses.get(canonicalLabel);
+            if (byteAddr !== undefined) {
+              lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`);
+            } else {
+              console.warn(
+                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+              );
+              lines.push("    JUMP_IF_FALSE, 0xFFFFFFFC");
+            }
           }
         } else {
           lines.push(inst.toString());
