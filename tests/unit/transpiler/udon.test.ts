@@ -286,7 +286,7 @@ describe("Udon Assembler", () => {
     const assembler = new UdonAssembler();
     const instructions = [
       new LabelInstruction("_start"),
-      new JumpInstruction(0xFFFFFFFC),
+      new JumpInstruction(0xfffffffc),
     ];
     const dataSection: Array<[string, number, string, unknown]> = [
       ["__asm_restrict_int32_0", 0, "Int32", 123],
@@ -311,7 +311,7 @@ describe("Udon Assembler", () => {
       new JumpIfFalseInstruction("0x10"),
       new JumpInstruction("0x10"),
       new LabelInstruction("0x10"),
-      new JumpInstruction(0xFFFFFFFC),
+      new JumpInstruction(0xfffffffc),
     ];
 
     const uasm = assembler.assemble(instructions, [], []);

@@ -511,16 +511,16 @@ export class UdonAssembler {
       } else if (inst.kind === UdonInstructionKind.JumpIfFalse) {
         const jumpInst = inst as JumpIfFalseInstruction;
         if (typeof jumpInst.address === "number") {
-          lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(jumpInst.address)}`);
+          lines.push(
+            `    JUMP_IF_FALSE, ${this.formatHexAddress(jumpInst.address)}`,
+          );
         } else {
           // Replace label with byte address
           const canonicalLabel =
             canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
           const byteAddr = labelAddresses.get(canonicalLabel);
           if (byteAddr !== undefined) {
-            lines.push(
-              `    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`,
-            );
+            lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`);
           } else {
             console.warn(
               `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
