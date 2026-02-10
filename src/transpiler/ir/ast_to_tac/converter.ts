@@ -58,6 +58,7 @@ import {
   maybeTrackInlineInstanceAssignment,
   tryResolveUnitySelfReference,
   visitInlineConstructor,
+  visitInlineInstanceMethodCall,
   visitInlineStaticMethodCall,
 } from "./helpers/inline.js";
 import {
@@ -179,7 +180,7 @@ export class ASTToTACConverter {
   entryPointClasses: Set<string> = new Set();
   inlineInstanceMap: Map<string, { prefix: string; className: string }> =
     new Map();
-  inlineStaticMethodStack: Set<string> = new Set();
+  inlineMethodStack: Set<string> = new Set();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
@@ -241,6 +242,7 @@ export class ASTToTACConverter {
     this.classMap = new Map();
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
+    this.inlineMethodStack = new Set();
     this.pendingTopLevelInits = [];
 
     // Separate top-level const declarations from other statements
@@ -286,6 +288,8 @@ export class ASTToTACConverter {
         const classNode = statement as ClassDeclarationNode;
         this.classMap.set(classNode.name, classNode);
         if (
+          this.udonBehaviourClasses.has(classNode.name) ||
+          classNode.decorators.some((d) => d.name === "UdonBehaviour") ||
           classNode.methods.some(
             (method) =>
               method.name === "Start" ||
@@ -458,6 +462,7 @@ export class ASTToTACConverter {
 
   visitInlineConstructor = visitInlineConstructor;
   visitInlineStaticMethodCall = visitInlineStaticMethodCall;
+  visitInlineInstanceMethodCall = visitInlineInstanceMethodCall;
   maybeTrackInlineInstanceAssignment = maybeTrackInlineInstanceAssignment;
   mapInlineProperty = mapInlineProperty;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;

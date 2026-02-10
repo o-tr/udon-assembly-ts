@@ -29,6 +29,7 @@ import {
 import {
   type ConstantOperand,
   createConstant,
+  createVariable,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
@@ -82,6 +83,46 @@ export function assignToTarget(
         return value;
       }
     }
+    // Entry point class self-property WRITE: direct copy
+    if (
+      propAccess.object.kind === ASTNodeKind.ThisExpression &&
+      this.currentClassName &&
+      this.entryPointClasses.has(this.currentClassName) &&
+      !this.currentInlineContext &&
+      !this.currentThisOverride
+    ) {
+      const classNode = this.classMap.get(this.currentClassName);
+      const prop = classNode?.properties.find(
+        (p) => p.name === propAccess.property,
+      );
+      if (prop) {
+        const targetVar = createVariable(propAccess.property, prop.type);
+        this.instructions.push(new CopyInstruction(targetVar, value));
+        this.maybeTrackInlineInstanceAssignment(targetVar, value);
+        const callback = this.resolveFieldChangeCallback(
+          propAccess.object,
+          propAccess.property,
+        );
+        if (callback) {
+          // Try to inline the callback method; fall back to MethodCallInstruction
+          const inlined = this.visitInlineInstanceMethodCall(
+            this.currentClassName,
+            callback,
+            [],
+          );
+          if (inlined == null) {
+            const thisVar = createVariable(
+              "this",
+              this.typeMapper.mapTypeScriptType(this.currentClassName),
+            );
+            this.instructions.push(
+              new MethodCallInstruction(undefined, thisVar, callback, []),
+            );
+          }
+        }
+        return value;
+      }
+    }
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const instanceInfo = this.inlineInstanceMap.get(
         (propAccess.object as IdentifierNode).name,
@@ -117,6 +158,23 @@ export function assignToTarget(
       return value;
     }
     const object = this.visitExpression(propAccess.object);
+    // Post-evaluation inline instance resolution for WRITE
+    if (object.kind === TACOperandKind.Variable) {
+      const instanceInfo = this.inlineInstanceMap.get(
+        (object as VariableOperand).name,
+      );
+      if (instanceInfo) {
+        const mapped = this.mapInlineProperty(
+          instanceInfo.className,
+          instanceInfo.prefix,
+          propAccess.property,
+        );
+        if (mapped) {
+          this.instructions.push(new CopyInstruction(mapped, value));
+          return value;
+        }
+      }
+    }
     this.instructions.push(
       new PropertySetInstruction(object, propAccess.property, value),
     );

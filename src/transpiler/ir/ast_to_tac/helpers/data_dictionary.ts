@@ -66,13 +66,7 @@ export function emitDictionaryFromProperties(
       [listResult],
     );
     if (inlineResult) return inlineResult;
-    const mergeResult = this.newTemp(ExternTypes.dataDictionary);
-    this.instructions.push(
-      new CallInstruction(mergeResult, "DataDictionaryHelpers.Merge", [
-        listResult,
-      ]),
-    );
-    return mergeResult;
+    return emitInlineDictionaryMerge.call(this, listResult);
   }
 
   const dictResult = this.newTemp(ExternTypes.dataDictionary);
@@ -207,6 +201,117 @@ export function emitDataDictionaryEntries(
   );
   this.instructions.push(new UnconditionalJumpInstruction(loopStart));
   this.instructions.push(new LabelInstruction(loopEnd));
+
+  return result;
+}
+
+/**
+ * Emit inline dictionary merge when DataDictionaryHelpers is not available.
+ * Iterates the DataList of DataToken-wrapped DataDictionaries and copies
+ * all entries into a single result DataDictionary.
+ */
+function emitInlineDictionaryMerge(
+  this: ASTToTACConverter,
+  segments: TACOperand,
+): TACOperand {
+  const dictCtorSig = this.requireExternSignature(
+    "DataDictionary",
+    "ctor",
+    "method",
+    [],
+    "DataDictionary",
+  );
+  const result = this.newTemp(ExternTypes.dataDictionary);
+  this.instructions.push(new CallInstruction(result, dictCtorSig, []));
+
+  // Outer loop: iterate segments DataList
+  const segCount = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new PropertyGetInstruction(segCount, segments, "Count"),
+  );
+  const segIdx = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new AssignmentInstruction(segIdx, createConstant(0, PrimitiveTypes.int32)),
+  );
+
+  const outerStart = this.newLabel("merge_outer");
+  const outerEnd = this.newLabel("merge_outer_end");
+  this.instructions.push(new LabelInstruction(outerStart));
+  const outerCond = this.newTemp(PrimitiveTypes.boolean);
+  this.instructions.push(
+    new BinaryOpInstruction(outerCond, segIdx, "<", segCount),
+  );
+  // ConditionalJumpInstruction = JUMP_IF_FALSE: exits loop when segIdx >= segCount
+  this.instructions.push(new ConditionalJumpInstruction(outerCond, outerEnd));
+
+  // Get segment DataToken and unwrap to DataDictionary
+  const segToken = this.newTemp(ExternTypes.dataToken);
+  this.instructions.push(
+    new MethodCallInstruction(segToken, segments, "get_Item", [segIdx]),
+  );
+  const segDict = this.newTemp(ExternTypes.dataDictionary);
+  this.instructions.push(
+    new PropertyGetInstruction(segDict, segToken, "DataDictionary"),
+  );
+
+  // Inner loop: iterate keys of segment dictionary
+  const keys = this.newTemp(ExternTypes.dataList);
+  this.instructions.push(
+    new MethodCallInstruction(keys, segDict, "GetKeys", []),
+  );
+  const keyCount = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(new PropertyGetInstruction(keyCount, keys, "Count"));
+  const keyIdx = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new AssignmentInstruction(keyIdx, createConstant(0, PrimitiveTypes.int32)),
+  );
+
+  const innerStart = this.newLabel("merge_inner");
+  const innerEnd = this.newLabel("merge_inner_end");
+  this.instructions.push(new LabelInstruction(innerStart));
+  const innerCond = this.newTemp(PrimitiveTypes.boolean);
+  this.instructions.push(
+    new BinaryOpInstruction(innerCond, keyIdx, "<", keyCount),
+  );
+  // ConditionalJumpInstruction = JUMP_IF_FALSE: exits loop when keyIdx >= keyCount
+  this.instructions.push(new ConditionalJumpInstruction(innerCond, innerEnd));
+
+  // Copy key-value pair
+  const key = this.newTemp(ExternTypes.dataToken);
+  this.instructions.push(
+    new MethodCallInstruction(key, keys, "get_Item", [keyIdx]),
+  );
+  const value = this.newTemp(ExternTypes.dataToken);
+  this.instructions.push(
+    new MethodCallInstruction(value, segDict, "GetValue", [key]),
+  );
+  this.instructions.push(
+    new MethodCallInstruction(undefined, result, "SetValue", [key, value]),
+  );
+
+  // Inner loop increment
+  this.instructions.push(
+    new BinaryOpInstruction(
+      keyIdx,
+      keyIdx,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  this.instructions.push(new UnconditionalJumpInstruction(innerStart));
+  this.instructions.push(new LabelInstruction(innerEnd));
+
+  // Outer loop increment
+  this.instructions.push(
+    new BinaryOpInstruction(
+      segIdx,
+      segIdx,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  this.instructions.push(new UnconditionalJumpInstruction(outerStart));
+  this.instructions.push(new LabelInstruction(outerEnd));
 
   return result;
 }
