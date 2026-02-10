@@ -123,12 +123,16 @@ export const simplifyJumps = (
     ) {
       const label = (inst as unknown as { label: TACOperand }).label;
       if (label.kind === TACOperandKind.Label) {
-        const labelName = canonicalLabel((label as LabelOperand).name);
-        const resolvedName = resolved.get(labelName) ?? labelName;
+        const originalName = (label as LabelOperand).name;
+        const canonicalName = canonicalLabel(originalName);
+        const resolvedName = resolved.get(canonicalName) ?? canonicalName;
         if (isJumpToNextLabel(i, resolvedName)) {
           continue;
         }
-        if (resolvedName !== labelName) {
+        // Rewrite when either alias canonicalization or jump-threading changes
+        // the effective target. Without this, we can keep stale alias names
+        // after dropping alias label definitions.
+        if (resolvedName !== originalName) {
           const resolvedLabel = createLabel(resolvedName);
           if (inst.kind === TACInstructionKind.UnconditionalJump) {
             result.push(new UnconditionalJumpInstruction(resolvedLabel));

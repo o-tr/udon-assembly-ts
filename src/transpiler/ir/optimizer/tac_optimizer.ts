@@ -130,7 +130,10 @@ export class TACOptimizer {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
-    const runAnalysisPasses = (current: TACInstruction[]): TACInstruction[] => {
+    const runAnalysisPasses = (
+      current: TACInstruction[],
+      enableSSAWindow: boolean,
+    ): TACInstruction[] => {
       let next = current;
 
       // Apply constant folding
@@ -167,10 +170,12 @@ export class TACOptimizer {
       next = reassociate(next);
 
       // SSA window: build SSA, run SSA-aware passes, then deconstruct
-      next = buildSSA(next);
-      next = performPRE(next, { useSSA: true });
-      next = globalValueNumbering(next, { useSSA: true });
-      next = deconstructSSA(next);
+      if (enableSSAWindow) {
+        const ssa = buildSSA(next);
+        const ssaPre = performPRE(ssa, { useSSA: true });
+        const ssaGvn = globalValueNumbering(ssaPre, { useSSA: true });
+        next = deconstructSSA(ssaGvn);
+      }
 
       // Optimize tail calls (call followed immediately by return)
       next = optimizeTailCalls(next);
@@ -231,7 +236,7 @@ export class TACOptimizer {
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const before = optimized.map((inst) => inst.toString()).join("\n");
-      optimized = runAnalysisPasses(optimized);
+      optimized = runAnalysisPasses(optimized, iteration === 0);
       const after = optimized.map((inst) => inst.toString()).join("\n");
       if (before === after) break;
     }
