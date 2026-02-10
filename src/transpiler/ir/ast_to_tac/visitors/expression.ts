@@ -1038,7 +1038,8 @@ export function visitPropertyAccessExpression(
 
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
-      this.currentInlineContext
+      this.currentInlineContext &&
+      !this.currentThisOverride
     ) {
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,

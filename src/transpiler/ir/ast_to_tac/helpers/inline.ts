@@ -12,6 +12,7 @@ import {
   type BinaryExpressionNode,
   type BlockStatementNode,
   type CallExpressionNode,
+  type ClassDeclarationNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
@@ -96,6 +97,7 @@ export function visitInlineConstructor(
     const value = this.visitExpression(prop.initializer);
     this.inSerializeFieldInitializer = previousSerializeFieldState;
     this.instructions.push(new AssignmentInstruction(propVar, value));
+    this.maybeTrackInlineInstanceAssignment(propVar, value);
   }
 
   if (classNode.constructor) {
@@ -249,6 +251,111 @@ export function visitInlineInstanceMethodCall(
 
   this.instructions.push(new LabelInstruction(returnLabel));
   return result;
+}
+
+export function visitInlineInstanceMethodCallWithContext(
+  this: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  methodName: string,
+  args: TACOperand[],
+): TACOperand | null {
+  const inlineKey = `${className}::${methodName}`;
+  if (this.inlineMethodStack.has(inlineKey)) {
+    return null; // recursion detected → fallback
+  }
+
+  let classNode = this.classMap.get(className);
+  if (!classNode && this.classRegistry) {
+    const meta = this.classRegistry.getClass(className);
+    if (meta && !this.classRegistry.isStub(className)) {
+      classNode = meta.node;
+      this.classMap.set(className, classNode);
+    }
+  }
+  if (!classNode) return null;
+
+  const method = classNode.methods.find(
+    (candidate) => candidate.name === methodName && !candidate.isStatic,
+  );
+  if (!method) return null;
+
+  const returnType = method.returnType;
+  const result = this.newTemp(returnType);
+  const returnLabel = this.newLabel("inline_return");
+
+  this.symbolTable.enterScope();
+  for (let i = 0; i < method.parameters.length; i++) {
+    const param = method.parameters[i];
+    if (!this.symbolTable.hasInCurrentScope(param.name)) {
+      this.symbolTable.addSymbol(param.name, param.type, true, false);
+    }
+    if (args[i]) {
+      this.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          args[i],
+        ),
+      );
+    }
+  }
+
+  const savedParamExportMap = this.currentParamExportMap;
+  const savedMethodLayout = this.currentMethodLayout;
+  const savedInlineContext = this.currentInlineContext;
+  const savedThisOverride = this.currentThisOverride;
+  this.currentParamExportMap = new Map();
+  this.currentMethodLayout = null;
+  this.currentThisOverride = null;
+  this.currentInlineContext = { className, instancePrefix };
+
+  this.inlineMethodStack.add(inlineKey);
+  this.inlineReturnStack.push({ returnVar: result, returnLabel });
+  try {
+    this.visitBlockStatement(method.body);
+  } finally {
+    this.inlineReturnStack.pop();
+    this.inlineMethodStack.delete(inlineKey);
+    this.currentParamExportMap = savedParamExportMap;
+    this.currentMethodLayout = savedMethodLayout;
+    this.currentInlineContext = savedInlineContext;
+    this.currentThisOverride = savedThisOverride;
+  }
+  this.symbolTable.exitScope();
+
+  this.instructions.push(new LabelInstruction(returnLabel));
+  return result;
+}
+
+/**
+ * Emit property initializers and constructor body for an entry-point class.
+ * Shared by visitClassDeclaration (Start method path) and generateEntryPoint (no-Start path).
+ */
+export function emitEntryPointPropertyInit(
+  this: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+): void {
+  for (const prop of classNode.properties) {
+    if (!prop.initializer || prop.isStatic) continue;
+    const previousSerializeFieldState = this.inSerializeFieldInitializer;
+    this.inSerializeFieldInitializer = !!prop.isSerializeField;
+    const value = this.visitExpression(prop.initializer);
+    this.inSerializeFieldInitializer = previousSerializeFieldState;
+    const targetVar = createVariable(prop.name, prop.type);
+    this.instructions.push(new CopyInstruction(targetVar, value));
+    this.maybeTrackInlineInstanceAssignment(targetVar, value);
+  }
+  if (classNode.constructor?.body) {
+    this.symbolTable.enterScope();
+    for (const param of classNode.constructor.parameters) {
+      const paramType = this.typeMapper.mapTypeScriptType(param.type);
+      if (!this.symbolTable.hasInCurrentScope(param.name)) {
+        this.symbolTable.addSymbol(param.name, paramType, true, false);
+      }
+    }
+    this.visitStatement(classNode.constructor.body);
+    this.symbolTable.exitScope();
+  }
 }
 
 export function maybeTrackInlineInstanceAssignment(

@@ -715,7 +715,15 @@ export function visitClassDeclaration(
   const isUdonBehaviourClass =
     classLayout !== null ||
     node.decorators.some((decorator) => decorator.name === "UdonBehaviour");
-  for (const method of node.methods) {
+  const startIndex = node.methods.findIndex((m) => m.name === "Start");
+  const orderedMethods =
+    startIndex >= 0
+      ? [
+          node.methods[startIndex],
+          ...node.methods.filter((_, i) => i !== startIndex),
+        ]
+      : [...node.methods];
+  for (const method of orderedMethods) {
     this.currentMethodName = method.name;
     const eventDef = getVrcEventDefinition(method.name);
     let labelName = eventDef
@@ -803,6 +811,11 @@ export function visitClassDeclaration(
         this.visitVariableDeclaration(tlc);
       }
       this.pendingTopLevelInits = [];
+    }
+
+    // Entry-point class property initialization + constructor body in _start/Start
+    if (method.name === "Start" && this.entryPointClasses.has(node.name)) {
+      this.emitEntryPointPropertyInit(node);
     }
 
     this.visitBlockStatement(method.body);

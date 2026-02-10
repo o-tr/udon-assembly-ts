@@ -52,6 +52,7 @@ import {
 import { requireExternSignature } from "./helpers/extern.js";
 import {
   collectRecursiveLocals,
+  emitEntryPointPropertyInit,
   emitRecursiveEpilogue,
   emitRecursivePrologue,
   mapInlineProperty,
@@ -59,6 +60,7 @@ import {
   tryResolveUnitySelfReference,
   visitInlineConstructor,
   visitInlineInstanceMethodCall,
+  visitInlineInstanceMethodCallWithContext,
   visitInlineStaticMethodCall,
 } from "./helpers/inline.js";
 import {
@@ -346,23 +348,28 @@ export class ASTToTACConverter {
       return;
     }
 
-    // No Start method: generate _start with non-literal const initialization
-    if (this.pendingTopLevelInits.length > 0) {
-      const startLabel = createLabel("_start");
-      this.instructions.push(new LabelInstruction(startLabel));
-      for (const tlc of this.pendingTopLevelInits) {
-        this.visitStatement(tlc);
-      }
-      this.pendingTopLevelInits = [];
-      this.instructions.push(new ReturnInstruction());
-      return;
-    }
-
-    // Always generate _start label to safely handle initialization,
-    // If not, just return (no-op start).
-    // This ensures _start event is valid.
+    // No Start method: generate _start with initialization
     const startLabel = createLabel("_start");
     this.instructions.push(new LabelInstruction(startLabel));
+
+    // 1. pendingTopLevelInits
+    for (const tlc of this.pendingTopLevelInits) {
+      this.visitStatement(tlc);
+    }
+    this.pendingTopLevelInits = [];
+
+    // 2. Entry-point class property initialization + constructor body
+    for (const [name, classNode] of this.classMap) {
+      if (!this.entryPointClasses.has(name)) continue;
+      const savedClassName = this.currentClassName;
+      this.currentClassName = name;
+      try {
+        this.emitEntryPointPropertyInit(classNode);
+      } finally {
+        this.currentClassName = savedClassName;
+      }
+    }
+
     this.instructions.push(new ReturnInstruction());
   }
 
@@ -463,7 +470,10 @@ export class ASTToTACConverter {
   visitInlineConstructor = visitInlineConstructor;
   visitInlineStaticMethodCall = visitInlineStaticMethodCall;
   visitInlineInstanceMethodCall = visitInlineInstanceMethodCall;
+  visitInlineInstanceMethodCallWithContext =
+    visitInlineInstanceMethodCallWithContext;
   maybeTrackInlineInstanceAssignment = maybeTrackInlineInstanceAssignment;
+  emitEntryPointPropertyInit = emitEntryPointPropertyInit;
   mapInlineProperty = mapInlineProperty;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;
   collectRecursiveLocals = collectRecursiveLocals;

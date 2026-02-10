@@ -71,7 +71,8 @@ export function assignToTarget(
     const propAccess = target as PropertyAccessExpressionNode;
     if (
       propAccess.object.kind === ASTNodeKind.ThisExpression &&
-      this.currentInlineContext
+      this.currentInlineContext &&
+      !this.currentThisOverride
     ) {
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
@@ -80,6 +81,7 @@ export function assignToTarget(
       );
       if (mapped) {
         this.instructions.push(new CopyInstruction(mapped, value));
+        this.maybeTrackInlineInstanceAssignment(mapped, value);
         return value;
       }
     }
