@@ -26,7 +26,6 @@ import {
   type NameofExpressionNode,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
-  type ObjectLiteralPropertyNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   type SuperExpressionNode,
@@ -56,6 +55,8 @@ import {
   createConstant,
   createVariable,
   type TACOperand,
+  TACOperandKind,
+  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
@@ -1047,6 +1048,21 @@ export function visitPropertyAccessExpression(
       if (mapped) return mapped;
     }
 
+    // Entry point class self-property READ: direct variable reference
+    if (
+      node.object.kind === ASTNodeKind.ThisExpression &&
+      this.currentClassName &&
+      this.entryPointClasses.has(this.currentClassName) &&
+      !this.currentInlineContext &&
+      !this.currentThisOverride
+    ) {
+      const classNode = this.classMap.get(this.currentClassName);
+      const prop = classNode?.properties.find((p) => p.name === node.property);
+      if (prop) {
+        return createVariable(node.property, prop.type);
+      }
+    }
+
     if (node.object.kind === ASTNodeKind.Identifier) {
       const instanceInfo = this.inlineInstanceMap.get(
         (node.object as IdentifierNode).name,
@@ -1088,6 +1104,22 @@ export function visitPropertyAccessExpression(
     }
 
     const object = this.visitExpression(node.object);
+
+    // Post-evaluation inline instance resolution for chained access
+    if (object.kind === TACOperandKind.Variable) {
+      const instanceInfo = this.inlineInstanceMap.get(
+        (object as VariableOperand).name,
+      );
+      if (instanceInfo) {
+        const mapped = this.mapInlineProperty(
+          instanceInfo.className,
+          instanceInfo.prefix,
+          node.property,
+        );
+        if (mapped) return mapped;
+      }
+    }
+
     const objectType = this.getOperandType(object);
     const resolvedBaseType = resolveTypeFromNode(this, node.object);
     const isSet =
@@ -1175,59 +1207,7 @@ export function visitObjectLiteralExpression(
   this: ASTToTACConverter,
   node: ObjectLiteralExpressionNode,
 ): TACOperand {
-  const hasSpread = node.properties.some((prop) => prop.kind === "spread");
-  if (!hasSpread) {
-    return this.emitDictionaryFromProperties(node.properties);
-  }
-
-  const listResult = this.newTemp(ExternTypes.dataList);
-  const listCtorSig = this.requireExternSignature(
-    "DataList",
-    "ctor",
-    "method",
-    [],
-    "DataList",
-  );
-  this.instructions.push(new CallInstruction(listResult, listCtorSig, []));
-
-  let pendingProps: ObjectLiteralPropertyNode[] = [];
-  const flushPending = (): void => {
-    if (pendingProps.length === 0) return;
-    const dictSegment = this.emitDictionaryFromProperties(pendingProps);
-    const dictToken = this.wrapDataToken(dictSegment);
-    this.instructions.push(
-      new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
-    );
-    pendingProps = [];
-  };
-
-  for (const prop of node.properties) {
-    if (prop.kind === "spread") {
-      flushPending();
-      const spreadValue = this.visitExpression(prop.value);
-      const spreadToken = this.wrapDataToken(spreadValue);
-      this.instructions.push(
-        new MethodCallInstruction(undefined, listResult, "Add", [spreadToken]),
-      );
-      continue;
-    }
-    pendingProps.push(prop);
-  }
-  flushPending();
-
-  const inlineResult = this.visitInlineStaticMethodCall(
-    "DataDictionaryHelpers",
-    "Merge",
-    [listResult],
-  );
-  if (inlineResult) return inlineResult;
-  const mergeResult = this.newTemp(ExternTypes.dataDictionary);
-  this.instructions.push(
-    new CallInstruction(mergeResult, "DataDictionaryHelpers.Merge", [
-      listResult,
-    ]),
-  );
-  return mergeResult;
+  return this.emitDictionaryFromProperties(node.properties);
 }
 
 export function visitDeleteExpression(

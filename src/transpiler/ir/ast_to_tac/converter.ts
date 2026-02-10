@@ -58,6 +58,7 @@ import {
   maybeTrackInlineInstanceAssignment,
   tryResolveUnitySelfReference,
   visitInlineConstructor,
+  visitInlineInstanceMethodCall,
   visitInlineStaticMethodCall,
 } from "./helpers/inline.js";
 import {
@@ -286,6 +287,10 @@ export class ASTToTACConverter {
         const classNode = statement as ClassDeclarationNode;
         this.classMap.set(classNode.name, classNode);
         if (
+          this.udonBehaviourClasses.has(classNode.name) ||
+          classNode.decorators.some(
+            (d) => d.name === "UdonBehaviour",
+          ) ||
           classNode.methods.some(
             (method) =>
               method.name === "Start" ||
@@ -458,6 +463,7 @@ export class ASTToTACConverter {
 
   visitInlineConstructor = visitInlineConstructor;
   visitInlineStaticMethodCall = visitInlineStaticMethodCall;
+  visitInlineInstanceMethodCall = visitInlineInstanceMethodCall;
   maybeTrackInlineInstanceAssignment = maybeTrackInlineInstanceAssignment;
   mapInlineProperty = mapInlineProperty;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;

@@ -1185,6 +1185,22 @@ export function visitCallExpression(
       );
       return VOID_RETURN;
     }
+    // Entry point class self-method: inline the body
+    if (
+      propAccess.object.kind === ASTNodeKind.ThisExpression &&
+      this.currentClassName &&
+      this.entryPointClasses.has(this.currentClassName) &&
+      !this.currentInlineContext &&
+      !this.currentThisOverride
+    ) {
+      const inlineResult = this.visitInlineInstanceMethodCall(
+        this.currentClassName,
+        propAccess.property,
+        evaluatedArgs,
+      );
+      if (inlineResult != null) return inlineResult;
+    }
+
     let resolvedReturnType: TypeSymbol | null = null;
     if (this.classRegistry) {
       const classMeta = this.classRegistry.getClass(objectType.name);

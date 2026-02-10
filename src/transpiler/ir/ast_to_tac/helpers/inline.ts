@@ -183,6 +183,64 @@ export function visitInlineStaticMethodCall(
   return result;
 }
 
+export function visitInlineInstanceMethodCall(
+  this: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  args: TACOperand[],
+): TACOperand | null {
+  const inlineKey = `${className}::${methodName}`;
+  if (this.inlineStaticMethodStack.has(inlineKey)) {
+    return null; // recursion detected → fallback
+  }
+  let classNode = this.classMap.get(className);
+  if (!classNode && this.classRegistry) {
+    const meta = this.classRegistry.getClass(className);
+    if (meta && !this.classRegistry.isStub(className)) {
+      classNode = meta.node;
+      this.classMap.set(className, classNode);
+    }
+  }
+  if (!classNode) return null;
+  const method = classNode.methods.find(
+    (candidate) => candidate.name === methodName && !candidate.isStatic,
+  );
+  if (!method) return null;
+
+  const returnType = method.returnType;
+  const result = this.newTemp(returnType);
+  const returnLabel = this.newLabel("inline_return");
+
+  this.symbolTable.enterScope();
+  for (let i = 0; i < method.parameters.length; i++) {
+    const param = method.parameters[i];
+    if (!this.symbolTable.hasInCurrentScope(param.name)) {
+      this.symbolTable.addSymbol(param.name, param.type, true, false);
+    }
+    if (args[i]) {
+      this.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          args[i],
+        ),
+      );
+    }
+  }
+
+  this.inlineStaticMethodStack.add(inlineKey);
+  this.inlineReturnStack.push({ returnVar: result, returnLabel });
+  try {
+    this.visitBlockStatement(method.body);
+  } finally {
+    this.inlineReturnStack.pop();
+    this.inlineStaticMethodStack.delete(inlineKey);
+  }
+  this.symbolTable.exitScope();
+
+  this.instructions.push(new LabelInstruction(returnLabel));
+  return result;
+}
+
 export function maybeTrackInlineInstanceAssignment(
   this: ASTToTACConverter,
   target: VariableOperand,

@@ -13,7 +13,6 @@ import {
   CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
-  PropertyGetInstruction,
   ReturnInstruction,
 } from "../../tac_instruction.js";
 import { createLabel, createVariable } from "../../tac_operand.js";
@@ -129,9 +128,8 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     }
 
     const currentVal = this.newTemp(prop.type);
-    this.instructions.push(
-      new PropertyGetInstruction(currentVal, thisVar, prop.name),
-    );
+    const fieldVar = createVariable(prop.name, prop.type);
+    this.instructions.push(new CopyInstruction(currentVal, fieldVar));
 
     const changed = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
@@ -141,14 +139,21 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     this.instructions.push(new ConditionalJumpInstruction(changed, skipLabel));
     this.instructions.push(new CopyInstruction(prevVar, currentVal));
     if (prop.fieldChangeCallback) {
-      this.instructions.push(
-        new MethodCallInstruction(
-          undefined,
-          thisVar,
-          prop.fieldChangeCallback,
-          [],
-        ),
+      const inlined = this.visitInlineInstanceMethodCall(
+        classNode.name,
+        prop.fieldChangeCallback,
+        [],
       );
+      if (inlined == null) {
+        this.instructions.push(
+          new MethodCallInstruction(
+            undefined,
+            thisVar,
+            prop.fieldChangeCallback,
+            [],
+          ),
+        );
+      }
     }
     this.instructions.push(new LabelInstruction(skipLabel));
   }
