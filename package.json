@@ -29,8 +29,7 @@
     }
   },
   "files": [
-    "dist",
-    "src/stubs"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
