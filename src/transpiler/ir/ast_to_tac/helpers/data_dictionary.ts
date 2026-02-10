@@ -241,6 +241,7 @@ function emitInlineDictionaryMerge(
   this.instructions.push(
     new BinaryOpInstruction(outerCond, segIdx, "<", segCount),
   );
+  // ConditionalJumpInstruction = JUMP_IF_FALSE: exits loop when segIdx >= segCount
   this.instructions.push(new ConditionalJumpInstruction(outerCond, outerEnd));
 
   // Get segment DataToken and unwrap to DataDictionary
@@ -272,6 +273,7 @@ function emitInlineDictionaryMerge(
   this.instructions.push(
     new BinaryOpInstruction(innerCond, keyIdx, "<", keyCount),
   );
+  // ConditionalJumpInstruction = JUMP_IF_FALSE: exits loop when keyIdx >= keyCount
   this.instructions.push(new ConditionalJumpInstruction(innerCond, innerEnd));
 
   // Copy key-value pair

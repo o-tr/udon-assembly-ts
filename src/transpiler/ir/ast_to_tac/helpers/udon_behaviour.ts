@@ -127,6 +127,9 @@ export function emitOnDeserializationForFieldChangeCallbacks(
       this.symbolTable.addSymbol(prevVar.name, prop.type, false, false);
     }
 
+    // Direct variable access: in UdonSharp's flat heap model, entry-point class
+    // fields are heap variables accessed by name. Using CopyInstruction instead of
+    // PropertyGetInstruction avoids generating a self-referencing extern.
     const currentVal = this.newTemp(prop.type);
     const fieldVar = createVariable(prop.name, prop.type);
     this.instructions.push(new CopyInstruction(currentVal, fieldVar));

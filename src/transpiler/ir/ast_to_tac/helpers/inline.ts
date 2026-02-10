@@ -132,7 +132,7 @@ export function visitInlineStaticMethodCall(
   args: TACOperand[],
 ): TACOperand | null {
   const inlineKey = `${className}.${methodName}`;
-  if (this.inlineStaticMethodStack.has(inlineKey)) {
+  if (this.inlineMethodStack.has(inlineKey)) {
     return null;
   }
   let classNode = this.classMap.get(className);
@@ -169,13 +169,13 @@ export function visitInlineStaticMethodCall(
     }
   }
 
-  this.inlineStaticMethodStack.add(inlineKey);
+  this.inlineMethodStack.add(inlineKey);
   this.inlineReturnStack.push({ returnVar: result, returnLabel });
   try {
     this.visitBlockStatement(method.body);
   } finally {
     this.inlineReturnStack.pop();
-    this.inlineStaticMethodStack.delete(inlineKey);
+    this.inlineMethodStack.delete(inlineKey);
   }
   this.symbolTable.exitScope();
 
@@ -190,7 +190,7 @@ export function visitInlineInstanceMethodCall(
   args: TACOperand[],
 ): TACOperand | null {
   const inlineKey = `${className}::${methodName}`;
-  if (this.inlineStaticMethodStack.has(inlineKey)) {
+  if (this.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
   let classNode = this.classMap.get(className);
@@ -227,13 +227,23 @@ export function visitInlineInstanceMethodCall(
     }
   }
 
-  this.inlineStaticMethodStack.add(inlineKey);
+  const savedParamExportMap = this.currentParamExportMap;
+  const savedMethodLayout = this.currentMethodLayout;
+  const savedInlineContext = this.currentInlineContext;
+  this.currentParamExportMap = new Map();
+  this.currentMethodLayout = null;
+  this.currentInlineContext = undefined;
+
+  this.inlineMethodStack.add(inlineKey);
   this.inlineReturnStack.push({ returnVar: result, returnLabel });
   try {
     this.visitBlockStatement(method.body);
   } finally {
     this.inlineReturnStack.pop();
-    this.inlineStaticMethodStack.delete(inlineKey);
+    this.inlineMethodStack.delete(inlineKey);
+    this.currentParamExportMap = savedParamExportMap;
+    this.currentMethodLayout = savedMethodLayout;
+    this.currentInlineContext = savedInlineContext;
   }
   this.symbolTable.exitScope();
 

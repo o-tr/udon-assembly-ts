@@ -180,7 +180,7 @@ export class ASTToTACConverter {
   entryPointClasses: Set<string> = new Set();
   inlineInstanceMap: Map<string, { prefix: string; className: string }> =
     new Map();
-  inlineStaticMethodStack: Set<string> = new Set();
+  inlineMethodStack: Set<string> = new Set();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
