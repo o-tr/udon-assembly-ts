@@ -1,0 +1,17 @@
+{
+  "name": "jp.ootr.tasm",
+  "displayName": "TASM",
+  "version": "0.0.7",
+  "license": "MIT",
+  "unity": "2022.3",
+  "description": "TypeScript Assembly (.tasm) importer for VRChat Udon",
+  "author": {
+    "name": "ootr",
+    "email": "ootr@ootr.jp",
+    "url": "https://github.com/o-tr"
+  },
+  "vpmDependencies": {
+    "com.vrchat.base": "^3.6.1",
+    "com.vrchat.worlds": "^3.6.1"
+  }
+}
