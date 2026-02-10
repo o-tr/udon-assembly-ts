@@ -473,11 +473,7 @@ export class BatchTranspiler {
   ): void {
     heapLimit = heapLimit ?? UASM_HEAP_LIMIT;
     const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
-    if (
-      outputExt === "uasm" &&
-      resolvedUsage > UASM_RUNTIME_LIMIT &&
-      resolvedUsage <= heapLimit
-    ) {
+    if (outputExt === "uasm" && resolvedUsage > UASM_RUNTIME_LIMIT) {
       console.warn(
         `UASM heap usage ${resolvedUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPointName}.`,
       );

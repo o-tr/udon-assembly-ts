@@ -24,7 +24,7 @@ namespace VRC.Udon.Editor.ProgramSources
                 ctx.SetMainObject(asset);
                 return;
             }
-            prop.stringValue = File.ReadAllText(ctx.GetPathOfSourceAsset(ctx.assetPath));
+            prop.stringValue = File.ReadAllText(ctx.assetPath);
             serialized.ApplyModifiedProperties();
             asset.RefreshProgram();
             ctx.AddObjectToAsset("Imported Type Assembly Program", asset);
