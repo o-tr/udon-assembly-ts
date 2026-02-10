@@ -287,6 +287,17 @@ export class UdonAssembler {
       if (addr > maxAddr) maxAddr = addr;
     }
     let nextAddr = maxAddr + 1;
+    const existingNames = new Set(mutData.map(([name]) => name));
+    const allocateUniqueHelperName = (baseName: string): string => {
+      let candidate = baseName;
+      let suffix = 1;
+      while (existingNames.has(candidate)) {
+        candidate = `${baseName}_${suffix}`;
+        suffix += 1;
+      }
+      existingNames.add(candidate);
+      return candidate;
+    };
 
     // Track helper data entries to deduplicate (shared across all boolean true inits)
     let int32ZeroName: string | null = null;
@@ -305,11 +316,11 @@ export class UdonAssembler {
       }
       // Boolean true: use (0 == 0) → true
       if (int32ZeroName === null) {
-        int32ZeroName = "__asm_restrict_int32_0";
+        int32ZeroName = allocateUniqueHelperName("__asm_restrict_int32_0");
         mutData.push([int32ZeroName, nextAddr++, "Int32", 0]);
       }
       if (eqExternName === null) {
-        eqExternName = "__asm_restrict_eq_extern";
+        eqExternName = allocateUniqueHelperName("__asm_restrict_eq_extern");
         mutData.push([
           eqExternName,
           nextAddr++,
@@ -481,51 +492,41 @@ export class UdonAssembler {
         lines.push(inst.toString());
       } else if (inst.kind === UdonInstructionKind.Jump) {
         const jumpInst = inst as JumpInstruction;
-        if (typeof jumpInst.address === "string") {
-          if (/^0x[0-9A-Fa-f]+$/.test(jumpInst.address)) {
-            // Already a hex address (e.g. 0xFFFFFFFC halt address), pass through
-            lines.push(inst.toString());
-          } else {
-            // Replace label with byte address
-            const canonicalLabel =
-              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
-            const byteAddr = labelAddresses.get(canonicalLabel);
-            if (byteAddr !== undefined) {
-              lines.push(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
-            } else {
-              console.warn(
-                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
-              );
-              lines.push("    JUMP, 0xFFFFFFFC");
-            }
-          }
+        if (typeof jumpInst.address === "number") {
+          lines.push(`    JUMP, ${this.formatHexAddress(jumpInst.address)}`);
         } else {
-          lines.push(inst.toString());
+          // Replace label with byte address
+          const canonicalLabel =
+            canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+          const byteAddr = labelAddresses.get(canonicalLabel);
+          if (byteAddr !== undefined) {
+            lines.push(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
+          } else {
+            console.warn(
+              `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+            );
+            lines.push("    JUMP, 0xFFFFFFFC");
+          }
         }
       } else if (inst.kind === UdonInstructionKind.JumpIfFalse) {
         const jumpInst = inst as JumpIfFalseInstruction;
-        if (typeof jumpInst.address === "string") {
-          if (/^0x[0-9A-Fa-f]+$/.test(jumpInst.address)) {
-            // Already a hex address, pass through
-            lines.push(inst.toString());
-          } else {
-            // Replace label with byte address
-            const canonicalLabel =
-              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
-            const byteAddr = labelAddresses.get(canonicalLabel);
-            if (byteAddr !== undefined) {
-              lines.push(
-                `    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`,
-              );
-            } else {
-              console.warn(
-                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
-              );
-              lines.push("    JUMP_IF_FALSE, 0xFFFFFFFC");
-            }
-          }
+        if (typeof jumpInst.address === "number") {
+          lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(jumpInst.address)}`);
         } else {
-          lines.push(inst.toString());
+          // Replace label with byte address
+          const canonicalLabel =
+            canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+          const byteAddr = labelAddresses.get(canonicalLabel);
+          if (byteAddr !== undefined) {
+            lines.push(
+              `    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`,
+            );
+          } else {
+            console.warn(
+              `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+            );
+            lines.push("    JUMP_IF_FALSE, 0xFFFFFFFC");
+          }
         }
       } else if (inst.kind === UdonInstructionKind.Push) {
         const _pushInst = inst as PushInstruction;

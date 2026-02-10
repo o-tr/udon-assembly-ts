@@ -6,7 +6,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "../../../src/transpiler/codegen/udon_assembler";
-import { UdonInstructionKind } from "../../../src/transpiler/codegen/udon_instruction";
+import {
+  JumpIfFalseInstruction,
+  JumpInstruction,
+  LabelInstruction,
+  UdonInstructionKind,
+} from "../../../src/transpiler/codegen/udon_instruction";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 
@@ -275,5 +280,44 @@ describe("Udon Assembler", () => {
     // Should contain PUSH and COPY instructions with comma separator
     expect(uasm).toContain("PUSH,");
     expect(uasm).toContain("COPY");
+  });
+
+  it("should avoid helper data name collisions for restricted type init", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xFFFFFFFC),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__asm_restrict_int32_0", 0, "Int32", 123],
+      ["__asm_restrict_eq_extern", 1, "String", "user_defined"],
+      ["flag", 2, "Boolean", true],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toMatch(/__asm_restrict_int32_0_\d+: %SystemInt32, 0/);
+    expect(uasm).toMatch(
+      /__asm_restrict_eq_extern_\d+: %SystemString, "SystemInt32.__op_Equality__SystemInt32_SystemInt32__SystemBoolean"/,
+    );
+    expect(uasm).toMatch(/PUSH, __asm_restrict_int32_0_\d+/);
+    expect(uasm).toMatch(/EXTERN, __asm_restrict_eq_extern_\d+/);
+  });
+
+  it("should resolve hex-looking jump labels and reserve numeric jumps for literal addresses", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpIfFalseInstruction("0x10"),
+      new JumpInstruction("0x10"),
+      new LabelInstruction("0x10"),
+      new JumpInstruction(0xFFFFFFFC),
+    ];
+
+    const uasm = assembler.assemble(instructions, [], []);
+
+    expect(uasm).toContain("JUMP_IF_FALSE, 0x00000010");
+    expect(uasm).toContain("JUMP, 0x00000010");
+    expect(uasm).toContain("JUMP, 0xFFFFFFFC");
   });
 });
