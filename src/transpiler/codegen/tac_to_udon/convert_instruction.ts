@@ -411,7 +411,7 @@ export function convertInstruction(
       }
 
       // Jump to exit address directly (0xFFFFFFFC)
-      this.instructions.push(new JumpInstruction("0xFFFFFFFC"));
+      this.instructions.push(new JumpInstruction(0xfffffffc));
       break;
     }
 
