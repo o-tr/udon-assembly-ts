@@ -230,6 +230,11 @@ export class BatchTranspiler {
     const normalized = rawExt.trim().toLowerCase();
     const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
     const ext = sanitized.length > 0 ? sanitized : "tasm";
+    if (ext !== "tasm" && ext !== "uasm") {
+      throw new Error(
+        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
+      );
+    }
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
@@ -486,8 +491,9 @@ export class BatchTranspiler {
       callAnalyzer,
       registry,
     );
+    const formatLabel = outputExt === "tasm" ? "TASM" : "UASM";
     const messageParts = [
-      `UASM heap usage ${resolvedUsage} exceeds limit ${heapLimit} for ${entryPointName}.`,
+      `${formatLabel} heap usage ${resolvedUsage} exceeds limit ${heapLimit} for ${entryPointName}.`,
       "Heap usage by class:",
       breakdown || "  - <no data>",
     ];
