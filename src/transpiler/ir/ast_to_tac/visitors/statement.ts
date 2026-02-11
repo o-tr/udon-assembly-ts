@@ -46,6 +46,8 @@ import {
   createLabel,
   createVariable,
   type TACOperand,
+  TACOperandKind,
+  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
@@ -675,6 +677,32 @@ export function visitReturnStatement(
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, value),
       );
+      if (!inlineContext.returnTrackingInvalidated) {
+        const valueMapping =
+          value.kind === TACOperandKind.Variable
+            ? this.inlineInstanceMap.get((value as VariableOperand).name)
+            : undefined;
+        if (valueMapping) {
+          const existingMapping = this.inlineInstanceMap.get(
+            inlineContext.returnVar.name,
+          );
+          if (existingMapping && existingMapping !== valueMapping) {
+            this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+            inlineContext.returnTrackingInvalidated = true;
+          } else {
+            this.inlineInstanceMap.set(
+              inlineContext.returnVar.name,
+              valueMapping,
+            );
+          }
+        } else {
+          this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+          inlineContext.returnTrackingInvalidated = true;
+        }
+      }
+    } else if (!inlineContext.returnTrackingInvalidated) {
+      this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+      inlineContext.returnTrackingInvalidated = true;
     }
     this.instructions.push(
       new UnconditionalJumpInstruction(inlineContext.returnLabel),

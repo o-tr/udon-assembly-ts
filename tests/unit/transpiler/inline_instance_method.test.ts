@@ -444,4 +444,120 @@ describe("inline instance method calls", () => {
     const tacStr = updateSection.map((i) => i.toString()).join("\n");
     expect(tacStr).toContain("42");
   });
+
+  it("inlines return this from inline class method", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Service {
+        getValue(): number { return 42; }
+        getSelf(): Service { return this; }
+      }
+      class Main {
+        private svc: Service = new Service();
+        Start(): void {
+          let s: Service = this.svc.getSelf();
+          let v: number = s.getValue();
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+    const startSection = getStartSection(tac);
+
+    // getSelf and getValue should both be inlined
+    const hasMethodCall = startSection.some(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        (inst.toString().includes("getSelf") ||
+          inst.toString().includes("getValue")),
+    );
+    expect(hasMethodCall).toBe(false);
+
+    // The constant 42 should appear in _start
+    const tacStr = startSection.map((i) => i.toString()).join("\n");
+    expect(tacStr).toContain("42");
+  });
+
+  it("passes this as argument from within inline class method", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Helper {
+        process(svc: Service): number { return svc.getValue(); }
+      }
+      class Service {
+        getValue(): number { return 42; }
+        callHelper(h: Helper): number { return h.process(this); }
+      }
+      class Main {
+        private svc: Service = new Service();
+        private helper: Helper = new Helper();
+        Start(): void {
+          let v: number = this.svc.callHelper(this.helper);
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+    const startSection = getStartSection(tac);
+
+    // callHelper, process, getValue should all be inlined
+    const hasMethodCall = startSection.some(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        (inst.toString().includes("callHelper") ||
+          inst.toString().includes("process") ||
+          inst.toString().includes("getValue")),
+    );
+    expect(hasMethodCall).toBe(false);
+
+    // The constant 42 should appear in _start
+    const tacStr = startSection.map((i) => i.toString()).join("\n");
+    expect(tacStr).toContain("42");
+  });
+
+  it("tracks this alias within inline method scope", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Service {
+        val: number = 10;
+        method(): number {
+          let self: Service = this;
+          return self.val;
+        }
+      }
+      class Main {
+        private svc: Service = new Service();
+        Start(): void {
+          let v: number = this.svc.method();
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+    const startSection = getStartSection(tac);
+
+    // method should be inlined
+    const hasMethodCall = startSection.some(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        inst.toString().includes("method"),
+    );
+    expect(hasMethodCall).toBe(false);
+
+    // Should have __inst_Service_ prefix from inlining
+    const tacStr = startSection.map((i) => i.toString()).join("\n");
+    expect(tacStr).toContain("__inst_Service_");
+  });
 });

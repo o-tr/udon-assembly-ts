@@ -171,8 +171,9 @@ export class ASTToTACConverter {
     errorTarget: TACOperand;
   }> = [];
   inlineReturnStack: Array<{
-    returnVar: TACOperand;
+    returnVar: VariableOperand;
     returnLabel: TACOperand;
+    returnTrackingInvalidated: boolean;
   }> = [];
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;

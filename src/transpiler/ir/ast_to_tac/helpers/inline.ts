@@ -102,12 +102,28 @@ export function visitInlineConstructor(
 
   if (classNode.constructor) {
     this.symbolTable.enterScope();
+
+    const argInlineInfos = args.map((arg) =>
+      arg && arg.kind === TACOperandKind.Variable
+        ? this.inlineInstanceMap.get((arg as VariableOperand).name)
+        : undefined,
+    );
+    const savedParamEntries = new Map<
+      string,
+      { prefix: string; className: string } | undefined
+    >();
+
     for (let i = 0; i < classNode.constructor.parameters.length; i++) {
       const param = classNode.constructor.parameters[i];
       const paramType = this.typeMapper.mapTypeScriptType(param.type);
       if (!this.symbolTable.hasInCurrentScope(param.name)) {
         this.symbolTable.addSymbol(param.name, paramType, true, false);
       }
+      savedParamEntries.set(
+        param.name,
+        this.inlineInstanceMap.get(param.name),
+      );
+      this.inlineInstanceMap.delete(param.name);
       if (args[i]) {
         this.instructions.push(
           new CopyInstruction(
@@ -115,12 +131,23 @@ export function visitInlineConstructor(
             args[i],
           ),
         );
+        const argInfo = argInlineInfos[i];
+        if (argInfo) {
+          this.inlineInstanceMap.set(param.name, argInfo);
+        }
       }
     }
     const previousContext = this.currentInlineContext;
     this.currentInlineContext = { className, instancePrefix };
     this.visitStatement(classNode.constructor.body);
     this.currentInlineContext = previousContext;
+    for (const [name, entry] of savedParamEntries) {
+      if (entry === undefined) {
+        this.inlineInstanceMap.delete(name);
+      } else {
+        this.inlineInstanceMap.set(name, entry);
+      }
+    }
     this.symbolTable.exitScope();
   }
 
@@ -152,15 +179,35 @@ export function visitInlineStaticMethodCall(
   if (!method) return null;
 
   const returnType = method.returnType;
-  const result = this.newTemp(returnType);
+  const result = createVariable(
+    `__inline_ret_${this.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
   const returnLabel = this.newLabel("inline_return");
 
   this.symbolTable.enterScope();
+
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? this.inlineInstanceMap.get((arg as VariableOperand).name)
+      : undefined,
+  );
+  const savedParamEntries = new Map<
+    string,
+    { prefix: string; className: string } | undefined
+  >();
+
   for (let i = 0; i < method.parameters.length; i++) {
     const param = method.parameters[i];
     if (!this.symbolTable.hasInCurrentScope(param.name)) {
       this.symbolTable.addSymbol(param.name, param.type, true, false);
     }
+    savedParamEntries.set(
+      param.name,
+      this.inlineInstanceMap.get(param.name),
+    );
+    this.inlineInstanceMap.delete(param.name);
     if (args[i]) {
       this.instructions.push(
         new CopyInstruction(
@@ -168,16 +215,27 @@ export function visitInlineStaticMethodCall(
           args[i],
         ),
       );
+      const argInfo = argInlineInfos[i];
+      if (argInfo) {
+        this.inlineInstanceMap.set(param.name, argInfo);
+      }
     }
   }
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel });
+  this.inlineReturnStack.push({ returnVar: result, returnLabel, returnTrackingInvalidated: false });
   try {
     this.visitBlockStatement(method.body);
   } finally {
     this.inlineReturnStack.pop();
     this.inlineMethodStack.delete(inlineKey);
+    for (const [name, entry] of savedParamEntries) {
+      if (entry === undefined) {
+        this.inlineInstanceMap.delete(name);
+      } else {
+        this.inlineInstanceMap.set(name, entry);
+      }
+    }
   }
   this.symbolTable.exitScope();
 
@@ -210,15 +268,35 @@ export function visitInlineInstanceMethodCall(
   if (!method) return null;
 
   const returnType = method.returnType;
-  const result = this.newTemp(returnType);
+  const result = createVariable(
+    `__inline_ret_${this.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
   const returnLabel = this.newLabel("inline_return");
 
   this.symbolTable.enterScope();
+
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? this.inlineInstanceMap.get((arg as VariableOperand).name)
+      : undefined,
+  );
+  const savedParamEntries = new Map<
+    string,
+    { prefix: string; className: string } | undefined
+  >();
+
   for (let i = 0; i < method.parameters.length; i++) {
     const param = method.parameters[i];
     if (!this.symbolTable.hasInCurrentScope(param.name)) {
       this.symbolTable.addSymbol(param.name, param.type, true, false);
     }
+    savedParamEntries.set(
+      param.name,
+      this.inlineInstanceMap.get(param.name),
+    );
+    this.inlineInstanceMap.delete(param.name);
     if (args[i]) {
       this.instructions.push(
         new CopyInstruction(
@@ -226,6 +304,10 @@ export function visitInlineInstanceMethodCall(
           args[i],
         ),
       );
+      const argInfo = argInlineInfos[i];
+      if (argInfo) {
+        this.inlineInstanceMap.set(param.name, argInfo);
+      }
     }
   }
 
@@ -237,7 +319,7 @@ export function visitInlineInstanceMethodCall(
   this.currentInlineContext = undefined;
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel });
+  this.inlineReturnStack.push({ returnVar: result, returnLabel, returnTrackingInvalidated: false });
   try {
     this.visitBlockStatement(method.body);
   } finally {
@@ -246,6 +328,13 @@ export function visitInlineInstanceMethodCall(
     this.currentParamExportMap = savedParamExportMap;
     this.currentMethodLayout = savedMethodLayout;
     this.currentInlineContext = savedInlineContext;
+    for (const [name, entry] of savedParamEntries) {
+      if (entry === undefined) {
+        this.inlineInstanceMap.delete(name);
+      } else {
+        this.inlineInstanceMap.set(name, entry);
+      }
+    }
   }
   this.symbolTable.exitScope();
 
@@ -281,15 +370,35 @@ export function visitInlineInstanceMethodCallWithContext(
   if (!method) return null;
 
   const returnType = method.returnType;
-  const result = this.newTemp(returnType);
+  const result = createVariable(
+    `__inline_ret_${this.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
   const returnLabel = this.newLabel("inline_return");
 
   this.symbolTable.enterScope();
+
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? this.inlineInstanceMap.get((arg as VariableOperand).name)
+      : undefined,
+  );
+  const savedParamEntries = new Map<
+    string,
+    { prefix: string; className: string } | undefined
+  >();
+
   for (let i = 0; i < method.parameters.length; i++) {
     const param = method.parameters[i];
     if (!this.symbolTable.hasInCurrentScope(param.name)) {
       this.symbolTable.addSymbol(param.name, param.type, true, false);
     }
+    savedParamEntries.set(
+      param.name,
+      this.inlineInstanceMap.get(param.name),
+    );
+    this.inlineInstanceMap.delete(param.name);
     if (args[i]) {
       this.instructions.push(
         new CopyInstruction(
@@ -297,6 +406,10 @@ export function visitInlineInstanceMethodCallWithContext(
           args[i],
         ),
       );
+      const argInfo = argInlineInfos[i];
+      if (argInfo) {
+        this.inlineInstanceMap.set(param.name, argInfo);
+      }
     }
   }
 
@@ -310,7 +423,7 @@ export function visitInlineInstanceMethodCallWithContext(
   this.currentInlineContext = { className, instancePrefix };
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel });
+  this.inlineReturnStack.push({ returnVar: result, returnLabel, returnTrackingInvalidated: false });
   try {
     this.visitBlockStatement(method.body);
   } finally {
@@ -320,6 +433,13 @@ export function visitInlineInstanceMethodCallWithContext(
     this.currentMethodLayout = savedMethodLayout;
     this.currentInlineContext = savedInlineContext;
     this.currentThisOverride = savedThisOverride;
+    for (const [name, entry] of savedParamEntries) {
+      if (entry === undefined) {
+        this.inlineInstanceMap.delete(name);
+      } else {
+        this.inlineInstanceMap.set(name, entry);
+      }
+    }
   }
   this.symbolTable.exitScope();
 

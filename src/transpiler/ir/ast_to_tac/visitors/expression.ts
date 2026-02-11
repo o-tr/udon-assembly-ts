@@ -1191,6 +1191,10 @@ export function visitThisExpression(
   if (this.currentThisOverride) {
     return this.currentThisOverride;
   }
+  if (this.currentInlineContext) {
+    const { instancePrefix } = this.currentInlineContext;
+    return createVariable(`${instancePrefix}__handle`, ObjectType);
+  }
   const classType = this.currentClassName
     ? this.typeMapper.mapTypeScriptType(this.currentClassName)
     : ObjectType;
