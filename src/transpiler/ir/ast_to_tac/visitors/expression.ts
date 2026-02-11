@@ -1038,7 +1038,8 @@ export function visitPropertyAccessExpression(
 
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
-      this.currentInlineContext
+      this.currentInlineContext &&
+      !this.currentThisOverride
     ) {
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
@@ -1059,7 +1060,10 @@ export function visitPropertyAccessExpression(
       const classNode = this.classMap.get(this.currentClassName);
       const prop = classNode?.properties.find((p) => p.name === node.property);
       if (prop) {
-        return createVariable(node.property, prop.type);
+        return createVariable(
+          this.entryPointPropName(node.property),
+          prop.type,
+        );
       }
     }
 
@@ -1189,6 +1193,10 @@ export function visitThisExpression(
 ): TACOperand {
   if (this.currentThisOverride) {
     return this.currentThisOverride;
+  }
+  if (this.currentInlineContext) {
+    const { instancePrefix } = this.currentInlineContext;
+    return createVariable(`${instancePrefix}__handle`, ObjectType);
   }
   const classType = this.currentClassName
     ? this.typeMapper.mapTypeScriptType(this.currentClassName)

@@ -40,6 +40,7 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
+  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
@@ -1184,6 +1185,35 @@ export function visitCallExpression(
         new CallInstruction(undefined, externSig, [object]),
       );
       return VOID_RETURN;
+    }
+    // Inline context self-method: this.method() inside inline class body
+    if (
+      propAccess.object.kind === ASTNodeKind.ThisExpression &&
+      this.currentInlineContext &&
+      !this.currentThisOverride
+    ) {
+      const inlineResult = this.visitInlineInstanceMethodCallWithContext(
+        this.currentInlineContext.className,
+        this.currentInlineContext.instancePrefix,
+        propAccess.property,
+        evaluatedArgs,
+      );
+      if (inlineResult != null) return inlineResult;
+    }
+    // Inline instance method call: object.method() where object is inline instance
+    if (object.kind === TACOperandKind.Variable) {
+      const instanceInfo = this.inlineInstanceMap.get(
+        (object as VariableOperand).name,
+      );
+      if (instanceInfo) {
+        const inlineResult = this.visitInlineInstanceMethodCallWithContext(
+          instanceInfo.className,
+          instanceInfo.prefix,
+          propAccess.property,
+          evaluatedArgs,
+        );
+        if (inlineResult != null) return inlineResult;
+      }
     }
     // Entry point class self-method: inline the body
     if (

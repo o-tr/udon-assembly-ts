@@ -46,6 +46,8 @@ import {
   createLabel,
   createVariable,
   type TACOperand,
+  TACOperandKind,
+  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
@@ -675,6 +677,32 @@ export function visitReturnStatement(
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, value),
       );
+      if (!inlineContext.returnTrackingInvalidated) {
+        const valueMapping =
+          value.kind === TACOperandKind.Variable
+            ? this.inlineInstanceMap.get((value as VariableOperand).name)
+            : undefined;
+        if (valueMapping) {
+          const existingMapping = this.inlineInstanceMap.get(
+            inlineContext.returnVar.name,
+          );
+          if (existingMapping && existingMapping !== valueMapping) {
+            this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+            inlineContext.returnTrackingInvalidated = true;
+          } else {
+            this.inlineInstanceMap.set(
+              inlineContext.returnVar.name,
+              valueMapping,
+            );
+          }
+        } else {
+          this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+          inlineContext.returnTrackingInvalidated = true;
+        }
+      }
+    } else if (!inlineContext.returnTrackingInvalidated) {
+      this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+      inlineContext.returnTrackingInvalidated = true;
     }
     this.instructions.push(
       new UnconditionalJumpInstruction(inlineContext.returnLabel),
@@ -715,7 +743,15 @@ export function visitClassDeclaration(
   const isUdonBehaviourClass =
     classLayout !== null ||
     node.decorators.some((decorator) => decorator.name === "UdonBehaviour");
-  for (const method of node.methods) {
+  const startIndex = node.methods.findIndex((m) => m.name === "Start");
+  const orderedMethods =
+    startIndex >= 0
+      ? [
+          node.methods[startIndex],
+          ...node.methods.filter((_, i) => i !== startIndex),
+        ]
+      : [...node.methods];
+  for (const method of orderedMethods) {
     this.currentMethodName = method.name;
     const eventDef = getVrcEventDefinition(method.name);
     let labelName = eventDef
@@ -803,6 +839,11 @@ export function visitClassDeclaration(
         this.visitVariableDeclaration(tlc);
       }
       this.pendingTopLevelInits = [];
+    }
+
+    // Entry-point class property initialization + constructor body in _start/Start
+    if (method.name === "Start" && this.entryPointClasses.has(node.name)) {
+      this.emitEntryPointPropertyInit(node);
     }
 
     this.visitBlockStatement(method.body);

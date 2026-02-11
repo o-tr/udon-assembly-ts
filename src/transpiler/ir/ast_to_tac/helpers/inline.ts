@@ -12,6 +12,7 @@ import {
   type BinaryExpressionNode,
   type BlockStatementNode,
   type CallExpressionNode,
+  type ClassDeclarationNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
@@ -40,6 +41,58 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+
+type InlineParamSave = Map<
+  string,
+  { prefix: string; className: string } | undefined
+>;
+
+function saveAndBindInlineParams(
+  converter: ASTToTACConverter,
+  params: Array<{ name: string; type: TypeSymbol }>,
+  args: TACOperand[],
+): InlineParamSave {
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? converter.inlineInstanceMap.get((arg as VariableOperand).name)
+      : undefined,
+  );
+  const saved: InlineParamSave = new Map();
+  for (let i = 0; i < params.length; i++) {
+    const param = params[i];
+    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+      converter.symbolTable.addSymbol(param.name, param.type, true, false);
+    }
+    saved.set(param.name, converter.inlineInstanceMap.get(param.name));
+    converter.inlineInstanceMap.delete(param.name);
+    if (args[i]) {
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          args[i],
+        ),
+      );
+      const argInfo = argInlineInfos[i];
+      if (argInfo) {
+        converter.inlineInstanceMap.set(param.name, argInfo);
+      }
+    }
+  }
+  return saved;
+}
+
+function restoreInlineParams(
+  converter: ASTToTACConverter,
+  saved: InlineParamSave,
+): void {
+  for (const [name, entry] of saved) {
+    if (entry === undefined) {
+      converter.inlineInstanceMap.delete(name);
+    } else {
+      converter.inlineInstanceMap.set(name, entry);
+    }
+  }
+}
 
 export function visitInlineConstructor(
   this: ASTToTACConverter,
@@ -96,30 +149,28 @@ export function visitInlineConstructor(
     const value = this.visitExpression(prop.initializer);
     this.inSerializeFieldInitializer = previousSerializeFieldState;
     this.instructions.push(new AssignmentInstruction(propVar, value));
+    this.maybeTrackInlineInstanceAssignment(propVar, value);
   }
 
   if (classNode.constructor) {
     this.symbolTable.enterScope();
-    for (let i = 0; i < classNode.constructor.parameters.length; i++) {
-      const param = classNode.constructor.parameters[i];
-      const paramType = this.typeMapper.mapTypeScriptType(param.type);
-      if (!this.symbolTable.hasInCurrentScope(param.name)) {
-        this.symbolTable.addSymbol(param.name, paramType, true, false);
-      }
-      if (args[i]) {
-        this.instructions.push(
-          new CopyInstruction(
-            createVariable(param.name, paramType, { isParameter: true }),
-            args[i],
-          ),
-        );
-      }
-    }
+    const typedParams = classNode.constructor.parameters.map((p) => ({
+      name: p.name,
+      type: this.typeMapper.mapTypeScriptType(p.type),
+    }));
+    const savedParamEntries = saveAndBindInlineParams(this, typedParams, args);
     const previousContext = this.currentInlineContext;
+    const previousThisOverride = this.currentThisOverride;
     this.currentInlineContext = { className, instancePrefix };
-    this.visitStatement(classNode.constructor.body);
-    this.currentInlineContext = previousContext;
-    this.symbolTable.exitScope();
+    this.currentThisOverride = null;
+    try {
+      this.visitStatement(classNode.constructor.body);
+    } finally {
+      this.currentInlineContext = previousContext;
+      this.currentThisOverride = previousThisOverride;
+      restoreInlineParams(this, savedParamEntries);
+      this.symbolTable.exitScope();
+    }
   }
 
   return instanceHandle;
@@ -150,55 +201,74 @@ export function visitInlineStaticMethodCall(
   if (!method) return null;
 
   const returnType = method.returnType;
-  const result = this.newTemp(returnType);
+  const result = createVariable(
+    `__inline_ret_${this.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
   const returnLabel = this.newLabel("inline_return");
 
   this.symbolTable.enterScope();
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    if (!this.symbolTable.hasInCurrentScope(param.name)) {
-      this.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-    if (args[i]) {
-      this.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
-          args[i],
-        ),
-      );
-    }
-  }
+  const savedParamEntries = saveAndBindInlineParams(
+    this,
+    method.parameters,
+    args,
+  );
+
+  const savedParamExportMap = this.currentParamExportMap;
+  const savedMethodLayout = this.currentMethodLayout;
+  const savedInlineContext = this.currentInlineContext;
+  const savedThisOverride = this.currentThisOverride;
+  this.currentParamExportMap = new Map();
+  this.currentMethodLayout = null;
+  this.currentInlineContext = undefined;
+  this.currentThisOverride = null;
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel });
+  this.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel,
+    returnTrackingInvalidated: false,
+  });
   try {
     this.visitBlockStatement(method.body);
   } finally {
     this.inlineReturnStack.pop();
     this.inlineMethodStack.delete(inlineKey);
+    this.currentParamExportMap = savedParamExportMap;
+    this.currentMethodLayout = savedMethodLayout;
+    this.currentInlineContext = savedInlineContext;
+    this.currentThisOverride = savedThisOverride;
+    restoreInlineParams(this, savedParamEntries);
+    this.symbolTable.exitScope();
   }
-  this.symbolTable.exitScope();
 
   this.instructions.push(new LabelInstruction(returnLabel));
   return result;
 }
 
-export function visitInlineInstanceMethodCall(
-  this: ASTToTACConverter,
+/**
+ * Shared implementation for instance method inlining.
+ * When instancePrefix is provided, sets currentInlineContext;
+ * otherwise clears it.
+ */
+function inlineInstanceMethodCallCore(
+  converter: ASTToTACConverter,
   className: string,
   methodName: string,
   args: TACOperand[],
+  instancePrefix: string | undefined,
 ): TACOperand | null {
   const inlineKey = `${className}::${methodName}`;
-  if (this.inlineMethodStack.has(inlineKey)) {
+  if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
-  let classNode = this.classMap.get(className);
-  if (!classNode && this.classRegistry) {
-    const meta = this.classRegistry.getClass(className);
-    if (meta && !this.classRegistry.isStub(className)) {
+  let classNode = converter.classMap.get(className);
+  if (!classNode && converter.classRegistry) {
+    const meta = converter.classRegistry.getClass(className);
+    if (meta && !converter.classRegistry.isStub(className)) {
       classNode = meta.node;
-      this.classMap.set(className, classNode);
+      converter.classMap.set(className, classNode);
     }
   }
   if (!classNode) return null;
@@ -208,47 +278,119 @@ export function visitInlineInstanceMethodCall(
   if (!method) return null;
 
   const returnType = method.returnType;
-  const result = this.newTemp(returnType);
-  const returnLabel = this.newLabel("inline_return");
+  const result = createVariable(
+    `__inline_ret_${converter.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
+  const returnLabel = converter.newLabel("inline_return");
 
-  this.symbolTable.enterScope();
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    if (!this.symbolTable.hasInCurrentScope(param.name)) {
-      this.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-    if (args[i]) {
-      this.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
-          args[i],
-        ),
+  converter.symbolTable.enterScope();
+  const savedParamEntries = saveAndBindInlineParams(
+    converter,
+    method.parameters,
+    args,
+  );
+
+  const savedParamExportMap = converter.currentParamExportMap;
+  const savedMethodLayout = converter.currentMethodLayout;
+  const savedInlineContext = converter.currentInlineContext;
+  const savedThisOverride = converter.currentThisOverride;
+  converter.currentParamExportMap = new Map();
+  converter.currentMethodLayout = null;
+  converter.currentThisOverride = null;
+  converter.currentInlineContext = instancePrefix
+    ? { className, instancePrefix }
+    : undefined;
+
+  converter.inlineMethodStack.add(inlineKey);
+  converter.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel,
+    returnTrackingInvalidated: false,
+  });
+  try {
+    converter.visitBlockStatement(method.body);
+  } finally {
+    converter.inlineReturnStack.pop();
+    converter.inlineMethodStack.delete(inlineKey);
+    converter.currentParamExportMap = savedParamExportMap;
+    converter.currentMethodLayout = savedMethodLayout;
+    converter.currentInlineContext = savedInlineContext;
+    converter.currentThisOverride = savedThisOverride;
+    restoreInlineParams(converter, savedParamEntries);
+    converter.symbolTable.exitScope();
+  }
+
+  converter.instructions.push(new LabelInstruction(returnLabel));
+  return result;
+}
+
+export function visitInlineInstanceMethodCall(
+  this: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  args: TACOperand[],
+): TACOperand | null {
+  return inlineInstanceMethodCallCore(
+    this,
+    className,
+    methodName,
+    args,
+    undefined,
+  );
+}
+
+export function visitInlineInstanceMethodCallWithContext(
+  this: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  methodName: string,
+  args: TACOperand[],
+): TACOperand | null {
+  return inlineInstanceMethodCallCore(
+    this,
+    className,
+    methodName,
+    args,
+    instancePrefix,
+  );
+}
+
+/**
+ * Emit property initializers and constructor body for an entry-point class.
+ * Shared by visitClassDeclaration (Start method path) and generateEntryPoint (no-Start path).
+ */
+export function emitEntryPointPropertyInit(
+  this: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+): void {
+  for (const prop of classNode.properties) {
+    if (!prop.initializer || prop.isStatic) continue;
+    const previousSerializeFieldState = this.inSerializeFieldInitializer;
+    this.inSerializeFieldInitializer = !!prop.isSerializeField;
+    const value = this.visitExpression(prop.initializer);
+    this.inSerializeFieldInitializer = previousSerializeFieldState;
+    const targetVar = createVariable(
+      this.entryPointPropName(prop.name),
+      prop.type,
+    );
+    this.instructions.push(new CopyInstruction(targetVar, value));
+    this.maybeTrackInlineInstanceAssignment(targetVar, value);
+  }
+  if (classNode.constructor?.body) {
+    if (classNode.constructor.parameters.length > 0) {
+      throw new Error(
+        `Entry-point class "${classNode.name}" constructor must be parameterless`,
       );
     }
+    this.symbolTable.enterScope();
+    try {
+      this.visitStatement(classNode.constructor.body);
+    } finally {
+      this.symbolTable.exitScope();
+    }
   }
-
-  const savedParamExportMap = this.currentParamExportMap;
-  const savedMethodLayout = this.currentMethodLayout;
-  const savedInlineContext = this.currentInlineContext;
-  this.currentParamExportMap = new Map();
-  this.currentMethodLayout = null;
-  this.currentInlineContext = undefined;
-
-  this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel });
-  try {
-    this.visitBlockStatement(method.body);
-  } finally {
-    this.inlineReturnStack.pop();
-    this.inlineMethodStack.delete(inlineKey);
-    this.currentParamExportMap = savedParamExportMap;
-    this.currentMethodLayout = savedMethodLayout;
-    this.currentInlineContext = savedInlineContext;
-  }
-  this.symbolTable.exitScope();
-
-  this.instructions.push(new LabelInstruction(returnLabel));
-  return result;
 }
 
 export function maybeTrackInlineInstanceAssignment(
