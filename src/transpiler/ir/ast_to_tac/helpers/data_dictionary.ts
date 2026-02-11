@@ -1,3 +1,4 @@
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import {
   ExternTypes,
   ObjectType,
@@ -21,8 +22,87 @@ export function emitDictionaryFromProperties(
   this: ASTToTACConverter,
   properties: ObjectLiteralPropertyNode[],
 ): TACOperand {
-  const hasSpread = properties.some((prop) => prop.kind === "spread");
-  if (hasSpread) {
+  let spreadCount = 0;
+  for (const p of properties) {
+    if (p.kind === "spread") spreadCount++;
+  }
+  if (spreadCount > 0) {
+    // === ShallowClone最適化: spreadが1つだけ＆先頭にある場合 ===
+    if (spreadCount === 1 && properties[0].kind === "spread") {
+      const spreadValue = this.visitExpression(properties[0].value);
+      const spreadType = this.getOperandType(spreadValue);
+
+      const shallowCloneSig = resolveExternSignature(
+        "DataDictionary",
+        "ShallowClone",
+        "method",
+        [],
+      );
+      if (
+        shallowCloneSig &&
+        spreadType.udonType === ExternTypes.dataDictionary.udonType
+      ) {
+        // ShallowClone最適化パス
+        const cloneResult = this.newTemp(ExternTypes.dataDictionary);
+        this.instructions.push(
+          new MethodCallInstruction(
+            cloneResult,
+            spreadValue,
+            "ShallowClone",
+            [],
+          ),
+        );
+        // 残りのプロパティを順次SetValue（左→右の評価順序を維持）
+        for (let i = 1; i < properties.length; i++) {
+          const prop = properties[i];
+          if (prop.kind !== "property") continue;
+          const keyToken = this.wrapDataToken(
+            createConstant(prop.key, PrimitiveTypes.string),
+          );
+          const value = this.visitExpression(prop.value);
+          const valueToken = this.wrapDataToken(value);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, cloneResult, "SetValue", [
+              keyToken,
+              valueToken,
+            ]),
+          );
+        }
+        return cloneResult;
+      }
+
+      // 型不一致フォールバック: 評価済みspreadValueを再利用してmerge
+      const listResult = this.newTemp(ExternTypes.dataList);
+      const listCtorSig = this.requireExternSignature(
+        "DataList",
+        "ctor",
+        "method",
+        [],
+        "DataList",
+      );
+      this.instructions.push(new CallInstruction(listResult, listCtorSig, []));
+      const spreadToken = this.wrapDataToken(spreadValue);
+      this.instructions.push(
+        new MethodCallInstruction(undefined, listResult, "Add", [spreadToken]),
+      );
+      const remaining = properties.slice(1);
+      if (remaining.length > 0) {
+        const dictSegment = this.emitDictionaryFromProperties(remaining);
+        const dictToken = this.wrapDataToken(dictSegment);
+        this.instructions.push(
+          new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
+        );
+      }
+      const inlineResult = this.visitInlineStaticMethodCall(
+        "DataDictionaryHelpers",
+        "Merge",
+        [listResult],
+      );
+      if (inlineResult) return inlineResult;
+      return emitInlineDictionaryMerge.call(this, listResult);
+    }
+
+    // === 既存のmergeパス（複数spread or spread先頭でない場合） ===
     const listResult = this.newTemp(ExternTypes.dataList);
     const listCtorSig = this.requireExternSignature(
       "DataList",

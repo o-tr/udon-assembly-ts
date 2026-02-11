@@ -99,4 +99,7 @@ export class DataDictionary {
   GetValues(): DataList {
     return new DataList();
   }
+  ShallowClone(): DataDictionary {
+    return new DataDictionary();
+  }
 }
