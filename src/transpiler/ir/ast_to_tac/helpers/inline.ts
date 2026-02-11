@@ -119,10 +119,7 @@ export function visitInlineConstructor(
       if (!this.symbolTable.hasInCurrentScope(param.name)) {
         this.symbolTable.addSymbol(param.name, paramType, true, false);
       }
-      savedParamEntries.set(
-        param.name,
-        this.inlineInstanceMap.get(param.name),
-      );
+      savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
       this.inlineInstanceMap.delete(param.name);
       if (args[i]) {
         this.instructions.push(
@@ -138,9 +135,12 @@ export function visitInlineConstructor(
       }
     }
     const previousContext = this.currentInlineContext;
+    const previousThisOverride = this.currentThisOverride;
     this.currentInlineContext = { className, instancePrefix };
+    this.currentThisOverride = null;
     this.visitStatement(classNode.constructor.body);
     this.currentInlineContext = previousContext;
+    this.currentThisOverride = previousThisOverride;
     for (const [name, entry] of savedParamEntries) {
       if (entry === undefined) {
         this.inlineInstanceMap.delete(name);
@@ -203,10 +203,7 @@ export function visitInlineStaticMethodCall(
     if (!this.symbolTable.hasInCurrentScope(param.name)) {
       this.symbolTable.addSymbol(param.name, param.type, true, false);
     }
-    savedParamEntries.set(
-      param.name,
-      this.inlineInstanceMap.get(param.name),
-    );
+    savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
     this.inlineInstanceMap.delete(param.name);
     if (args[i]) {
       this.instructions.push(
@@ -223,7 +220,11 @@ export function visitInlineStaticMethodCall(
   }
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel, returnTrackingInvalidated: false });
+  this.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel,
+    returnTrackingInvalidated: false,
+  });
   try {
     this.visitBlockStatement(method.body);
   } finally {
@@ -292,10 +293,7 @@ export function visitInlineInstanceMethodCall(
     if (!this.symbolTable.hasInCurrentScope(param.name)) {
       this.symbolTable.addSymbol(param.name, param.type, true, false);
     }
-    savedParamEntries.set(
-      param.name,
-      this.inlineInstanceMap.get(param.name),
-    );
+    savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
     this.inlineInstanceMap.delete(param.name);
     if (args[i]) {
       this.instructions.push(
@@ -319,7 +317,11 @@ export function visitInlineInstanceMethodCall(
   this.currentInlineContext = undefined;
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel, returnTrackingInvalidated: false });
+  this.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel,
+    returnTrackingInvalidated: false,
+  });
   try {
     this.visitBlockStatement(method.body);
   } finally {
@@ -394,10 +396,7 @@ export function visitInlineInstanceMethodCallWithContext(
     if (!this.symbolTable.hasInCurrentScope(param.name)) {
       this.symbolTable.addSymbol(param.name, param.type, true, false);
     }
-    savedParamEntries.set(
-      param.name,
-      this.inlineInstanceMap.get(param.name),
-    );
+    savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
     this.inlineInstanceMap.delete(param.name);
     if (args[i]) {
       this.instructions.push(
@@ -423,7 +422,11 @@ export function visitInlineInstanceMethodCallWithContext(
   this.currentInlineContext = { className, instancePrefix };
 
   this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({ returnVar: result, returnLabel, returnTrackingInvalidated: false });
+  this.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel,
+    returnTrackingInvalidated: false,
+  });
   try {
     this.visitBlockStatement(method.body);
   } finally {

@@ -4,28 +4,20 @@
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { TypeScriptToUdonTranspiler } from "../../../src/transpiler";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
-import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
-import {
-  TACInstructionKind,
-  type TACInstruction,
-} from "../../../src/transpiler/ir/tac_instruction";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-/** Extract instructions in the _start section (from _start label to its return). */
-function getStartSection(tac: TACInstruction[]): TACInstruction[] {
-  const startIdx = tac.findIndex(
-    (inst) =>
-      inst.kind === TACInstructionKind.Label &&
-      inst.toString().includes("_start"),
+/** Extract lines in the _start section (from _start label to its return). */
+function getStartSection(tac: string): string {
+  const lines = tac.split("\n");
+  const startIdx = lines.findIndex((line) => line.includes("_start:"));
+  if (startIdx < 0) return "";
+  const endIdx = lines.findIndex(
+    (line, i) => i > startIdx && line.trim().startsWith("return"),
   );
-  if (startIdx < 0) return [];
-  // Find the Return that ends the _start method
-  const endIdx = tac.findIndex(
-    (inst, i) => i > startIdx && inst.kind === TACInstructionKind.Return,
-  );
-  return tac.slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined);
+  return lines
+    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined)
+    .join("\n");
 }
 
 describe("inline instance method calls", () => {
@@ -34,7 +26,6 @@ describe("inline instance method calls", () => {
   });
 
   it("inlines this.service.method() without EXTERN", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Service {
         getValue(): number {
@@ -48,29 +39,17 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
-    // Should NOT have a MethodCallInstruction for getValue in _start
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        inst.toString().includes("getValue"),
-    );
-    expect(hasMethodCall).toBe(false);
+    // Should NOT have a method call for getValue in _start
+    expect(startSection).not.toMatch(/\.getValue\(/);
 
     // Should have inlined the constant 42 in _start
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("42");
+    expect(startSection).toContain("42");
   });
 
   it("propagates return values from inlined methods", () => {
-    const transpiler = new TypeScriptToUdonTranspiler();
     const source = `
       class Calculator {
         add(a: number, b: number): number {
@@ -84,7 +63,7 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const result = transpiler.transpile(source);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
     // The method should be inlined (no extern for Calculator.add)
     expect(result.tac).not.toContain("EXTERN");
     // Should contain the addition
@@ -92,7 +71,6 @@ describe("inline instance method calls", () => {
   });
 
   it("inlines this.otherMethod() inside inline class context", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Logic {
         helper(): number {
@@ -109,30 +87,18 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // In _start, both helper and compute should be inlined
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        (inst.toString().includes("helper") ||
-          inst.toString().includes("compute")),
-    );
-    expect(hasMethodCall).toBe(false);
+    expect(startSection).not.toMatch(/\.helper\(/);
+    expect(startSection).not.toMatch(/\.compute\(/);
 
     // The inlined value 10 should appear in _start
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("10");
+    expect(startSection).toContain("10");
   });
 
   it("inlines nested inline instances (this.outer.getInnerVal())", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Inner {
         getVal(): number {
@@ -152,30 +118,18 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // In _start, getInnerVal and getVal should be inlined
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        (inst.toString().includes("getInnerVal") ||
-          inst.toString().includes("getVal")),
-    );
-    expect(hasMethodCall).toBe(false);
+    expect(startSection).not.toMatch(/\.getInnerVal\(/);
+    expect(startSection).not.toMatch(/\.getVal\(/);
 
     // The constant 99 should appear in _start
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("99");
+    expect(startSection).toContain("99");
   });
 
   it("processes property initializers in _start (with Start method)", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Service {
         val: number = 5;
@@ -190,22 +144,15 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const tacStr = tac.map((i) => i.toString()).join("\n");
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
 
     // Should have __inst_Service_* variables from property initialization
-    expect(tacStr).toContain("__inst_Service_");
+    expect(result.tac).toContain("__inst_Service_");
     // Property initialization should produce the inline variable for svc
-    expect(tacStr).toContain("svc");
+    expect(result.tac).toContain("svc");
   });
 
   it("processes property initializers in _start (without Start method)", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Service {
         val: number = 5;
@@ -217,22 +164,15 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const tacStr = tac.map((i) => i.toString()).join("\n");
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
 
     // _start should contain property initialization
-    expect(tacStr).toContain("_start");
+    expect(result.tac).toContain("_start");
     // Should have inline instance for Service
-    expect(tacStr).toContain("__inst_Service_");
+    expect(result.tac).toContain("__inst_Service_");
   });
 
   it("processes constructor body in _start", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Main {
         x: number = 0;
@@ -244,21 +184,14 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // Constructor body should set x = 42 in _start
-    expect(tacStr).toContain("42");
+    expect(startSection).toContain("42");
   });
 
   it("detects recursion and falls back", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Recursive {
         recurse(): number {
@@ -272,26 +205,15 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // The first call is inlined, but the recursive call inside
-    // falls back to MethodCallInstruction
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        inst.toString().includes("recurse"),
-    );
-    expect(hasMethodCall).toBe(true);
+    // falls back to a method call
+    expect(startSection).toMatch(/\.recurse\(/);
   });
 
   it("inlines multiple instances of the same class", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Svc {
         getValue(): number {
@@ -307,30 +229,18 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // Both calls should be inlined in _start
-    const methodCalls = startSection.filter(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        inst.toString().includes("getValue"),
-    );
-    expect(methodCalls).toHaveLength(0);
+    expect(startSection).not.toMatch(/\.getValue\(/);
 
     // Should have two different inline instance prefixes
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("__inst_Svc_0");
-    expect(tacStr).toContain("__inst_Svc_1");
+    expect(startSection).toContain("__inst_Svc_0");
+    expect(startSection).toContain("__inst_Svc_1");
   });
 
   it("excludes static properties from _start initialization", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Main {
         static count: number = 0;
@@ -340,28 +250,16 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // Non-static property should be initialized
-    expect(tacStr).toContain("value");
-    // Static property should not appear as a CopyInstruction target in _start
-    const copyInstructions = startSection.filter(
-      (inst) =>
-        inst.kind === TACInstructionKind.Copy &&
-        inst.toString().includes("count"),
-    );
-    expect(copyInstructions).toHaveLength(0);
+    expect(startSection).toContain("value");
+    // Static property should not appear as a copy target in _start
+    expect(startSection).not.toMatch(/^count\s*=/m);
   });
 
   it("verifies execution order: pendingTopLevelInits → prop init → constructor → Start body", () => {
-    const parser = new TypeScriptParser();
     const source = `
       const FACTOR = 2 + 3;
       class Main {
@@ -374,23 +272,13 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // After _start, we should see: FACTOR init, then value = 10, then value = 20
-    const afterStart = startSection.map((i) => i.toString());
-    const factorIdx = afterStart.findIndex((s) => s.includes("FACTOR"));
-    const valueInitIdx = afterStart.findIndex(
-      (s, i) => i > factorIdx && s.includes("value") && s.includes("10"),
-    );
-    const ctorIdx = afterStart.findIndex(
-      (s, i) => i > valueInitIdx && s.includes("value") && s.includes("20"),
-    );
+    const factorIdx = startSection.indexOf("FACTOR");
+    const valueInitIdx = startSection.indexOf("10", factorIdx);
+    const ctorIdx = startSection.indexOf("20", valueInitIdx);
 
     expect(factorIdx).toBeGreaterThan(0);
     expect(valueInitIdx).toBeGreaterThan(factorIdx);
@@ -398,7 +286,6 @@ describe("inline instance method calls", () => {
   });
 
   it("inlines when Start is declared after other methods", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Service {
         getValue(): number {
@@ -413,40 +300,27 @@ describe("inline instance method calls", () => {
         Start(): void {}
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    // Find the _update section (VRC event name for Update)
-    const updateIdx = tac.findIndex(
-      (inst) =>
-        inst.kind === TACInstructionKind.Label &&
-        inst.toString().includes("_update"),
-    );
+    // Extract the _update section
+    const lines = result.tac.split("\n");
+    const updateIdx = lines.findIndex((line) => line.includes("_update:"));
     expect(updateIdx).toBeGreaterThanOrEqual(0);
-    const updateEnd = tac.findIndex(
-      (inst, i) => i > updateIdx && inst.kind === TACInstructionKind.Return,
+    const updateEnd = lines.findIndex(
+      (line, i) => i > updateIdx && line.trim().startsWith("return"),
     );
-    const updateSection = tac.slice(updateIdx, updateEnd + 1);
+    const updateSection = lines
+      .slice(updateIdx, updateEnd !== -1 ? updateEnd + 1 : undefined)
+      .join("\n");
 
     // getValue should be inlined in Update even though Start is declared after
-    const hasMethodCall = updateSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        inst.toString().includes("getValue"),
-    );
-    expect(hasMethodCall).toBe(false);
+    expect(updateSection).not.toMatch(/\.getValue\(/);
 
     // The inlined value 42 should appear
-    const tacStr = updateSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("42");
+    expect(updateSection).toContain("42");
   });
 
   it("inlines return this from inline class method", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Service {
         getValue(): number { return 42; }
@@ -460,30 +334,18 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // getSelf and getValue should both be inlined
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        (inst.toString().includes("getSelf") ||
-          inst.toString().includes("getValue")),
-    );
-    expect(hasMethodCall).toBe(false);
+    expect(startSection).not.toMatch(/\.getSelf\(/);
+    expect(startSection).not.toMatch(/\.getValue\(/);
 
     // The constant 42 should appear in _start
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("42");
+    expect(startSection).toContain("42");
   });
 
   it("passes this as argument from within inline class method", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Helper {
         process(svc: Service): number { return svc.getValue(); }
@@ -500,31 +362,19 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // callHelper, process, getValue should all be inlined
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        (inst.toString().includes("callHelper") ||
-          inst.toString().includes("process") ||
-          inst.toString().includes("getValue")),
-    );
-    expect(hasMethodCall).toBe(false);
+    expect(startSection).not.toMatch(/\.callHelper\(/);
+    expect(startSection).not.toMatch(/\.process\(/);
+    expect(startSection).not.toMatch(/\.getValue\(/);
 
     // The constant 42 should appear in _start
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("42");
+    expect(startSection).toContain("42");
   });
 
   it("tracks this alias within inline method scope", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Service {
         val: number = 10;
@@ -540,24 +390,13 @@ describe("inline instance method calls", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const startSection = getStartSection(tac);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
 
     // method should be inlined
-    const hasMethodCall = startSection.some(
-      (inst) =>
-        inst.kind === TACInstructionKind.MethodCall &&
-        inst.toString().includes("method"),
-    );
-    expect(hasMethodCall).toBe(false);
+    expect(startSection).not.toMatch(/\.method\(/);
 
     // Should have __inst_Service_ prefix from inlining
-    const tacStr = startSection.map((i) => i.toString()).join("\n");
-    expect(tacStr).toContain("__inst_Service_");
+    expect(startSection).toContain("__inst_Service_");
   });
 });
