@@ -15,21 +15,33 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import { createConstant, type TACOperand } from "../../tac_operand.js";
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function emitDictionaryFromProperties(
   this: ASTToTACConverter,
   properties: ObjectLiteralPropertyNode[],
 ): TACOperand {
-  const hasSpread = properties.some((prop) => prop.kind === "spread");
-  if (hasSpread) {
+  let spreadCount = 0;
+  for (const p of properties) {
+    if (p.kind === "spread") spreadCount++;
+  }
+  if (spreadCount > 0) {
     // === ShallowClone最適化: spreadが1つだけ＆先頭にある場合 ===
-    const spreadCount = properties.filter((p) => p.kind === "spread").length;
     if (spreadCount === 1 && properties[0].kind === "spread") {
       const spreadValue = this.visitExpression(properties[0].value);
       const spreadType = this.getOperandType(spreadValue);
 
-      if (spreadType.udonType === ExternTypes.dataDictionary.udonType) {
+      const shallowCloneSig = resolveExternSignature(
+        "DataDictionary",
+        "ShallowClone",
+        "method",
+        [],
+      );
+      if (
+        shallowCloneSig &&
+        spreadType.udonType === ExternTypes.dataDictionary.udonType
+      ) {
         // ShallowClone最適化パス
         const cloneResult = this.newTemp(ExternTypes.dataDictionary);
         this.instructions.push(

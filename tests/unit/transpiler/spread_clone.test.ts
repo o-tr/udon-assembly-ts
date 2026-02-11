@@ -107,5 +107,17 @@ describe("spread clone optimization", () => {
       let copy = {key: "old", ...obj};
     `);
     expect(hasMethodCall(tac, "ShallowClone")).toBe(false);
+    const hasMerge =
+      hasMethodCall(tac, "Merge") || hasLabel(tac, "merge_outer");
+    expect(hasMerge).toBe(true);
+  });
+
+  it("{...obj} with only spread produces no SetValue", () => {
+    const tac = getTACInstructions(`
+      let obj: DataDictionary = new DataDictionary();
+      let copy = {...obj};
+    `);
+    expect(hasMethodCall(tac, "ShallowClone")).toBe(true);
+    expect(countMethodCalls(tac, "SetValue")).toBe(0);
   });
 });
