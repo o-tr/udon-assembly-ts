@@ -20,7 +20,6 @@ import {
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
-  UdonType,
   type UnaryExpressionNode,
   type VariableDeclarationNode,
   type WhileStatementNode,
@@ -42,6 +41,58 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+
+type InlineParamSave = Map<
+  string,
+  { prefix: string; className: string } | undefined
+>;
+
+function saveAndBindInlineParams(
+  converter: ASTToTACConverter,
+  params: Array<{ name: string; type: TypeSymbol }>,
+  args: TACOperand[],
+): InlineParamSave {
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? converter.inlineInstanceMap.get((arg as VariableOperand).name)
+      : undefined,
+  );
+  const saved: InlineParamSave = new Map();
+  for (let i = 0; i < params.length; i++) {
+    const param = params[i];
+    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+      converter.symbolTable.addSymbol(param.name, param.type, true, false);
+    }
+    saved.set(param.name, converter.inlineInstanceMap.get(param.name));
+    converter.inlineInstanceMap.delete(param.name);
+    if (args[i]) {
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          args[i],
+        ),
+      );
+      const argInfo = argInlineInfos[i];
+      if (argInfo) {
+        converter.inlineInstanceMap.set(param.name, argInfo);
+      }
+    }
+  }
+  return saved;
+}
+
+function restoreInlineParams(
+  converter: ASTToTACConverter,
+  saved: InlineParamSave,
+): void {
+  for (const [name, entry] of saved) {
+    if (entry === undefined) {
+      converter.inlineInstanceMap.delete(name);
+    } else {
+      converter.inlineInstanceMap.set(name, entry);
+    }
+  }
+}
 
 export function visitInlineConstructor(
   this: ASTToTACConverter,
@@ -103,53 +154,23 @@ export function visitInlineConstructor(
 
   if (classNode.constructor) {
     this.symbolTable.enterScope();
-
-    const argInlineInfos = args.map((arg) =>
-      arg && arg.kind === TACOperandKind.Variable
-        ? this.inlineInstanceMap.get((arg as VariableOperand).name)
-        : undefined,
-    );
-    const savedParamEntries = new Map<
-      string,
-      { prefix: string; className: string } | undefined
-    >();
-
-    for (let i = 0; i < classNode.constructor.parameters.length; i++) {
-      const param = classNode.constructor.parameters[i];
-      const paramType = this.typeMapper.mapTypeScriptType(param.type);
-      if (!this.symbolTable.hasInCurrentScope(param.name)) {
-        this.symbolTable.addSymbol(param.name, paramType, true, false);
-      }
-      savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
-      this.inlineInstanceMap.delete(param.name);
-      if (args[i]) {
-        this.instructions.push(
-          new CopyInstruction(
-            createVariable(param.name, paramType, { isParameter: true }),
-            args[i],
-          ),
-        );
-        const argInfo = argInlineInfos[i];
-        if (argInfo) {
-          this.inlineInstanceMap.set(param.name, argInfo);
-        }
-      }
-    }
+    const typedParams = classNode.constructor.parameters.map((p) => ({
+      name: p.name,
+      type: this.typeMapper.mapTypeScriptType(p.type),
+    }));
+    const savedParamEntries = saveAndBindInlineParams(this, typedParams, args);
     const previousContext = this.currentInlineContext;
     const previousThisOverride = this.currentThisOverride;
     this.currentInlineContext = { className, instancePrefix };
     this.currentThisOverride = null;
-    this.visitStatement(classNode.constructor.body);
-    this.currentInlineContext = previousContext;
-    this.currentThisOverride = previousThisOverride;
-    for (const [name, entry] of savedParamEntries) {
-      if (entry === undefined) {
-        this.inlineInstanceMap.delete(name);
-      } else {
-        this.inlineInstanceMap.set(name, entry);
-      }
+    try {
+      this.visitStatement(classNode.constructor.body);
+    } finally {
+      this.currentInlineContext = previousContext;
+      this.currentThisOverride = previousThisOverride;
+      restoreInlineParams(this, savedParamEntries);
+      this.symbolTable.exitScope();
     }
-    this.symbolTable.exitScope();
   }
 
   return instanceHandle;
@@ -188,37 +209,11 @@ export function visitInlineStaticMethodCall(
   const returnLabel = this.newLabel("inline_return");
 
   this.symbolTable.enterScope();
-
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? this.inlineInstanceMap.get((arg as VariableOperand).name)
-      : undefined,
+  const savedParamEntries = saveAndBindInlineParams(
+    this,
+    method.parameters,
+    args,
   );
-  const savedParamEntries = new Map<
-    string,
-    { prefix: string; className: string } | undefined
-  >();
-
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    if (!this.symbolTable.hasInCurrentScope(param.name)) {
-      this.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-    savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
-    this.inlineInstanceMap.delete(param.name);
-    if (args[i]) {
-      this.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
-          args[i],
-        ),
-      );
-      const argInfo = argInlineInfos[i];
-      if (argInfo) {
-        this.inlineInstanceMap.set(param.name, argInfo);
-      }
-    }
-  }
 
   const savedParamExportMap = this.currentParamExportMap;
   const savedMethodLayout = this.currentMethodLayout;
@@ -244,15 +239,9 @@ export function visitInlineStaticMethodCall(
     this.currentMethodLayout = savedMethodLayout;
     this.currentInlineContext = savedInlineContext;
     this.currentThisOverride = savedThisOverride;
-    for (const [name, entry] of savedParamEntries) {
-      if (entry === undefined) {
-        this.inlineInstanceMap.delete(name);
-      } else {
-        this.inlineInstanceMap.set(name, entry);
-      }
-    }
+    restoreInlineParams(this, savedParamEntries);
+    this.symbolTable.exitScope();
   }
-  this.symbolTable.exitScope();
 
   this.instructions.push(new LabelInstruction(returnLabel));
   return result;
@@ -297,42 +286,11 @@ function inlineInstanceMethodCallCore(
   const returnLabel = converter.newLabel("inline_return");
 
   converter.symbolTable.enterScope();
-
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? converter.inlineInstanceMap.get((arg as VariableOperand).name)
-      : undefined,
+  const savedParamEntries = saveAndBindInlineParams(
+    converter,
+    method.parameters,
+    args,
   );
-  const savedParamEntries = new Map<
-    string,
-    { prefix: string; className: string } | undefined
-  >();
-
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-      converter.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-    savedParamEntries.set(
-      param.name,
-      converter.inlineInstanceMap.get(param.name),
-    );
-    converter.inlineInstanceMap.delete(param.name);
-    if (args[i]) {
-      converter.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, {
-            isParameter: true,
-          }),
-          args[i],
-        ),
-      );
-      const argInfo = argInlineInfos[i];
-      if (argInfo) {
-        converter.inlineInstanceMap.set(param.name, argInfo);
-      }
-    }
-  }
 
   const savedParamExportMap = converter.currentParamExportMap;
   const savedMethodLayout = converter.currentMethodLayout;
@@ -360,15 +318,9 @@ function inlineInstanceMethodCallCore(
     converter.currentMethodLayout = savedMethodLayout;
     converter.currentInlineContext = savedInlineContext;
     converter.currentThisOverride = savedThisOverride;
-    for (const [name, entry] of savedParamEntries) {
-      if (entry === undefined) {
-        converter.inlineInstanceMap.delete(name);
-      } else {
-        converter.inlineInstanceMap.set(name, entry);
-      }
-    }
+    restoreInlineParams(converter, savedParamEntries);
+    converter.symbolTable.exitScope();
   }
-  converter.symbolTable.exitScope();
 
   converter.instructions.push(new LabelInstruction(returnLabel));
   return result;
@@ -433,39 +385,9 @@ export function emitEntryPointPropertyInit(
       if (!this.symbolTable.hasInCurrentScope(param.name)) {
         this.symbolTable.addSymbol(param.name, paramType, true, false);
       }
-      // Entry-point constructors are called by the Udon runtime
-      // without arguments; explicitly initialize params to their
-      // type-appropriate default so the TAC is deterministic.
-      const paramVar = createVariable(param.name, paramType, {
-        isParameter: true,
-      });
-      const defaultVal = defaultConstantForType(paramType);
-      this.instructions.push(new CopyInstruction(paramVar, defaultVal));
-      this.maybeTrackInlineInstanceAssignment(paramVar, defaultVal);
     }
     this.visitStatement(classNode.constructor.body);
     this.symbolTable.exitScope();
-  }
-}
-
-function defaultConstantForType(type: TypeSymbol) {
-  if (type.udonType === UdonType.Boolean) {
-    return createConstant(false, type);
-  }
-  switch (type.udonType) {
-    case UdonType.Int32:
-    case UdonType.Int16:
-    case UdonType.UInt16:
-    case UdonType.UInt32:
-    case UdonType.Int64:
-    case UdonType.UInt64:
-    case UdonType.Byte:
-    case UdonType.SByte:
-    case UdonType.Single:
-    case UdonType.Double:
-      return createConstant(0, type);
-    default:
-      return createConstant(null, type);
   }
 }
 
