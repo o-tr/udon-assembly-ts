@@ -1060,7 +1060,10 @@ export function visitPropertyAccessExpression(
       const classNode = this.classMap.get(this.currentClassName);
       const prop = classNode?.properties.find((p) => p.name === node.property);
       if (prop) {
-        return createVariable(node.property, prop.type);
+        return createVariable(
+          this.entryPointPropName(node.property),
+          prop.type,
+        );
       }
     }
 

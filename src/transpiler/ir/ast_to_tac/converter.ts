@@ -382,6 +382,17 @@ export class ASTToTACConverter {
   }
 
   /**
+   * Scope an entry-point property name with the current class name
+   * when multiple entry-point classes exist, to avoid variable collisions.
+   */
+  entryPointPropName(propName: string): string {
+    if (this.entryPointClasses.size > 1 && this.currentClassName) {
+      return `${this.currentClassName}__${propName}`;
+    }
+    return propName;
+  }
+
+  /**
    * Generate a new temporary variable
    */
   newTemp(type: TypeSymbol = PrimitiveTypes.single): TACOperand {

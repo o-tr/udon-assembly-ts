@@ -98,7 +98,10 @@ export function assignToTarget(
         (p) => p.name === propAccess.property,
       );
       if (prop) {
-        const targetVar = createVariable(propAccess.property, prop.type);
+        const targetVar = createVariable(
+          this.entryPointPropName(propAccess.property),
+          prop.type,
+        );
         this.instructions.push(new CopyInstruction(targetVar, value));
         this.maybeTrackInlineInstanceAssignment(targetVar, value);
         const callback = this.resolveFieldChangeCallback(
@@ -137,6 +140,7 @@ export function assignToTarget(
         );
         if (mapped) {
           this.instructions.push(new CopyInstruction(mapped, value));
+          this.maybeTrackInlineInstanceAssignment(mapped, value);
           return value;
         }
       }

@@ -464,7 +464,10 @@ export function emitEntryPointPropertyInit(
     this.inSerializeFieldInitializer = !!prop.isSerializeField;
     const value = this.visitExpression(prop.initializer);
     this.inSerializeFieldInitializer = previousSerializeFieldState;
-    const targetVar = createVariable(prop.name, prop.type);
+    const targetVar = createVariable(
+      this.entryPointPropName(prop.name),
+      prop.type,
+    );
     this.instructions.push(new CopyInstruction(targetVar, value));
     this.maybeTrackInlineInstanceAssignment(targetVar, value);
   }
