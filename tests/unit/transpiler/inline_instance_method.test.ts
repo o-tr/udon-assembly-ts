@@ -399,4 +399,28 @@ describe("inline instance method calls", () => {
     // Should have __inst_Service_ prefix from inlining
     expect(startSection).toContain("__inst_Service_");
   });
+
+  it("rejects entry-point constructor with parameters (Start path)", () => {
+    const source = `
+      class Main {
+        constructor(x: number) {}
+        Start(): void {}
+      }
+    `;
+    expect(() => new TypeScriptToUdonTranspiler().transpile(source)).toThrow(
+      /constructor must be parameterless/,
+    );
+  });
+
+  it("rejects entry-point constructor with parameters (no-Start path)", () => {
+    const source = `
+      class Main {
+        constructor(x: number) {}
+        Update(): void {}
+      }
+    `;
+    expect(() => new TypeScriptToUdonTranspiler().transpile(source)).toThrow(
+      /constructor must be parameterless/,
+    );
+  });
 });

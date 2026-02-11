@@ -379,15 +379,17 @@ export function emitEntryPointPropertyInit(
     this.maybeTrackInlineInstanceAssignment(targetVar, value);
   }
   if (classNode.constructor?.body) {
-    this.symbolTable.enterScope();
-    for (const param of classNode.constructor.parameters) {
-      const paramType = this.typeMapper.mapTypeScriptType(param.type);
-      if (!this.symbolTable.hasInCurrentScope(param.name)) {
-        this.symbolTable.addSymbol(param.name, paramType, true, false);
-      }
+    if (classNode.constructor.parameters.length > 0) {
+      throw new Error(
+        `Entry-point class "${classNode.name}" constructor must be parameterless`,
+      );
     }
-    this.visitStatement(classNode.constructor.body);
-    this.symbolTable.exitScope();
+    this.symbolTable.enterScope();
+    try {
+      this.visitStatement(classNode.constructor.body);
+    } finally {
+      this.symbolTable.exitScope();
+    }
   }
 }
 
