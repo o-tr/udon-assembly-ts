@@ -20,6 +20,7 @@ import {
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
+  UdonType,
   type UnaryExpressionNode,
   type VariableDeclarationNode,
   type WhileStatementNode,
@@ -219,207 +220,14 @@ export function visitInlineStaticMethodCall(
     }
   }
 
-  this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({
-    returnVar: result,
-    returnLabel,
-    returnTrackingInvalidated: false,
-  });
-  try {
-    this.visitBlockStatement(method.body);
-  } finally {
-    this.inlineReturnStack.pop();
-    this.inlineMethodStack.delete(inlineKey);
-    for (const [name, entry] of savedParamEntries) {
-      if (entry === undefined) {
-        this.inlineInstanceMap.delete(name);
-      } else {
-        this.inlineInstanceMap.set(name, entry);
-      }
-    }
-  }
-  this.symbolTable.exitScope();
-
-  this.instructions.push(new LabelInstruction(returnLabel));
-  return result;
-}
-
-export function visitInlineInstanceMethodCall(
-  this: ASTToTACConverter,
-  className: string,
-  methodName: string,
-  args: TACOperand[],
-): TACOperand | null {
-  const inlineKey = `${className}::${methodName}`;
-  if (this.inlineMethodStack.has(inlineKey)) {
-    return null; // recursion detected → fallback
-  }
-  let classNode = this.classMap.get(className);
-  if (!classNode && this.classRegistry) {
-    const meta = this.classRegistry.getClass(className);
-    if (meta && !this.classRegistry.isStub(className)) {
-      classNode = meta.node;
-      this.classMap.set(className, classNode);
-    }
-  }
-  if (!classNode) return null;
-  const method = classNode.methods.find(
-    (candidate) => candidate.name === methodName && !candidate.isStatic,
-  );
-  if (!method) return null;
-
-  const returnType = method.returnType;
-  const result = createVariable(
-    `__inline_ret_${this.tempCounter++}`,
-    returnType,
-    { isLocal: true },
-  );
-  const returnLabel = this.newLabel("inline_return");
-
-  this.symbolTable.enterScope();
-
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? this.inlineInstanceMap.get((arg as VariableOperand).name)
-      : undefined,
-  );
-  const savedParamEntries = new Map<
-    string,
-    { prefix: string; className: string } | undefined
-  >();
-
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    if (!this.symbolTable.hasInCurrentScope(param.name)) {
-      this.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-    savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
-    this.inlineInstanceMap.delete(param.name);
-    if (args[i]) {
-      this.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
-          args[i],
-        ),
-      );
-      const argInfo = argInlineInfos[i];
-      if (argInfo) {
-        this.inlineInstanceMap.set(param.name, argInfo);
-      }
-    }
-  }
-
-  const savedParamExportMap = this.currentParamExportMap;
-  const savedMethodLayout = this.currentMethodLayout;
-  const savedInlineContext = this.currentInlineContext;
-  this.currentParamExportMap = new Map();
-  this.currentMethodLayout = null;
-  this.currentInlineContext = undefined;
-
-  this.inlineMethodStack.add(inlineKey);
-  this.inlineReturnStack.push({
-    returnVar: result,
-    returnLabel,
-    returnTrackingInvalidated: false,
-  });
-  try {
-    this.visitBlockStatement(method.body);
-  } finally {
-    this.inlineReturnStack.pop();
-    this.inlineMethodStack.delete(inlineKey);
-    this.currentParamExportMap = savedParamExportMap;
-    this.currentMethodLayout = savedMethodLayout;
-    this.currentInlineContext = savedInlineContext;
-    for (const [name, entry] of savedParamEntries) {
-      if (entry === undefined) {
-        this.inlineInstanceMap.delete(name);
-      } else {
-        this.inlineInstanceMap.set(name, entry);
-      }
-    }
-  }
-  this.symbolTable.exitScope();
-
-  this.instructions.push(new LabelInstruction(returnLabel));
-  return result;
-}
-
-export function visitInlineInstanceMethodCallWithContext(
-  this: ASTToTACConverter,
-  className: string,
-  instancePrefix: string,
-  methodName: string,
-  args: TACOperand[],
-): TACOperand | null {
-  const inlineKey = `${className}::${methodName}`;
-  if (this.inlineMethodStack.has(inlineKey)) {
-    return null; // recursion detected → fallback
-  }
-
-  let classNode = this.classMap.get(className);
-  if (!classNode && this.classRegistry) {
-    const meta = this.classRegistry.getClass(className);
-    if (meta && !this.classRegistry.isStub(className)) {
-      classNode = meta.node;
-      this.classMap.set(className, classNode);
-    }
-  }
-  if (!classNode) return null;
-
-  const method = classNode.methods.find(
-    (candidate) => candidate.name === methodName && !candidate.isStatic,
-  );
-  if (!method) return null;
-
-  const returnType = method.returnType;
-  const result = createVariable(
-    `__inline_ret_${this.tempCounter++}`,
-    returnType,
-    { isLocal: true },
-  );
-  const returnLabel = this.newLabel("inline_return");
-
-  this.symbolTable.enterScope();
-
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? this.inlineInstanceMap.get((arg as VariableOperand).name)
-      : undefined,
-  );
-  const savedParamEntries = new Map<
-    string,
-    { prefix: string; className: string } | undefined
-  >();
-
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    if (!this.symbolTable.hasInCurrentScope(param.name)) {
-      this.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-    savedParamEntries.set(param.name, this.inlineInstanceMap.get(param.name));
-    this.inlineInstanceMap.delete(param.name);
-    if (args[i]) {
-      this.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
-          args[i],
-        ),
-      );
-      const argInfo = argInlineInfos[i];
-      if (argInfo) {
-        this.inlineInstanceMap.set(param.name, argInfo);
-      }
-    }
-  }
-
   const savedParamExportMap = this.currentParamExportMap;
   const savedMethodLayout = this.currentMethodLayout;
   const savedInlineContext = this.currentInlineContext;
   const savedThisOverride = this.currentThisOverride;
   this.currentParamExportMap = new Map();
   this.currentMethodLayout = null;
+  this.currentInlineContext = undefined;
   this.currentThisOverride = null;
-  this.currentInlineContext = { className, instancePrefix };
 
   this.inlineMethodStack.add(inlineKey);
   this.inlineReturnStack.push({
@@ -451,6 +259,153 @@ export function visitInlineInstanceMethodCallWithContext(
 }
 
 /**
+ * Shared implementation for instance method inlining.
+ * When instancePrefix is provided, sets currentInlineContext;
+ * otherwise clears it.
+ */
+function inlineInstanceMethodCallCore(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+): TACOperand | null {
+  const inlineKey = `${className}::${methodName}`;
+  if (converter.inlineMethodStack.has(inlineKey)) {
+    return null; // recursion detected → fallback
+  }
+  let classNode = converter.classMap.get(className);
+  if (!classNode && converter.classRegistry) {
+    const meta = converter.classRegistry.getClass(className);
+    if (meta && !converter.classRegistry.isStub(className)) {
+      classNode = meta.node;
+      converter.classMap.set(className, classNode);
+    }
+  }
+  if (!classNode) return null;
+  const method = classNode.methods.find(
+    (candidate) => candidate.name === methodName && !candidate.isStatic,
+  );
+  if (!method) return null;
+
+  const returnType = method.returnType;
+  const result = createVariable(
+    `__inline_ret_${converter.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
+  const returnLabel = converter.newLabel("inline_return");
+
+  converter.symbolTable.enterScope();
+
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? converter.inlineInstanceMap.get((arg as VariableOperand).name)
+      : undefined,
+  );
+  const savedParamEntries = new Map<
+    string,
+    { prefix: string; className: string } | undefined
+  >();
+
+  for (let i = 0; i < method.parameters.length; i++) {
+    const param = method.parameters[i];
+    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+      converter.symbolTable.addSymbol(param.name, param.type, true, false);
+    }
+    savedParamEntries.set(
+      param.name,
+      converter.inlineInstanceMap.get(param.name),
+    );
+    converter.inlineInstanceMap.delete(param.name);
+    if (args[i]) {
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, {
+            isParameter: true,
+          }),
+          args[i],
+        ),
+      );
+      const argInfo = argInlineInfos[i];
+      if (argInfo) {
+        converter.inlineInstanceMap.set(param.name, argInfo);
+      }
+    }
+  }
+
+  const savedParamExportMap = converter.currentParamExportMap;
+  const savedMethodLayout = converter.currentMethodLayout;
+  const savedInlineContext = converter.currentInlineContext;
+  const savedThisOverride = converter.currentThisOverride;
+  converter.currentParamExportMap = new Map();
+  converter.currentMethodLayout = null;
+  converter.currentThisOverride = null;
+  converter.currentInlineContext = instancePrefix
+    ? { className, instancePrefix }
+    : undefined;
+
+  converter.inlineMethodStack.add(inlineKey);
+  converter.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel,
+    returnTrackingInvalidated: false,
+  });
+  try {
+    converter.visitBlockStatement(method.body);
+  } finally {
+    converter.inlineReturnStack.pop();
+    converter.inlineMethodStack.delete(inlineKey);
+    converter.currentParamExportMap = savedParamExportMap;
+    converter.currentMethodLayout = savedMethodLayout;
+    converter.currentInlineContext = savedInlineContext;
+    converter.currentThisOverride = savedThisOverride;
+    for (const [name, entry] of savedParamEntries) {
+      if (entry === undefined) {
+        converter.inlineInstanceMap.delete(name);
+      } else {
+        converter.inlineInstanceMap.set(name, entry);
+      }
+    }
+  }
+  converter.symbolTable.exitScope();
+
+  converter.instructions.push(new LabelInstruction(returnLabel));
+  return result;
+}
+
+export function visitInlineInstanceMethodCall(
+  this: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  args: TACOperand[],
+): TACOperand | null {
+  return inlineInstanceMethodCallCore(
+    this,
+    className,
+    methodName,
+    args,
+    undefined,
+  );
+}
+
+export function visitInlineInstanceMethodCallWithContext(
+  this: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  methodName: string,
+  args: TACOperand[],
+): TACOperand | null {
+  return inlineInstanceMethodCallCore(
+    this,
+    className,
+    methodName,
+    args,
+    instancePrefix,
+  );
+}
+
+/**
  * Emit property initializers and constructor body for an entry-point class.
  * Shared by visitClassDeclaration (Start method path) and generateEntryPoint (no-Start path).
  */
@@ -478,9 +433,39 @@ export function emitEntryPointPropertyInit(
       if (!this.symbolTable.hasInCurrentScope(param.name)) {
         this.symbolTable.addSymbol(param.name, paramType, true, false);
       }
+      // Entry-point constructors are called by the Udon runtime
+      // without arguments; explicitly initialize params to their
+      // type-appropriate default so the TAC is deterministic.
+      const paramVar = createVariable(param.name, paramType, {
+        isParameter: true,
+      });
+      const defaultVal = defaultConstantForType(paramType);
+      this.instructions.push(new CopyInstruction(paramVar, defaultVal));
+      this.maybeTrackInlineInstanceAssignment(paramVar, defaultVal);
     }
     this.visitStatement(classNode.constructor.body);
     this.symbolTable.exitScope();
+  }
+}
+
+function defaultConstantForType(type: TypeSymbol) {
+  if (type.udonType === UdonType.Boolean) {
+    return createConstant(false, type);
+  }
+  switch (type.udonType) {
+    case UdonType.Int32:
+    case UdonType.Int16:
+    case UdonType.UInt16:
+    case UdonType.UInt32:
+    case UdonType.Int64:
+    case UdonType.UInt64:
+    case UdonType.Byte:
+    case UdonType.SByte:
+    case UdonType.Single:
+    case UdonType.Double:
+      return createConstant(0, type);
+    default:
+      return createConstant(null, type);
   }
 }
 
