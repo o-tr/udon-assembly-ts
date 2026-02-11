@@ -1,3 +1,4 @@
+import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import {
   ExternTypes,
   ObjectType,
@@ -15,7 +16,6 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import { createConstant, type TACOperand } from "../../tac_operand.js";
-import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 export function emitDictionaryFromProperties(
