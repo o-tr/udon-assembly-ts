@@ -44,6 +44,9 @@ export function visitClassDeclaration(
   const decorators = rawDecorators.map((decorator) =>
     this.visitDecorator(decorator),
   );
+  const isUdonBehaviourClass = decorators.some(
+    (d) => d.name === "UdonBehaviour",
+  );
 
   let baseClass: string | null = null;
   let implementsList: string[] | undefined;
@@ -100,6 +103,12 @@ export function visitClassDeclaration(
             serializeFieldParams.add(param.name.getText());
           }
         }
+      }
+
+      if (serializeFieldParams.size > 0 && !isUdonBehaviourClass) {
+        throw new Error(
+          `@SerializeField on constructor parameters is only allowed in @UdonBehaviour classes, but "${className}" is not decorated with @UdonBehaviour`,
+        );
       }
 
       // Build params excluding @SerializeField ones
@@ -193,6 +202,15 @@ export function visitClassDeclaration(
         member,
         `Unsupported class member: ${ts.SyntaxKind[member.kind]}`,
         "Remove or refactor this class member.",
+      );
+    }
+  }
+
+  if (!isUdonBehaviourClass) {
+    const sfProp = properties.find((p) => p.isSerializeField);
+    if (sfProp) {
+      throw new Error(
+        `@SerializeField is only allowed in @UdonBehaviour classes, but "${className}" is not decorated with @UdonBehaviour`,
       );
     }
   }
