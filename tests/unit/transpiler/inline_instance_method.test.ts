@@ -423,4 +423,93 @@ describe("inline instance method calls", () => {
       /constructor must be parameterless/,
     );
   });
+
+  it("allows @SerializeField constructor parameter properties in @UdonBehaviour classes", () => {
+    const source = `
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonBehaviour";
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        constructor(@SerializeField private value: number) {}
+        Start(): void {
+          const x = this.value;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Should not throw "constructor must be parameterless"
+    // The property should be exported in uasm
+    expect(result.uasm).toContain("value");
+    expect(result.uasm).toContain(".export value");
+  });
+
+  it("mixes @SerializeField and regular constructor params correctly in @UdonBehaviour class", () => {
+    const source = `
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonBehaviour";
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        constructor(@SerializeField private value: number, extra: string) {}
+        Start(): void {}
+      }
+    `;
+    expect(() => new TypeScriptToUdonTranspiler().transpile(source)).toThrow(
+      /constructor must be parameterless/,
+    );
+  });
+
+  it("rejects @SerializeField on constructor params in non-@UdonBehaviour class", () => {
+    const source = `
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+
+      class Main {
+        constructor(@SerializeField private value: number) {}
+        Start(): void {}
+      }
+    `;
+    expect(() => new TypeScriptToUdonTranspiler().transpile(source)).toThrow(
+      /only allowed in @UdonBehaviour classes/,
+    );
+  });
+
+  it("rejects @SerializeField on property declarations in non-@UdonBehaviour class", () => {
+    const source = `
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+
+      class Main {
+        @SerializeField
+        private value: number = 0;
+        Start(): void {}
+      }
+    `;
+    expect(() => new TypeScriptToUdonTranspiler().transpile(source)).toThrow(
+      /only allowed in @UdonBehaviour classes/,
+    );
+  });
+
+  it("@SerializeField param without access modifier is treated as public property", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonBehaviour";
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        constructor(@SerializeField value: number) {
+          super();
+          this.value = value;
+        }
+        Start(): void {
+          const v = this.value;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).toContain("value");
+    expect(result.uasm).toContain(".export value");
+  });
 });

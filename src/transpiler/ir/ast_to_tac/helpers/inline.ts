@@ -379,13 +379,22 @@ export function emitEntryPointPropertyInit(
     this.maybeTrackInlineInstanceAssignment(targetVar, value);
   }
   if (classNode.constructor?.body) {
-    if (classNode.constructor.parameters.length > 0) {
+    const nonSerializeFieldParams = classNode.constructor.parameters.filter(
+      (p) => !p.isSerializeField,
+    );
+    if (nonSerializeFieldParams.length > 0) {
       throw new Error(
         `Entry-point class "${classNode.name}" constructor must be parameterless`,
       );
     }
     this.symbolTable.enterScope();
     try {
+      // Register @SerializeField params so the constructor body can reference them
+      for (const param of classNode.constructor.parameters) {
+        if (!param.isSerializeField) continue;
+        const paramType = this.typeMapper.mapTypeScriptType(param.type);
+        this.symbolTable.addSymbol(param.name, paramType, true, false);
+      }
       this.visitStatement(classNode.constructor.body);
     } finally {
       this.symbolTable.exitScope();

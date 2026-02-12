@@ -44,6 +44,9 @@ export function visitClassDeclaration(
   const decorators = rawDecorators.map((decorator) =>
     this.visitDecorator(decorator),
   );
+  const isUdonBehaviourClass = decorators.some(
+    (d) => d.name === "UdonBehaviour",
+  );
 
   let baseClass: string | null = null;
   let implementsList: string[] | undefined;
@@ -88,9 +91,33 @@ export function visitClassDeclaration(
       const method = this.visitMethodDeclaration(member);
       if (method) methods.push(method);
     } else if (ts.isConstructorDeclaration(member)) {
+      // First pass: collect @SerializeField params
+      const serializeFieldParams = new Set<string>();
+      for (const param of member.parameters) {
+        const paramDecorators = ts.canHaveDecorators(param)
+          ? (ts.getDecorators(param) ?? [])
+          : [];
+        for (const decorator of paramDecorators) {
+          const dec = this.visitDecorator(decorator);
+          if (dec.name === "SerializeField") {
+            serializeFieldParams.add(param.name.getText());
+          }
+        }
+      }
+
+      if (serializeFieldParams.size > 0 && !isUdonBehaviourClass) {
+        throw new Error(
+          `@SerializeField on constructor parameters is only allowed in @UdonBehaviour classes, but "${className}" is not decorated with @UdonBehaviour`,
+        );
+      }
+
+      // Build params, marking @SerializeField ones
       const params = member.parameters.map((param) => ({
         name: param.name.getText(),
         type: param.type ? param.type.getText() : "number",
+        ...(serializeFieldParams.has(param.name.getText())
+          ? { isSerializeField: true }
+          : {}),
       }));
       const body = member.body ? this.visitBlock(member.body) : undefined;
       if (body) {
@@ -108,7 +135,11 @@ export function visitClassDeclaration(
               mod.kind === ts.SyntaxKind.ProtectedKeyword ||
               mod.kind === ts.SyntaxKind.ReadonlyKeyword,
           ) ?? false;
-        if (!hasPropertyModifier) continue;
+        if (
+          !hasPropertyModifier &&
+          !serializeFieldParams.has(param.name.getText())
+        )
+          continue;
         const propName = param.name.getText();
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
@@ -117,13 +148,14 @@ export function visitClassDeclaration(
         const isPublic =
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
-          ) ?? false;
+          ) ?? !hasPropertyModifier;
         properties.push({
           kind: ASTNodeKind.PropertyDeclaration,
           name: propName,
           type: propType,
           isPublic,
           isStatic: false,
+          isSerializeField: serializeFieldParams.has(propName),
         });
       }
     } else if (ts.isGetAccessorDeclaration(member)) {
@@ -175,6 +207,15 @@ export function visitClassDeclaration(
         member,
         `Unsupported class member: ${ts.SyntaxKind[member.kind]}`,
         "Remove or refactor this class member.",
+      );
+    }
+  }
+
+  if (!isUdonBehaviourClass) {
+    const sfProp = properties.find((p) => p.isSerializeField);
+    if (sfProp) {
+      throw new Error(
+        `@SerializeField is only allowed in @UdonBehaviour classes, but "${className}" is not decorated with @UdonBehaviour`,
       );
     }
   }

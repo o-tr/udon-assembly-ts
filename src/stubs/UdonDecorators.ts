@@ -20,7 +20,8 @@ export function UdonBehaviour(_options?: {
 }): ClassDecorator {
   return () => undefined;
 }
-export const SerializeField: PropertyDecorator = () => undefined;
+export const SerializeField: PropertyDecorator & ParameterDecorator = () =>
+  undefined;
 
 // UdonSharp stub requires generic arguments
 export function UdonStub(target: (...args: never[]) => unknown): void;
