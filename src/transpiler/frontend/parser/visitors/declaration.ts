@@ -135,7 +135,11 @@ export function visitClassDeclaration(
               mod.kind === ts.SyntaxKind.ProtectedKeyword ||
               mod.kind === ts.SyntaxKind.ReadonlyKeyword,
           ) ?? false;
-        if (!hasPropertyModifier && !serializeFieldParams.has(param.name.getText())) continue;
+        if (
+          !hasPropertyModifier &&
+          !serializeFieldParams.has(param.name.getText())
+        )
+          continue;
         const propName = param.name.getText();
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
