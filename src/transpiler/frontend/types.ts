@@ -439,7 +439,7 @@ export interface ClassDeclarationNode extends ASTNode {
   properties: PropertyDeclarationNode[];
   methods: MethodDeclarationNode[];
   constructor?: {
-    parameters: Array<{ name: string; type: string }>;
+    parameters: Array<{ name: string; type: string; isSerializeField?: boolean }>;
     body: ASTNode;
   };
 }

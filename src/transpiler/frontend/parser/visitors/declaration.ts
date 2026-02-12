@@ -111,13 +111,14 @@ export function visitClassDeclaration(
         );
       }
 
-      // Build params excluding @SerializeField ones
-      const params = member.parameters
-        .filter((param) => !serializeFieldParams.has(param.name.getText()))
-        .map((param) => ({
-          name: param.name.getText(),
-          type: param.type ? param.type.getText() : "number",
-        }));
+      // Build params, marking @SerializeField ones
+      const params = member.parameters.map((param) => ({
+        name: param.name.getText(),
+        type: param.type ? param.type.getText() : "number",
+        ...(serializeFieldParams.has(param.name.getText())
+          ? { isSerializeField: true }
+          : {}),
+      }));
       const body = member.body ? this.visitBlock(member.body) : undefined;
       if (body) {
         constructorNode = {
@@ -134,7 +135,7 @@ export function visitClassDeclaration(
               mod.kind === ts.SyntaxKind.ProtectedKeyword ||
               mod.kind === ts.SyntaxKind.ReadonlyKeyword,
           ) ?? false;
-        if (!hasPropertyModifier) continue;
+        if (!hasPropertyModifier && !serializeFieldParams.has(param.name.getText())) continue;
         const propName = param.name.getText();
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
@@ -143,7 +144,7 @@ export function visitClassDeclaration(
         const isPublic =
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
-          ) ?? false;
+          ) ?? !hasPropertyModifier;
         properties.push({
           kind: ASTNodeKind.PropertyDeclaration,
           name: propName,

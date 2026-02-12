@@ -490,4 +490,26 @@ describe("inline instance method calls", () => {
       /only allowed in @UdonBehaviour classes/,
     );
   });
+
+  it("@SerializeField param without access modifier is treated as public property", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonBehaviour";
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        constructor(@SerializeField value: number) {
+          super();
+          this.value = value;
+        }
+        Start(): void {
+          const v = this.value;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).toContain("value");
+    expect(result.uasm).toContain(".export value");
+  });
 });
