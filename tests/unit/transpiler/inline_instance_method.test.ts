@@ -423,4 +423,36 @@ describe("inline instance method calls", () => {
       /constructor must be parameterless/,
     );
   });
+
+  it("allows @SerializeField constructor parameter properties in entry-point classes", () => {
+    const source = `
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+
+      class Main {
+        constructor(@SerializeField private value: number) {}
+        Start(): void {
+          const x = this.value;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Should not throw "constructor must be parameterless"
+    // The property should be exported in uasm
+    expect(result.uasm).toContain("value");
+    expect(result.uasm).toContain(".export value");
+  });
+
+  it("mixes @SerializeField and regular constructor params correctly", () => {
+    const source = `
+      import { SerializeField } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+
+      class Main {
+        constructor(@SerializeField private value: number, extra: string) {}
+        Start(): void {}
+      }
+    `;
+    expect(() => new TypeScriptToUdonTranspiler().transpile(source)).toThrow(
+      /constructor must be parameterless/,
+    );
+  });
 });

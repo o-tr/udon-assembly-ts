@@ -88,10 +88,27 @@ export function visitClassDeclaration(
       const method = this.visitMethodDeclaration(member);
       if (method) methods.push(method);
     } else if (ts.isConstructorDeclaration(member)) {
-      const params = member.parameters.map((param) => ({
-        name: param.name.getText(),
-        type: param.type ? param.type.getText() : "number",
-      }));
+      // First pass: collect @SerializeField params
+      const serializeFieldParams = new Set<string>();
+      for (const param of member.parameters) {
+        const paramDecorators = ts.canHaveDecorators(param)
+          ? (ts.getDecorators(param) ?? [])
+          : [];
+        for (const decorator of paramDecorators) {
+          const dec = this.visitDecorator(decorator);
+          if (dec.name === "SerializeField") {
+            serializeFieldParams.add(param.name.getText());
+          }
+        }
+      }
+
+      // Build params excluding @SerializeField ones
+      const params = member.parameters
+        .filter((param) => !serializeFieldParams.has(param.name.getText()))
+        .map((param) => ({
+          name: param.name.getText(),
+          type: param.type ? param.type.getText() : "number",
+        }));
       const body = member.body ? this.visitBlock(member.body) : undefined;
       if (body) {
         constructorNode = {
@@ -124,6 +141,7 @@ export function visitClassDeclaration(
           type: propType,
           isPublic,
           isStatic: false,
+          isSerializeField: serializeFieldParams.has(propName),
         });
       }
     } else if (ts.isGetAccessorDeclaration(member)) {
