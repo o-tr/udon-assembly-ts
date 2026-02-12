@@ -910,6 +910,13 @@ export function visitIdentifier(
     ) {
       return createVariable(node.name, ObjectType);
     }
+    if (this.classRegistry) {
+      const meta = this.classRegistry.getClass(node.name);
+      if (meta && !this.classRegistry.isStub(node.name)) {
+        this.classMap.set(node.name, meta.node);
+        return createVariable(node.name, ObjectType);
+      }
+    }
     const location = this.currentClassName
       ? `${this.currentClassName}${this.currentMethodName ? `.${this.currentMethodName}` : ""}`
       : "<unknown>";
