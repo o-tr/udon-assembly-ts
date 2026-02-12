@@ -94,6 +94,7 @@ export class TypeScriptParser {
    * Parse TypeScript source code into simplified AST
    */
   parse(sourceCode: string, filePath = "temp.ts"): ProgramNode {
+    this.symbolTable = new SymbolTable();
     const sourceFile = ts.createSourceFile(
       filePath,
       sourceCode,
