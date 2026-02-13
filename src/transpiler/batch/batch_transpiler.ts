@@ -110,6 +110,9 @@ export class BatchTranspiler {
     const reachable = new Set<string>();
     const fallbackDeps = new Set<string>();
     const includeExternal = options.includeExternalDependencies !== false;
+    console.log(
+      `Discovered ${files.length} TypeScript files, ${entryFiles.length} entry points.`,
+    );
     if (entryFiles.length > 0) {
       for (const entry of entryFiles) {
         try {
@@ -203,6 +206,9 @@ export class BatchTranspiler {
         }
       }
     }
+    console.log(
+      `registered ${registry.getAllClasses().length} classes from ${cacheFiles.length} files.`,
+    );
 
     const validator = new InheritanceValidator(registry, errorCollector);
     for (const entryPoint of registry.getEntryPoints()) {
@@ -214,6 +220,7 @@ export class BatchTranspiler {
     validator.validateUdonBehaviourInterfaceConsistency(
       udonBehaviourInterfaceNames,
     );
+    console.log(`Inheritance validation completed.`);
 
     if (errorCollector.hasErrors()) {
       throw new AggregateTranspileError(errorCollector.getErrors());
@@ -239,11 +246,10 @@ export class BatchTranspiler {
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     for (const entryPoint of registry.getEntryPoints()) {
+      console.log(`Transpiling entry point: ${entryPoint.name}`);
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
         continue;
       }
-      const _entryFile = entryPoint.filePath;
-
       const mergedMethods = registry.getMergedMethods(entryPoint.name);
       const mergedProperties = registry.getMergedProperties(entryPoint.name);
 
@@ -262,6 +268,9 @@ export class BatchTranspiler {
           (decorator) => decorator.name === "UdonBehaviour",
         );
       });
+      console.log(
+        `  - Collected ${filteredInlineClassNames.length} inline classes.`,
+      );
 
       const entryPointMethods = this.orderEntryMethods(
         this.filterMethodsByUsage(mergedMethods, entryPoint.name, methodUsage),
@@ -276,6 +285,9 @@ export class BatchTranspiler {
           false,
         );
       }
+      console.log(
+        `  - Collected ${entryPointMethods.length} methods, ${mergedProperties.length} properties, ${filteredInlineClassNames.length} inline classes.`,
+      );
 
       let topLevelConsts: TopLevelConstInfo[];
       try {
@@ -364,6 +376,7 @@ export class BatchTranspiler {
         { useStringBuilder: options.useStringBuilder },
       );
       let tacInstructions = tacConverter.convert(methodProgram);
+      console.log(`  - Generated ${tacInstructions.length} TAC instructions.`);
 
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();

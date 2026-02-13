@@ -30,12 +30,14 @@ export const computeDominators = (cfg: {
       if (block.id === 0) continue;
       const preds = block.preds;
       if (preds.length === 0) continue;
-      let intersection = new Set<number>(dom.get(preds[0]) ?? []);
+      const intersection = new Set<number>(dom.get(preds[0]) ?? []);
       for (let i = 1; i < preds.length; i++) {
         const predDom = dom.get(preds[i]) ?? new Set<number>();
-        intersection = new Set(
-          Array.from(intersection).filter((id) => predDom.has(id)),
-        );
+        for (const id of intersection) {
+          if (!predDom.has(id)) {
+            intersection.delete(id);
+          }
+        }
       }
       intersection.add(block.id);
       const current = dom.get(block.id) ?? new Set<number>();
@@ -51,11 +53,14 @@ export const computeDominators = (cfg: {
 
 export const collectLoops = (cfg: {
   blocks: BasicBlock[];
-}): Array<{
-  headerId: number;
-  blocks: Set<number>;
-  preheaderId: number;
-}> => {
+}): {
+  loops: Array<{
+    headerId: number;
+    blocks: Set<number>;
+    preheaderId: number;
+  }>;
+  dom: Map<number, Set<number>>;
+} => {
   const dom = computeDominators(cfg);
   const loopsByHeader = new Map<number, Set<number>>();
 
@@ -101,7 +106,7 @@ export const collectLoops = (cfg: {
       preheaderId: externalPreds[0],
     });
   }
-  return loops;
+  return { loops, dom };
 };
 
 export const preheaderInsertIndex = (
@@ -170,10 +175,8 @@ export const performLICM = (
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  const loops = collectLoops(cfg);
+  const { loops, dom } = collectLoops(cfg);
   if (loops.length === 0) return instructions;
-
-  const dom = computeDominators(cfg);
   const indexToBlock = new Map<number, number>();
   for (const block of cfg.blocks) {
     for (let i = block.start; i <= block.end; i++) {

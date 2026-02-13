@@ -47,7 +47,7 @@ export const unswitchLoops = (
     const cfg = buildCFG(work);
     if (cfg.blocks.length === 0) return work;
 
-    const loops = collectLoops(cfg);
+    const { loops } = collectLoops(cfg);
     if (loops.length === 0) return work;
 
     let changed = false;
