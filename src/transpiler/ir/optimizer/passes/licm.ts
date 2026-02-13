@@ -7,67 +7,190 @@ import {
   isPureProducer,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
-import { numberSetEqual } from "../utils/sets.js";
 
-export const computeDominators = (cfg: {
-  blocks: BasicBlock[];
-}): Map<number, Set<number>> => {
-  const dom = new Map<number, Set<number>>();
-  const all = new Set<number>(cfg.blocks.map((block) => block.id));
+type CFG = { blocks: BasicBlock[] };
 
-  for (const block of cfg.blocks) {
-    if (block.id === 0) {
-      dom.set(block.id, new Set([block.id]));
+/**
+ * Compute reverse postorder numbering via iterative DFS.
+ * Only reachable blocks from entry (block 0) are included.
+ */
+export const computeRPO = (cfg: CFG): number[] => {
+  const visited = new Set<number>();
+  const postorder: number[] = [];
+
+  // Iterative DFS using explicit stack
+  // Stack entries: [blockId, childIndex]
+  const stack: Array<[number, number]> = [[0, 0]];
+  visited.add(0);
+
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1];
+    const blockId = top[0];
+    const childIdx = top[1];
+    const succs = cfg.blocks[blockId].succs;
+
+    if (childIdx < succs.length) {
+      top[1] = childIdx + 1;
+      const succ = succs[childIdx];
+      if (!visited.has(succ)) {
+        visited.add(succ);
+        stack.push([succ, 0]);
+      }
     } else {
-      dom.set(block.id, new Set(all));
+      stack.pop();
+      postorder.push(blockId);
     }
   }
+
+  postorder.reverse();
+  return postorder;
+};
+
+/**
+ * Cooper-Harvey-Kennedy algorithm for computing immediate dominators.
+ * RPO-based fixpoint iteration. Entry block's idom = entry block itself.
+ * Memory: O(N).
+ */
+export const computeIDom = (cfg: CFG): Map<number, number> => {
+  const rpo = computeRPO(cfg);
+  const rpoNumber = new Map<number, number>();
+  for (let i = 0; i < rpo.length; i++) {
+    rpoNumber.set(rpo[i], i);
+  }
+
+  const entryId = rpo[0];
+  const idom = new Map<number, number>();
+  idom.set(entryId, entryId);
+
+  const intersect = (b1: number, b2: number): number => {
+    let finger1 = b1;
+    let finger2 = b2;
+    while (finger1 !== finger2) {
+      while ((rpoNumber.get(finger1) ?? 0) > (rpoNumber.get(finger2) ?? 0)) {
+        finger1 = idom.get(finger1) as number;
+      }
+      while ((rpoNumber.get(finger2) ?? 0) > (rpoNumber.get(finger1) ?? 0)) {
+        finger2 = idom.get(finger2) as number;
+      }
+    }
+    return finger1;
+  };
 
   let changed = true;
   while (changed) {
     changed = false;
-    for (const block of cfg.blocks) {
-      if (block.id === 0) continue;
-      const preds = block.preds;
-      if (preds.length === 0) continue;
-      const intersection = new Set<number>(dom.get(preds[0]) ?? []);
-      for (let i = 1; i < preds.length; i++) {
-        const predDom = dom.get(preds[i]) ?? new Set<number>();
-        for (const id of intersection) {
-          if (!predDom.has(id)) {
-            intersection.delete(id);
-          }
+    for (let i = 1; i < rpo.length; i++) {
+      const blockId = rpo[i];
+      const preds = cfg.blocks[blockId].preds;
+
+      // Find first predecessor with an idom entry
+      let newIdom: number | undefined;
+      for (const pred of preds) {
+        if (idom.has(pred)) {
+          newIdom = pred;
+          break;
         }
       }
-      intersection.add(block.id);
-      const current = dom.get(block.id) ?? new Set<number>();
-      if (!numberSetEqual(current, intersection)) {
-        dom.set(block.id, intersection);
+      if (newIdom === undefined) continue;
+
+      // Intersect with remaining processed predecessors
+      for (const pred of preds) {
+        if (pred === newIdom) continue;
+        if (idom.has(pred)) {
+          newIdom = intersect(newIdom, pred);
+        }
+      }
+
+      if (idom.get(blockId) !== newIdom) {
+        idom.set(blockId, newIdom);
         changed = true;
       }
     }
   }
 
-  return dom;
+  return idom;
 };
 
-export const collectLoops = (cfg: {
-  blocks: BasicBlock[];
-}): {
+/**
+ * Build dominator tree timestamps via iterative DFS on the dominator tree.
+ * Returns tin/tout maps for O(1) dominance queries.
+ */
+export const buildDomTimestamps = (
+  idom: Map<number, number>,
+  entryId: number,
+): { tin: Map<number, number>; tout: Map<number, number> } => {
+  // Build children lists from idom
+  const children = new Map<number, number[]>();
+  for (const [child, parent] of idom.entries()) {
+    if (child === parent) continue; // Skip entry self-reference
+    if (!children.has(parent)) children.set(parent, []);
+    children.get(parent)!.push(child);
+  }
+
+  const tin = new Map<number, number>();
+  const tout = new Map<number, number>();
+  let time = 0;
+
+  // Iterative DFS: stack entries [blockId, childIndex]
+  const stack: Array<[number, number]> = [[entryId, 0]];
+  tin.set(entryId, time++);
+
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1];
+    const blockId = top[0];
+    const childIdx = top[1];
+    const kids = children.get(blockId) ?? [];
+
+    if (childIdx < kids.length) {
+      top[1] = childIdx + 1;
+      const child = kids[childIdx];
+      tin.set(child, time++);
+      stack.push([child, 0]);
+    } else {
+      stack.pop();
+      tout.set(blockId, time++);
+    }
+  }
+
+  return { tin, tout };
+};
+
+/**
+ * O(1) dominance check using Euler tour timestamps.
+ * Returns true if `a` dominates `b`.
+ * Returns false if either block has no timestamp (unreachable).
+ */
+export const dominates = (
+  tin: Map<number, number>,
+  tout: Map<number, number>,
+  a: number,
+  b: number,
+): boolean => {
+  const tinA = tin.get(a);
+  const tinB = tin.get(b);
+  if (tinA === undefined || tinB === undefined) return false;
+  const toutA = tout.get(a)!;
+  const toutB = tout.get(b)!;
+  return tinA <= tinB && toutB <= toutA;
+};
+
+export const collectLoops = (cfg: CFG): {
   loops: Array<{
     headerId: number;
     blocks: Set<number>;
     preheaderId: number;
   }>;
-  dom: Map<number, Set<number>>;
+  idom: Map<number, number>;
+  tin: Map<number, number>;
+  tout: Map<number, number>;
 } => {
-  const dom = computeDominators(cfg);
+  const idom = computeIDom(cfg);
+  const { tin, tout } = buildDomTimestamps(idom, 0);
   const loopsByHeader = new Map<number, Set<number>>();
 
   for (const block of cfg.blocks) {
     for (const succ of block.succs) {
-      const doms = dom.get(block.id);
-      if (doms?.has(succ)) {
+      if (dominates(tin, tout, succ, block.id)) {
         const loop = new Set<number>([succ, block.id]);
         const stack = [block.id];
         while (stack.length > 0) {
@@ -106,7 +229,7 @@ export const collectLoops = (cfg: {
       preheaderId: externalPreds[0],
     });
   }
-  return { loops, dom };
+  return { loops, idom, tin, tout };
 };
 
 export const preheaderInsertIndex = (
@@ -175,7 +298,7 @@ export const performLICM = (
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  const { loops, dom } = collectLoops(cfg);
+  const { loops, tin, tout } = collectLoops(cfg);
   if (loops.length === 0) return instructions;
   const indexToBlock = new Map<number, number>();
   for (const block of cfg.blocks) {
@@ -248,7 +371,7 @@ export const performLICM = (
       if (defBlockId === undefined) continue;
       let dominatesLoop = true;
       for (const blockId of loopBlocks) {
-        if (!(dom.get(blockId)?.has(defBlockId) ?? false)) {
+        if (!dominates(tin, tout, defBlockId, blockId)) {
           dominatesLoop = false;
           break;
         }

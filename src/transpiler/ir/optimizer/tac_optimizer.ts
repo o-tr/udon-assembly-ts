@@ -31,6 +31,7 @@ import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
+import { computeRPO } from "./passes/licm.js";
 import { performLICM } from "./passes/licm.js";
 import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { unswitchLoops } from "./passes/loop_unswitching.js";
@@ -51,6 +52,9 @@ import {
 } from "./passes/temp_reuse.js";
 import { eliminateUnusedLabels } from "./passes/unused_labels.js";
 import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
+import { buildCFG } from "./analysis/cfg.js";
+
+const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
 
 const computeFingerprint = (insts: TACInstruction[]): number => {
   // FNV-1a 32-bit hash
@@ -150,145 +154,85 @@ export class TACOptimizer {
       current: TACInstruction[],
       isFirstIteration: boolean,
     ): TACInstruction[] => {
-      console.log(
-        `  - Running analysis passes (first iteration: ${isFirstIteration}), ${current.length} instructions`,
-      );
       let next = current;
 
       // Apply constant folding
       next = constantFolding(next);
-      console.log(`    -> ${next.length} instructions after constant folding`);
       // Coalesce string concatenation chains
       next = optimizeStringConcatenation(next);
-      console.log(
-        `    -> ${next.length} instructions after optimizeStringConcatenation`,
-      );
       // Apply SCCP and prune unreachable blocks (preserve exposedLabels)
       next = sccpAndPrune(next, exposedLabels);
-      console.log(`    -> ${next.length} instructions after SCCP and pruning`);
       // Apply boolean simplifications
       next = booleanSimplification(next);
-      console.log(
-        `    -> ${next.length} instructions after boolean simplification`,
-      );
       // Simplify diamond patterns (ternary true/false → copy of condition)
       next = simplifyDiamondPatterns(next);
-      console.log(
-        `    -> ${next.length} instructions after diamond simplification`,
-      );
       // Fuse negated comparisons
       next = negatedComparisonFusion(next);
-      console.log(
-        `    -> ${next.length} instructions after negatedComparisonFusion`,
-      );
       // Eliminate double negations
       next = doubleNegationElimination(next);
-      console.log(
-        `    -> ${next.length} instructions after doubleNegationElimination`,
-      );
       // Apply algebraic simplifications and redundant cast removal
       next = algebraicSimplification(next);
-      console.log(
-        `    -> ${next.length} instructions after algebraicSimplification`,
-      );
       // Fold cast chains
       next = castChainFolding(next);
-      console.log(`    -> ${next.length} instructions after castChainFolding`);
       // Eliminate redundant widening casts used only in comparisons
       next = narrowTypes(next);
-      console.log(`    -> ${next.length} instructions after narrowTypes`);
       // Reassociate partially-constant binary operations
       next = reassociate(next);
-      console.log(`    -> ${next.length} instructions after reassociation`);
-      // // SSA window: build SSA, run SSA-aware passes, then deconstruct
+      // SSA window: build SSA, run SSA-aware passes, then deconstruct
       if (isFirstIteration) {
-        const ssa = buildSSA(next);
-        const ssaPre = performPRE(ssa, { useSSA: true });
-        const ssaGvn = globalValueNumbering(ssaPre, { useSSA: true });
-        next = deconstructSSA(ssaGvn);
+        // Check reachable block count before SSA to avoid OOM on huge CFGs
+        const ssaCfg = buildCFG(next);
+        const rpo = computeRPO(ssaCfg);
+        if (rpo.length > SSA_REACHABLE_BLOCK_LIMIT) {
+          console.warn(
+            `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${SSA_REACHABLE_BLOCK_LIMIT}`,
+          );
+        } else {
+          const ssa = buildSSA(next);
+          const ssaPre = performPRE(ssa, { useSSA: true });
+          const ssaGvn = globalValueNumbering(ssaPre, { useSSA: true });
+          next = deconstructSSA(ssaGvn);
+        }
       }
-      console.log(`    -> ${next.length} instructions after SSA window`);
       // Optimize tail calls (call followed immediately by return)
       next = optimizeTailCalls(next);
-      console.log(`    -> ${next.length} instructions after optimizeTailCalls`);
       // Eliminate single-use temporaries inside basic blocks
       next = eliminateSingleUseTemporaries(next);
-      console.log(
-        `    -> ${next.length} instructions after eliminateSingleUseTemporaries`,
-      );
       // Remove no-op copies/assignments
       next = eliminateNoopCopies(next);
-      console.log(
-        `    -> ${next.length} instructions after eliminateNoopCopies`,
-      );
       // Propagate copies within basic blocks
       next = propagateCopies(next);
-      console.log(`    -> ${next.length} instructions after copy propagation`);
       // Remove dead stores using CFG liveness
       next = eliminateDeadStoresCFG(next);
-      console.log(
-        `    -> ${next.length} instructions after eliminateDeadStoresCFG`,
-      );
       // Apply dead code elimination
       next = deadCodeElimination(next);
-      console.log(
-        `    -> ${next.length} instructions after dead code elimination`,
-      );
       // Sink computations closer to their only use
       next = sinkCode(next);
-      console.log(`    -> ${next.length} instructions after code sinking`);
       // Reorder basic blocks to reduce jumps
       next = optimizeBlockLayout(next);
-      console.log(
-        `    -> ${next.length} instructions after block layout optimization`,
-      );
       // Remove jumps that fall through to the next label
       next = eliminateFallthroughJumps(next);
-      console.log(
-        `    -> ${next.length} instructions after fallthrough jump elimination`,
-      );
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);
-      console.log(
-        `    -> ${next.length} instructions after jump simplification`,
-      );
       if (isFirstIteration) {
         // Hoist loop-invariant code
         next = performLICM(next);
-        console.log(`    -> ${next.length} instructions after LICM`);
         // Unswitch loops with loop-invariant conditionals
         next = unswitchLoops(next);
-        console.log(
-          `    -> ${next.length} instructions after loop unswitching`,
-        );
         // Optimize simple induction variables
         next = optimizeInductionVariables(next);
-        console.log(
-          `    -> ${next.length} instructions after induction variable optimization`,
-        );
         // Unroll simple fixed-count loops
         next = optimizeLoopStructures(next);
-        console.log(
-          `    -> ${next.length} instructions after loop structure optimization`,
-        );
         // Fold scalar Vector3 updates into vector ops
         next = optimizeVectorSwizzle(next);
-        console.log(
-          `    -> ${next.length} instructions after vector swizzle optimization`,
-        );
       }
 
       // Remove unused temporary computations
       next = eliminateDeadTemporaries(next);
-      console.log(
-        `    -> ${next.length} instructions after dead temporary elimination`,
-      );
       // Merge identical return tails
       next = mergeTails(next);
-      console.log(`    -> ${next.length} instructions after tail merging`);
       // Remove unused labels (preserve externally exposed labels)
       next = eliminateUnusedLabels(next, exposedLabels);
-      console.log(`    -> ${next.length} instructions after analysis passes`);
       return next;
     };
 

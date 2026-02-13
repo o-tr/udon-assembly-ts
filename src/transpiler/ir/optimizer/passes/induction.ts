@@ -22,7 +22,7 @@ import {
   getOperandType,
   isNumericUdonType,
 } from "./constant_folding.js";
-import { collectLoops, preheaderInsertIndex } from "./licm.js";
+import { collectLoops, dominates, preheaderInsertIndex } from "./licm.js";
 
 export const optimizeInductionVariables = (
   instructions: TACInstruction[],
@@ -30,7 +30,7 @@ export const optimizeInductionVariables = (
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  const { loops, dom } = collectLoops(cfg);
+  const { loops, tin, tout } = collectLoops(cfg);
   if (loops.length === 0) return instructions;
   const indexToBlock = new Map<number, number>();
   for (const block of cfg.blocks) {
@@ -170,7 +170,7 @@ export const optimizeInductionVariables = (
         }
         if (
           updateBlockId !== multiplyBlockId &&
-          !(dom.get(multiplyBlockId)?.has(updateBlockId) ?? false)
+          !dominates(tin, tout, updateBlockId, multiplyBlockId)
         ) {
           continue;
         }
