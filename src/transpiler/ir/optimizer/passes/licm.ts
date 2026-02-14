@@ -123,8 +123,12 @@ export const buildDomTimestamps = (
   const children = new Map<number, number[]>();
   for (const [child, parent] of idom.entries()) {
     if (child === parent) continue; // Skip entry self-reference
-    if (!children.has(parent)) children.set(parent, []);
-    children.get(parent)!.push(child);
+    let kids = children.get(parent);
+    if (!kids) {
+      kids = [];
+      children.set(parent, kids);
+    }
+    kids.push(child);
   }
 
   const tin = new Map<number, number>();
@@ -169,12 +173,15 @@ export const dominates = (
   const tinA = tin.get(a);
   const tinB = tin.get(b);
   if (tinA === undefined || tinB === undefined) return false;
-  const toutA = tout.get(a)!;
-  const toutB = tout.get(b)!;
+  const toutA = tout.get(a);
+  const toutB = tout.get(b);
+  if (toutA === undefined || toutB === undefined) return false;
   return tinA <= tinB && toutB <= toutA;
 };
 
-export const collectLoops = (cfg: CFG): {
+export const collectLoops = (
+  cfg: CFG,
+): {
   loops: Array<{
     headerId: number;
     blocks: Set<number>;

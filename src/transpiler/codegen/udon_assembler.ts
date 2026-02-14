@@ -343,10 +343,7 @@ export class UdonAssembler {
         initInstructions.push(new ExternInstruction(eqExternName, true));
         initInstructions.push(new PushInstruction(name));
         initInstructions.push(new UdonCopyInstruction());
-      } else if (
-        udonType === "SystemInt64" ||
-        udonType === "SystemUInt64"
-      ) {
+      } else if (udonType === "SystemInt64" || udonType === "SystemUInt64") {
         // Int64/UInt64: convert from Int32 at runtime using SystemConvert
         const int64Value = this.parseRestrictedInt64Value(value);
         if (
@@ -399,8 +396,13 @@ export class UdonAssembler {
           }
         }
         const externName = isUnsigned
-          ? convertToUInt64ExternName!
-          : convertToInt64ExternName!;
+          ? convertToUInt64ExternName
+          : convertToInt64ExternName;
+        if (externName === null) {
+          throw new Error(
+            `Missing convert extern for ${udonType} on '${name}'`,
+          );
+        }
 
         // PUSH int32_src, EXTERN convert, PUSH target, COPY
         initInstructions.push(new PushInstruction(srcName));

@@ -11,6 +11,7 @@ import {
   type LabelOperand,
   TACOperandKind,
 } from "../tac_operand.js";
+import { buildCFG } from "./analysis/cfg.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
@@ -31,8 +32,7 @@ import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
-import { computeRPO } from "./passes/licm.js";
-import { performLICM } from "./passes/licm.js";
+import { computeRPO, performLICM } from "./passes/licm.js";
 import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { unswitchLoops } from "./passes/loop_unswitching.js";
 import { narrowTypes } from "./passes/narrow_type.js";
@@ -52,9 +52,10 @@ import {
 } from "./passes/temp_reuse.js";
 import { eliminateUnusedLabels } from "./passes/unused_labels.js";
 import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
-import { buildCFG } from "./analysis/cfg.js";
 
 const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
+// Tighter limit for the second SSA pass to avoid timeout on large codebases
+const SSA_REACHABLE_BLOCK_LIMIT_SECOND = 10_000;
 
 const computeFingerprint = (insts: TACInstruction[]): number => {
   // FNV-1a 32-bit hash
@@ -152,7 +153,8 @@ export class TACOptimizer {
 
     const runAnalysisPasses = (
       current: TACInstruction[],
-      isFirstIteration: boolean,
+      runExpensivePasses: boolean,
+      iteration: number,
     ): TACInstruction[] => {
       let next = current;
 
@@ -179,11 +181,16 @@ export class TACOptimizer {
       // Reassociate partially-constant binary operations
       next = reassociate(next);
       // SSA window: build SSA, run SSA-aware passes, then deconstruct
-      if (isFirstIteration) {
-        // Check reachable block count before SSA to avoid OOM on huge CFGs
+      if (runExpensivePasses) {
+        // Check reachable block count before SSA to avoid OOM on huge CFGs.
+        // Use a tighter limit on the second pass to prevent timeouts.
+        const ssaBlockLimit =
+          iteration === 0
+            ? SSA_REACHABLE_BLOCK_LIMIT
+            : SSA_REACHABLE_BLOCK_LIMIT_SECOND;
         const ssaCfg = buildCFG(next);
         const rpo = computeRPO(ssaCfg);
-        if (rpo.length > SSA_REACHABLE_BLOCK_LIMIT) {
+        if (rpo.length > ssaBlockLimit) {
           console.warn(
             `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${SSA_REACHABLE_BLOCK_LIMIT}`,
           );
@@ -214,7 +221,7 @@ export class TACOptimizer {
       next = eliminateFallthroughJumps(next);
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);
-      if (isFirstIteration) {
+      if (runExpensivePasses) {
         // Hoist loop-invariant code
         next = performLICM(next);
         // Unswitch loops with loop-invariant conditionals
@@ -239,7 +246,7 @@ export class TACOptimizer {
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const beforeLen = optimized.length;
       const beforeHash = computeFingerprint(optimized);
-      optimized = runAnalysisPasses(optimized, iteration <= 1);
+      optimized = runAnalysisPasses(optimized, iteration <= 1, iteration);
       if (
         optimized.length === beforeLen &&
         computeFingerprint(optimized) === beforeHash

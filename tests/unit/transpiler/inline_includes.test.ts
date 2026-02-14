@@ -24,8 +24,8 @@ describe("inline constant array .includes() optimization", () => {
     expect(result.tac).not.toContain("DataList");
     // Should contain == comparisons (Udon uses == not ===)
     expect(result.tac).toContain("==");
-    // Should contain | for boolean OR chaining
-    expect(result.tac).toContain("|");
+    // Should contain bitwise OR for boolean chaining (match " | " to avoid false positives)
+    expect(result.tac).toMatch(/\S+ \| \S+/);
   });
 
   it("numeric includes becomes equality chain", () => {

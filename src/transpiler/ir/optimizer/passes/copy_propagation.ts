@@ -15,19 +15,26 @@ import {
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
 
+type CopyMap = Map<string, TACOperand>;
+
+// TOP sentinel: null means "all copies available" (identity for intersection)
+type CopyMapOrTop = CopyMap | null;
+
 /**
- * Intersect multiple copy maps: keep only entries present in ALL maps
- * with the same operand value. Returns empty map when maps array is empty.
+ * Intersect multiple copy maps, treating null as TOP (identity element).
+ * intersect(TOP, M) == M; intersect(TOP, TOP) == TOP; intersect([], M) == empty.
  */
-const intersectCopyMaps = (
-  maps: Map<string, TACOperand>[],
-): Map<string, TACOperand> => {
+const intersectCopyMaps = (maps: CopyMapOrTop[]): CopyMapOrTop => {
   if (maps.length === 0) return new Map();
-  const result = new Map(maps[0]);
-  for (let i = 1; i < maps.length; i++) {
-    const other = maps[i];
+  let result: CopyMapOrTop = null; // start with TOP
+  for (const m of maps) {
+    if (m === null) continue; // TOP is identity
+    if (result === null) {
+      result = new Map(m);
+      continue;
+    }
     for (const [key, value] of result) {
-      const otherValue = other.get(key);
+      const otherValue = m.get(key);
       if (!otherValue || livenessKey(otherValue) !== livenessKey(value)) {
         result.delete(key);
       }
@@ -37,12 +44,11 @@ const intersectCopyMaps = (
 };
 
 /**
- * Compare two copy maps for equality.
+ * Compare two copy maps (or TOP sentinels) for equality.
  */
-const copyMapsEqual = (
-  a: Map<string, TACOperand>,
-  b: Map<string, TACOperand>,
-): boolean => {
+const copyMapsEqual = (a: CopyMapOrTop, b: CopyMapOrTop): boolean => {
+  if (a === null && b === null) return true;
+  if (a === null || b === null) return false;
   if (a.size !== b.size) return false;
   for (const [key, value] of a) {
     const bValue = b.get(key);
@@ -52,60 +58,84 @@ const copyMapsEqual = (
 };
 
 /**
- * Propagate copies within a single block, starting from an initial copy map.
- * Returns the output copy map after processing all instructions in the block.
- * Does NOT modify instructions (analysis only).
+ * Step through a single instruction, updating the copy map in place.
+ * Optionally rewrites operands when rewrite callback is provided.
  */
-const propagateBlock = (
-  instructions: TACInstruction[],
-  block: BasicBlock,
-  initialCopies: Map<string, TACOperand>,
-): Map<string, TACOperand> => {
-  const copies = new Map(initialCopies);
+const stepCopyState = (
+  inst: TACInstruction,
+  copies: CopyMap,
+  rewrite: boolean,
+): void => {
+  // Skip labels
+  if (inst.kind === TACInstructionKind.Label) return;
 
-  for (let i = block.start; i <= block.end; i++) {
-    const inst = instructions[i];
+  // Invalidate copies for mutated objects
+  const mutatedKey = getMutatedObjectKey(inst);
+  if (mutatedKey) {
+    copies.delete(mutatedKey);
+  }
 
-    // Skip labels — they don't affect copy state within a block
-    if (inst.kind === TACInstructionKind.Label) continue;
-
-    // Invalidate copies for mutated objects
-    const mutatedKey = getMutatedObjectKey(inst);
-    if (mutatedKey) {
-      copies.delete(mutatedKey);
-    }
-
-    // Track copy definitions (only temp-to-temp)
-    let insertedCopy = false;
-    if (inst.kind === TACInstructionKind.Copy) {
-      const typed = inst as unknown as CopyInstruction;
-      if (typed.src.kind === TACOperandKind.Temporary) {
-        const destKey = livenessKey(typed.dest);
-        if (destKey && typed.dest.kind === TACOperandKind.Temporary) {
-          copies.set(destKey, typed.src);
-          insertedCopy = true;
-        }
-      }
-    }
-
-    // When an operand is defined, invalidate entries
-    const defined = getDefinedOperandForReuse(inst);
-    if (defined) {
-      const defKey = livenessKey(defined);
-      if (defKey) {
-        if (!insertedCopy) {
-          copies.delete(defKey);
-        }
-        // Remove any entries whose copy source points to this operand
-        for (const [key, value] of Array.from(copies.entries())) {
-          if (livenessKey(value) === defKey && key !== defKey) {
-            copies.delete(key);
-          }
+  // Rewrite used operands with copy sources
+  if (rewrite) {
+    const used = getUsedOperandsForReuse(inst);
+    for (const operand of used) {
+      const key = livenessKey(operand);
+      if (key) {
+        const resolved = resolve(copies, key, operand);
+        if (resolved !== operand) {
+          rewriteOperands(inst, (op) => {
+            const opKey = livenessKey(op);
+            if (opKey === key) return resolved;
+            return op;
+          });
         }
       }
     }
   }
 
+  // Track copy definitions (only temp-to-temp)
+  let insertedCopy = false;
+  if (inst.kind === TACInstructionKind.Copy) {
+    const typed = inst as unknown as CopyInstruction;
+    if (typed.src.kind === TACOperandKind.Temporary) {
+      const destKey = livenessKey(typed.dest);
+      if (destKey && typed.dest.kind === TACOperandKind.Temporary) {
+        copies.set(destKey, typed.src);
+        insertedCopy = true;
+      }
+    }
+  }
+
+  // When an operand is defined, invalidate entries
+  const defined = getDefinedOperandForReuse(inst);
+  if (defined) {
+    const defKey = livenessKey(defined);
+    if (defKey) {
+      if (!insertedCopy) {
+        copies.delete(defKey);
+      }
+      for (const [key, value] of Array.from(copies.entries())) {
+        if (livenessKey(value) === defKey && key !== defKey) {
+          copies.delete(key);
+        }
+      }
+    }
+  }
+};
+
+/**
+ * Propagate copies within a single block (analysis only, no rewrite).
+ * Returns the output copy map.
+ */
+const propagateBlock = (
+  instructions: TACInstruction[],
+  block: BasicBlock,
+  initialCopies: CopyMap,
+): CopyMap => {
+  const copies = new Map(initialCopies);
+  for (let i = block.start; i <= block.end; i++) {
+    stepCopyState(instructions[i], copies, false);
+  }
   return copies;
 };
 
@@ -115,72 +145,21 @@ const propagateBlock = (
 const rewriteWithCopyMaps = (
   instructions: TACInstruction[],
   cfg: { blocks: BasicBlock[] },
-  inCopies: Map<number, Map<string, TACOperand>>,
+  inCopies: Map<number, CopyMapOrTop>,
 ): TACInstruction[] => {
   const result: TACInstruction[] = [];
 
   for (const block of cfg.blocks) {
-    const copies = new Map(inCopies.get(block.id) ?? new Map());
+    const rawIn = inCopies.get(block.id);
+    const copies: CopyMap = new Map(rawIn ?? new Map());
 
     for (let i = block.start; i <= block.end; i++) {
       const inst = instructions[i];
-
       if (inst.kind === TACInstructionKind.Label) {
         result.push(inst);
         continue;
       }
-
-      // Invalidate copies for mutated objects
-      const mutatedKey = getMutatedObjectKey(inst);
-      if (mutatedKey) {
-        copies.delete(mutatedKey);
-      }
-
-      // Rewrite used operands with copy sources
-      const used = getUsedOperandsForReuse(inst);
-      for (const operand of used) {
-        const key = livenessKey(operand);
-        if (key) {
-          const resolved = resolve(copies, key, operand);
-          if (resolved !== operand) {
-            rewriteOperands(inst, (op) => {
-              const opKey = livenessKey(op);
-              if (opKey === key) return resolved;
-              return op;
-            });
-          }
-        }
-      }
-
-      // Track copy definitions (only temp-to-temp)
-      let insertedCopy = false;
-      if (inst.kind === TACInstructionKind.Copy) {
-        const typed = inst as unknown as CopyInstruction;
-        if (typed.src.kind === TACOperandKind.Temporary) {
-          const destKey = livenessKey(typed.dest);
-          if (destKey && typed.dest.kind === TACOperandKind.Temporary) {
-            copies.set(destKey, typed.src);
-            insertedCopy = true;
-          }
-        }
-      }
-
-      // When an operand is defined, invalidate entries
-      const defined = getDefinedOperandForReuse(inst);
-      if (defined) {
-        const defKey = livenessKey(defined);
-        if (defKey) {
-          if (!insertedCopy) {
-            copies.delete(defKey);
-          }
-          for (const [key, value] of Array.from(copies.entries())) {
-            if (livenessKey(value) === defKey && key !== defKey) {
-              copies.delete(key);
-            }
-          }
-        }
-      }
-
+      stepCopyState(inst, copies, true);
       result.push(inst);
     }
   }
@@ -194,12 +173,12 @@ export const propagateCopies = (
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  // Initialize input/output copy maps for each block
-  const inCopies = new Map<number, Map<string, TACOperand>>();
-  const outCopies = new Map<number, Map<string, TACOperand>>();
+  // Initialize: entry block gets empty map, all others get TOP (null)
+  const inCopies = new Map<number, CopyMapOrTop>();
+  const outCopies = new Map<number, CopyMapOrTop>();
   for (const block of cfg.blocks) {
-    inCopies.set(block.id, new Map());
-    outCopies.set(block.id, new Map());
+    inCopies.set(block.id, block.id === 0 ? new Map() : null);
+    outCopies.set(block.id, block.id === 0 ? new Map() : null);
   }
 
   // Fixed-point iteration
@@ -213,10 +192,16 @@ export const propagateCopies = (
       );
 
       // Propagate through block to compute output
-      const newOut = propagateBlock(instructions, block, newIn);
+      const inputMap: CopyMap = newIn ?? new Map();
+      const newOut: CopyMapOrTop = propagateBlock(
+        instructions,
+        block,
+        inputMap,
+      );
 
       // Check for convergence
-      if (!copyMapsEqual(outCopies.get(block.id)!, newOut)) {
+      const prev = outCopies.get(block.id);
+      if (!copyMapsEqual(prev ?? null, newOut)) {
         outCopies.set(block.id, newOut);
         changed = true;
       }
@@ -229,7 +214,7 @@ export const propagateCopies = (
 };
 
 const resolve = (
-  copies: Map<string, TACOperand>,
+  copies: CopyMap,
   key: string,
   original: TACOperand,
 ): TACOperand => {

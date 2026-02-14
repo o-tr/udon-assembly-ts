@@ -216,6 +216,7 @@ class CompactLattice {
     return true;
   }
 
+  // Retained for potential per-block lattice merge strategies in future passes.
   static mergeFrom(
     preds: CompactLattice[],
     numVars: number,
@@ -923,7 +924,7 @@ export const sccpAndPrune = (
         result.push(inst);
       }
 
-      transferCompactLattice(localLattice, inst, varIds);
+      transferCompactLattice(localLattice, instructions[i], varIds);
     }
   }
 
