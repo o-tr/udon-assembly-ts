@@ -4,7 +4,6 @@
 
 import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
 import { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
-import { computeTypeId } from "./codegen/type_metadata_registry.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
 import { computeExportLabels, computeExposedLabels } from "./exposed_labels.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
@@ -269,9 +268,9 @@ export class TypeScriptToUdonTranspiler {
 
     const entries: Array<[string, number, string, unknown]> = [];
     for (const cls of classNodes) {
-      const typeId = computeTypeId(cls.name);
-      const hexId = `0x${typeId.toString(16)}`;
-      entries.push(["__refl_typeid", nextAddress(), "Int64", hexId]);
+      // typeId is null — UdonSharp's runtime resolves types internally
+      // and our computed hash would not match.
+      entries.push(["__refl_typeid", nextAddress(), "Int64", null]);
       entries.push(["__refl_typename", nextAddress(), "String", cls.name]);
       entries.push(["__refl_typeids", nextAddress(), "Int64Array", null]);
       break;

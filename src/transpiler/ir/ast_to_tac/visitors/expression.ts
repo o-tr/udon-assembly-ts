@@ -624,10 +624,91 @@ export function visitTemplateExpression(
   return result;
 }
 
+function resolveSpreadArrayType(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): ArrayTypeSymbol | null {
+  let resolved = resolveTypeFromNode(converter, node);
+  if (!resolved && node.kind === ASTNodeKind.PropertyAccessExpression) {
+    const access = node as PropertyAccessExpressionNode;
+    if (access.object.kind === ASTNodeKind.Identifier) {
+      const ident = access.object as IdentifierNode;
+      const sym = converter.symbolTable.lookup(ident.name);
+      if (sym?.type) {
+        resolved = resolvePropertyTypeFromType(
+          converter,
+          sym.type,
+          access.property,
+        );
+      }
+    }
+    if (
+      !resolved &&
+      access.object.kind === ASTNodeKind.ThisExpression &&
+      converter.currentClassName
+    ) {
+      const classNode = converter.classMap.get(converter.currentClassName);
+      const prop = classNode?.properties.find(
+        (p) => p.name === access.property,
+      );
+      if (prop) resolved = prop.type;
+    }
+  }
+  return resolved instanceof ArrayTypeSymbol ? resolved : null;
+}
+
 export function visitArrayLiteralExpression(
   this: ASTToTACConverter,
   node: ArrayLiteralExpressionNode,
 ): TACOperand {
+  // Typed array spread concat optimization:
+  // [...arr1, ...arr2] where all sources are typed arrays → arr1.concat(arr2)
+  if (
+    node.elements.length >= 2 &&
+    node.elements.every((e) => e.kind === "spread")
+  ) {
+    const resolvedTypes: ArrayTypeSymbol[] = [];
+    let allTypedArrays = true;
+    for (const elem of node.elements) {
+      const resolved = resolveSpreadArrayType(this, elem.value);
+      if (resolved) {
+        resolvedTypes.push(resolved);
+      } else {
+        allTypedArrays = false;
+        break;
+      }
+    }
+
+    if (allTypedArrays) {
+      let baseType = resolvedTypes[0];
+      if (node.typeHint) {
+        const contextType = this.typeMapper.mapTypeScriptType(node.typeHint);
+        if (contextType instanceof ArrayTypeSymbol) {
+          baseType = contextType;
+        }
+      }
+      const allCompatible = resolvedTypes.every((t) =>
+        t.isAssignableTo(baseType),
+      );
+      if (allCompatible) {
+        const operands = node.elements.map((e) =>
+          this.visitExpression(e.value),
+        );
+        let result = operands[0];
+        for (let i = 1; i < operands.length; i++) {
+          const newResult = this.newTemp(baseType);
+          this.instructions.push(
+            new MethodCallInstruction(newResult, result, "concat", [
+              operands[i],
+            ]),
+          );
+          result = newResult;
+        }
+        return result;
+      }
+    }
+  }
+
   const elementType = node.typeHint
     ? this.typeMapper.mapTypeScriptType(node.typeHint)
     : ObjectType;

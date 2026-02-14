@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
-import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
 import {
@@ -905,10 +904,10 @@ export class BatchTranspiler {
       return maxAddress;
     };
 
-    const typeId = computeTypeId(className);
-    const hexId = `0x${typeId.toString(16)}`;
+    // typeId is null — UdonSharp's runtime resolves types internally
+    // and our computed hash would not match.
     const entries: Array<[string, number, string, unknown]> = [
-      ["__refl_typeid", nextAddress(), "Int64", hexId],
+      ["__refl_typeid", nextAddress(), "Int64", null],
       ["__refl_typename", nextAddress(), "String", className],
       ["__refl_typeids", nextAddress(), "Int64Array", null],
     ];

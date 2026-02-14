@@ -239,7 +239,7 @@ export class TACOptimizer {
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const beforeLen = optimized.length;
       const beforeHash = computeFingerprint(optimized);
-      optimized = runAnalysisPasses(optimized, iteration === 0);
+      optimized = runAnalysisPasses(optimized, iteration <= 1);
       if (
         optimized.length === beforeLen &&
         computeFingerprint(optimized) === beforeHash
