@@ -742,7 +742,9 @@ export function visitCallExpression(
         this.instructions.push(
           new BinaryOpInstruction(accumulator, arg, "==", literals[0]),
         );
-        // Chain remaining with ||
+        // Chain remaining with bitwise OR — Udon has no logical-OR BinaryOp;
+        // `||` is lowered via conditional jumps (visitShortCircuitOr), but `|`
+        // on booleans produces the same result without branch overhead.
         for (let i = 1; i < literals.length; i++) {
           const cmp = this.newTemp(PrimitiveTypes.boolean);
           this.instructions.push(
