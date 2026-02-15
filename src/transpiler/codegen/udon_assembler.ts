@@ -346,9 +346,10 @@ export class UdonAssembler {
       } else if (udonType === "SystemInt64" || udonType === "SystemUInt64") {
         // Int64/UInt64: convert from Int32 at runtime using SystemConvert
         const int64Value = this.parseRestrictedInt64Value(value);
+        const isUnsigned = udonType === "SystemUInt64";
         if (
           int64Value === null ||
-          int64Value < -2147483648n ||
+          int64Value < (isUnsigned ? 0n : -2147483648n) ||
           int64Value > 2147483647n
         ) {
           console.warn(
@@ -369,7 +370,6 @@ export class UdonAssembler {
         }
 
         // Get or create convert extern
-        const isUnsigned = udonType === "SystemUInt64";
         if (isUnsigned) {
           if (convertToUInt64ExternName === null) {
             convertToUInt64ExternName = allocateUniqueHelperName(
@@ -692,9 +692,6 @@ export class UdonAssembler {
     if (typeof value === "number") return BigInt(Math.trunc(value));
     if (typeof value === "string") {
       try {
-        if (value.startsWith("0x") || value.startsWith("0X")) {
-          return BigInt(value);
-        }
         return BigInt(value);
       } catch {
         return null;

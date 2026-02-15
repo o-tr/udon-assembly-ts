@@ -192,7 +192,7 @@ export class TACOptimizer {
         const rpo = computeRPO(ssaCfg);
         if (rpo.length > ssaBlockLimit) {
           console.warn(
-            `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${SSA_REACHABLE_BLOCK_LIMIT}`,
+            `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${ssaBlockLimit}`,
           );
         } else {
           const ssa = buildSSA(next);
