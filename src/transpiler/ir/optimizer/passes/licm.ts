@@ -67,10 +67,14 @@ export const computeIDom = (cfg: CFG): Map<number, number> => {
     let finger2 = b2;
     while (finger1 !== finger2) {
       while ((rpoNumber.get(finger1) ?? 0) > (rpoNumber.get(finger2) ?? 0)) {
-        finger1 = idom.get(finger1) as number;
+        const next = idom.get(finger1);
+        if (next === undefined) return entryId;
+        finger1 = next;
       }
       while ((rpoNumber.get(finger2) ?? 0) > (rpoNumber.get(finger1) ?? 0)) {
-        finger2 = idom.get(finger2) as number;
+        const next = idom.get(finger2);
+        if (next === undefined) return entryId;
+        finger2 = next;
       }
     }
     return finger1;

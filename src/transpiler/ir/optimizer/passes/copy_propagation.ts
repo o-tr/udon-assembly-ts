@@ -187,8 +187,10 @@ export const propagateCopies = (
     changed = false;
     for (const block of cfg.blocks) {
       // Input = intersection of all predecessor outputs
+      // Pass raw values (including null/TOP) so intersectCopyMaps
+      // can treat TOP as the identity element.
       const newIn = intersectCopyMaps(
-        block.preds.map((id) => outCopies.get(id) ?? new Map()),
+        block.preds.map((id) => outCopies.get(id) ?? null),
       );
 
       // Propagate through block to compute output

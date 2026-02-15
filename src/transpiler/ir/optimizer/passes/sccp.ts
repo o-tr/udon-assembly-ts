@@ -216,7 +216,7 @@ class CompactLattice {
     return true;
   }
 
-  // Retained for potential per-block lattice merge strategies in future passes.
+  /** @internal Retained for potential per-block lattice merge strategies. */
   static mergeFrom(
     preds: CompactLattice[],
     numVars: number,

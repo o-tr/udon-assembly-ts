@@ -344,7 +344,11 @@ export class UdonAssembler {
         initInstructions.push(new PushInstruction(name));
         initInstructions.push(new UdonCopyInstruction());
       } else if (udonType === "SystemInt64" || udonType === "SystemUInt64") {
-        // Int64/UInt64: convert from Int32 at runtime using SystemConvert
+        // TODO(TRACK_INT64_INIT_LIMITATION): Runtime init for Int64/UInt64
+        // uses SystemConvert.ToInt64/ToUInt64 from an Int32 source, so only
+        // values in the Int32 range (or 0..Int32.Max for UInt64) can be
+        // initialised. Larger values require a multi-step conversion or a
+        // different runtime init strategy.
         const int64Value = this.parseRestrictedInt64Value(value);
         const isUnsigned = udonType === "SystemUInt64";
         if (
@@ -353,7 +357,7 @@ export class UdonAssembler {
           int64Value > 2147483647n
         ) {
           console.warn(
-            `Int64/UInt64 value ${JSON.stringify(value)} on '${name}' is outside Int32 range; leaving as null`,
+            `[TRACK_INT64_INIT_LIMITATION] ${udonType} value ${JSON.stringify(value)} on '${name}' is outside the representable Int32 range for runtime init; leaving as null`,
           );
           continue;
         }
@@ -689,7 +693,10 @@ export class UdonAssembler {
    */
   private parseRestrictedInt64Value(value: unknown): bigint | null {
     if (typeof value === "bigint") return value;
-    if (typeof value === "number") return BigInt(Math.trunc(value));
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return null;
+      return BigInt(Math.trunc(value));
+    }
     if (typeof value === "string") {
       try {
         return BigInt(value);
