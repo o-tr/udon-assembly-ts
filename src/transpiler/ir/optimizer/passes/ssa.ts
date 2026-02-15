@@ -19,7 +19,7 @@ import {
 } from "../../tac_operand.js";
 import { buildCFG, isBlockTerminator } from "../analysis/cfg.js";
 import { getDefinedOperandForReuse } from "../utils/instructions.js";
-import { computeDominators } from "./licm.js";
+import { computeIDom } from "./licm.js";
 
 type BlockInsts = Map<number, TACInstruction[]>;
 
@@ -205,60 +205,26 @@ const setDefinedOperand = (
   }
 };
 
-const computeImmediateDominators = (
-  cfg: ReturnType<typeof buildCFG>,
-  dom: Map<number, Set<number>>,
-): Map<number, number | null> => {
-  const idom = new Map<number, number | null>();
-  idom.set(0, null);
-
-  for (const block of cfg.blocks) {
-    if (block.id === 0) continue;
-    const strict = new Set(dom.get(block.id) ?? []);
-    strict.delete(block.id);
-    let candidate: number | null = null;
-    for (const d of strict) {
-      let dominatedByAll = true;
-      for (const other of strict) {
-        if (other === d) continue;
-        if (!dom.get(d)?.has(other)) {
-          dominatedByAll = false;
-          break;
-        }
-      }
-      if (dominatedByAll) {
-        candidate = d;
-        break;
-      }
-    }
-    idom.set(block.id, candidate);
-  }
-
-  return idom;
-};
-
 const computeDominanceFrontiers = (
   cfg: ReturnType<typeof buildCFG>,
-  dom: Map<number, Set<number>>,
+  idom: Map<number, number>,
 ): Map<number, Set<number>> => {
   const frontiers = new Map<number, Set<number>>();
   for (const block of cfg.blocks) frontiers.set(block.id, new Set());
 
-  const idom = computeImmediateDominators(cfg, dom);
-
   for (const block of cfg.blocks) {
     if (block.preds.length < 2) continue;
-    const stop = idom.get(block.id) ?? null;
+    const stop = idom.get(block.id);
+    if (stop === undefined) continue; // unreachable block
     for (const pred of block.preds) {
-      let runner: number | null = pred;
+      if (idom.get(pred) === undefined) continue; // unreachable predecessor
+      let runner: number = pred;
       const visited = new Set<number>();
-      while (runner !== null && runner !== stop) {
-        // Prevent infinite loop if idom chain has a cycle or self-reference
+      while (runner !== stop) {
         if (visited.has(runner)) break;
         visited.add(runner);
         frontiers.get(runner)?.add(block.id);
         const next = idom.get(runner);
-        // Break if idom is undefined or self-referencing
         if (next === undefined || next === runner) break;
         runner = next;
       }
@@ -270,16 +236,14 @@ const computeDominanceFrontiers = (
 
 const computeDomTree = (
   cfg: ReturnType<typeof buildCFG>,
-  dom: Map<number, Set<number>>,
+  idom: Map<number, number>,
 ): DomTree => {
-  const idom = computeImmediateDominators(cfg, dom);
-
   const tree: DomTree = new Map();
   for (const block of cfg.blocks) {
     tree.set(block.id, []);
   }
   for (const [blockId, parent] of idom.entries()) {
-    if (parent === null || parent === undefined) continue;
+    if (blockId === parent) continue; // Skip entry self-reference
     tree.get(parent)?.push(blockId);
   }
   return tree;
@@ -507,9 +471,9 @@ const linearizeParallelCopies = (
 const insertPhis = (
   cfg: ReturnType<typeof buildCFG>,
   instructions: TACInstruction[],
+  idom: Map<number, number>,
 ): { blocks: BlockInsts; phis: Map<number, PhiInstruction[]> } => {
-  const dom = computeDominators(cfg);
-  const frontiers = computeDominanceFrontiers(cfg, dom);
+  const frontiers = computeDominanceFrontiers(cfg, idom);
 
   const defBlocks = new Map<string, Set<number>>();
   const baseOperand = new Map<string, TACOperand>();
@@ -571,9 +535,9 @@ const renameBlocks = (
   cfg: ReturnType<typeof buildCFG>,
   blocks: BlockInsts,
   phiByBlock: Map<number, PhiInstruction[]>,
+  idom: Map<number, number>,
 ): void => {
-  const dom = computeDominators(cfg);
-  const domTree = computeDomTree(cfg, dom);
+  const domTree = computeDomTree(cfg, idom);
   const stacks = new Map<string, TACOperand[]>();
   const counters = new Map<string, number>();
 
@@ -787,8 +751,9 @@ export const buildSSA = (instructions: TACInstruction[]): TACInstruction[] => {
   const cfg = buildCFG(instructions);
   if (cfg.blocks.length === 0) return instructions;
 
-  const { blocks, phis } = insertPhis(cfg, instructions);
-  renameBlocks(cfg, blocks, phis);
+  const idom = computeIDom(cfg);
+  const { blocks, phis } = insertPhis(cfg, instructions, idom);
+  renameBlocks(cfg, blocks, phis, idom);
 
   const ordered: TACInstruction[] = [];
   for (const block of cfg.blocks) {

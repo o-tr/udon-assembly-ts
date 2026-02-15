@@ -1,5 +1,4 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
-import { computeTypeId } from "../../../codegen/type_metadata_registry.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -11,12 +10,14 @@ import {
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
+  type ArrayLiteralExpressionNode,
   type ASTNode,
   ASTNodeKind,
   type BlockStatementNode,
   type CallExpressionNode,
   type FunctionExpressionNode,
   type IdentifierNode,
+  type LiteralNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   UdonType,
@@ -441,6 +442,25 @@ export function visitCallExpression(
       this.instructions.push(new CastInstruction(castResult, arg));
       return castResult;
     }
+    if (calleeName === "String") {
+      const evaluatedArgs = getArgs();
+      if (evaluatedArgs.length === 0) {
+        return createConstant("", PrimitiveTypes.string);
+      }
+      if (evaluatedArgs.length !== 1) {
+        throw new Error("String(...) expects one argument.");
+      }
+      const arg = evaluatedArgs[0];
+      const argType = this.getOperandType(arg);
+      if (argType.udonType === UdonType.String) {
+        return arg;
+      }
+      const result = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(result, arg, "ToString", []),
+      );
+      return result;
+    }
     if (calleeName === "parseInt") {
       const evaluatedArgs = getArgs();
       if (evaluatedArgs.length === 0) {
@@ -698,6 +718,48 @@ export function visitCallExpression(
 
   if (callee.kind === ASTNodeKind.PropertyAccessExpression) {
     const propAccess = callee as PropertyAccessExpressionNode;
+
+    // Inline constant array .includes() optimization:
+    // [literal1, literal2, ...].includes(x) → x === literal1 || x === literal2 || ...
+    if (
+      propAccess.property === "includes" &&
+      propAccess.object.kind === ASTNodeKind.ArrayLiteralExpression &&
+      node.arguments.length === 1
+    ) {
+      const arrayNode = propAccess.object as ArrayLiteralExpressionNode;
+      const allLiterals = arrayNode.elements.every(
+        (e) => e.kind === "element" && e.value.kind === ASTNodeKind.Literal,
+      );
+      if (allLiterals && arrayNode.elements.length > 0) {
+        const arg = this.visitExpression(node.arguments[0]);
+        const literals = arrayNode.elements.map((e) =>
+          this.visitLiteral(
+            (e as { kind: "element"; value: LiteralNode }).value,
+          ),
+        );
+        // First comparison (use "==" since Udon has no strict equality)
+        let accumulator = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(accumulator, arg, "==", literals[0]),
+        );
+        // Chain remaining with bitwise OR — Udon has no logical-OR BinaryOp;
+        // `||` is lowered via conditional jumps (visitShortCircuitOr), but `|`
+        // on booleans produces the same result without branch overhead.
+        for (let i = 1; i < literals.length; i++) {
+          const cmp = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(cmp, arg, "==", literals[i]),
+          );
+          const newAcc = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(newAcc, accumulator, "|", cmp),
+          );
+          accumulator = newAcc;
+        }
+        return accumulator;
+      }
+    }
+
     const object = this.visitExpression(propAccess.object);
     const objectType = this.getOperandType(object);
     const resolvedType = resolveTypeFromNode(this, propAccess.object);
@@ -933,11 +995,9 @@ export function visitCallExpression(
     ) {
       const targetType = node.typeArguments[0] ?? "object";
       const targetTypeSymbol = this.typeMapper.mapTypeScriptType(targetType);
-      const typeId = computeTypeId(targetType);
-      const typeOperand = createConstant(
-        `0x${typeId.toString(16)}`,
-        PrimitiveTypes.int64,
-      );
+      // typeId is always 0 — UdonSharp's runtime resolves types internally
+      // and our computed hash would not match.
+      const typeOperand = createConstant(0n, PrimitiveTypes.int64);
       const externSig = this.requireExternSignature(
         "GetComponentShim",
         "GetComponent",

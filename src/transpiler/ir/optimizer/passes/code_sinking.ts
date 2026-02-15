@@ -10,7 +10,7 @@ import {
   isPureProducer,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
-import { computeDominators } from "./licm.js";
+import { buildDomTimestamps, computeIDom, dominates } from "./licm.js";
 
 /**
  * Code sinking: move pure computations closer to their only use.
@@ -50,7 +50,8 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
   }
 
   // Precompute dominators so we can conservatively check availability
-  const dominators = computeDominators(cfg);
+  const idom = computeIDom(cfg);
+  const { tin, tout } = buildDomTimestamps(idom, 0);
 
   // Collect sink candidates: instruction index → target block id
   const sinkTargets = new Map<number, number>();
@@ -165,8 +166,7 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
             operandsAvailable = false;
             break;
           }
-          const domSet = dominators.get(targetBlockId);
-          if (!domSet || !domSet.has(defBlock)) {
+          if (!dominates(tin, tout, defBlock, targetBlockId)) {
             operandsAvailable = false;
             break;
           }

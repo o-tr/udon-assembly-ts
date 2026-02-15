@@ -11,6 +11,7 @@ import {
   type LabelOperand,
   TACOperandKind,
 } from "../tac_operand.js";
+import { buildCFG } from "./analysis/cfg.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
@@ -31,7 +32,7 @@ import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
 import { simplifyJumps } from "./passes/jumps.js";
-import { performLICM } from "./passes/licm.js";
+import { computeRPO, performLICM } from "./passes/licm.js";
 import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { unswitchLoops } from "./passes/loop_unswitching.js";
 import { narrowTypes } from "./passes/narrow_type.js";
@@ -51,6 +52,26 @@ import {
 } from "./passes/temp_reuse.js";
 import { eliminateUnusedLabels } from "./passes/unused_labels.js";
 import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
+
+const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
+// Tighter limit for the second SSA pass to avoid timeout on large codebases
+const SSA_REACHABLE_BLOCK_LIMIT_SECOND = 10_000;
+
+const computeFingerprint = (insts: TACInstruction[]): number => {
+  // FNV-1a 32-bit hash
+  let h = 0x811c9dc5;
+  h = Math.imul(h ^ (insts.length & 0xff), 0x01000193);
+  h = Math.imul(h ^ ((insts.length >> 8) & 0xff), 0x01000193);
+  for (const inst of insts) {
+    const s = inst.toString();
+    for (let i = 0; i < s.length; i++) {
+      h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+    }
+    // Separator to distinguish "ab"+"cd" from "a"+"bcd"
+    h = Math.imul(h ^ 0x0a, 0x01000193);
+  }
+  return h | 0;
+};
 
 /**
  * TAC optimizer
@@ -132,113 +153,106 @@ export class TACOptimizer {
 
     const runAnalysisPasses = (
       current: TACInstruction[],
-      enableSSAWindow: boolean,
+      runExpensivePasses: boolean,
+      iteration: number,
     ): TACInstruction[] => {
       let next = current;
 
       // Apply constant folding
       next = constantFolding(next);
-
       // Coalesce string concatenation chains
       next = optimizeStringConcatenation(next);
-
       // Apply SCCP and prune unreachable blocks (preserve exposedLabels)
       next = sccpAndPrune(next, exposedLabels);
-
       // Apply boolean simplifications
       next = booleanSimplification(next);
-
       // Simplify diamond patterns (ternary true/false → copy of condition)
       next = simplifyDiamondPatterns(next);
-
       // Fuse negated comparisons
       next = negatedComparisonFusion(next);
-
       // Eliminate double negations
       next = doubleNegationElimination(next);
-
       // Apply algebraic simplifications and redundant cast removal
       next = algebraicSimplification(next);
-
       // Fold cast chains
       next = castChainFolding(next);
-
       // Eliminate redundant widening casts used only in comparisons
       next = narrowTypes(next);
-
       // Reassociate partially-constant binary operations
       next = reassociate(next);
-
       // SSA window: build SSA, run SSA-aware passes, then deconstruct
-      if (enableSSAWindow) {
-        const ssa = buildSSA(next);
-        const ssaPre = performPRE(ssa, { useSSA: true });
-        const ssaGvn = globalValueNumbering(ssaPre, { useSSA: true });
-        next = deconstructSSA(ssaGvn);
+      if (runExpensivePasses) {
+        // Check reachable block count before SSA to avoid OOM on huge CFGs.
+        // Use a tighter limit on the second pass to prevent timeouts.
+        const ssaBlockLimit =
+          iteration === 0
+            ? SSA_REACHABLE_BLOCK_LIMIT
+            : SSA_REACHABLE_BLOCK_LIMIT_SECOND;
+        const ssaCfg = buildCFG(next);
+        const rpo = computeRPO(ssaCfg);
+        if (rpo.length > ssaBlockLimit) {
+          console.warn(
+            `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${ssaBlockLimit}`,
+          );
+        } else {
+          const ssa = buildSSA(next);
+          const ssaPre = performPRE(ssa, { useSSA: true });
+          const ssaGvn = globalValueNumbering(ssaPre, { useSSA: true });
+          next = deconstructSSA(ssaGvn);
+        }
       }
-
       // Optimize tail calls (call followed immediately by return)
       next = optimizeTailCalls(next);
-
       // Eliminate single-use temporaries inside basic blocks
       next = eliminateSingleUseTemporaries(next);
-
       // Remove no-op copies/assignments
       next = eliminateNoopCopies(next);
-
       // Propagate copies within basic blocks
       next = propagateCopies(next);
-
       // Remove dead stores using CFG liveness
       next = eliminateDeadStoresCFG(next);
-
       // Apply dead code elimination
       next = deadCodeElimination(next);
-
       // Sink computations closer to their only use
       next = sinkCode(next);
-
       // Reorder basic blocks to reduce jumps
       next = optimizeBlockLayout(next);
-
       // Remove jumps that fall through to the next label
       next = eliminateFallthroughJumps(next);
-
       // Remove redundant jumps and thread jump chains
       next = simplifyJumps(next);
-
-      // Hoist loop-invariant code
-      next = performLICM(next);
-
-      // Unswitch loops with loop-invariant conditionals
-      next = unswitchLoops(next);
-
-      // Optimize simple induction variables
-      next = optimizeInductionVariables(next);
-
-      // Unroll simple fixed-count loops
-      next = optimizeLoopStructures(next);
-
-      // Fold scalar Vector3 updates into vector ops
-      next = optimizeVectorSwizzle(next);
+      if (runExpensivePasses) {
+        // Hoist loop-invariant code
+        next = performLICM(next);
+        // Unswitch loops with loop-invariant conditionals
+        next = unswitchLoops(next);
+        // Optimize simple induction variables
+        next = optimizeInductionVariables(next);
+        // Unroll simple fixed-count loops
+        next = optimizeLoopStructures(next);
+        // Fold scalar Vector3 updates into vector ops
+        next = optimizeVectorSwizzle(next);
+      }
 
       // Remove unused temporary computations
       next = eliminateDeadTemporaries(next);
-
       // Merge identical return tails
       next = mergeTails(next);
-
       // Remove unused labels (preserve externally exposed labels)
       next = eliminateUnusedLabels(next, exposedLabels);
-
       return next;
     };
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-      const before = optimized.map((inst) => inst.toString()).join("\n");
-      optimized = runAnalysisPasses(optimized, iteration === 0);
-      const after = optimized.map((inst) => inst.toString()).join("\n");
-      if (before === after) break;
+      const beforeLen = optimized.length;
+      const beforeHash = computeFingerprint(optimized);
+      optimized = runAnalysisPasses(optimized, iteration <= 1, iteration);
+      if (
+        optimized.length === beforeLen &&
+        computeFingerprint(optimized) === beforeHash
+      ) {
+        break;
+      }
     }
 
     // Ensure all referenced labels have definitions before temp-reuse passes

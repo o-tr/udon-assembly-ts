@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
-import { computeTypeId } from "../codegen/type_metadata_registry.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
 import {
@@ -110,6 +109,11 @@ export class BatchTranspiler {
     const reachable = new Set<string>();
     const fallbackDeps = new Set<string>();
     const includeExternal = options.includeExternalDependencies !== false;
+    if (options?.verbose) {
+      console.log(
+        `Discovered ${files.length} TypeScript files, ${entryFiles.length} entry points.`,
+      );
+    }
     if (entryFiles.length > 0) {
       for (const entry of entryFiles) {
         try {
@@ -203,6 +207,11 @@ export class BatchTranspiler {
         }
       }
     }
+    if (options?.verbose) {
+      console.log(
+        `registered ${registry.getAllClasses().length} classes from ${cacheFiles.length} files.`,
+      );
+    }
 
     const validator = new InheritanceValidator(registry, errorCollector);
     for (const entryPoint of registry.getEntryPoints()) {
@@ -214,6 +223,9 @@ export class BatchTranspiler {
     validator.validateUdonBehaviourInterfaceConsistency(
       udonBehaviourInterfaceNames,
     );
+    if (options?.verbose) {
+      console.log(`Inheritance validation completed.`);
+    }
 
     if (errorCollector.hasErrors()) {
       throw new AggregateTranspileError(errorCollector.getErrors());
@@ -242,8 +254,9 @@ export class BatchTranspiler {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
         continue;
       }
-      const _entryFile = entryPoint.filePath;
-
+      if (options?.verbose) {
+        console.log(`Transpiling entry point: ${entryPoint.name}`);
+      }
       const mergedMethods = registry.getMergedMethods(entryPoint.name);
       const mergedProperties = registry.getMergedProperties(entryPoint.name);
 
@@ -262,6 +275,11 @@ export class BatchTranspiler {
           (decorator) => decorator.name === "UdonBehaviour",
         );
       });
+      if (options?.verbose) {
+        console.log(
+          `  - Collected ${filteredInlineClassNames.length} inline classes.`,
+        );
+      }
 
       const entryPointMethods = this.orderEntryMethods(
         this.filterMethodsByUsage(mergedMethods, entryPoint.name, methodUsage),
@@ -274,6 +292,11 @@ export class BatchTranspiler {
           typeMapper.mapTypeScriptType(prop.type),
           false,
           false,
+        );
+      }
+      if (options?.verbose) {
+        console.log(
+          `  - Collected ${entryPointMethods.length} methods, ${mergedProperties.length} properties, ${filteredInlineClassNames.length} inline classes.`,
         );
       }
 
@@ -364,6 +387,11 @@ export class BatchTranspiler {
         { useStringBuilder: options.useStringBuilder },
       );
       let tacInstructions = tacConverter.convert(methodProgram);
+      if (options?.verbose) {
+        console.log(
+          `  - Generated ${tacInstructions.length} TAC instructions.`,
+        );
+      }
 
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();
@@ -892,10 +920,10 @@ export class BatchTranspiler {
       return maxAddress;
     };
 
-    const typeId = computeTypeId(className);
-    const hexId = `0x${typeId.toString(16)}`;
+    // typeId is null — UdonSharp's runtime resolves types internally
+    // and our computed hash would not match.
     const entries: Array<[string, number, string, unknown]> = [
-      ["__refl_typeid", nextAddress(), "Int64", hexId],
+      ["__refl_typeid", nextAddress(), "Int64", null],
       ["__refl_typename", nextAddress(), "String", className],
       ["__refl_typeids", nextAddress(), "Int64Array", null],
     ];

@@ -20,12 +20,21 @@ import {
 
 /**
  * Types that VRChat's UASM assembler only accepts as `null` (or `this`) in the
- * data section.  Currently only SystemBoolean is confirmed to cause assembler
- * errors.  Other integer types (SByte, Byte, Int16, UInt16, Int64, UInt64)
- * can be added here once assembler errors are observed AND their runtime init
- * externs are verified to exist in Udon.
+ * data section.  The UASM scanner cannot parse Int64/UInt64 hex literals
+ * (16-digit hex overflows Convert.ToUInt32) and explicitly rejects non-null
+ * initializers for these types.
  */
-const NULL_ONLY_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
+const NULL_ONLY_TYPES = new Set([
+  "Boolean",
+  "SystemBoolean",
+  "System.Boolean",
+  "Int64",
+  "SystemInt64",
+  "System.Int64",
+  "UInt64",
+  "SystemUInt64",
+  "System.UInt64",
+]);
 
 /**
  * Udon assembler - generates .uasm output
@@ -158,14 +167,6 @@ export class UdonAssembler {
     }
 
     let truncated = Math.trunc(value);
-    if (this.isUInt32Type(typeName) && truncated < 0) {
-      const text = truncated.toString();
-      const expanded =
-        text.includes("e") || text.includes("E")
-          ? this.expandExponentialLiteral(text)
-          : text;
-      return expanded.includes(".") ? expanded.split(".")[0] : expanded;
-    }
     const bounds = this.getIntegerBounds(typeName);
     if (bounds) {
       if (truncated < bounds.min) {
@@ -173,6 +174,12 @@ export class UdonAssembler {
       } else if (truncated > bounds.max) {
         truncated = bounds.max;
       }
+    }
+
+    // UInt32 values > Int32.MaxValue must be emitted as hex because the
+    // UASM scanner uses Int32.Parse for decimal literals which would overflow.
+    if (this.isUInt32Type(typeName) && truncated > 2147483647) {
+      return `0x${(truncated >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
     }
 
     const text = truncated.toString();
@@ -265,8 +272,13 @@ export class UdonAssembler {
       if (!this.isNullOnlyType(type, csharpType, udonType)) continue;
       if (value === null) continue;
 
-      // For booleans, `false` is the default (null represents false in Udon VM)
-      const isDefault = value === false;
+      // For booleans, `false` is the default (null represents false in Udon VM).
+      // For Int64/UInt64, `0` is the default (null represents 0 in Udon VM).
+      const isDefault =
+        value === false ||
+        value === 0 ||
+        value === 0n ||
+        (typeof value === "string" && /^0x0+$/i.test(value));
 
       // Set data section value to null
       entry[3] = null;
@@ -299,41 +311,113 @@ export class UdonAssembler {
       return candidate;
     };
 
-    // Track helper data entries to deduplicate (shared across all boolean true inits)
+    // Track helper data entries to deduplicate
     let int32ZeroName: string | null = null;
     let eqExternName: string | null = null;
+    // Cache for Int64/UInt64 convert externs and Int32 source constants
+    let convertToInt64ExternName: string | null = null;
+    let convertToUInt64ExternName: string | null = null;
+    const int32ConstantNames = new Map<number, string>();
 
     const initInstructions: UdonInstruction[] = [];
 
     for (const { name, udonType, value } of initEntries) {
-      if (value !== true) {
-        // Only boolean true init is implemented. If NULL_ONLY_TYPES is
-        // expanded to other types, add their init paths here.
+      if (value === true) {
+        // Boolean true: use (0 == 0) → true
+        if (int32ZeroName === null) {
+          int32ZeroName = allocateUniqueHelperName("__asm_restrict_int32_0");
+          mutData.push([int32ZeroName, nextAddr++, "Int32", 0]);
+        }
+        if (eqExternName === null) {
+          eqExternName = allocateUniqueHelperName("__asm_restrict_eq_extern");
+          mutData.push([
+            eqExternName,
+            nextAddr++,
+            "String",
+            "SystemInt32.__op_Equality__SystemInt32_SystemInt32__SystemBoolean",
+          ]);
+        }
+        // PUSH int32_0, PUSH int32_0, EXTERN eq, PUSH target, COPY
+        initInstructions.push(new PushInstruction(int32ZeroName));
+        initInstructions.push(new PushInstruction(int32ZeroName));
+        initInstructions.push(new ExternInstruction(eqExternName, true));
+        initInstructions.push(new PushInstruction(name));
+        initInstructions.push(new UdonCopyInstruction());
+      } else if (udonType === "SystemInt64" || udonType === "SystemUInt64") {
+        // TODO(TRACK_INT64_INIT_LIMITATION): Runtime init for Int64/UInt64
+        // uses SystemConvert.ToInt64/ToUInt64 from an Int32 source, so only
+        // values in the Int32 range (or 0..Int32.Max for UInt64) can be
+        // initialised. Larger values require a multi-step conversion or a
+        // different runtime init strategy.
+        const int64Value = this.parseRestrictedInt64Value(value);
+        const isUnsigned = udonType === "SystemUInt64";
+        if (
+          int64Value === null ||
+          int64Value < (isUnsigned ? 0n : -2147483648n) ||
+          int64Value > 2147483647n
+        ) {
+          console.warn(
+            `[TRACK_INT64_INIT_LIMITATION] ${udonType} value ${JSON.stringify(value)} on '${name}' is outside the representable Int32 range for runtime init; leaving as null`,
+          );
+          continue;
+        }
+        const int32Val = Number(int64Value);
+
+        // Get or create Int32 constant for the source value
+        let srcName = int32ConstantNames.get(int32Val);
+        if (!srcName) {
+          srcName = allocateUniqueHelperName(
+            `__asm_restrict_int32_${int32Val < 0 ? `n${-int32Val}` : int32Val}`,
+          );
+          mutData.push([srcName, nextAddr++, "Int32", int32Val]);
+          int32ConstantNames.set(int32Val, srcName);
+        }
+
+        // Get or create convert extern
+        if (isUnsigned) {
+          if (convertToUInt64ExternName === null) {
+            convertToUInt64ExternName = allocateUniqueHelperName(
+              "__asm_restrict_cvt_uint64_extern",
+            );
+            mutData.push([
+              convertToUInt64ExternName,
+              nextAddr++,
+              "String",
+              "SystemConvert.__ToUInt64__SystemInt32__SystemUInt64",
+            ]);
+          }
+        } else {
+          if (convertToInt64ExternName === null) {
+            convertToInt64ExternName = allocateUniqueHelperName(
+              "__asm_restrict_cvt_int64_extern",
+            );
+            mutData.push([
+              convertToInt64ExternName,
+              nextAddr++,
+              "String",
+              "SystemConvert.__ToInt64__SystemInt32__SystemInt64",
+            ]);
+          }
+        }
+        const externName = isUnsigned
+          ? convertToUInt64ExternName
+          : convertToInt64ExternName;
+        if (externName === null) {
+          throw new Error(
+            `Missing convert extern for ${udonType} on '${name}'`,
+          );
+        }
+
+        // PUSH int32_src, EXTERN convert, PUSH target, COPY
+        initInstructions.push(new PushInstruction(srcName));
+        initInstructions.push(new ExternInstruction(externName, true));
+        initInstructions.push(new PushInstruction(name));
+        initInstructions.push(new UdonCopyInstruction());
+      } else {
         console.warn(
           `No runtime init path for restricted type value ${JSON.stringify(value)} on '${name}' (${udonType}); leaving as null`,
         );
-        continue;
       }
-      // Boolean true: use (0 == 0) → true
-      if (int32ZeroName === null) {
-        int32ZeroName = allocateUniqueHelperName("__asm_restrict_int32_0");
-        mutData.push([int32ZeroName, nextAddr++, "Int32", 0]);
-      }
-      if (eqExternName === null) {
-        eqExternName = allocateUniqueHelperName("__asm_restrict_eq_extern");
-        mutData.push([
-          eqExternName,
-          nextAddr++,
-          "String",
-          "SystemInt32.__op_Equality__SystemInt32_SystemInt32__SystemBoolean",
-        ]);
-      }
-      // PUSH int32_0, PUSH int32_0, EXTERN eq, PUSH target, COPY
-      initInstructions.push(new PushInstruction(int32ZeroName));
-      initInstructions.push(new PushInstruction(int32ZeroName));
-      initInstructions.push(new ExternInstruction(eqExternName, true));
-      initInstructions.push(new PushInstruction(name));
-      initInstructions.push(new UdonCopyInstruction());
     }
 
     if (initInstructions.length === 0) {
@@ -601,6 +685,26 @@ export class UdonAssembler {
     }
 
     return canonical;
+  }
+
+  /**
+   * Parse an Int64/UInt64 value from a data section entry into a BigInt.
+   * Returns null if the value cannot be parsed.
+   */
+  private parseRestrictedInt64Value(value: unknown): bigint | null {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return null;
+      return BigInt(Math.trunc(value));
+    }
+    if (typeof value === "string") {
+      try {
+        return BigInt(value);
+      } catch {
+        return null;
+      }
+    }
+    return null;
   }
 
   private getLabelPriority(label: string, exportLabels?: Set<string>): number {
