@@ -62,16 +62,24 @@ export const computeIDom = (cfg: CFG): Map<number, number> => {
   const idom = new Map<number, number>();
   idom.set(entryId, entryId);
 
+  const rpoOf = (blockId: number): number => {
+    const n = rpoNumber.get(blockId);
+    if (n === undefined) {
+      throw new Error(`intersect: block ${blockId} has no RPO number`);
+    }
+    return n;
+  };
+
   const intersect = (b1: number, b2: number): number => {
     let finger1 = b1;
     let finger2 = b2;
     while (finger1 !== finger2) {
-      while ((rpoNumber.get(finger1) ?? 0) > (rpoNumber.get(finger2) ?? 0)) {
+      while (rpoOf(finger1) > rpoOf(finger2)) {
         const next = idom.get(finger1);
         if (next === undefined) return entryId;
         finger1 = next;
       }
-      while ((rpoNumber.get(finger2) ?? 0) > (rpoNumber.get(finger1) ?? 0)) {
+      while (rpoOf(finger2) > rpoOf(finger1)) {
         const next = idom.get(finger2);
         if (next === undefined) return entryId;
         finger2 = next;

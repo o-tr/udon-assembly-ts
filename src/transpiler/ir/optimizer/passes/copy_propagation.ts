@@ -181,9 +181,10 @@ export const propagateCopies = (
     outCopies.set(block.id, block.id === 0 ? new Map() : null);
   }
 
-  // Fixed-point iteration
+  // Fixed-point iteration (capped to guard against accidental infinite loops)
+  const maxIterations = cfg.blocks.length * 2 + 1;
   let changed = true;
-  while (changed) {
+  for (let iter = 0; iter < maxIterations && changed; iter++) {
     changed = false;
     for (const block of cfg.blocks) {
       // Input = intersection of all predecessor outputs

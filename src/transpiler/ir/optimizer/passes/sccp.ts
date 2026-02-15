@@ -169,8 +169,8 @@ class CompactLattice {
   }
 
   clone(): CompactLattice {
-    const result = new CompactLattice(0, this.varIds);
-    result.kinds = this.kinds.slice();
+    const result = new CompactLattice(this.kinds.length, this.varIds);
+    result.kinds.set(this.kinds);
     for (const [k, v] of this.payloads) {
       result.payloads.set(k, v);
     }
@@ -305,6 +305,8 @@ class CompactLattice {
   }
 }
 
+// Compares ConstantValue instances for structural equality.
+// Handles: number, string, boolean, bigint, null, number[], Record<string, number>.
 const constantValueEquals = (a: ConstantValue, b: ConstantValue): boolean => {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object") return false;
@@ -624,6 +626,7 @@ const replaceInstructionWithLatticeMap = (
           call.dest,
           call.func,
           args,
+          call.isTailCall,
         );
       }
       return inst;
@@ -641,6 +644,7 @@ const replaceInstructionWithLatticeMap = (
           object,
           call.method,
           args,
+          call.isTailCall,
         );
       }
       return inst;
@@ -719,6 +723,13 @@ const replaceInstructionWithLatticeMap = (
   }
 };
 
+/**
+ * Sparse Conditional Constant Propagation with dead-code pruning.
+ *
+ * Uses a single global lattice (no SSA phi functions) with worklist-driven
+ * propagation.  Sound but may be imprecise for variables defined across
+ * multiple paths — those are conservatively marked overdefined.
+ */
 export const sccpAndPrune = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,

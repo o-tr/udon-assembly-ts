@@ -278,7 +278,7 @@ export class UdonAssembler {
         value === false ||
         value === 0 ||
         value === 0n ||
-        value === "0x0000000000000000";
+        (typeof value === "string" && /^0x0+$/i.test(value));
 
       // Set data section value to null
       entry[3] = null;
