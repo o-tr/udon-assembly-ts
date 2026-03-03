@@ -68,16 +68,19 @@ export class UdonAssembler {
     return `${sign}${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
   }
 
+  private expandToDecimal(value: number): string {
+    const text = value.toString();
+    return text.includes("e") || text.includes("E")
+      ? this.expandExponentialLiteral(text)
+      : text;
+  }
+
   private formatFloatLiteral(value: number): string {
     if (!Number.isFinite(value)) {
       return JSON.stringify(value);
     }
 
-    const text = value.toString();
-    const expanded =
-      text.includes("e") || text.includes("E")
-        ? this.expandExponentialLiteral(text)
-        : text;
+    const expanded = this.expandToDecimal(value);
 
     // Large floats whose integer part exceeds 9 digits are lowered to
     // null by lowerRestrictedTypes and initialised at runtime via
@@ -116,12 +119,7 @@ export class UdonAssembler {
    */
   private floatValueOverflowsScanner(value: number): boolean {
     if (!Number.isFinite(value)) return false;
-    const text = value.toString();
-    const expanded =
-      text.includes("e") || text.includes("E")
-        ? this.expandExponentialLiteral(text)
-        : text;
-    return this.integerPartOverflowsInt32(expanded);
+    return this.integerPartOverflowsInt32(this.expandToDecimal(value));
   }
 
   private isFloatType(typeName: string): boolean {
