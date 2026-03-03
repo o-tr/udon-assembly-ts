@@ -124,19 +124,23 @@ namespace VRC.Udon.Editor.ProgramSources
     {
         public override void OnInspectorGUI()
         {
-            EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.ObjectField("Script",
-                MonoScript.FromScriptableObject((TASMProgramAsset)target),
-                typeof(MonoScript), false);
-            EditorGUI.EndDisabledGroup();
+            serializedObject.Update();
+
+            using (new EditorGUI.DisabledScope(true))
+            {
+                EditorGUILayout.ObjectField("Script",
+                    MonoScript.FromScriptableObject((TASMProgramAsset)target),
+                    typeof(MonoScript), false);
+            }
 
             var serializedProgramProp = serializedObject.FindProperty("serializedUdonProgramAsset");
             if (serializedProgramProp != null)
             {
-                EditorGUI.BeginDisabledGroup(true);
-                EditorGUILayout.PropertyField(serializedProgramProp,
-                    new GUIContent("Serialized Udon Program Asset"));
-                EditorGUI.EndDisabledGroup();
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    EditorGUILayout.PropertyField(serializedProgramProp,
+                        new GUIContent("Serialized Udon Program Asset"));
+                }
             }
 
             var assemblyErrorProp = serializedObject.FindProperty("assemblyError");
