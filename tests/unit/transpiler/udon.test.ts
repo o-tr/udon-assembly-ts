@@ -431,5 +431,7 @@ describe("Udon Assembler", () => {
 
     expect(uasm).toContain("__const_d: %SystemDouble, null");
     expect(uasm).toContain("SystemDouble.__Parse__SystemString__SystemDouble");
+    expect(uasm).toContain('"1.7976931348623157e+308"');
+    expect(uasm).toContain("PUSH, __asm_restrict_float_str");
   });
 });
