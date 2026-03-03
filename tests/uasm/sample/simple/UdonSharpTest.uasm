@@ -7,5 +7,5 @@
     _start:
         PUSH, __const_SystemString_0
         EXTERN, "UnityEngineDebug.__Log__SystemObject__SystemVoid"
-        JUMP, 0xFFFFFFFF
+        JUMP, 0xFFFFFFFC
 .code_end
