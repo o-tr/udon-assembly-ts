@@ -381,6 +381,9 @@ describe("Udon Assembler", () => {
     expect(uasm).toContain("__const_fmax: %SystemSingle, null");
     // Should have runtime init via Single.Parse
     expect(uasm).toContain("SystemSingle.__Parse__SystemString__SystemSingle");
+    expect(uasm).toContain('"-3.4028235e+38"');
+    expect(uasm).toContain('"3.4028235e+38"');
+    expect(uasm).toContain("PUSH, __asm_restrict_float_str");
   });
 
   it("should still expand small scientific notation floats", () => {
