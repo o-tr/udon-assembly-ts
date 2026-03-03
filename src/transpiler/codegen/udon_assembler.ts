@@ -85,7 +85,12 @@ export class UdonAssembler {
     // float/double parser accepts directly.
     if (this.integerPartOverflowsInt32(expanded)) {
       const sci = value.toExponential();
-      return sci.includes(".") ? sci : `${sci}.0`;
+      // toExponential() always contains 'e', so split into mantissa + exponent
+      // and ensure the mantissa has a decimal point (e.g. "1e+10" → "1.0e+10").
+      const eIdx = sci.search(/[eE]/);
+      const mantissa = sci.slice(0, eIdx);
+      const exp = sci.slice(eIdx);
+      return mantissa.includes(".") ? sci : `${mantissa}.0${exp}`;
     }
 
     if (expanded.includes(".")) {
