@@ -428,13 +428,35 @@ describe("Udon Assembler", () => {
     ];
     const dataSection: Array<[string, number, string, unknown]> = [
       ["__const_d", 0, "Double", 1.7976931348623157e308],
+      ["__const_dneg", 1, "Double", -1.7976931348623157e308],
     ];
 
     const uasm = assembler.assemble(instructions, [], dataSection);
 
     expect(uasm).toContain("__const_d: %SystemDouble, null");
+    expect(uasm).toContain("__const_dneg: %SystemDouble, null");
     expect(uasm).toContain("SystemDouble.__Parse__SystemString__SystemDouble");
     expect(uasm).toContain('"1.7976931348623157e+308"');
+    expect(uasm).toContain('"-1.7976931348623157e+308"');
     expect(uasm).toContain("PUSH, __asm_restrict_float_str");
+  });
+
+  it("should not lower 9-digit float and should lower 10-digit float", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_9dig", 0, "Single", 999999999.0],
+      ["__const_10dig", 1, "Single", 1000000000.0],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    // 9 digits: should pass through as a normal literal
+    expect(uasm).toContain("__const_9dig: %SystemSingle, 999999999.0");
+    // 10 digits: should be lowered to null with runtime init
+    expect(uasm).toContain("__const_10dig: %SystemSingle, null");
   });
 });
