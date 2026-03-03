@@ -416,4 +416,20 @@ describe("Udon Assembler", () => {
     expect(uasm).not.toContain("%SystemSingle, 10000000000");
     expect(uasm).toContain("SystemSingle.__Parse__SystemString__SystemSingle");
   });
+
+  it("should lower large Double values to null and use runtime init via Double.Parse", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_d", 0, "Double", 1.7976931348623157e308],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toContain("__const_d: %SystemDouble, null");
+    expect(uasm).toContain("SystemDouble.__Parse__SystemString__SystemDouble");
+  });
 });

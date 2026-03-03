@@ -84,6 +84,9 @@ export class UdonAssembler {
     // Single.Parse / Double.Parse.  This branch should not be reached
     // in practice, but guards against callers that bypass lowering.
     if (this.integerPartOverflowsInt32(expanded)) {
+      console.warn(
+        `[formatFloatLiteral] Overflowing float value ${value} was not lowered by lowerRestrictedTypes; emitting null. Ensure lowerRestrictedTypes is called before assembly.`,
+      );
       return "null";
     }
 
