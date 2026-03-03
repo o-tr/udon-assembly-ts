@@ -512,9 +512,7 @@ export class UdonAssembler {
           ? parseSingleExternName
           : parseDoubleExternName;
         if (parseExternName === null) {
-          throw new Error(
-            `Missing parse extern for ${udonType} on '${name}'`,
-          );
+          throw new Error(`Missing parse extern for ${udonType} on '${name}'`);
         }
 
         // PUSH str_src, EXTERN parse, PUSH target, COPY

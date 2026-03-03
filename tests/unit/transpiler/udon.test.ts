@@ -380,9 +380,7 @@ describe("Udon Assembler", () => {
     expect(uasm).toContain("__const_fmin: %SystemSingle, null");
     expect(uasm).toContain("__const_fmax: %SystemSingle, null");
     // Should have runtime init via Single.Parse
-    expect(uasm).toContain(
-      "SystemSingle.__Parse__SystemString__SystemSingle",
-    );
+    expect(uasm).toContain("SystemSingle.__Parse__SystemString__SystemSingle");
   });
 
   it("should still expand small scientific notation floats", () => {
@@ -416,8 +414,6 @@ describe("Udon Assembler", () => {
     // Should be lowered to null with runtime init via Single.Parse.
     expect(uasm).toContain("__const_big: %SystemSingle, null");
     expect(uasm).not.toContain("%SystemSingle, 10000000000");
-    expect(uasm).toContain(
-      "SystemSingle.__Parse__SystemString__SystemSingle",
-    );
+    expect(uasm).toContain("SystemSingle.__Parse__SystemString__SystemSingle");
   });
 });
