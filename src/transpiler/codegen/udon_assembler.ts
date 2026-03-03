@@ -79,11 +79,38 @@ export class UdonAssembler {
         ? this.expandExponentialLiteral(text)
         : text;
 
+    // The UASM scanner uses Int32.Parse() to lex the integer part of
+    // numeric literals.  If the expanded integer part exceeds 9 digits
+    // it may overflow.  Fall back to scientific notation which C#'s
+    // float/double parser accepts directly.
+    if (this.integerPartOverflowsInt32(expanded)) {
+      const sci = value.toExponential();
+      // toExponential() always contains 'e', so split into mantissa + exponent
+      // and ensure the mantissa has a decimal point (e.g. "1e+10" → "1.0e+10").
+      const eIdx = sci.search(/[eE]/);
+      const mantissa = sci.slice(0, eIdx);
+      const exp = sci.slice(eIdx);
+      return mantissa.includes(".") ? sci : `${mantissa}.0${exp}`;
+    }
+
     if (expanded.includes(".")) {
       return expanded;
     }
 
     return `${expanded}.0`;
+  }
+
+  /**
+   * Check whether the integer part of a numeric string would overflow
+   * Int32.Parse() in VRChat's UASM scanner.  The scanner lexes '-' as
+   * a separate token, so only unsigned digit count matters.  Any value
+   * with more than 9 integer digits is conservatively flagged
+   * (999_999_999 < Int32.MaxValue = 2_147_483_647 < 9_999_999_999).
+   */
+  private integerPartOverflowsInt32(text: string): boolean {
+    const unsigned = text.replace(/^[+-]/, "");
+    const integerPart = unsigned.split(/[.eE]/)[0];
+    return integerPart.length > 9;
   }
 
   private isFloatType(typeName: string): boolean {
@@ -180,6 +207,14 @@ export class UdonAssembler {
     // UASM scanner uses Int32.Parse for decimal literals which would overflow.
     if (this.isUInt32Type(typeName) && truncated > 2147483647) {
       return `0x${(truncated >>> 0).toString(16).toUpperCase().padStart(8, "0")}`;
+    }
+
+    // Int32.MinValue (-2147483648): the UASM scanner lexes '-' as a
+    // separate token and then calls Int32.Parse("2147483648") which
+    // overflows.  Emit as hex: C#'s int.Parse("80000000",
+    // NumberStyles.HexNumber) correctly yields -2147483648.
+    if (truncated === -2147483648) {
+      return "0x80000000";
     }
 
     const text = truncated.toString();

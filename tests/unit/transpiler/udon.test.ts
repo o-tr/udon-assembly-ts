@@ -320,4 +320,92 @@ describe("Udon Assembler", () => {
     expect(uasm).toContain("JUMP, 0x00000010");
     expect(uasm).toContain("JUMP, 0xFFFFFFFC");
   });
+
+  it("should emit Int32.MinValue as hex to avoid UASM scanner overflow", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_min", 0, "Int32", -2147483648],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toContain("__const_min: %SystemInt32, 0x80000000");
+    expect(uasm).not.toContain("-2147483648");
+  });
+
+  it("should keep normal Int32 values as decimal", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_a", 0, "Int32", 42],
+      ["__const_b", 1, "Int32", 2147483647],
+      ["__const_c", 2, "Int32", -2147483647],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toContain("__const_a: %SystemInt32, 42");
+    expect(uasm).toContain("__const_b: %SystemInt32, 2147483647");
+    expect(uasm).toContain("__const_c: %SystemInt32, -2147483647");
+  });
+
+  it("should use scientific notation for large float values", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_fmin", 0, "Single", -3.4028235e38],
+      ["__const_fmax", 1, "Single", 3.4028235e38],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    // Should NOT contain the expanded 39-digit decimal
+    expect(uasm).not.toContain("340282350000000000000000000000000000000");
+    // Should contain scientific notation
+    expect(uasm).toMatch(/__const_fmin: %SystemSingle, -3\.\d+e\+38/);
+    expect(uasm).toMatch(/__const_fmax: %SystemSingle, 3\.\d+e\+38/);
+  });
+
+  it("should still expand small scientific notation floats", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_f", 0, "Single", 1.5e3],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toContain("__const_f: %SystemSingle, 1500.0");
+  });
+
+  it("should produce valid scientific notation for integer-valued large floats", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_big", 0, "Single", 1e10],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    // 1e10 has 11 digits expanded (10000000000) which exceeds 9-digit limit.
+    // toExponential() produces "1e+10" (no dot), so the assembler must
+    // insert ".0" into the mantissa, yielding "1.0e+10" (not "1e+10.0").
+    expect(uasm).toContain("__const_big: %SystemSingle, 1.0e+10");
+  });
 });
