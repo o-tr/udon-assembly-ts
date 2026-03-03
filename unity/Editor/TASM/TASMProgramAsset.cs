@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using UnityEditor;
 using UnityEngine;
 using VRC.Udon.Common.Interfaces;
 using VRC.Udon.EditorBindings;
@@ -115,6 +116,36 @@ namespace VRC.Udon.Editor.ProgramSources
                 dataVarCount++;
             }
             return Math.Max(dataVarCount + 128, 512);
+        }
+    }
+
+    [CustomEditor(typeof(TASMProgramAsset))]
+    internal class TASMProgramAssetEditor : Editor
+    {
+        public override void OnInspectorGUI()
+        {
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.ObjectField("Script",
+                MonoScript.FromScriptableObject((TASMProgramAsset)target),
+                typeof(MonoScript), false);
+            EditorGUI.EndDisabledGroup();
+
+            var serializedProgramProp = serializedObject.FindProperty("serializedUdonProgramAsset");
+            if (serializedProgramProp != null)
+            {
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUILayout.PropertyField(serializedProgramProp,
+                    new GUIContent("Serialized Udon Program Asset"));
+                EditorGUI.EndDisabledGroup();
+            }
+
+            var assemblyErrorProp = serializedObject.FindProperty("assemblyError");
+            if (assemblyErrorProp != null
+                && !string.IsNullOrEmpty(assemblyErrorProp.stringValue))
+            {
+                EditorGUILayout.HelpBox(assemblyErrorProp.stringValue,
+                    MessageType.Error);
+            }
         }
     }
 }
