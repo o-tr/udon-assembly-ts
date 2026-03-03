@@ -356,7 +356,7 @@ describe("Udon Assembler", () => {
     expect(uasm).toContain("__const_c: %SystemInt32, -2147483647");
   });
 
-  it("should use scientific notation for large float values", () => {
+  it("should lower large float values to null and use runtime init via Parse", () => {
     const assembler = new UdonAssembler();
     const instructions = [
       new LabelInstruction("_start"),
@@ -369,11 +369,21 @@ describe("Udon Assembler", () => {
 
     const uasm = assembler.assemble(instructions, [], dataSection);
 
-    // Should NOT contain the expanded 39-digit decimal
-    expect(uasm).not.toContain("340282350000000000000000000000000000000");
-    // Should contain scientific notation
-    expect(uasm).toMatch(/__const_fmin: %SystemSingle, -3\.\d+e\+38/);
-    expect(uasm).toMatch(/__const_fmax: %SystemSingle, 3\.\d+e\+38/);
+    // Should NOT contain the expanded 39-digit decimal as a raw numeric literal
+    expect(uasm).not.toContain(
+      "%SystemSingle, 340282350000000000000000000000000000000",
+    );
+    expect(uasm).not.toContain(
+      "%SystemSingle, -340282350000000000000000000000000000000",
+    );
+    // Data section should have null for the large floats
+    expect(uasm).toContain("__const_fmin: %SystemSingle, null");
+    expect(uasm).toContain("__const_fmax: %SystemSingle, null");
+    // Should have runtime init via Single.Parse
+    expect(uasm).toContain("SystemSingle.__Parse__SystemString__SystemSingle");
+    expect(uasm).toContain('"-3.4028235e+38"');
+    expect(uasm).toContain('"3.4028235e+38"');
+    expect(uasm).toContain("PUSH, __asm_restrict_float_str");
   });
 
   it("should still expand small scientific notation floats", () => {
@@ -391,7 +401,7 @@ describe("Udon Assembler", () => {
     expect(uasm).toContain("__const_f: %SystemSingle, 1500.0");
   });
 
-  it("should produce valid scientific notation for integer-valued large floats", () => {
+  it("should lower integer-valued large floats to null and use runtime init", () => {
     const assembler = new UdonAssembler();
     const instructions = [
       new LabelInstruction("_start"),
@@ -404,8 +414,49 @@ describe("Udon Assembler", () => {
     const uasm = assembler.assemble(instructions, [], dataSection);
 
     // 1e10 has 11 digits expanded (10000000000) which exceeds 9-digit limit.
-    // toExponential() produces "1e+10" (no dot), so the assembler must
-    // insert ".0" into the mantissa, yielding "1.0e+10" (not "1e+10.0").
-    expect(uasm).toContain("__const_big: %SystemSingle, 1.0e+10");
+    // Should be lowered to null with runtime init via Single.Parse.
+    expect(uasm).toContain("__const_big: %SystemSingle, null");
+    expect(uasm).not.toContain("%SystemSingle, 10000000000");
+    expect(uasm).toContain("SystemSingle.__Parse__SystemString__SystemSingle");
+  });
+
+  it("should lower large Double values to null and use runtime init via Double.Parse", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_d", 0, "Double", 1.7976931348623157e308],
+      ["__const_dneg", 1, "Double", -1.7976931348623157e308],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toContain("__const_d: %SystemDouble, null");
+    expect(uasm).toContain("__const_dneg: %SystemDouble, null");
+    expect(uasm).toContain("SystemDouble.__Parse__SystemString__SystemDouble");
+    expect(uasm).toContain('"1.7976931348623157e+308"');
+    expect(uasm).toContain('"-1.7976931348623157e+308"');
+    expect(uasm).toContain("PUSH, __asm_restrict_float_str");
+  });
+
+  it("should not lower 9-digit float and should lower 10-digit float", () => {
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new JumpInstruction(0xfffffffc),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__const_9dig", 0, "Single", 999999999.0],
+      ["__const_10dig", 1, "Single", 1000000000.0],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    // 9 digits: should pass through as a normal literal
+    expect(uasm).toContain("__const_9dig: %SystemSingle, 999999999.0");
+    // 10 digits: should be lowered to null with runtime init
+    expect(uasm).toContain("__const_10dig: %SystemSingle, null");
   });
 });
