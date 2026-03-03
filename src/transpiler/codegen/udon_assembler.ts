@@ -103,19 +103,9 @@ export class UdonAssembler {
    * (999_999_999 < Int32.MaxValue = 2_147_483_647 < 9_999_999_999).
    */
   private integerPartOverflowsInt32(text: string): boolean {
-    let start = 0;
-    if (text.length > 0 && (text[0] === "-" || text[0] === "+")) {
-      start = 1;
-    }
-    let end = text.length;
-    for (let i = start; i < text.length; i++) {
-      const ch = text[i];
-      if (ch === "." || ch === "e" || ch === "E") {
-        end = i;
-        break;
-      }
-    }
-    return end - start > 9;
+    const unsigned = text.replace(/^[+-]/, "");
+    const integerPart = unsigned.split(/[.eE]/)[0];
+    return integerPart.length > 9;
   }
 
   private isFloatType(typeName: string): boolean {
