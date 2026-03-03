@@ -79,18 +79,12 @@ export class UdonAssembler {
         ? this.expandExponentialLiteral(text)
         : text;
 
-    // The UASM scanner uses Int32.Parse() to lex the integer part of
-    // numeric literals.  If the expanded integer part exceeds 9 digits
-    // it may overflow.  Fall back to scientific notation which C#'s
-    // float/double parser accepts directly.
+    // Large floats whose integer part exceeds 9 digits are lowered to
+    // null by lowerRestrictedTypes and initialised at runtime via
+    // Single.Parse / Double.Parse.  This branch should not be reached
+    // in practice, but guards against callers that bypass lowering.
     if (this.integerPartOverflowsInt32(expanded)) {
-      const sci = value.toExponential();
-      // toExponential() always contains 'e', so split into mantissa + exponent
-      // and ensure the mantissa has a decimal point (e.g. "1e+10" → "1.0e+10").
-      const eIdx = sci.search(/[eE]/);
-      const mantissa = sci.slice(0, eIdx);
-      const exp = sci.slice(eIdx);
-      return mantissa.includes(".") ? sci : `${mantissa}.0${exp}`;
+      return "null";
     }
 
     if (expanded.includes(".")) {
@@ -111,6 +105,20 @@ export class UdonAssembler {
     const unsigned = text.replace(/^[+-]/, "");
     const integerPart = unsigned.split(/[.eE]/)[0];
     return integerPart.length > 9;
+  }
+
+  /**
+   * Check whether a finite float value would overflow the UASM scanner
+   * when emitted as a decimal literal.
+   */
+  private floatValueOverflowsScanner(value: number): boolean {
+    if (!Number.isFinite(value)) return false;
+    const text = value.toString();
+    const expanded =
+      text.includes("e") || text.includes("E")
+        ? this.expandExponentialLiteral(text)
+        : text;
+    return this.integerPartOverflowsInt32(expanded);
   }
 
   private isFloatType(typeName: string): boolean {
@@ -304,7 +312,16 @@ export class UdonAssembler {
       const csharpType = mapTypeScriptToCSharp(type);
       const udonType = this.resolveUdonTypeName(type);
 
-      if (!this.isNullOnlyType(type, csharpType, udonType)) continue;
+      const isNullOnly = this.isNullOnlyType(type, csharpType, udonType);
+      const isOverflowingFloat =
+        !isNullOnly &&
+        typeof value === "number" &&
+        (this.isFloatType(type) ||
+          this.isFloatType(csharpType) ||
+          this.isFloatType(udonType)) &&
+        this.floatValueOverflowsScanner(value);
+
+      if (!isNullOnly && !isOverflowingFloat) continue;
       if (value === null) continue;
 
       // For booleans, `false` is the default (null represents false in Udon VM).
@@ -353,6 +370,10 @@ export class UdonAssembler {
     let convertToInt64ExternName: string | null = null;
     let convertToUInt64ExternName: string | null = null;
     const int32ConstantNames = new Map<number, string>();
+    // Cache for float parse externs and string constants
+    let parseSingleExternName: string | null = null;
+    let parseDoubleExternName: string | null = null;
+    const floatStringNames = new Map<string, string>();
 
     const initInstructions: UdonInstruction[] = [];
 
@@ -446,6 +467,59 @@ export class UdonAssembler {
         // PUSH int32_src, EXTERN convert, PUSH target, COPY
         initInstructions.push(new PushInstruction(srcName));
         initInstructions.push(new ExternInstruction(externName, true));
+        initInstructions.push(new PushInstruction(name));
+        initInstructions.push(new UdonCopyInstruction());
+      } else if (
+        (udonType === "SystemSingle" || udonType === "SystemDouble") &&
+        typeof value === "number"
+      ) {
+        // Large float: use Single.Parse / Double.Parse from string
+        const strValue = value.toString();
+        let srcStrName = floatStringNames.get(strValue);
+        if (!srcStrName) {
+          srcStrName = allocateUniqueHelperName("__asm_restrict_float_str");
+          mutData.push([srcStrName, nextAddr++, "String", strValue]);
+          floatStringNames.set(strValue, srcStrName);
+        }
+
+        const isSingle = udonType === "SystemSingle";
+        if (isSingle) {
+          if (parseSingleExternName === null) {
+            parseSingleExternName = allocateUniqueHelperName(
+              "__asm_restrict_parse_single_extern",
+            );
+            mutData.push([
+              parseSingleExternName,
+              nextAddr++,
+              "String",
+              "SystemSingle.__Parse__SystemString__SystemSingle",
+            ]);
+          }
+        } else {
+          if (parseDoubleExternName === null) {
+            parseDoubleExternName = allocateUniqueHelperName(
+              "__asm_restrict_parse_double_extern",
+            );
+            mutData.push([
+              parseDoubleExternName,
+              nextAddr++,
+              "String",
+              "SystemDouble.__Parse__SystemString__SystemDouble",
+            ]);
+          }
+        }
+        const parseExternName = isSingle
+          ? parseSingleExternName
+          : parseDoubleExternName;
+        if (parseExternName === null) {
+          throw new Error(
+            `Missing parse extern for ${udonType} on '${name}'`,
+          );
+        }
+
+        // PUSH str_src, EXTERN parse, PUSH target, COPY
+        initInstructions.push(new PushInstruction(srcStrName));
+        initInstructions.push(new ExternInstruction(parseExternName, true));
         initInstructions.push(new PushInstruction(name));
         initInstructions.push(new UdonCopyInstruction());
       } else {
