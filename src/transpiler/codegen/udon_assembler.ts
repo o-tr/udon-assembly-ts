@@ -508,12 +508,9 @@ export class UdonAssembler {
             ]);
           }
         }
-        const parseExternName = isSingle
-          ? parseSingleExternName
-          : parseDoubleExternName;
-        if (parseExternName === null) {
-          throw new Error(`Missing parse extern for ${udonType} on '${name}'`);
-        }
+        const parseExternName = (
+          isSingle ? parseSingleExternName : parseDoubleExternName
+        ) as string;
 
         // PUSH str_src, EXTERN parse, PUSH target, COPY
         initInstructions.push(new PushInstruction(srcStrName));
