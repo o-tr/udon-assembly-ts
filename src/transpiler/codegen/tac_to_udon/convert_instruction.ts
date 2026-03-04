@@ -110,10 +110,7 @@ export function convertInstruction(
         this.instructions.push(new PushInstruction(coerceTmpName));
         const destAddr = this.getOperandAddress(unInst.dest);
         this.instructions.push(new PushInstruction(destAddr));
-        const externSig = this.getExternForUnaryOp(
-          unInst.operator,
-          "Boolean",
-        );
+        const externSig = this.getExternForUnaryOp(unInst.operator, "Boolean");
         this.externSignatures.add(externSig);
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(externSig), true),
