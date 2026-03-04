@@ -19,16 +19,7 @@ jobs:
       cancel-in-progress: true
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    container:
-      image: unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885
     steps:
-      - name: Activate Unity License
-        run: |
-          mkdir -p "$HOME/.local/share/unity3d/Unity/"
-          echo "$UNITY_LICENSE" > "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -61,9 +52,22 @@ jobs:
         run: vrc-get resolve --project tests/vm/unity-project
 
       - name: Run VM Tests
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" \
+            -w "$GITHUB_WORKSPACE" \
+            -e UNITY_LICENSE \
+            -e UNITY_EDITOR_PATH=/opt/unity/Editor/Unity \
+            unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885 \
+            bash -c '
+              mkdir -p /root/.local/share/unity3d/Unity/
+              echo "$UNITY_LICENSE" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
+              curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1
+              apt-get install -y -qq nodejs >/dev/null 2>&1
+              node ./node_modules/.bin/vitest run tests/vm/ --hideSkippedTests
+            '
         env:
-          UNITY_EDITOR_PATH: /opt/unity/Editor/Unity
-        run: pnpm test:vm
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
 
       - name: Upload test results
         if: always()
@@ -72,7 +76,3 @@ jobs:
           name: vm-test-results
           path: tests/vm/unity-project/TestResults/
           if-no-files-found: warn
-
-      - name: Deactivate Unity License
-        if: always()
-        run: rm -f "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
