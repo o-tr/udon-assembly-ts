@@ -144,6 +144,9 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     );
     testResults = new Map();
     for (const result of rawResults.results) {
+      if (testResults.has(result.name)) {
+        throw new Error(`Duplicate test result name: "${result.name}"`);
+      }
       testResults.set(result.name, result);
     }
   }, 600_000); // 10 minute timeout for beforeAll
