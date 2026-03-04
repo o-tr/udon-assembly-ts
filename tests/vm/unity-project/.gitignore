@@ -1,16 +1,8 @@
-/Library/
-/Temp/
-/Logs/
-/obj/
-/Build/
-/Builds/
-/UserSettings/
 /TestInput/
 /TestResults/
 /Packages/com.vrchat.base/
 /Packages/com.vrchat.worlds/
 /Packages/packages-lock.json
-/[Aa]ssets/[Ss]treamingAssets/aa/*
 /Assets/SerializedUdonPrograms/
 /Assets/SerializedUdonPrograms.meta
 /Assets/UdonSharp/

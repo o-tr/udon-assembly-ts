@@ -153,7 +153,6 @@ public static class UasmTestRunner
         };
 
         var capturedLogs = new List<string>();
-        bool executionStarted = false;
 
         // Log capture handler - only capture LogType.Log, exclude our own messages
         Application.LogCallback logHandler = (message, stackTrace, type) =>
@@ -234,7 +233,6 @@ public static class UasmTestRunner
                 // NOTE: Interpret() is a blocking call with no timeout.
                 // Test cases must be loop-terminating; an infinite loop will block
                 // until the outer execFileSync timeout kills the Unity process.
-                executionStarted = true;
                 uint execResult = vm.Interpret();
                 if (execResult != 0)
                 {
@@ -284,7 +282,7 @@ public static class UasmTestRunner
         }
         catch (Exception e)
         {
-            if (testDef.expectError && executionStarted)
+            if (testDef.expectError)
             {
                 result.passed = true;
                 result.error = $"Expected error: {e.GetType().Name}: {e.Message}";

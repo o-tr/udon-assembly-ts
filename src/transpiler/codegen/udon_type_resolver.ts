@@ -34,12 +34,23 @@ const UDON_TYPE_TO_CSHARP: Record<string, string> = {
   AudioClip: "UnityEngine.AudioClip",
   Animator: "UnityEngine.Animator",
   Component: "UnityEngine.Component",
+  Material: "UnityEngine.Material",
+  Renderer: "UnityEngine.Renderer",
+  MeshRenderer: "UnityEngine.MeshRenderer",
+  Collider: "UnityEngine.Collider",
+  BoxCollider: "UnityEngine.BoxCollider",
+  SphereCollider: "UnityEngine.SphereCollider",
+  Rigidbody: "UnityEngine.Rigidbody",
+  Camera: "UnityEngine.Camera",
+  Canvas: "UnityEngine.Canvas",
+  RectTransform: "UnityEngine.RectTransform",
   // VRC types
   VRCPlayerApi: "VRC.SDKBase.VRCPlayerApi",
   UdonBehaviour: "VRC.Udon.UdonBehaviour",
   DataList: "VRC.SDK3.Data.DataList",
   DataDictionary: "VRC.SDK3.Data.DataDictionary",
   DataToken: "VRC.SDK3.Data.DataToken",
+  NetworkEventTarget: "VRC.Udon.Common.Enums.NetworkEventTarget",
 };
 
 /**
