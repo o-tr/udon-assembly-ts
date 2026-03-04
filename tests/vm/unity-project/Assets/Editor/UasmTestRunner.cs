@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
@@ -61,6 +62,9 @@ public static class UasmTestRunner
     /// </summary>
     public static void Run()
     {
+        // Force invariant culture so float.ToString() etc. always use '.' as decimal separator
+        System.Threading.Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+
         var projectRoot = Path.Combine(Application.dataPath, "..");
         var inputDir = Path.Combine(projectRoot, "TestInput");
         var outputDir = Path.Combine(projectRoot, "TestResults");
@@ -149,6 +153,7 @@ public static class UasmTestRunner
         };
 
         var capturedLogs = new List<string>();
+        bool executionStarted = false;
 
         // Log capture handler - only capture LogType.Log, exclude our own messages
         Application.LogCallback logHandler = (message, stackTrace, type) =>
@@ -226,6 +231,7 @@ public static class UasmTestRunner
             Application.logMessageReceived += logHandler;
             try
             {
+                executionStarted = true;
                 uint execResult = vm.Interpret();
                 if (execResult != 0)
                 {
@@ -275,7 +281,7 @@ public static class UasmTestRunner
         }
         catch (Exception e)
         {
-            if (testDef.expectError)
+            if (testDef.expectError && executionStarted)
             {
                 result.passed = true;
                 result.error = $"Expected error: {e.GetType().Name}: {e.Message}";

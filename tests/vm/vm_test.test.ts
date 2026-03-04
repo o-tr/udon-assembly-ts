@@ -12,7 +12,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { TypeScriptToUdonTranspiler } from "../../src/transpiler/index.js";
 import { VM_TEST_CASES } from "./vm_test_definitions.js";
 
-const UNITY_EDITOR_PATH = process.env.UNITY_EDITOR_PATH;
+const UNITY_EDITOR_PATH: string = process.env.UNITY_EDITOR_PATH ?? "";
 const UNITY_PROJECT_PATH = path.resolve(import.meta.dirname, "unity-project");
 
 const shouldRun = !!UNITY_EDITOR_PATH;
@@ -97,10 +97,6 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       logFile,
       "-quit",
     ];
-
-    if (!UNITY_EDITOR_PATH) {
-      throw new Error("UNITY_EDITOR_PATH is not set");
-    }
 
     try {
       execFileSync(UNITY_EDITOR_PATH, unityArgs, {
