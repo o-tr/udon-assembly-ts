@@ -31,7 +31,7 @@ export function getExternForBinaryOp(
       methodName = "op_Subtraction";
       break;
     case "*":
-      methodName = "op_Multiplication";
+      methodName = "op_Multiply";
       break;
     case "/":
       methodName = "op_Division";
@@ -142,7 +142,7 @@ export function getConvertMethodName(
   // Normalise pre-qualified names (e.g. "SystemInt32" or "System.Int32" → "Int32")
   const shortType = targetType.startsWith("System.")
     ? targetType.slice("System.".length)
-    : targetType.startsWith("System")
+    : /^System[A-Z]/.test(targetType)
       ? targetType.slice("System".length)
       : targetType;
   switch (shortType) {
