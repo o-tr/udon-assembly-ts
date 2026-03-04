@@ -102,7 +102,6 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       execFileSync(UNITY_EDITOR_PATH, unityArgs, {
         timeout: 300_000,
         stdio: "inherit",
-        encoding: "utf-8",
       });
     } catch (err: unknown) {
       // Unity exits with code 1 when tests fail — check results file below.

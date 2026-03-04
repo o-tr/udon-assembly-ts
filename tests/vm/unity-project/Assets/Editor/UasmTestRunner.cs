@@ -231,6 +231,9 @@ public static class UasmTestRunner
             Application.logMessageReceived += logHandler;
             try
             {
+                // NOTE: Interpret() is a blocking call with no timeout.
+                // Test cases must be loop-terminating; an infinite loop will block
+                // until the outer execFileSync timeout kills the Unity process.
                 executionStarted = true;
                 uint execResult = vm.Interpret();
                 if (execResult != 0)
