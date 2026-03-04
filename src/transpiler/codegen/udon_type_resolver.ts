@@ -17,6 +17,8 @@ const UDON_TYPE_TO_CSHARP: Record<string, string> = {
   Int64: "System.Int64",
   UInt64: "System.UInt64",
   Double: "System.Double",
+  Char: "System.Char",
+  Decimal: "System.Decimal",
   Object: "System.Object",
   Array: "System.Array",
   Type: "System.Type",

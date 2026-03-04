@@ -7,6 +7,6 @@ export class StringOps extends UdonSharpBehaviour {
   Start(): void {
     const greeting: string = "Hello";
     const name: string = "World";
-    Debug.Log(`${greeting} ${name}`);
+    Debug.Log(greeting + " " + name);
   }
 }

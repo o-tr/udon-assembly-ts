@@ -10,6 +10,7 @@ import {
   type JumpInstruction,
   type LabelInstruction,
   PushInstruction,
+  CopyInstruction as UdonCopyInstruction,
   UdonInstructionKind,
 } from "./udon_instruction.js";
 import {

@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -35,12 +35,11 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
   const outputDir = path.join(UNITY_PROJECT_PATH, "TestResults");
   const casesDir = path.resolve(import.meta.dirname, "cases");
 
-  let testResults: Map<string, TestResultEntry>;
+  let testResults: Map<string, TestResultEntry> = new Map();
 
   beforeAll(() => {
     // Clean I/O directories
-    if (existsSync(inputDir))
-      rmSync(inputDir, { recursive: true, force: true });
+    if (existsSync(inputDir)) rmSync(inputDir, { recursive: true, force: true });
     if (existsSync(outputDir))
       rmSync(outputDir, { recursive: true, force: true });
     mkdirSync(inputDir, { recursive: true });
@@ -83,21 +82,25 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     // Run Unity in batch mode
     const logFile = path.join(tmpdir(), `uasm-vm-test-${Date.now()}.log`);
     const unityArgs = [
-      `"${UNITY_EDITOR_PATH}"`,
       "-batchmode",
       "-nographics",
-      `-projectPath "${UNITY_PROJECT_PATH}"`,
-      "-executeMethod UasmTestRunner.Run",
-      `-uasmTestInputDir "${inputDir}"`,
-      `-uasmTestOutputDir "${outputDir}"`,
-      `-logFile "${logFile}"`,
+      "-projectPath",
+      UNITY_PROJECT_PATH,
+      "-executeMethod",
+      "UasmTestRunner.Run",
+      "-uasmTestInputDir",
+      inputDir,
+      "-uasmTestOutputDir",
+      outputDir,
+      "-logFile",
+      logFile,
       "-quit",
-    ].join(" ");
+    ];
 
     try {
-      execSync(unityArgs, {
+      execFileSync(UNITY_EDITOR_PATH!, unityArgs, {
         timeout: 300_000,
-        stdio: "pipe",
+        stdio: "inherit",
         encoding: "utf-8",
       });
     } catch {
@@ -148,16 +151,16 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         `No result found for test "${testCase.name}"`,
       ).toBeDefined();
 
-      if (!result?.passed) {
+      if (!result!.passed) {
         throw new Error(
           `VM test "${testCase.name}" failed:\n` +
-            `  Error: ${result?.error}\n` +
+            `  Error: ${result!.error}\n` +
             `  Expected logs: ${JSON.stringify(testCase.expectedLogs)}\n` +
-            `  Captured logs: ${JSON.stringify(result?.capturedLogs)}`,
+            `  Captured logs: ${JSON.stringify(result!.capturedLogs)}`,
         );
       }
 
-      expect(result?.capturedLogs).toEqual(testCase.expectedLogs);
+      expect(result!.capturedLogs).toEqual(testCase.expectedLogs);
     });
   }
 });

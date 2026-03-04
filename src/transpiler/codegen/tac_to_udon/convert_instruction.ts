@@ -112,7 +112,7 @@ export function convertInstruction(
         this.instructions.push(new PushInstruction(destAddr));
         const externSig = this.getExternForUnaryOp(
           unInst.operator,
-          operandType,
+          "Boolean",
         );
         this.externSignatures.add(externSig);
         this.instructions.push(

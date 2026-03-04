@@ -84,11 +84,7 @@ export function getExternForBinaryOp(
 
   const csharpType = udonTypeToCSharp(typeStr);
   const csharpReturn = udonTypeToCSharp(returnType);
-  return createUdonExternSignature(
-    methodName,
-    [csharpType, csharpType],
-    csharpReturn,
-  );
+  return createUdonExternSignature(methodName, [csharpType, csharpType], csharpReturn);
 }
 
 export function getExternForUnaryOp(
