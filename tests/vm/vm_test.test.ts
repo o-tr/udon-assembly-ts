@@ -108,8 +108,13 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         stdio: "inherit",
         encoding: "utf-8",
       });
-    } catch {
-      // Unity exits with code 1 if any test fails; check results file
+    } catch (err: unknown) {
+      // Unity exits with code 1 when tests fail — check results file below.
+      // Re-throw launch failures (ENOENT, permission, timeout, etc.)
+      const spawnError = err as NodeJS.ErrnoException & { status?: number };
+      if (spawnError.code !== undefined && spawnError.status === undefined) {
+        throw err;
+      }
     }
 
     // Read results
