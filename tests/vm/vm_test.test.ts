@@ -154,6 +154,13 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       }
       testResults.set(result.name, result);
     }
+
+    // Clean up temp log file
+    try {
+      rmSync(logFile, { force: true });
+    } catch {
+      /* ignore */
+    }
   }, 600_000); // 10 minute timeout for beforeAll
 
   // Generate individual vitest assertions per test case
