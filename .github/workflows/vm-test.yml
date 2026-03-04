@@ -10,7 +10,11 @@ on:
 jobs:
   vm-test:
     name: Udon VM Tests
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    concurrency:
+      group: vm-test-${{ github.ref }}
+      cancel-in-progress: true
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     container:
       image: unityci/editor:ubuntu-2022.3.22f1-base-3
