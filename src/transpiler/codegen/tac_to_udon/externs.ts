@@ -1,5 +1,6 @@
 import { resolveExternSignature } from "../extern_signatures.js";
 import { createUdonExternSignature } from "../udon_instruction.js";
+import { udonTypeToCSharp } from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function getExternSymbol(
@@ -30,7 +31,7 @@ export function getExternForBinaryOp(
       methodName = "op_Subtraction";
       break;
     case "*":
-      methodName = "op_Multiply";
+      methodName = "op_Multiplication";
       break;
     case "/":
       methodName = "op_Division";
@@ -81,7 +82,9 @@ export function getExternForBinaryOp(
       throw new Error(`Unsupported binary operator: ${operator}`);
   }
 
-  return createUdonExternSignature(methodName, [typeStr, typeStr], returnType);
+  const csharpType = udonTypeToCSharp(typeStr);
+  const csharpReturn = udonTypeToCSharp(returnType);
+  return createUdonExternSignature(methodName, [csharpType, csharpType], csharpReturn);
 }
 
 export function getExternForUnaryOp(
@@ -103,7 +106,8 @@ export function getExternForUnaryOp(
       throw new Error(`Unsupported unary operator: ${operator}`);
   }
 
-  return createUdonExternSignature(methodName, [operandType], operandType);
+  const csharpType = udonTypeToCSharp(operandType);
+  return createUdonExternSignature(methodName, [csharpType], csharpType);
 }
 
 export function getConvertExternSignature(

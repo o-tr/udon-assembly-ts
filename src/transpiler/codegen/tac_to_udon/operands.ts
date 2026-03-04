@@ -7,6 +7,10 @@ import {
   type VariableOperand,
 } from "../../ir/tac_operand.js";
 import { PushInstruction } from "../udon_instruction.js";
+import {
+  toUdonTypeNameWithArray,
+  udonTypeToCSharp,
+} from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function pushOperand(
@@ -78,7 +82,7 @@ export function getOperandTypeName(
       const type =
         (operand as { type?: { udonType?: string } }).type?.udonType ??
         "Object";
-      return `System${type}`;
+      return toUdonTypeNameWithArray(udonTypeToCSharp(type));
     }
     default:
       return "SystemObject";

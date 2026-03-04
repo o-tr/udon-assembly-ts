@@ -61,6 +61,10 @@ export function convertInstruction(
       this.pushOperand(binInst.left);
       this.pushOperand(binInst.right);
 
+      // Push result address before EXTERN (Udon VM calling convention)
+      const destAddr = this.getOperandAddress(binInst.dest);
+      this.instructions.push(new PushInstruction(destAddr));
+
       // Call extern for operation
       const leftOp = binInst.left as
         | VariableOperand
@@ -72,27 +76,27 @@ export function convertInstruction(
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),
       );
-
-      // Store result
-      const destAddr = this.getOperandAddress(binInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-      this.instructions.push(new CopyInstruction());
       break;
     }
 
     case TACInstructionKind.UnaryOp: {
       const unInst = inst as TACUnaryOpInstruction;
-      this.pushOperand(unInst.operand);
 
       // Call extern for operation
       const operandOp = unInst.operand as
         | VariableOperand
         | ConstantOperand
         | TemporaryOperand;
-      // operandOp might be a LabelOperand in theory if TAC is broken, but safe to assume it has type if valid
-      // Actually, let's correspond to the fix I made earlier exactly
       const operandType = operandOp.type?.udonType ?? "Single";
+
       if (unInst.operator === "!" && operandType !== "Boolean") {
+        // Need to coerce to Boolean first, then negate
+        // Step 1: Convert to Boolean (needs intermediate temp)
+        this.pushOperand(unInst.operand);
+        const coerceTmpName = `__coerce_tmp_${this.nextAddress}`;
+        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+        this.variableTypes.set(coerceTmpName, "Boolean");
+        this.instructions.push(new PushInstruction(coerceTmpName));
         const coerceSig = this.getConvertExternSignature(
           operandType,
           "Boolean",
@@ -101,17 +105,33 @@ export function convertInstruction(
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(coerceSig), true),
         );
-      }
-      const externSig = this.getExternForUnaryOp(unInst.operator, operandType);
-      this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
 
-      // Store result
-      const destAddr = this.getOperandAddress(unInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-      this.instructions.push(new CopyInstruction());
+        // Step 2: Negate the Boolean
+        this.instructions.push(new PushInstruction(coerceTmpName));
+        const destAddr = this.getOperandAddress(unInst.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+        const externSig = this.getExternForUnaryOp(
+          unInst.operator,
+          operandType,
+        );
+        this.externSignatures.add(externSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(externSig), true),
+        );
+      } else {
+        // Simple unary op: push operand, push dest, EXTERN
+        this.pushOperand(unInst.operand);
+        const destAddr = this.getOperandAddress(unInst.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+        const externSig = this.getExternForUnaryOp(
+          unInst.operator,
+          operandType,
+        );
+        this.externSignatures.add(externSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(externSig), true),
+        );
+      }
       break;
     }
 
@@ -128,10 +148,16 @@ export function convertInstruction(
         break;
       }
 
-      this.pushOperand(castInst.src);
+      const destAddr = this.getOperandAddress(castInst.dest);
 
       if (this.isFloatType(sourceType) && this.isIntegerType(targetType)) {
         if (sourceType === "Single") {
+          // Step 1: Convert Single → Double
+          const castTmp0 = `__cast_tmp_${this.nextAddress}`;
+          this.variableAddresses.set(castTmp0, this.nextAddress++);
+          this.variableTypes.set(castTmp0, "Double");
+          this.pushOperand(castInst.src);
+          this.instructions.push(new PushInstruction(castTmp0));
           const toDoubleSig = this.getConvertExternSignature(
             "Single",
             "Double",
@@ -140,22 +166,60 @@ export function convertInstruction(
           this.instructions.push(
             new ExternInstruction(this.getExternSymbol(toDoubleSig), true),
           );
-        }
-        const truncateSig = this.getTruncateExternSignature();
-        this.externSignatures.add(truncateSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(truncateSig), true),
-        );
 
-        const toTargetSig = this.getConvertExternSignature(
-          "Double",
-          targetType,
-        );
-        this.externSignatures.add(toTargetSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(toTargetSig), true),
-        );
+          // Step 2: Math.Truncate Double → Double
+          const castTmp1 = `__cast_tmp_${this.nextAddress}`;
+          this.variableAddresses.set(castTmp1, this.nextAddress++);
+          this.variableTypes.set(castTmp1, "Double");
+          this.instructions.push(new PushInstruction(castTmp0));
+          this.instructions.push(new PushInstruction(castTmp1));
+          const truncateSig = this.getTruncateExternSignature();
+          this.externSignatures.add(truncateSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(truncateSig), true),
+          );
+
+          // Step 3: Convert Double → target type
+          this.instructions.push(new PushInstruction(castTmp1));
+          this.instructions.push(new PushInstruction(destAddr));
+          const toTargetSig = this.getConvertExternSignature(
+            "Double",
+            targetType,
+          );
+          this.externSignatures.add(toTargetSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(toTargetSig), true),
+          );
+        } else {
+          // sourceType is Double, just truncate and convert
+          // Step 1: Math.Truncate Double → Double
+          const castTmp = `__cast_tmp_${this.nextAddress}`;
+          this.variableAddresses.set(castTmp, this.nextAddress++);
+          this.variableTypes.set(castTmp, "Double");
+          this.pushOperand(castInst.src);
+          this.instructions.push(new PushInstruction(castTmp));
+          const truncateSig = this.getTruncateExternSignature();
+          this.externSignatures.add(truncateSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(truncateSig), true),
+          );
+
+          // Step 2: Convert Double → target type
+          this.instructions.push(new PushInstruction(castTmp));
+          this.instructions.push(new PushInstruction(destAddr));
+          const toTargetSig = this.getConvertExternSignature(
+            "Double",
+            targetType,
+          );
+          this.externSignatures.add(toTargetSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(toTargetSig), true),
+          );
+        }
       } else {
+        // Simple conversion: push source, push dest, EXTERN
+        this.pushOperand(castInst.src);
+        this.instructions.push(new PushInstruction(destAddr));
         const toTargetSig = this.getConvertExternSignature(
           sourceType,
           targetType,
@@ -165,10 +229,6 @@ export function convertInstruction(
           new ExternInstruction(this.getExternSymbol(toTargetSig), true),
         );
       }
-
-      const destAddr = this.getOperandAddress(castInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-      this.instructions.push(new CopyInstruction());
       break;
     }
 
@@ -231,18 +291,14 @@ export function convertInstruction(
       }
       this.externSignatures.add(externSig);
       const externSymbol = this.getExternSymbol(externSig);
-      // Emit a normal extern call. Tail-call optimization is currently
-      // only an IR-level hint; mapping it to a raw `JUMP` is incorrect
-      // for Udon's calling convention and may produce invalid control
-      // flow. Preserve normal call/return semantics here.
-      this.instructions.push(new ExternInstruction(externSymbol, true));
 
-      // Store result if needed
+      // Push return address before EXTERN if non-void (Udon VM calling convention)
       if (call.dest) {
         const destAddr = this.getOperandAddress(call.dest);
         this.instructions.push(new PushInstruction(destAddr));
-        this.instructions.push(new CopyInstruction());
       }
+
+      this.instructions.push(new ExternInstruction(externSymbol, true));
       break;
     }
 
@@ -278,15 +334,14 @@ export function convertInstruction(
         ) ?? createUdonExternSignature(methodName, paramTypes, returnType);
       this.externSignatures.add(externSig);
       const externSymbol = this.getExternSymbol(externSig);
-      // Emit a normal method call. As above, do not lower IR `isTailCall`
-      // to a raw `JUMP` here; that is unsafe for Udon control flow.
-      this.instructions.push(new ExternInstruction(externSymbol, true));
 
+      // Push return address before EXTERN if non-void (Udon VM calling convention)
       if (call.dest) {
         const destAddr = this.getOperandAddress(call.dest);
         this.instructions.push(new PushInstruction(destAddr));
-        this.instructions.push(new CopyInstruction());
       }
+
+      this.instructions.push(new ExternInstruction(externSymbol, true));
       break;
     }
 
@@ -313,13 +368,14 @@ export function convertInstruction(
           returnType,
         );
       this.externSignatures.add(externSig);
+
+      // Push return address before EXTERN (Udon VM calling convention)
+      const destAddr = this.getOperandAddress(getInst.dest);
+      this.instructions.push(new PushInstruction(destAddr));
+
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),
       );
-
-      const destAddr = this.getOperandAddress(getInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-      this.instructions.push(new CopyInstruction());
       break;
     }
 
@@ -369,12 +425,14 @@ export function convertInstruction(
         throw new Error("Missing extern signature for SystemArray.Get");
       }
       this.externSignatures.add(externSig);
+
+      // Push return address before EXTERN (Udon VM calling convention)
+      const destAddr = this.getOperandAddress(arrayInst.dest);
+      this.instructions.push(new PushInstruction(destAddr));
+
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),
       );
-      const destAddr = this.getOperandAddress(arrayInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-      this.instructions.push(new CopyInstruction());
       break;
     }
 
