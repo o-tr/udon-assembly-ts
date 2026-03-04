@@ -233,6 +233,10 @@ public static class UasmTestRunner
                 // NOTE: Interpret() is a blocking call with no timeout.
                 // Test cases must be loop-terminating; an infinite loop will block
                 // until the outer execFileSync timeout kills the Unity process.
+                // In batch mode, a single Interpret() call runs the program to
+                // completion and returns 0 on success. A non-zero return indicates
+                // an error (verified empirically; the SDK does not document the
+                // exact semantics of the return value).
                 uint execResult = vm.Interpret();
                 if (execResult != 0)
                 {

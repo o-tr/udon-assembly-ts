@@ -74,7 +74,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       testDefinitions.tests.push({
         name: testCase.name,
         uasmFile: uasmFileName,
-        entryPoint: testCase.entryPoint,
+        entryPoint: testCase.entryPoint ?? "_start",
         expectedLogs: testCase.expectedLogs,
         expectError: testCase.expectError ?? false,
       });
@@ -114,7 +114,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       // Unity exits with code 1 when tests fail — check results file below.
       // Re-throw launch failures (ENOENT, permission, timeout, etc.)
       const spawnError = err as NodeJS.ErrnoException & { status?: number };
-      if (spawnError.code !== undefined && spawnError.status === undefined) {
+      if (spawnError.code !== undefined && spawnError.status == null) {
         throw err;
       }
     }
@@ -123,9 +123,8 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     const resultsPath = path.join(outputDir, "test_results.json");
     if (!existsSync(resultsPath)) {
       // Read Unity log for diagnostics
-      let logContent = "";
       if (existsSync(logFile)) {
-        logContent = readFileSync(logFile, "utf-8");
+        const logContent = readFileSync(logFile, "utf-8");
         const errorLines = logContent
           .split("\n")
           .filter(
