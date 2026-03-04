@@ -418,7 +418,7 @@ export function convertInstruction(
         createUdonExternSignature(
           `set_${setInst.property}`,
           paramTypes,
-          "Void",
+          "SystemVoid",
         );
       this.externSignatures.add(externSig);
       this.instructions.push(
