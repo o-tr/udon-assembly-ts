@@ -45,7 +45,7 @@ jobs:
         run: |
           curl -L -o /usr/local/bin/vrc-get \
             "https://github.com/vrc-get/vrc-get/releases/download/v1.9.1/x86_64-unknown-linux-musl-vrc-get"
-          echo "${{ secrets.VRC_GET_SHA256 }}  /usr/local/bin/vrc-get" | sha256sum -c -
+          echo "a34aecf8ccf304dfc62d8073e7a6fc166472ec6f7bf40f22f7c44745ac0394a1  /usr/local/bin/vrc-get" | sha256sum -c -
           chmod +x /usr/local/bin/vrc-get
 
       - name: Setup VRChat SDK
