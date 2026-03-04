@@ -293,10 +293,7 @@ export function convertInstruction(
       if (call.dest) {
         const destAddr = this.getOperandAddress(call.dest);
         this.instructions.push(new PushInstruction(destAddr));
-      } else if (
-        !externSig.endsWith("__SystemVoid") &&
-        !externSig.endsWith("__Void")
-      ) {
+      } else if (!externSig.endsWith("__SystemVoid")) {
         // Non-void call with discarded result: allocate a scratch slot
         const scratchName = `__tdiscard_${this.nextAddress}`;
         this.variableAddresses.set(scratchName, this.nextAddress++);
@@ -345,10 +342,7 @@ export function convertInstruction(
       if (call.dest) {
         const destAddr = this.getOperandAddress(call.dest);
         this.instructions.push(new PushInstruction(destAddr));
-      } else if (
-        !externSig.endsWith("__SystemVoid") &&
-        !externSig.endsWith("__Void")
-      ) {
+      } else if (!externSig.endsWith("__SystemVoid")) {
         // Non-void call with discarded result: allocate a scratch slot
         const scratchName = `__tdiscard_${this.nextAddress}`;
         this.variableAddresses.set(scratchName, this.nextAddress++);
