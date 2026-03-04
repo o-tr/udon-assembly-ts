@@ -23,7 +23,9 @@ jobs:
       image: unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885
     steps:
       - name: Activate Unity License
-        uses: game-ci/unity-activate@33cd3ea96f11f3a1ddcf8fa9d8d265d5ea81e240 # v2
+        run: |
+          mkdir -p /root/.local/share/unity3d/Unity/
+          echo "$UNITY_LICENSE" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
 
@@ -72,5 +74,5 @@ jobs:
           if-no-files-found: warn
 
       - name: Deactivate Unity License
-        uses: game-ci/unity-return-license@39eed66c5d43dc75f6d7eef74ba94acaa0fd2933 # v2
         if: always()
+        run: rm -f /root/.local/share/unity3d/Unity/Unity_lic.ulf
