@@ -324,7 +324,7 @@ export function convertInstruction(
       );
       const returnType = call.dest
         ? this.getOperandTypeName(call.dest)
-        : "Void";
+        : "SystemVoid";
       const tsReturnType = call.dest
         ? this.getOperandTsTypeName(call.dest)
         : "void";
