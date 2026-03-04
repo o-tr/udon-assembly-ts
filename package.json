@@ -35,6 +35,8 @@
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --hideSkippedTests",
+    "test:vm": "vitest run tests/vm/ --hideSkippedTests",
+    "setup:vm": "vrc-get resolve -p tests/vm/unity-project",
     "format": "biome format",
     "format:fix": "biome format --write",
     "lint": "biome check",

@@ -1,5 +1,6 @@
 import { resolveExternSignature } from "../extern_signatures.js";
 import { createUdonExternSignature } from "../udon_instruction.js";
+import { udonTypeToCSharp } from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function getExternSymbol(
@@ -81,7 +82,13 @@ export function getExternForBinaryOp(
       throw new Error(`Unsupported binary operator: ${operator}`);
   }
 
-  return createUdonExternSignature(methodName, [typeStr, typeStr], returnType);
+  const csharpType = udonTypeToCSharp(typeStr);
+  const csharpReturn = udonTypeToCSharp(returnType);
+  return createUdonExternSignature(
+    methodName,
+    [csharpType, csharpType],
+    csharpReturn,
+  );
 }
 
 export function getExternForUnaryOp(
@@ -103,7 +110,8 @@ export function getExternForUnaryOp(
       throw new Error(`Unsupported unary operator: ${operator}`);
   }
 
-  return createUdonExternSignature(methodName, [operandType], operandType);
+  const csharpType = udonTypeToCSharp(operandType);
+  return createUdonExternSignature(methodName, [csharpType], csharpType);
 }
 
 export function getConvertExternSignature(
@@ -131,7 +139,13 @@ export function getConvertMethodName(
   this: TACToUdonConverter,
   targetType: string,
 ): string {
-  switch (targetType) {
+  // Normalise pre-qualified names (e.g. "SystemInt32" or "System.Int32" → "Int32")
+  const shortType = targetType.startsWith("System.")
+    ? targetType.slice("System.".length)
+    : /^System[A-Z]/.test(targetType)
+      ? targetType.slice("System".length)
+      : targetType;
+  switch (shortType) {
     case "Int16":
       return "ToInt16";
     case "UInt16":

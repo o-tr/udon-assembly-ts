@@ -10,7 +10,6 @@ import {
   type JumpInstruction,
   type LabelInstruction,
   PushInstruction,
-  CopyInstruction as UdonCopyInstruction,
   UdonInstructionKind,
 } from "./udon_instruction.js";
 import {
@@ -394,12 +393,12 @@ export class UdonAssembler {
             "SystemInt32.__op_Equality__SystemInt32_SystemInt32__SystemBoolean",
           ]);
         }
-        // PUSH int32_0, PUSH int32_0, EXTERN eq, PUSH target, COPY
+        // PUSH int32_0, PUSH int32_0, PUSH target, EXTERN eq
+        // Udon VM requires return address on stack before EXTERN
         initInstructions.push(new PushInstruction(int32ZeroName));
         initInstructions.push(new PushInstruction(int32ZeroName));
-        initInstructions.push(new ExternInstruction(eqExternName, true));
         initInstructions.push(new PushInstruction(name));
-        initInstructions.push(new UdonCopyInstruction());
+        initInstructions.push(new ExternInstruction(eqExternName, true));
       } else if (udonType === "SystemInt64" || udonType === "SystemUInt64") {
         // TODO(TRACK_INT64_INIT_LIMITATION): Runtime init for Int64/UInt64
         // uses SystemConvert.ToInt64/ToUInt64 from an Int32 source, so only
@@ -465,11 +464,11 @@ export class UdonAssembler {
           );
         }
 
-        // PUSH int32_src, EXTERN convert, PUSH target, COPY
+        // PUSH int32_src, PUSH target, EXTERN convert
+        // Udon VM requires return address on stack before EXTERN
         initInstructions.push(new PushInstruction(srcName));
-        initInstructions.push(new ExternInstruction(externName, true));
         initInstructions.push(new PushInstruction(name));
-        initInstructions.push(new UdonCopyInstruction());
+        initInstructions.push(new ExternInstruction(externName, true));
       } else if (
         (udonType === "SystemSingle" || udonType === "SystemDouble") &&
         typeof value === "number"
@@ -513,11 +512,11 @@ export class UdonAssembler {
           isSingle ? parseSingleExternName : parseDoubleExternName
         ) as string;
 
-        // PUSH str_src, EXTERN parse, PUSH target, COPY
+        // PUSH str_src, PUSH target, EXTERN parse
+        // Udon VM requires return address on stack before EXTERN
         initInstructions.push(new PushInstruction(srcStrName));
-        initInstructions.push(new ExternInstruction(parseExternName, true));
         initInstructions.push(new PushInstruction(name));
-        initInstructions.push(new UdonCopyInstruction());
+        initInstructions.push(new ExternInstruction(parseExternName, true));
       } else {
         console.warn(
           `No runtime init path for restricted type value ${JSON.stringify(value)} on '${name}' (${udonType}); leaving as null`,
