@@ -6,6 +6,9 @@ on:
 jobs:
   activation:
     name: Request activation file
+    permissions:
+      contents: read
+      actions: write
     runs-on: ubuntu-latest
     steps:
       - name: Request activation file

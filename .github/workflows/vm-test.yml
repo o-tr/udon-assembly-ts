@@ -10,6 +10,9 @@ on:
 jobs:
   vm-test:
     name: Udon VM Tests
+    permissions:
+      contents: read
+      actions: write
     timeout-minutes: 30
     concurrency:
       group: vm-test-${{ github.ref }}
@@ -17,7 +20,7 @@ jobs:
     if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     container:
-      image: unityci/editor:ubuntu-2022.3.22f1-base-3
+      image: unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885
     steps:
       - name: Activate Unity License
         uses: game-ci/unity-activate@33cd3ea96f11f3a1ddcf8fa9d8d265d5ea81e240 # v2
