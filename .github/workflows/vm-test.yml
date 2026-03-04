@@ -70,3 +70,7 @@ jobs:
           name: vm-test-results
           path: tests/vm/unity-project/TestResults/
           if-no-files-found: warn
+
+      - name: Deactivate Unity License
+        uses: game-ci/unity-return-license@39eed66c5d43dc75f6d7eef74ba94acaa0fd2933 # v2
+        if: always()
