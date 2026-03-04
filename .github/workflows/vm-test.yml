@@ -1,0 +1,59 @@
+name: VM Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  vm-test:
+    name: Udon VM Tests
+    runs-on: ubuntu-latest
+    container:
+      image: unityci/editor:ubuntu-2022.3.22f1-base-3
+    steps:
+      - name: Activate Unity License
+        uses: game-ci/unity-activate@v2
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.15.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Install vrc-get
+        run: |
+          curl -L -o /usr/local/bin/vrc-get \
+            "https://github.com/vrc-get/vrc-get/releases/download/v1.9.1/x86_64-unknown-linux-musl-vrc-get"
+          chmod +x /usr/local/bin/vrc-get
+
+      - name: Setup VRChat SDK
+        run: vrc-get resolve --project tests/vm/unity-project
+
+      - name: Run VM Tests
+        env:
+          UNITY_EDITOR_PATH: /opt/unity/Editor/Unity
+        run: pnpm test:vm
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vm-test-results
+          path: tests/vm/unity-project/TestResults/
+          if-no-files-found: ignore
