@@ -60,7 +60,14 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     for (const testCase of VM_TEST_CASES) {
       const sourceFile = path.join(casesDir, testCase.sourceFile);
       const source = readFileSync(sourceFile, "utf-8");
-      const result = transpiler.transpile(source);
+      let result: { uasm: string };
+      try {
+        result = transpiler.transpile(source);
+      } catch (err) {
+        throw new Error(
+          `Transpilation failed for "${testCase.name}" (${testCase.sourceFile}): ${err}`,
+        );
+      }
       const uasmFileName = `${testCase.name}.uasm`;
       writeFileSync(path.join(inputDir, uasmFileName), result.uasm, "utf-8");
 
