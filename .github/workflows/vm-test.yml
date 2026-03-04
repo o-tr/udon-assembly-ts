@@ -69,4 +69,4 @@ jobs:
         with:
           name: vm-test-results
           path: tests/vm/unity-project/TestResults/
-          if-no-files-found: ignore
+          if-no-files-found: warn
