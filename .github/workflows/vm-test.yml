@@ -10,25 +10,30 @@ on:
 jobs:
   vm-test:
     name: Udon VM Tests
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     container:
       image: unityci/editor:ubuntu-2022.3.22f1-base-3
     steps:
       - name: Activate Unity License
-        uses: game-ci/unity-activate@v2
+        uses: game-ci/unity-activate@33cd3ea96f11f3a1ddcf8fa9d8d265d5ea81e240 # v2
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
+        with:
+          version: 10.15.1
+          run_install: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-
-      - name: Install pnpm
-        run: npm install -g pnpm@10.15.1
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -40,6 +45,7 @@ jobs:
         run: |
           curl -L -o /usr/local/bin/vrc-get \
             "https://github.com/vrc-get/vrc-get/releases/download/v1.9.1/x86_64-unknown-linux-musl-vrc-get"
+          echo "${{ secrets.VRC_GET_SHA256 }}  /usr/local/bin/vrc-get" | sha256sum -c -
           chmod +x /usr/local/bin/vrc-get
 
       - name: Setup VRChat SDK
@@ -52,7 +58,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vm-test-results
           path: tests/vm/unity-project/TestResults/
