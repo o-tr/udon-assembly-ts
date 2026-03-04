@@ -39,7 +39,8 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
 
   beforeAll(() => {
     // Clean I/O directories
-    if (existsSync(inputDir)) rmSync(inputDir, { recursive: true, force: true });
+    if (existsSync(inputDir))
+      rmSync(inputDir, { recursive: true, force: true });
     if (existsSync(outputDir))
       rmSync(outputDir, { recursive: true, force: true });
     mkdirSync(inputDir, { recursive: true });
@@ -147,16 +148,16 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         `No result found for test "${testCase.name}"`,
       ).toBeDefined();
 
-      if (!result!.passed) {
+      if (!result?.passed) {
         throw new Error(
           `VM test "${testCase.name}" failed:\n` +
-            `  Error: ${result!.error}\n` +
+            `  Error: ${result?.error}\n` +
             `  Expected logs: ${JSON.stringify(testCase.expectedLogs)}\n` +
-            `  Captured logs: ${JSON.stringify(result!.capturedLogs)}`,
+            `  Captured logs: ${JSON.stringify(result?.capturedLogs)}`,
         );
       }
 
-      expect(result!.capturedLogs).toEqual(testCase.expectedLogs);
+      expect(result?.capturedLogs).toEqual(testCase.expectedLogs);
     });
   }
 });
