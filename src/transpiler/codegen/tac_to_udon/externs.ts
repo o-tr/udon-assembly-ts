@@ -139,7 +139,11 @@ export function getConvertMethodName(
   this: TACToUdonConverter,
   targetType: string,
 ): string {
-  switch (targetType) {
+  // Normalise pre-qualified names (e.g. "SystemInt32" → "Int32")
+  const shortType = targetType.startsWith("System")
+    ? targetType.slice("System".length)
+    : targetType;
+  switch (shortType) {
     case "Int16":
       return "ToInt16";
     case "UInt16":
