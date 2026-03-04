@@ -24,8 +24,8 @@ jobs:
     steps:
       - name: Activate Unity License
         run: |
-          mkdir -p /root/.local/share/unity3d/Unity/
-          echo "$UNITY_LICENSE" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
+          mkdir -p "$HOME/.local/share/unity3d/Unity/"
+          echo "$UNITY_LICENSE" > "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
 
@@ -75,4 +75,4 @@ jobs:
 
       - name: Deactivate Unity License
         if: always()
-        run: rm -f /root/.local/share/unity3d/Unity/Unity_lic.ulf
+        run: rm -f "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"
