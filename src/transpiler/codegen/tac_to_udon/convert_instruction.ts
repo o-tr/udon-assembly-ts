@@ -295,9 +295,13 @@ export function convertInstruction(
         this.instructions.push(new PushInstruction(destAddr));
       } else if (!externSig.endsWith("__SystemVoid")) {
         // Non-void call with discarded result: allocate a scratch slot
+        // Extract return type from signature (segment after the last "__")
+        const returnUdonType = externSig.substring(
+          externSig.lastIndexOf("__") + 2,
+        );
         const scratchName = `__tdiscard_${this.nextAddress}`;
         this.variableAddresses.set(scratchName, this.nextAddress++);
-        this.variableTypes.set(scratchName, "Object");
+        this.variableTypes.set(scratchName, returnUdonType);
         this.instructions.push(new PushInstruction(scratchName));
       }
 
@@ -344,9 +348,13 @@ export function convertInstruction(
         this.instructions.push(new PushInstruction(destAddr));
       } else if (!externSig.endsWith("__SystemVoid")) {
         // Non-void call with discarded result: allocate a scratch slot
+        // Extract return type from signature (segment after the last "__")
+        const returnUdonType = externSig.substring(
+          externSig.lastIndexOf("__") + 2,
+        );
         const scratchName = `__tdiscard_${this.nextAddress}`;
         this.variableAddresses.set(scratchName, this.nextAddress++);
-        this.variableTypes.set(scratchName, "Object");
+        this.variableTypes.set(scratchName, returnUdonType);
         this.instructions.push(new PushInstruction(scratchName));
       }
 
