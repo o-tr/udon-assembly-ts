@@ -151,21 +151,20 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
   for (const testCase of VM_TEST_CASES) {
     it(`VM: ${testCase.name}`, () => {
       const result = testResults.get(testCase.name);
-      expect(
-        result,
-        `No result found for test "${testCase.name}"`,
-      ).toBeDefined();
+      if (!result) {
+        throw new Error(`No result found for test "${testCase.name}"`);
+      }
 
-      if (!result?.passed) {
+      if (!result.passed) {
         throw new Error(
           `VM test "${testCase.name}" failed:\n` +
-            `  Error: ${result?.error}\n` +
+            `  Error: ${result.error}\n` +
             `  Expected logs: ${JSON.stringify(testCase.expectedLogs)}\n` +
-            `  Captured logs: ${JSON.stringify(result?.capturedLogs)}`,
+            `  Captured logs: ${JSON.stringify(result.capturedLogs)}`,
         );
       }
 
-      expect(result?.capturedLogs).toEqual(testCase.expectedLogs);
+      expect(result.capturedLogs).toEqual(testCase.expectedLogs);
     });
   }
 });

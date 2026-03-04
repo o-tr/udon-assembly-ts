@@ -93,7 +93,7 @@ export function convertInstruction(
         // Need to coerce to Boolean first, then negate
         // Step 1: Convert to Boolean (needs intermediate temp)
         this.pushOperand(unInst.operand);
-        const coerceTmpName = `__coerce_tmp_${this.nextAddress}`;
+        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
         this.variableAddresses.set(coerceTmpName, this.nextAddress++);
         this.variableTypes.set(coerceTmpName, "Boolean");
         this.instructions.push(new PushInstruction(coerceTmpName));
@@ -150,7 +150,7 @@ export function convertInstruction(
       if (this.isFloatType(sourceType) && this.isIntegerType(targetType)) {
         if (sourceType === "Single") {
           // Step 1: Convert Single → Double
-          const castTmp0 = `__cast_tmp_${this.nextAddress}`;
+          const castTmp0 = `__tcast_${this.nextAddress}`;
           this.variableAddresses.set(castTmp0, this.nextAddress++);
           this.variableTypes.set(castTmp0, "Double");
           this.pushOperand(castInst.src);
@@ -165,7 +165,7 @@ export function convertInstruction(
           );
 
           // Step 2: Math.Truncate Double → Double
-          const castTmp1 = `__cast_tmp_${this.nextAddress}`;
+          const castTmp1 = `__tcast_${this.nextAddress}`;
           this.variableAddresses.set(castTmp1, this.nextAddress++);
           this.variableTypes.set(castTmp1, "Double");
           this.instructions.push(new PushInstruction(castTmp0));
@@ -190,7 +190,7 @@ export function convertInstruction(
         } else {
           // sourceType is Double, just truncate and convert
           // Step 1: Math.Truncate Double → Double
-          const castTmp = `__cast_tmp_${this.nextAddress}`;
+          const castTmp = `__tcast_${this.nextAddress}`;
           this.variableAddresses.set(castTmp, this.nextAddress++);
           this.variableTypes.set(castTmp, "Double");
           this.pushOperand(castInst.src);
