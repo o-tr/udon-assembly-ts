@@ -14,7 +14,7 @@ export class OperatorsArithmetic extends UdonSharpBehaviour {
     Debug.Log(x);
     x = x * 2;
     Debug.Log(x);
-    const neg: number = 0 - x;
+    const neg: number = -x;
     Debug.Log(neg);
   }
 }
