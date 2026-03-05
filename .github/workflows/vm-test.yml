@@ -56,24 +56,54 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" \
             -w "$GITHUB_WORKSPACE" \
-            -e UNITY_LICENSE \
+            -e UNITY_SERIAL \
+            -e UNITY_EMAIL \
+            -e UNITY_PASSWORD \
             -e UNITY_EDITOR_PATH=/opt/unity/Editor/Unity \
             unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885 \
             bash -c '
-              # Place license file directly in Unity cache directory
-              # (bypasses machine binding validation that -manualLicenseFile performs)
-              mkdir -p /root/.local/share/unity3d/Unity/
-              echo "$UNITY_LICENSE" | tr -d "\r" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
+              # Randomize machine ID for Personal license activation (game-ci approach)
+              dbus-uuidgen > /etc/machine-id 2>/dev/null \
+                || cat /proc/sys/kernel/random/uuid | tr -d "-" > /etc/machine-id
+              mkdir -p /var/lib/dbus/
+              ln -sf /etc/machine-id /var/lib/dbus/machine-id
+
+              # Create blank project for activation
+              mkdir -p /tmp/_blank_project/Assets
+
+              # Activate Unity license online with serial
+              /opt/unity/Editor/Unity \
+                -batchmode -nographics \
+                -logFile /dev/stdout \
+                -quit \
+                -serial "$UNITY_SERIAL" \
+                -username "$UNITY_EMAIL" \
+                -password "$UNITY_PASSWORD" \
+                -projectPath /tmp/_blank_project 2>&1 || true
+              # Note: exit code may be non-zero for Personal license activation
+              # even when the license file is written successfully
 
               # Install Node.js for running vitest
               curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1
               apt-get install -y -qq nodejs >/dev/null 2>&1
 
-              # Run tests
+              # Run tests (capture exit code to return after license release)
               ./node_modules/.bin/vitest run tests/vm/ --hideSkippedTests
+              TEST_EXIT_CODE=$?
+
+              # Return license seat so it is not consumed permanently
+              /opt/unity/Editor/Unity \
+                -batchmode -nographics \
+                -logFile /dev/stdout \
+                -quit \
+                -returnlicense 2>&1 || true
+
+              exit $TEST_EXIT_CODE
             '
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
       - name: Upload test results
         if: always()
