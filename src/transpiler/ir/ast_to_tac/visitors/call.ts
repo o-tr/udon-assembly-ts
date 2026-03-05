@@ -700,7 +700,7 @@ export function visitCallExpression(
       );
       return instResult;
     }
-    if (node.isNew && (calleeName === "Vector3" || calleeName === "Color")) {
+    if (node.isNew) {
       const externSig = `__ctor_${calleeName}`;
       const ctorType = this.typeMapper.mapTypeScriptType(calleeName);
       const ctorResult = this.newTemp(ctorType);

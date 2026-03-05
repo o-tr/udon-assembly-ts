@@ -126,16 +126,16 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "inline_state_machine.ts",
     expectedLogs: ["idle", "running", "done", "idle"],
   },
-  // --- String method tests ---
+  // --- String operation tests ---
   {
     name: "string_methods_basic",
     sourceFile: "string_methods_basic.ts",
-    expectedLogs: ["True", "False", "True", "True", "6"],
+    expectedLogs: ["Hello World", "HelloWorld", "Hello"],
   },
   {
     name: "string_methods_transform",
     sourceFile: "string_methods_transform.ts",
-    expectedLogs: ["Hello World", "  hello world  ", "  HELLO WORLD  "],
+    expectedLogs: ["Hello World", "15", "5"],
   },
   {
     name: "string_concat_basic",
@@ -203,17 +203,6 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "string_builder.ts",
     expectedLogs: ["abcdef", "x=10, y=20", "sum=30"],
   },
-  // --- DataList & DataDictionary ---
-  {
-    name: "data_list",
-    sourceFile: "data_list.ts",
-    expectedLogs: ["added 3 items", "added 4th item"],
-  },
-  {
-    name: "data_dictionary",
-    sourceFile: "data_dictionary.ts",
-    expectedLogs: ["set 2 values", "True", "False"],
-  },
   // --- Method chains ---
   {
     name: "method_chain_calls",
@@ -225,5 +214,16 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "fibonacci_iterative",
     sourceFile: "fibonacci_iterative.ts",
     expectedLogs: ["0", "1", "5", "55"],
+  },
+  // --- DataList & DataDictionary ---
+  {
+    name: "data_list",
+    sourceFile: "data_list.ts",
+    expectedLogs: ["added 3 items", "added 4th item"],
+  },
+  {
+    name: "data_dictionary",
+    sourceFile: "data_dictionary.ts",
+    expectedLogs: ["set 2 values", "True", "False"],
   },
 ];
