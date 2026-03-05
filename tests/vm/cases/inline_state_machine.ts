@@ -16,10 +16,10 @@ class StateMachine {
   }
 
   getStateName(): string {
-    if (this.state == 0) {
+    if (this.state === 0) {
       return "idle";
     }
-    if (this.state == 1) {
+    if (this.state === 1) {
       return "running";
     }
     return "done";

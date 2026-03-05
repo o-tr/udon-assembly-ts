@@ -5,12 +5,30 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class OperatorsComparison extends UdonSharpBehaviour {
   Start(): void {
-    if (5 == 5) { Debug.Log("eq"); }
-    if (5 != 3) { Debug.Log("neq"); }
-    if (3 < 5) { Debug.Log("lt"); }
-    if (5 > 3) { Debug.Log("gt"); }
-    if (5 <= 5) { Debug.Log("lte"); }
-    if (5 >= 5) { Debug.Log("gte"); }
-    if (!false) { Debug.Log("not"); }
+    const a: number = 5;
+    const b: number = 3;
+    const c: number = 5;
+    if (a === c) {
+      Debug.Log("eq");
+    }
+    if (a !== b) {
+      Debug.Log("neq");
+    }
+    if (b < a) {
+      Debug.Log("lt");
+    }
+    if (a > b) {
+      Debug.Log("gt");
+    }
+    if (a <= c) {
+      Debug.Log("lte");
+    }
+    if (a >= c) {
+      Debug.Log("gte");
+    }
+    const f: boolean = false;
+    if (!f) {
+      Debug.Log("not");
+    }
   }
 }

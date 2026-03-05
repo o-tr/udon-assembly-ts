@@ -27,7 +27,7 @@ export class MethodPatterns extends UdonSharpBehaviour {
     Debug.Log(this.Clamp(5, 0, 10));
     Debug.Log(this.Clamp(0 - 5, 0, 10));
     Debug.Log(this.Clamp(15, 0, 10));
-    let combined: number = this.Max(3, 7) + this.Max(1, 2);
+    const combined: number = this.Max(3, 7) + this.Max(1, 2);
     Debug.Log(combined);
   }
 }
