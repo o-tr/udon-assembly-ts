@@ -178,5 +178,8 @@ export function generateExternSignature(
   if (paramsUdon) {
     return `${ownerUdon}.__${methodName}__${paramsUdon}__${returnUdon}`;
   }
-  return `${ownerUdon}.__${methodName}____${returnUdon}`;
+  if (methodName === "ctor") {
+    return `${ownerUdon}.__${methodName}____${returnUdon}`;
+  }
+  return `${ownerUdon}.__${methodName}__${returnUdon}`;
 }

@@ -126,4 +126,104 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "inline_state_machine.ts",
     expectedLogs: ["idle", "running", "done", "idle"],
   },
+  // --- String method tests ---
+  {
+    name: "string_methods_basic",
+    sourceFile: "string_methods_basic.ts",
+    expectedLogs: ["True", "False", "True", "True", "6"],
+  },
+  {
+    name: "string_methods_transform",
+    sourceFile: "string_methods_transform.ts",
+    expectedLogs: ["Hello World", "  hello world  ", "  HELLO WORLD  "],
+  },
+  {
+    name: "string_concat_basic",
+    sourceFile: "string_length.ts",
+    expectedLogs: ["Hello World", "HelloWorld"],
+  },
+  // --- Mathf tests ---
+  {
+    name: "mathf_basic",
+    sourceFile: "mathf_basic.ts",
+    expectedLogs: ["5", "3", "7", "3", "4"],
+  },
+  {
+    name: "mathf_advanced",
+    sourceFile: "mathf_advanced.ts",
+    expectedLogs: ["3", "1024", "4"],
+  },
+  // --- Type conversion tests ---
+  {
+    name: "type_conversion",
+    sourceFile: "type_conversion.ts",
+    expectedLogs: ["3.14", "100", "-42", "True", "False"],
+  },
+  // --- Variable mutation & accumulation ---
+  {
+    name: "compound_assignment",
+    sourceFile: "compound_assignment.ts",
+    expectedLogs: ["15", "12", "24", "6", "2", "15"],
+  },
+  {
+    name: "increment_decrement",
+    sourceFile: "increment_decrement.ts",
+    expectedLogs: ["1", "2", "1", "55", "120"],
+  },
+  // --- Local variables & early returns ---
+  {
+    name: "local_variables",
+    sourceFile: "block_scoping.ts",
+    expectedLogs: ["60", "10", "Hello World", "2", "1"],
+  },
+  {
+    name: "early_return",
+    sourceFile: "early_return.ts",
+    expectedLogs: ["negative", "zero", "small", "large"],
+  },
+  // --- Null coalescing & complex boolean ---
+  {
+    name: "null_coalescing",
+    sourceFile: "null_coalescing.ts",
+    expectedLogs: ["hello", "fallback"],
+  },
+  {
+    name: "complex_boolean",
+    sourceFile: "complex_boolean.ts",
+    expectedLogs: ["True", "False", "False", "True", "True", "False"],
+  },
+  // --- String concat & StringBuilder ---
+  {
+    name: "string_concat_multi",
+    sourceFile: "string_concat_multi.ts",
+    expectedLogs: ["Name: Player, Score: 42", "Hello World"],
+  },
+  {
+    name: "string_builder",
+    sourceFile: "string_builder.ts",
+    expectedLogs: ["abcdef", "x=10, y=20", "sum=30"],
+  },
+  // --- DataList & DataDictionary ---
+  {
+    name: "data_list",
+    sourceFile: "data_list.ts",
+    expectedLogs: ["added 3 items", "added 4th item"],
+  },
+  {
+    name: "data_dictionary",
+    sourceFile: "data_dictionary.ts",
+    expectedLogs: ["set 2 values", "True", "False"],
+  },
+  // --- Method chains ---
+  {
+    name: "method_chain_calls",
+    sourceFile: "method_chain_calls.ts",
+    expectedLogs: ["14", "16", "-6"],
+  },
+  // --- Computation patterns ---
+  {
+    name: "fibonacci_iterative",
+    sourceFile: "fibonacci_iterative.ts",
+    expectedLogs: ["0", "1", "5", "55"],
+  },
 ];

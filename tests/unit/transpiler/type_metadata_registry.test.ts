@@ -52,7 +52,7 @@ describe("type metadata registry", () => {
       "GetPlayerCount",
       "method",
     );
-    expect(sig).toBe("VRCSDKBaseVRCPlayerApi.__GetPlayerCount____SystemInt32");
+    expect(sig).toBe("VRCSDKBaseVRCPlayerApi.__GetPlayerCount__SystemInt32");
   });
 
   it("resolves VRCPlayerApi.GetPlayers extern", () => {
