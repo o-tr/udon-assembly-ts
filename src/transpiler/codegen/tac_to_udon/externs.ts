@@ -31,7 +31,7 @@ export function getExternForBinaryOp(
       methodName = "op_Subtraction";
       break;
     case "*":
-      methodName = "op_Multiply";
+      methodName = "op_Multiplication";
       break;
     case "/":
       methodName = "op_Division";
@@ -63,14 +63,17 @@ export function getExternForBinaryOp(
       methodName = "op_Inequality";
       returnType = "Boolean";
       break;
+    // Udon VM uses non-standard extern names for bitwise operators:
+    // "LogicalAnd/Or/Xor" instead of C#'s "BitwiseAnd/Or/ExclusiveOr".
+    // See: UdonSharp ExternBuiltinOperatorSymbol.GetOperatorUdonName()
     case "&":
-      methodName = "op_BitwiseAnd";
+      methodName = "op_LogicalAnd";
       break;
     case "|":
-      methodName = "op_BitwiseOr";
+      methodName = "op_LogicalOr";
       break;
     case "^":
-      methodName = "op_ExclusiveOr";
+      methodName = "op_LogicalXor";
       break;
     case "<<":
       methodName = "op_LeftShift";
