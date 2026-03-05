@@ -43,16 +43,16 @@ describe("extern signatures expansion", () => {
 
   it("should include Transform and GameObject properties", () => {
     expect(resolveExternSignature("Transform", "localPosition", "getter")).toBe(
-      "UnityEngineTransform.__get_localPosition____UnityEngineVector3",
+      "UnityEngineTransform.__get_localPosition__UnityEngineVector3",
     );
     expect(resolveExternSignature("Transform", "localRotation", "getter")).toBe(
-      "UnityEngineTransform.__get_localRotation____UnityEngineQuaternion",
+      "UnityEngineTransform.__get_localRotation__UnityEngineQuaternion",
     );
     expect(resolveExternSignature("GameObject", "activeSelf", "getter")).toBe(
-      "UnityEngineGameObject.__get_activeSelf____SystemBoolean",
+      "UnityEngineGameObject.__get_activeSelf__SystemBoolean",
     );
     expect(resolveExternSignature("GameObject", "transform", "getter")).toBe(
-      "UnityEngineGameObject.__get_transform____UnityEngineTransform",
+      "UnityEngineGameObject.__get_transform__UnityEngineTransform",
     );
   });
 });

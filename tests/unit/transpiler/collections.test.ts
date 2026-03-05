@@ -124,7 +124,7 @@ describe("collections support", () => {
     ).toBe(true);
     expect(
       externs.some((sig) =>
-        sig.includes("UdonSharpRuntime_List.__get_Count____SystemInt32"),
+        sig.includes("UdonSharpRuntime_List.__get_Count__SystemInt32"),
       ),
     ).toBe(true);
     expect(
@@ -218,7 +218,7 @@ describe("collections support", () => {
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDK3DataDataDictionary.__GetKeys____VRCSDK3DataDataList",
+          "VRCSDK3DataDataDictionary.__GetKeys__VRCSDK3DataDataList",
         ),
       ),
     ).toBe(true);
@@ -314,13 +314,13 @@ describe("collections support", () => {
     ).toBe(true);
     expect(
       externs.some((sig) =>
-        sig.includes("VRCSDK3DataDataDictionary.__Clear____SystemVoid"),
+        sig.includes("VRCSDK3DataDataDictionary.__Clear__SystemVoid"),
       ),
     ).toBe(true);
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDK3DataDataDictionary.__GetKeys____VRCSDK3DataDataList",
+          "VRCSDK3DataDataDictionary.__GetKeys__VRCSDK3DataDataList",
         ),
       ),
     ).toBe(true);
@@ -328,7 +328,7 @@ describe("collections support", () => {
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDK3DataDataDictionary.__GetValues____VRCSDK3DataDataList",
+          "VRCSDK3DataDataDictionary.__GetValues__VRCSDK3DataDataList",
         ),
       ),
     ).toBe(true);

@@ -40,9 +40,7 @@ export function convertInstruction(
   inst: TACInstruction,
 ): void {
   const isUdonExternSignature = (signature: string): boolean => {
-    return /^[A-Za-z0-9._]+\.__[A-Za-z0-9_]+__(?:[A-Za-z0-9_]+)?__[A-Za-z0-9_]+$/.test(
-      signature,
-    );
+    return /^[A-Za-z0-9._]+\.__\w+__\w+$/.test(signature);
   };
 
   switch (inst.kind) {

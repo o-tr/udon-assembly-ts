@@ -39,7 +39,7 @@ describe("type casts", () => {
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDKBaseVRCPlayerApi.__GetPosition____UnityEngineVector3",
+          "VRCSDKBaseVRCPlayerApi.__GetPosition__UnityEngineVector3",
         ),
       ),
     ).toBe(true);
