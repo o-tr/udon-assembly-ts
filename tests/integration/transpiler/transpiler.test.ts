@@ -167,7 +167,7 @@ describe("TypeScript to Udon Transpiler Integration", () => {
 
     // Check .uasm is generated with proper operator name
     expect(result.uasm).toContain(".code_start");
-    expect(result.uasm).toContain("op_Multiply");
+    expect(result.uasm).toContain("op_Multiplication");
   });
 
   it("should generate valid .uasm structure for complex program", () => {
