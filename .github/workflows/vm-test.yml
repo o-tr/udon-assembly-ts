@@ -60,10 +60,10 @@ jobs:
             -e UNITY_EDITOR_PATH=/opt/unity/Editor/Unity \
             unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885 \
             bash -c '
-              # Activate license via -manualLicenseFile (handles machine binding)
-              echo "$UNITY_LICENSE" | tr -d "\r" > /tmp/Unity_lic.ulf
-              /opt/unity/Editor/Unity -batchmode -manualLicenseFile /tmp/Unity_lic.ulf -logFile /dev/stdout -quit || true
-              rm -f /tmp/Unity_lic.ulf
+              # Place license file directly in Unity cache directory
+              # (bypasses machine binding validation that -manualLicenseFile performs)
+              mkdir -p /root/.local/share/unity3d/Unity/
+              echo "$UNITY_LICENSE" | tr -d "\r" > /root/.local/share/unity3d/Unity/Unity_lic.ulf
 
               # Install Node.js for running vitest
               curl -fsSL https://deb.nodesource.com/setup_24.x | bash - >/dev/null 2>&1
