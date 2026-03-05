@@ -3,7 +3,7 @@ import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehavi
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
-export class StringLength extends UdonSharpBehaviour {
+export class StringConcatBasic extends UdonSharpBehaviour {
   Start(): void {
     const a: string = "Hello";
     const b: string = "World";

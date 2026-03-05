@@ -139,7 +139,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   },
   {
     name: "string_concat_basic",
-    sourceFile: "string_length.ts",
+    sourceFile: "string_concat_basic.ts",
     expectedLogs: ["Hello World", "HelloWorld"],
   },
   // --- Mathf tests ---
