@@ -3,7 +3,7 @@ import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehavi
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
-export class StringMethodsTransform extends UdonSharpBehaviour {
+export class TemplateLiteralBasic extends UdonSharpBehaviour {
   Start(): void {
     const greeting: string = "Hello";
     const name: string = "World";

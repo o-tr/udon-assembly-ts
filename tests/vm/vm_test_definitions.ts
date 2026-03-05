@@ -128,13 +128,13 @@ export const VM_TEST_CASES: VmTestCase[] = [
   },
   // --- String operation tests ---
   {
-    name: "string_methods_basic",
-    sourceFile: "string_methods_basic.ts",
+    name: "string_concat_parts",
+    sourceFile: "string_concat_parts.ts",
     expectedLogs: ["Hello World", "HelloWorld", "Hello"],
   },
   {
-    name: "string_methods_transform",
-    sourceFile: "string_methods_transform.ts",
+    name: "template_literal_basic",
+    sourceFile: "template_literal_basic.ts",
     expectedLogs: ["Hello World", "15", "5"],
   },
   {
@@ -172,7 +172,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   },
   // --- Local variables & early returns ---
   {
-    name: "local_variables",
+    name: "block_scoping",
     sourceFile: "block_scoping.ts",
     expectedLogs: ["60", "10", "Hello World", "2", "1"],
   },
@@ -199,8 +199,8 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["Name: Player, Score: 42", "Hello World"],
   },
   {
-    name: "string_builder",
-    sourceFile: "string_builder.ts",
+    name: "string_concat_chain",
+    sourceFile: "string_concat_chain.ts",
     expectedLogs: ["abcdef", "x=10, y=20", "sum=30"],
   },
   // --- Method chains ---
