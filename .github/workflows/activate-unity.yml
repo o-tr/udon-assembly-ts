@@ -12,14 +12,17 @@ jobs:
       actions: write
     runs-on: ubuntu-latest
     steps:
-      - name: Request activation file
-        id: getManualLicenseFile
-        uses: game-ci/unity-request-activation-file@65874ef791dae6dfa5829f1cb490eafbd7b2173c # v2
-        with:
-          unityVersion: 2022.3.22f1
+      - name: Generate activation file
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":"$GITHUB_WORKSPACE" \
+            -w "$GITHUB_WORKSPACE" \
+            unityci/editor:ubuntu-2022.3.22f1-base-3@sha256:003109364b9db1cdb4200f9abfd31ec92c1de61abfff491c68bdaca2e0796885 \
+            /opt/unity/Editor/Unity -batchmode -nographics -createManualActivationFile -logFile /dev/null -quit || true
 
       - name: Upload activation file
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Unity_v2022.3.22f1.alf
-          path: ${{ steps.getManualLicenseFile.outputs.filePath }}
+          path: "*.alf"
+          if-no-files-found: error
