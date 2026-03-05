@@ -47,4 +47,83 @@ export const VM_TEST_CASES: VmTestCase[] = [
 
     expectedLogs: ["7"],
   },
+  // --- Inline class tests ---
+  {
+    name: "inline_basic",
+    sourceFile: "inline_basic.ts",
+    expectedLogs: ["3"],
+  },
+  {
+    name: "inline_constructor",
+    sourceFile: "inline_constructor.ts",
+    expectedLogs: ["200"],
+  },
+  {
+    name: "inline_multiple_instances",
+    sourceFile: "inline_multiple_instances.ts",
+    expectedLogs: ["15", "20"],
+  },
+  {
+    name: "inline_method_chain",
+    sourceFile: "inline_method_chain.ts",
+    expectedLogs: ["10", "13"],
+  },
+  {
+    name: "inline_nested",
+    sourceFile: "inline_nested.ts",
+    expectedLogs: ["42", "84"],
+  },
+  {
+    name: "inline_with_params",
+    sourceFile: "inline_with_params.ts",
+    expectedLogs: ["42", "60"],
+  },
+  // --- Operator tests ---
+  {
+    name: "operators_arithmetic",
+    sourceFile: "operators_arithmetic.ts",
+    expectedLogs: ["2", "15", "12", "24", "-24"],
+  },
+  {
+    name: "operators_comparison",
+    sourceFile: "operators_comparison.ts",
+    expectedLogs: ["eq", "neq", "lt", "gt", "lte", "gte", "not"],
+  },
+  // --- Control flow tests ---
+  {
+    name: "switch_case",
+    sourceFile: "switch_case.ts",
+    expectedLogs: ["two", "default"],
+  },
+  {
+    name: "do_while",
+    sourceFile: "do_while.ts",
+    expectedLogs: ["0", "1", "2"],
+  },
+  {
+    name: "nested_loops",
+    sourceFile: "nested_loops.ts",
+    expectedLogs: ["4", "10"],
+  },
+  // --- Expression and pattern tests ---
+  {
+    name: "ternary_and_shortcircuit",
+    sourceFile: "ternary_and_shortcircuit.ts",
+    expectedLogs: ["big", "small", "False", "True"],
+  },
+  {
+    name: "enum_usage",
+    sourceFile: "enum_usage.ts",
+    expectedLogs: ["3", "is right", "right"],
+  },
+  {
+    name: "method_patterns",
+    sourceFile: "method_patterns.ts",
+    expectedLogs: ["20", "30", "5", "0", "10", "9"],
+  },
+  {
+    name: "inline_state_machine",
+    sourceFile: "inline_state_machine.ts",
+    expectedLogs: ["idle", "running", "done", "idle"],
+  },
 ];
