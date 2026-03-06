@@ -26,6 +26,7 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -736,10 +737,10 @@ export const sccpAndPrune = (
   options?: {
     maxWorklistIterations?: number;
     onLimitReached?: "markAllReachable" | "break" | "warn";
-  },
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  } & CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   // Pre-scan: build variable ID map
   const varIds = new VariableIdMap();
@@ -939,5 +940,5 @@ export const sccpAndPrune = (
     }
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

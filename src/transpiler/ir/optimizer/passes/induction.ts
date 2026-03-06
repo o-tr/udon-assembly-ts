@@ -12,6 +12,7 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -26,12 +27,13 @@ import { collectLoops, dominates, preheaderInsertIndex } from "./licm.js";
 
 export const optimizeInductionVariables = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const { loops, tin, tout } = collectLoops(cfg);
-  if (loops.length === 0) return instructions;
+  if (loops.length === 0) return { instructions, changed: false };
   const indexToBlock = new Map<number, number>();
   for (const block of cfg.blocks) {
     for (let i = block.start; i <= block.end; i++) {
@@ -227,7 +229,8 @@ export const optimizeInductionVariables = (
     }
   }
 
-  if (replacements.size === 0 && inserts.size === 0) return instructions;
+  if (replacements.size === 0 && inserts.size === 0)
+    return { instructions, changed: false };
 
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i++) {
@@ -244,5 +247,5 @@ export const optimizeInductionVariables = (
   const tail = inserts.get(instructions.length);
   if (tail) result.push(...tail);
 
-  return result;
+  return { instructions: result, changed: true };
 };

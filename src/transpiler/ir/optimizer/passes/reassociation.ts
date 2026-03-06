@@ -5,6 +5,7 @@ import {
 } from "../../tac_instruction.js";
 import type { ConstantOperand, TACOperand } from "../../tac_operand.js";
 import { createConstant, TACOperandKind } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { operandKey } from "../utils/operands.js";
 import {
   evaluateBinaryOp,
@@ -24,11 +25,10 @@ type ReassociationResult = {
   nonConstant: TACOperand;
 };
 
-export const reassociate = (
-  instructions: TACInstruction[],
-): TACInstruction[] => {
+export const reassociate = (instructions: TACInstruction[]): PassResult => {
   const result: TACInstruction[] = [];
   const definitions = new Map<string, BinaryOpInstruction>();
+  let changed = false;
 
   const resetDefinitions = (): void => {
     definitions.clear();
@@ -66,6 +66,7 @@ export const reassociate = (
             chosen.operator,
             constantOperand,
           );
+          changed = true;
         }
       }
     }
@@ -78,7 +79,7 @@ export const reassociate = (
     }
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };
 
 const tryReassociate = (

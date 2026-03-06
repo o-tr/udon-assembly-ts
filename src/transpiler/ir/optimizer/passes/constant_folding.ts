@@ -16,6 +16,7 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import {
   type PureExternValue,
   pureExternEvaluators,
@@ -25,10 +26,9 @@ import {
  * Constant folding optimization
  * Evaluate constant expressions at compile time
  */
-export const constantFolding = (
-  instructions: TACInstruction[],
-): TACInstruction[] => {
+export const constantFolding = (instructions: TACInstruction[]): PassResult => {
   const result: TACInstruction[] = [];
+  let changed = false;
 
   for (const inst of instructions) {
     if (inst.kind === TACInstructionKind.Call) {
@@ -36,6 +36,7 @@ export const constantFolding = (
       const folded = tryFoldPureExternCall(callInst);
       if (folded) {
         result.push(folded);
+        changed = true;
         continue;
       }
     }
@@ -45,6 +46,7 @@ export const constantFolding = (
       const folded = tryFoldCastInstruction(castInst);
       if (folded) {
         result.push(folded);
+        changed = true;
         continue;
       }
     }
@@ -54,6 +56,7 @@ export const constantFolding = (
       const folded = tryFoldValueTypeConstructor(callInst);
       if (folded) {
         result.push(folded);
+        changed = true;
         continue;
       }
     }
@@ -119,6 +122,7 @@ export const constantFolding = (
             : PrimitiveTypes.boolean;
           const constantOperand = createConstant(foldedValue, foldedType);
           result.push(new AssignmentInstruction(binOp.dest, constantOperand));
+          changed = true;
           continue;
         }
       }
@@ -141,6 +145,7 @@ export const constantFolding = (
           // Replace with assignment of constant
           const constantOperand = createConstant(foldedValue, constOp.type);
           result.push(new AssignmentInstruction(unOp.dest, constantOperand));
+          changed = true;
           continue;
         }
       }
@@ -150,7 +155,7 @@ export const constantFolding = (
     result.push(inst);
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };
 
 export const tryFoldCastInstruction = (

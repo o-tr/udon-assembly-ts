@@ -15,6 +15,7 @@ import {
   TACOperandKind,
   type TemporaryOperand,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { countTempUses, getMaxTempId } from "../utils/instructions.js";
 import { sameOperand } from "../utils/operands.js";
 import { getOperandType } from "./constant_folding.js";
@@ -74,12 +75,13 @@ const extractComponentUpdate = (
 
 export const optimizeVectorSwizzle = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length < 9) return instructions;
+): PassResult => {
+  if (instructions.length < 9) return { instructions, changed: false };
 
   const tempUses = countTempUses(instructions);
   let nextTempId = getMaxTempId(instructions) + 1;
   const result: TACInstruction[] = [];
+  let changed = false;
 
   let i = 0;
   while (i < instructions.length) {
@@ -191,9 +193,10 @@ export const optimizeVectorSwizzle = (
       new BinaryOpInstruction(updateTemp, updateX.object, "+", vectorConst),
     );
     result.push(new AssignmentInstruction(updateX.object, updateTemp));
+    changed = true;
 
     i += 9;
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };

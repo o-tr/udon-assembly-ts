@@ -12,12 +12,14 @@ import type {
   TACOperand,
 } from "../../tac_operand.js";
 import { createConstant, TACOperandKind } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { getOperandType } from "./constant_folding.js";
 
 export const booleanSimplification = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   const result: TACInstruction[] = [];
+  let changed = false;
 
   for (const inst of instructions) {
     if (inst.kind !== TACInstructionKind.BinaryOp) {
@@ -47,6 +49,7 @@ export const booleanSimplification = (
         } else {
           result.push(new AssignmentInstruction(bin.dest, bin.right));
         }
+        changed = true;
         continue;
       }
       if (rightConst !== null) {
@@ -60,6 +63,7 @@ export const booleanSimplification = (
         } else {
           result.push(new AssignmentInstruction(bin.dest, bin.left));
         }
+        changed = true;
         continue;
       }
     }
@@ -73,6 +77,7 @@ export const booleanSimplification = (
         } else {
           result.push(new AssignmentInstruction(bin.dest, bin.right));
         }
+        changed = true;
         continue;
       }
       if (rightConst !== null) {
@@ -83,6 +88,7 @@ export const booleanSimplification = (
         } else {
           result.push(new AssignmentInstruction(bin.dest, bin.left));
         }
+        changed = true;
         continue;
       }
     }
@@ -104,6 +110,7 @@ export const booleanSimplification = (
         } else {
           result.push(new AssignmentInstruction(bin.dest, operand));
         }
+        changed = true;
         continue;
       }
     }
@@ -111,7 +118,7 @@ export const booleanSimplification = (
     result.push(inst);
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };
 
 export const isTruthyConstant = (value: ConstantValue): boolean | null => {

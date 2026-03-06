@@ -28,6 +28,7 @@ import {
   type TemporaryOperand,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getMaxTempId,
@@ -39,16 +40,16 @@ import { collectLoops } from "./licm.js";
 
 const MAX_LOOP_INSTRUCTIONS = 20;
 
-export const unswitchLoops = (
-  instructions: TACInstruction[],
-): TACInstruction[] => {
+export const unswitchLoops = (instructions: TACInstruction[]): PassResult => {
   let work = instructions;
+  let everChanged = false;
   while (true) {
     const cfg = buildCFG(work);
-    if (cfg.blocks.length === 0) return work;
+    if (cfg.blocks.length === 0)
+      return { instructions: work, changed: everChanged };
 
     const { loops } = collectLoops(cfg);
-    if (loops.length === 0) return work;
+    if (loops.length === 0) return { instructions: work, changed: everChanged };
 
     let changed = false;
 
@@ -261,7 +262,8 @@ export const unswitchLoops = (
       if (changed) break;
     }
 
-    if (!changed) return work;
+    if (!changed) return { instructions: work, changed: everChanged };
+    everChanged = true;
   }
 };
 

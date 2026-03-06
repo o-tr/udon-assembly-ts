@@ -8,6 +8,7 @@ import type { LabelOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import type { BasicBlock } from "../analysis/cfg.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 
 type Chain = {
   id: number;
@@ -162,14 +163,16 @@ const orderChains = (
 
 export const optimizeBlockLayout = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  if (instructions.length === 0) return { instructions, changed: false };
 
-  const { blocks } = buildCFG(instructions);
-  if (blocks.length <= 1) return instructions;
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  const { blocks } = cfg;
+  if (blocks.length <= 1) return { instructions, changed: false };
 
   const { chains, blockToChain } = buildChains(blocks, instructions);
-  if (chains.length <= 1) return instructions;
+  if (chains.length <= 1) return { instructions, changed: false };
 
   const chainOrder = orderChains(chains, blockToChain, instructions, blocks);
 
@@ -184,5 +187,5 @@ export const optimizeBlockLayout = (
     }
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

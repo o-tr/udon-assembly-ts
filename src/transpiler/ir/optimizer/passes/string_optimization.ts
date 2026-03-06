@@ -7,6 +7,7 @@ import {
 } from "../../tac_instruction.js";
 import type { TACOperand, TemporaryOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { countTempUses } from "../utils/instructions.js";
 import { getOperandType } from "./constant_folding.js";
 
@@ -23,11 +24,12 @@ const isTemp = (operand: TACOperand): operand is TemporaryOperand => {
 
 export const optimizeStringConcatenation = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length === 0) return instructions;
+): PassResult => {
+  if (instructions.length === 0) return { instructions, changed: false };
 
   const tempUses = countTempUses(instructions);
   const result: TACInstruction[] = [];
+  let changed = false;
 
   let i = 0;
   while (i < instructions.length) {
@@ -105,8 +107,9 @@ export const optimizeStringConcatenation = (
       );
     }
 
+    changed = true;
     i = cursor + 1;
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };

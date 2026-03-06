@@ -8,6 +8,7 @@ import {
 import type { TACOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { type BasicBlock, buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -169,9 +170,10 @@ const rewriteWithCopyMaps = (
 
 export const propagateCopies = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   // Initialize: entry block gets empty map, all others get TOP (null)
   const inCopies = new Map<number, CopyMapOrTop>();
@@ -213,7 +215,10 @@ export const propagateCopies = (
   }
 
   // Final pass: rewrite operands using computed copy maps
-  return rewriteWithCopyMaps(instructions, cfg, inCopies);
+  return {
+    instructions: rewriteWithCopyMaps(instructions, cfg, inCopies),
+    changed: true,
+  };
 };
 
 const resolve = (

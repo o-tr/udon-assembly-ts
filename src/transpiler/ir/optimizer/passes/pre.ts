@@ -15,6 +15,7 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
   getDefinedOperandForReuse,
@@ -191,6 +192,7 @@ type ExprValue = { key: string; inst: TACInstruction };
 
 const computeAvailableMaps = (
   instructions: TACInstruction[],
+  cfg: ReturnType<typeof buildCFG>,
   options?: { useSSA?: boolean },
 ): {
   inMaps: Map<number, Map<string, ExprValue>>;
@@ -199,7 +201,6 @@ const computeAvailableMaps = (
   const useSSA = options?.useSSA === true;
   const keyForOperand = useSSA ? operandKeyWithSSA : operandKey;
   const liveKey = useSSA ? livenessKeyWithSSA : livenessKey;
-  const cfg = buildCFG(instructions);
   const inMaps = new Map<number, Map<string, ExprValue>>();
   const outMaps = new Map<number, Map<string, ExprValue>>();
 
@@ -364,15 +365,15 @@ const findEquivalentExpr = (
 
 export const performPRE = (
   instructions: TACInstruction[],
-  options?: { useSSA?: boolean },
-): TACInstruction[] => {
+  options?: { useSSA?: boolean } & CFGPassOptions,
+): PassResult => {
   const useSSA = options?.useSSA === true;
   const keyForOperand = useSSA ? operandKeyWithSSA : operandKey;
   const liveKey = useSSA ? livenessKeyWithSSA : livenessKey;
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
-  const { inMaps } = computeAvailableMaps(instructions, options);
+  const { inMaps } = computeAvailableMaps(instructions, cfg, options);
   const inserts = new Map<
     number,
     Array<{ order: number; insts: TACInstruction[] }>
@@ -489,7 +490,8 @@ export const performPRE = (
     }
   }
 
-  if (inserts.size === 0 && removeIndices.size === 0) return instructions;
+  if (inserts.size === 0 && removeIndices.size === 0)
+    return { instructions, changed: false };
 
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i += 1) {
@@ -522,5 +524,5 @@ export const performPRE = (
     result.push(...ordered);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

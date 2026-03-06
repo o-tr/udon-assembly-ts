@@ -1,6 +1,7 @@
 import type { TACInstruction } from "../../tac_instruction.js";
 import type { BasicBlock } from "../analysis/cfg.js";
 import { buildCFG, isBlockTerminator } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -313,12 +314,13 @@ const orderHoistedByDeps = (
 
 export const performLICM = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const { loops, tin, tout } = collectLoops(cfg);
-  if (loops.length === 0) return instructions;
+  if (loops.length === 0) return { instructions, changed: false };
   const indexToBlock = new Map<number, number>();
   for (const block of cfg.blocks) {
     for (let i = block.start; i <= block.end; i++) {
@@ -429,7 +431,7 @@ export const performLICM = (
     }
   }
 
-  if (hoistIndices.size === 0) return instructions;
+  if (hoistIndices.size === 0) return { instructions, changed: false };
 
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i++) {
@@ -446,5 +448,5 @@ export const performLICM = (
     result.push(...tailInserts);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

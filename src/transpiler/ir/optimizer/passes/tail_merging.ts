@@ -15,6 +15,7 @@ import {
   type LabelOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { operandKey } from "../utils/operands.js";
 
 type ReturnInfo = {
@@ -155,10 +156,8 @@ const collectTailEndpoints = (
   return endpoints;
 };
 
-export const mergeTails = (
-  instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length === 0) return instructions;
+export const mergeTails = (instructions: TACInstruction[]): PassResult => {
+  if (instructions.length === 0) return { instructions, changed: false };
 
   // Count label definitions to ensure uniqueness for jump targets
   const labelDefCount = new Map<string, number>();
@@ -173,7 +172,7 @@ export const mergeTails = (
   }
 
   const endpoints = collectTailEndpoints(instructions, labelDefCount);
-  if (endpoints.length < 2) return instructions;
+  if (endpoints.length < 2) return { instructions, changed: false };
 
   const groups = new Map<string, ReturnInfo[]>();
   for (const info of endpoints) {
@@ -236,7 +235,7 @@ export const mergeTails = (
   }
 
   if (insertLabels.size === 0 && replaceWithJump.size === 0) {
-    return instructions;
+    return { instructions, changed: false };
   }
 
   const result: TACInstruction[] = [];
@@ -259,5 +258,5 @@ export const mergeTails = (
     result.push(instructions[i]);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

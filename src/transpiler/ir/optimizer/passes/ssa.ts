@@ -18,6 +18,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import { buildCFG, isBlockTerminator } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import { getDefinedOperandForReuse } from "../utils/instructions.js";
 import { computeIDom } from "./licm.js";
 
@@ -747,9 +748,12 @@ const stripSsaVersions = (instructions: TACInstruction[]): TACInstruction[] => {
   return instructions;
 };
 
-export const buildSSA = (instructions: TACInstruction[]): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+export const buildSSA = (
+  instructions: TACInstruction[],
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const idom = computeIDom(cfg);
   const { blocks, phis } = insertPhis(cfg, instructions, idom);
@@ -761,14 +765,15 @@ export const buildSSA = (instructions: TACInstruction[]): TACInstruction[] => {
     if (insts) ordered.push(...insts);
   }
 
-  return ordered;
+  return { instructions: ordered, changed: true };
 };
 
 export const deconstructSSA = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const blocks: BlockInsts = new Map();
   const orderedBlockIds = cfg.blocks.map((block) => block.id);
@@ -906,13 +911,21 @@ export const deconstructSSA = (
     if (insts) ordered.push(...insts);
   }
 
-  return stripSsaVersions(ordered);
+  return { instructions: stripSsaVersions(ordered), changed: true };
 };
 
-export const applySSA = (instructions: TACInstruction[]): TACInstruction[] => {
-  const ssa = buildSSA(instructions);
-  if (!ssa.some((inst) => inst.kind === TACInstructionKind.Phi)) {
-    return stripSsaVersions(ssa);
+export const applySSA = (
+  instructions: TACInstruction[],
+  options?: CFGPassOptions,
+): PassResult => {
+  const ssaResult = buildSSA(instructions, options);
+  if (
+    !ssaResult.instructions.some((inst) => inst.kind === TACInstructionKind.Phi)
+  ) {
+    return {
+      instructions: stripSsaVersions(ssaResult.instructions),
+      changed: ssaResult.changed,
+    };
   }
-  return deconstructSSA(ssa);
+  return deconstructSSA(ssaResult.instructions);
 };

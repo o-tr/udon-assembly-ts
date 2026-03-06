@@ -62,7 +62,7 @@ describe("jump simplification", () => {
       new ReturnInstruction(),
     ];
 
-    const optimized = simplifyJumps(instructions);
+    const optimized = simplifyJumps(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("goto else7");
@@ -83,7 +83,7 @@ describe("jump simplification", () => {
       new ReturnInstruction(),
     ];
 
-    const optimized = simplifyJumps(instructions);
+    const optimized = simplifyJumps(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("goto endif7");

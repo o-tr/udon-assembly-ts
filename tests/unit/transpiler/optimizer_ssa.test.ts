@@ -46,10 +46,10 @@ describe("ssa pass", () => {
       new ReturnInstruction(t0),
     ];
 
-    const ssa = buildSSA(instructions);
+    const ssa = buildSSA(instructions).instructions;
     expect(ssa.some((inst) => inst.kind === TACInstructionKind.Phi)).toBe(true);
 
-    const lowered = deconstructSSA(ssa);
+    const lowered = deconstructSSA(ssa).instructions;
     expect(lowered.some((inst) => inst.kind === TACInstructionKind.Phi)).toBe(
       false,
     );
@@ -83,7 +83,9 @@ describe("ssa pass", () => {
       new ReturnInstruction(t1),
     ];
 
-    const optimized = globalValueNumbering(instructions, { useSSA: true });
+    const optimized = globalValueNumbering(instructions, {
+      useSSA: true,
+    }).instructions;
     const binCount = optimized.filter(
       (inst) => inst.kind === TACInstructionKind.BinaryOp,
     ).length;
