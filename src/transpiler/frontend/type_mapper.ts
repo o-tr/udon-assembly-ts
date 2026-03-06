@@ -13,6 +13,8 @@ import { UdonType } from "./types.js";
 
 const warnedTypes = new Set<string>();
 
+// Matches two or more quoted string literals joined by "|",
+// e.g. "'a' | \"b\"" or "\"foo\" | 'bar'". Does not match bare identifiers.
 const STRING_LITERAL_UNION_RE =
   /^("[^"]*"|'[^']*')(\s*\|\s*("[^"]*"|'[^']*'))+$/;
 
@@ -39,6 +41,11 @@ export class TypeMapper {
       const kind = this.enumRegistry.getEnumKind(trimmed);
       const result =
         kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
+      if (this.typeCache.get(trimmed) !== result) {
+        // Enum newly registered — clear entire cache so composites (e.g.
+        // Foo[], Array<Foo>) that embedded the old fallback are recomputed.
+        this.typeCache.clear();
+      }
       this.typeCache.set(trimmed, result);
       return result;
     }

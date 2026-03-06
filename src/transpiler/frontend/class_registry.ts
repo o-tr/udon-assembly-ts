@@ -125,11 +125,11 @@ export class ClassRegistry {
   }
 
   getEntryPoints(): ClassMetadata[] {
-    if (this.entryPointsCache) return this.entryPointsCache;
+    if (this.entryPointsCache) return [...this.entryPointsCache];
     this.entryPointsCache = Array.from(this.classes.values()).filter(
       (cls) => cls.isEntryPoint,
     );
-    return this.entryPointsCache;
+    return [...this.entryPointsCache];
   }
 
   getAllClasses(): ClassMetadata[] {
