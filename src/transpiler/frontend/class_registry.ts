@@ -82,8 +82,23 @@ export class ClassRegistry {
   private interfaces: Map<string, InterfaceMetadata> = new Map();
   private topLevelConsts: Map<string, TopLevelConstInfo[]> = new Map();
 
+  private inheritanceChainCache = new Map<string, string[]>();
+  private mergedMethodsCache = new Map<string, MethodInfo[]>();
+  private mergedPropertiesCache = new Map<string, PropertyInfo[]>();
+  private stubCache = new Map<string, boolean>();
+  private entryPointsCache: ClassMetadata[] | null = null;
+
   register(classInfo: ClassMetadata): void {
     this.classes.set(classInfo.name, classInfo);
+    this.clearCaches();
+  }
+
+  private clearCaches(): void {
+    this.inheritanceChainCache.clear();
+    this.mergedMethodsCache.clear();
+    this.mergedPropertiesCache.clear();
+    this.stubCache.clear();
+    this.entryPointsCache = null;
   }
 
   getClass(name: string): ClassMetadata | undefined {
@@ -95,6 +110,9 @@ export class ClassRegistry {
   }
 
   getInheritanceChain(className: string): string[] {
+    const cached = this.inheritanceChainCache.get(className);
+    if (cached) return [...cached];
+
     const chain: string[] = [];
     let current = this.classes.get(className);
     while (current) {
@@ -102,11 +120,16 @@ export class ClassRegistry {
       if (!current.baseClass) break;
       current = this.classes.get(current.baseClass);
     }
-    return chain;
+    this.inheritanceChainCache.set(className, chain);
+    return [...chain];
   }
 
   getEntryPoints(): ClassMetadata[] {
-    return Array.from(this.classes.values()).filter((cls) => cls.isEntryPoint);
+    if (this.entryPointsCache) return [...this.entryPointsCache];
+    this.entryPointsCache = Array.from(this.classes.values()).filter(
+      (cls) => cls.isEntryPoint,
+    );
+    return [...this.entryPointsCache];
   }
 
   getAllClasses(): ClassMetadata[] {
@@ -120,14 +143,25 @@ export class ClassRegistry {
   }
 
   isStub(className: string): boolean {
+    const cached = this.stubCache.get(className);
+    if (cached !== undefined) return cached;
+
     const metadata = this.classes.get(className);
-    if (!metadata) return false;
-    return metadata.decorators.some(
+    if (!metadata) {
+      this.stubCache.set(className, false);
+      return false;
+    }
+    const result = metadata.decorators.some(
       (decorator) => decorator.name === "UdonStub",
     );
+    this.stubCache.set(className, result);
+    return result;
   }
 
   getMergedMethods(className: string): MethodInfo[] {
+    const cached = this.mergedMethodsCache.get(className);
+    if (cached) return [...cached];
+
     const chain = this.getInheritanceChain(className).slice().reverse();
     const merged = new Map<string, MethodInfo>();
 
@@ -140,10 +174,15 @@ export class ClassRegistry {
       }
     }
 
-    return Array.from(merged.values());
+    const result = Array.from(merged.values());
+    this.mergedMethodsCache.set(className, result);
+    return [...result];
   }
 
   getMergedProperties(className: string): PropertyInfo[] {
+    const cached = this.mergedPropertiesCache.get(className);
+    if (cached) return [...cached];
+
     const chain = this.getInheritanceChain(className).slice().reverse();
     const merged = new Map<string, PropertyInfo>();
 
@@ -156,7 +195,9 @@ export class ClassRegistry {
       }
     }
 
-    return Array.from(merged.values());
+    const result = Array.from(merged.values());
+    this.mergedPropertiesCache.set(className, result);
+    return [...result];
   }
 
   getTopLevelConstsForFile(filePath: string): TopLevelConstInfo[] {
@@ -195,6 +236,7 @@ export class ClassRegistry {
       this.topLevelConsts.set(filePath, consts);
     }
 
+    let registeredAnyClass = false;
     for (const stmt of program.statements) {
       if (stmt.kind === ASTNodeKind.InterfaceDeclaration) {
         const interfaceNode = stmt as InterfaceDeclarationNode;
@@ -235,7 +277,7 @@ export class ClassRegistry {
         (decorator) => decorator.name === "UdonBehaviour",
       )?.arguments?.[0];
 
-      this.register({
+      this.classes.set(classNode.name, {
         name: classNode.name,
         filePath,
         baseClass: classNode.baseClass,
@@ -256,6 +298,10 @@ export class ClassRegistry {
                 )
               : undefined,
       });
+      registeredAnyClass = true;
+    }
+    if (registeredAnyClass) {
+      this.clearCaches();
     }
   }
 

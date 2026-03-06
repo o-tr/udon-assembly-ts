@@ -35,6 +35,42 @@ const NULL_ONLY_TYPES = new Set([
   "System.UInt64",
 ]);
 
+const FLOAT_TYPES = new Set([
+  "Single",
+  "Double",
+  "SystemSingle",
+  "SystemDouble",
+  "System.Single",
+  "System.Double",
+]);
+
+const INTEGER_TYPES = new Set([
+  "Byte",
+  "SByte",
+  "Int16",
+  "UInt16",
+  "Int32",
+  "UInt32",
+  "SystemByte",
+  "SystemSByte",
+  "SystemInt16",
+  "SystemUInt16",
+  "SystemInt32",
+  "SystemUInt32",
+  "System.Byte",
+  "System.SByte",
+  "System.Int16",
+  "System.UInt16",
+  "System.Int32",
+  "System.UInt32",
+]);
+
+const UINT32_TYPES = new Set(["UInt32", "SystemUInt32", "System.UInt32"]);
+
+const STRING_TYPES = new Set(["String", "SystemString", "System.String"]);
+
+const BOOLEAN_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
+
 /**
  * Udon assembler - generates .uasm output
  */
@@ -122,45 +158,15 @@ export class UdonAssembler {
   }
 
   private isFloatType(typeName: string): boolean {
-    return (
-      typeName === "Single" ||
-      typeName === "Double" ||
-      typeName === "SystemSingle" ||
-      typeName === "SystemDouble" ||
-      typeName === "System.Single" ||
-      typeName === "System.Double"
-    );
+    return FLOAT_TYPES.has(typeName);
   }
 
   private isIntegerType(typeName: string): boolean {
-    return (
-      typeName === "Byte" ||
-      typeName === "SByte" ||
-      typeName === "Int16" ||
-      typeName === "UInt16" ||
-      typeName === "Int32" ||
-      typeName === "UInt32" ||
-      typeName === "SystemByte" ||
-      typeName === "SystemSByte" ||
-      typeName === "SystemInt16" ||
-      typeName === "SystemUInt16" ||
-      typeName === "SystemInt32" ||
-      typeName === "SystemUInt32" ||
-      typeName === "System.Byte" ||
-      typeName === "System.SByte" ||
-      typeName === "System.Int16" ||
-      typeName === "System.UInt16" ||
-      typeName === "System.Int32" ||
-      typeName === "System.UInt32"
-    );
+    return INTEGER_TYPES.has(typeName);
   }
 
   private isUInt32Type(typeName: string): boolean {
-    return (
-      typeName === "UInt32" ||
-      typeName === "SystemUInt32" ||
-      typeName === "System.UInt32"
-    );
+    return UINT32_TYPES.has(typeName);
   }
 
   private getIntegerBounds(
@@ -235,19 +241,11 @@ export class UdonAssembler {
   }
 
   private isStringType(typeName: string): boolean {
-    return (
-      typeName === "String" ||
-      typeName === "SystemString" ||
-      typeName === "System.String"
-    );
+    return STRING_TYPES.has(typeName);
   }
 
   private isBooleanType(typeName: string): boolean {
-    return (
-      typeName === "Boolean" ||
-      typeName === "SystemBoolean" ||
-      typeName === "System.Boolean"
-    );
+    return BOOLEAN_TYPES.has(typeName);
   }
 
   private resolveUdonTypeName(typeName: string): string {

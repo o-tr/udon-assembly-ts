@@ -13,8 +13,14 @@ import { UdonType } from "./types.js";
 
 const warnedTypes = new Set<string>();
 
+// Matches two or more quoted string literals joined by "|",
+// e.g. "'a' | \"b\"" or "\"foo\" | 'bar'". Does not match bare identifiers.
+const STRING_LITERAL_UNION_RE =
+  /^("[^"]*"|'[^']*')(\s*\|\s*("[^"]*"|'[^']*'))+$/;
+
 export class TypeMapper {
   private typeAliases = new Map<string, TypeSymbol>();
+  private typeCache = new Map<string, TypeSymbol>();
 
   constructor(private enumRegistry?: EnumRegistry) {}
 
@@ -24,10 +30,34 @@ export class TypeMapper {
 
   registerTypeAlias(name: string, symbol: TypeSymbol): void {
     this.typeAliases.set(name, symbol);
+    this.typeCache.clear();
   }
 
   mapTypeScriptType(tsType: string): TypeSymbol {
     const trimmed = tsType.trim();
+    // Enum check runs before cache: enumRegistry may gain entries after a
+    // previous call cached a fallback result for the same type name.
+    if (this.enumRegistry?.isEnum(trimmed)) {
+      const kind = this.enumRegistry.getEnumKind(trimmed);
+      const result =
+        kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
+      const existing = this.typeCache.get(trimmed);
+      if (existing !== undefined && existing !== result) {
+        // Enum kind changed after a previous fallback was cached — clear
+        // composites (e.g. Foo[], Array<Foo>) that embedded the old value.
+        this.typeCache.clear();
+      }
+      this.typeCache.set(trimmed, result);
+      return result;
+    }
+    const cached = this.typeCache.get(trimmed);
+    if (cached) return cached;
+    const result = this.mapTypeScriptTypeImpl(trimmed);
+    this.typeCache.set(trimmed, result);
+    return result;
+  }
+
+  private mapTypeScriptTypeImpl(trimmed: string): TypeSymbol {
     if (trimmed.startsWith("readonly ")) {
       return this.mapTypeScriptType(trimmed.slice(9));
     }
@@ -158,11 +188,6 @@ export class TypeMapper {
         case "Omit":
           return ObjectType;
       }
-    }
-
-    if (this.enumRegistry?.isEnum(trimmed)) {
-      const kind = this.enumRegistry.getEnumKind(trimmed);
-      return kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
     }
 
     switch (trimmed) {
@@ -345,10 +370,7 @@ export class TypeMapper {
   }
 
   private isStringLiteralUnionType(typeText: string): boolean {
-    const trimmed = typeText.trim();
-    const literal = `("[^"]*"|'[^']*')`;
-    const pattern = new RegExp(`^${literal}(\\s*\\|\\s*${literal})+$`);
-    return pattern.test(trimmed);
+    return STRING_LITERAL_UNION_RE.test(typeText.trim());
   }
 
   mapUdonType(udonType: UdonType): TypeSymbol {
