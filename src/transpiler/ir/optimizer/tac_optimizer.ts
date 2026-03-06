@@ -75,7 +75,7 @@ const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
 const SSA_REACHABLE_BLOCK_LIMIT_SECOND = 10_000;
 
 /** Pre-computed numeric index for each TACInstructionKind (avoids hashing kind strings per instruction). */
-const instructionKindIndex = new Map<string, number>(
+const instructionKindIndex: Record<string, number> = Object.fromEntries(
   Object.values(TACInstructionKind).map((k, i) => [k, i]),
 );
 
@@ -154,7 +154,7 @@ const computeFingerprint = (insts: TACInstruction[]): number => {
   h = hashNum(h, insts.length);
   for (const inst of insts) {
     // Hash instruction kind as a unique ordinal index
-    h = hashByte(h, instructionKindIndex.get(inst.kind)!);
+    h = hashByte(h, instructionKindIndex[inst.kind] ?? 0);
     switch (inst.kind) {
       case TACInstructionKind.Assignment: {
         const a = inst as AssignmentInstruction;
