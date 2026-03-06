@@ -61,14 +61,15 @@ const copyMapsEqual = (a: CopyMapOrTop, b: CopyMapOrTop): boolean => {
 /**
  * Step through a single instruction, updating the copy map in place.
  * Optionally rewrites operands when rewrite callback is provided.
+ * Returns true if any operand was rewritten.
  */
 const stepCopyState = (
   inst: TACInstruction,
   copies: CopyMap,
   rewrite: boolean,
-): void => {
+): boolean => {
   // Skip labels
-  if (inst.kind === TACInstructionKind.Label) return;
+  if (inst.kind === TACInstructionKind.Label) return false;
 
   // Invalidate copies for mutated objects
   const mutatedKey = getMutatedObjectKey(inst);
@@ -77,6 +78,7 @@ const stepCopyState = (
   }
 
   // Rewrite used operands with copy sources
+  let didRewrite = false;
   if (rewrite) {
     const used = getUsedOperandsForReuse(inst);
     for (const operand of used) {
@@ -84,6 +86,7 @@ const stepCopyState = (
       if (key) {
         const resolved = resolve(copies, key, operand);
         if (resolved !== operand) {
+          didRewrite = true;
           rewriteOperands(inst, (op) => {
             const opKey = livenessKey(op);
             if (opKey === key) return resolved;
@@ -122,6 +125,7 @@ const stepCopyState = (
       }
     }
   }
+  return didRewrite;
 };
 
 /**
@@ -142,13 +146,15 @@ const propagateBlock = (
 
 /**
  * Final rewrite pass: use the computed input copy maps to rewrite operands.
+ * Returns the rewritten instructions and whether any operand was substituted.
  */
 const rewriteWithCopyMaps = (
   instructions: TACInstruction[],
   cfg: { blocks: BasicBlock[] },
   inCopies: Map<number, CopyMapOrTop>,
-): TACInstruction[] => {
+): { instructions: TACInstruction[]; didRewrite: boolean } => {
   const result: TACInstruction[] = [];
+  let didRewrite = false;
 
   for (const block of cfg.blocks) {
     const rawIn = inCopies.get(block.id);
@@ -160,12 +166,12 @@ const rewriteWithCopyMaps = (
         result.push(inst);
         continue;
       }
-      stepCopyState(inst, copies, true);
+      didRewrite = stepCopyState(inst, copies, true) || didRewrite;
       result.push(inst);
     }
   }
 
-  return result;
+  return { instructions: result, didRewrite };
 };
 
 export const propagateCopies = (
@@ -215,9 +221,10 @@ export const propagateCopies = (
   }
 
   // Final pass: rewrite operands using computed copy maps
+  const rewritten = rewriteWithCopyMaps(instructions, cfg, inCopies);
   return {
-    instructions: rewriteWithCopyMaps(instructions, cfg, inCopies),
-    changed: true,
+    instructions: rewritten.instructions,
+    changed: rewritten.didRewrite,
   };
 };
 

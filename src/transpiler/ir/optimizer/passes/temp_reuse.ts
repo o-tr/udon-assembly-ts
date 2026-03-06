@@ -752,7 +752,10 @@ export const reuseTemporaries = (
     rewriteOperands(inst, rewriteTemp);
   }
 
-  return { instructions: [...instructions], changed: didRewrite };
+  return {
+    instructions: didRewrite ? [...instructions] : instructions,
+    changed: didRewrite,
+  };
 };
 
 export const reuseLocalVariables = (
@@ -1001,7 +1004,10 @@ export const reuseLocalVariables = (
     rewriteOperands(inst, rewriteVar);
   }
 
-  return { instructions: [...instructions], changed: didRewrite };
+  return {
+    instructions: didRewrite ? [...instructions] : instructions,
+    changed: didRewrite,
+  };
 };
 
 export const isEligibleLocalVariable = (operand: VariableOperand): boolean => {

@@ -4,10 +4,12 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
+import { buildCFG } from "../../../src/transpiler/ir/optimizer/analysis/cfg";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
 import { sinkCode } from "../../../src/transpiler/ir/optimizer/passes/code_sinking";
 import { constantFolding } from "../../../src/transpiler/ir/optimizer/passes/constant_folding";
+import { propagateCopies } from "../../../src/transpiler/ir/optimizer/passes/copy_propagation";
 import {
   deadCodeElimination,
   eliminateDeadStoresCFG,
@@ -53,6 +55,78 @@ const stringify = (insts: { toString(): string }[]) =>
   insts.map((inst) => inst.toString()).join("\n");
 
 describe("optimizer passes", () => {
+  describe("PassResult.changed contract", () => {
+    it("constantFolding returns changed: false on already-folded input", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const instructions = [new ReturnInstruction(a)];
+
+      const result = constantFolding(instructions);
+      expect(result.changed).toBe(false);
+      expect(result.instructions).toBe(instructions);
+    });
+
+    it("constantFolding returns changed: true on foldable input", () => {
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(
+          t0,
+          createConstant(2, PrimitiveTypes.int32),
+          "+",
+          createConstant(3, PrimitiveTypes.int32),
+        ),
+        new ReturnInstruction(t0),
+      ];
+
+      const result = constantFolding(instructions);
+      expect(result.changed).toBe(true);
+    });
+
+    it("propagateCopies returns changed: false when no copies exist", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(
+          t0,
+          a,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+        new ReturnInstruction(t0),
+      ];
+
+      const result = propagateCopies(instructions);
+      expect(result.changed).toBe(false);
+    });
+
+    it("sccpAndPrune returns changed: false on trivial input", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const instructions = [new ReturnInstruction(a)];
+
+      const result = sccpAndPrune(instructions);
+      expect(result.changed).toBe(false);
+    });
+
+    it("CFG-consuming pass with cachedCFG produces identical results", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const b = createVariable("b", PrimitiveTypes.int32);
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(t0, a, "+", b),
+        new ReturnInstruction(t0),
+      ];
+
+      const withoutCache = eliminateDeadStoresCFG(instructions);
+      const cfg = buildCFG(instructions);
+      const withCache = eliminateDeadStoresCFG(instructions, {
+        cachedCFG: cfg,
+      });
+
+      expect(stringify(withCache.instructions)).toBe(
+        stringify(withoutCache.instructions),
+      );
+    });
+  });
+
   it("propagates copies and constants", () => {
     const a = createVariable("a", PrimitiveTypes.int32);
     const b = createVariable("b", PrimitiveTypes.int32);

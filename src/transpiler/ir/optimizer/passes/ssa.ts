@@ -922,9 +922,10 @@ export const applySSA = (
   if (
     !ssaResult.instructions.some((inst) => inst.kind === TACInstructionKind.Phi)
   ) {
+    // No Phi nodes inserted: build-SSA + strip-versions is a no-op round-trip
     return {
       instructions: stripSsaVersions(ssaResult.instructions),
-      changed: ssaResult.changed,
+      changed: false,
     };
   }
   return deconstructSSA(ssaResult.instructions);
