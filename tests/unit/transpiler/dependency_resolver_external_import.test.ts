@@ -58,3 +58,62 @@ describe("DependencyResolver external imports", () => {
     }
   });
 });
+
+describe("DependencyResolver graph caching", () => {
+  it("returns cached graph on repeated buildGraph calls", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "a.ts"),
+        `import { B } from "./b";\nexport class A {}\n`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "b.ts"),
+        `export class B {}\n`,
+      );
+
+      const entry = path.join(tmpDir, "a.ts");
+      const resolver = new DependencyResolver(tmpDir);
+
+      const graph1 = resolver.buildGraph(entry);
+      const graph2 = resolver.buildGraph(entry);
+
+      expect(graph2).toBe(graph1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("getCompilationOrder works after cached buildGraph", () => {
+    const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));
+    const tmpDir = fs.realpathSync(rawTmpDir);
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "a.ts"),
+        `import { B } from "./b";\nexport class A {}\n`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "b.ts"),
+        `export class B {}\n`,
+      );
+
+      const entryA = path.join(tmpDir, "a.ts");
+      const entryB = path.join(tmpDir, "b.ts");
+      const resolver = new DependencyResolver(tmpDir);
+
+      // First call builds graph for A
+      resolver.buildGraph(entryA);
+      // Build graph for B (overwrites this.graph)
+      resolver.buildGraph(entryB);
+      // Second call for A should restore this.graph from cache
+      resolver.buildGraph(entryA);
+      const order = resolver.getCompilationOrder(entryA);
+
+      expect(order).toContain(entryA);
+      expect(order).toContain(entryB);
+      expect(order.indexOf(entryB)).toBeLessThan(order.indexOf(entryA));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

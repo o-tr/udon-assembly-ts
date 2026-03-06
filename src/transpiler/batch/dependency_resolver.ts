@@ -10,6 +10,7 @@ export type DependencyGraph = Map<string, Set<string>>;
 
 export class DependencyResolver {
   private graph: DependencyGraph = new Map();
+  private graphCache = new Map<string, DependencyGraph>();
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
   private allowCircular: boolean;
@@ -25,9 +26,15 @@ export class DependencyResolver {
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
+    const cached = this.graphCache.get(entryPointPath);
+    if (cached) {
+      this.graph = cached;
+      return cached;
+    }
     this.graph = new Map();
     this.visiting.clear();
     this.visitFile(entryPointPath);
+    this.graphCache.set(entryPointPath, this.graph);
     return this.graph;
   }
 
