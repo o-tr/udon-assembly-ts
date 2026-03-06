@@ -33,6 +33,15 @@ export class TypeMapper {
 
   mapTypeScriptType(tsType: string): TypeSymbol {
     const trimmed = tsType.trim();
+    // Enum check runs before cache: enumRegistry may gain entries after a
+    // previous call cached a fallback result for the same type name.
+    if (this.enumRegistry?.isEnum(trimmed)) {
+      const kind = this.enumRegistry.getEnumKind(trimmed);
+      const result =
+        kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
+      this.typeCache.set(trimmed, result);
+      return result;
+    }
     const cached = this.typeCache.get(trimmed);
     if (cached) return cached;
     const result = this.mapTypeScriptTypeImpl(trimmed);
@@ -171,11 +180,6 @@ export class TypeMapper {
         case "Omit":
           return ObjectType;
       }
-    }
-
-    if (this.enumRegistry?.isEnum(trimmed)) {
-      const kind = this.enumRegistry.getEnumKind(trimmed);
-      return kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
     }
 
     switch (trimmed) {

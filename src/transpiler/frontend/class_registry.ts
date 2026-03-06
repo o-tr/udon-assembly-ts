@@ -111,7 +111,7 @@ export class ClassRegistry {
 
   getInheritanceChain(className: string): string[] {
     const cached = this.inheritanceChainCache.get(className);
-    if (cached) return cached;
+    if (cached) return [...cached];
 
     const chain: string[] = [];
     let current = this.classes.get(className);
@@ -121,7 +121,7 @@ export class ClassRegistry {
       current = this.classes.get(current.baseClass);
     }
     this.inheritanceChainCache.set(className, chain);
-    return chain;
+    return [...chain];
   }
 
   getEntryPoints(): ClassMetadata[] {
@@ -160,9 +160,9 @@ export class ClassRegistry {
 
   getMergedMethods(className: string): MethodInfo[] {
     const cached = this.mergedMethodsCache.get(className);
-    if (cached) return cached;
+    if (cached) return [...cached];
 
-    const chain = this.getInheritanceChain(className).slice().reverse();
+    const chain = this.getInheritanceChain(className).reverse();
     const merged = new Map<string, MethodInfo>();
 
     for (const name of chain) {
@@ -176,14 +176,14 @@ export class ClassRegistry {
 
     const result = Array.from(merged.values());
     this.mergedMethodsCache.set(className, result);
-    return result;
+    return [...result];
   }
 
   getMergedProperties(className: string): PropertyInfo[] {
     const cached = this.mergedPropertiesCache.get(className);
-    if (cached) return cached;
+    if (cached) return [...cached];
 
-    const chain = this.getInheritanceChain(className).slice().reverse();
+    const chain = this.getInheritanceChain(className).reverse();
     const merged = new Map<string, PropertyInfo>();
 
     for (const name of chain) {
@@ -197,7 +197,7 @@ export class ClassRegistry {
 
     const result = Array.from(merged.values());
     this.mergedPropertiesCache.set(className, result);
-    return result;
+    return [...result];
   }
 
   getTopLevelConstsForFile(filePath: string): TopLevelConstInfo[] {
@@ -276,7 +276,7 @@ export class ClassRegistry {
         (decorator) => decorator.name === "UdonBehaviour",
       )?.arguments?.[0];
 
-      this.register({
+      this.classes.set(classNode.name, {
         name: classNode.name,
         filePath,
         baseClass: classNode.baseClass,
@@ -298,6 +298,7 @@ export class ClassRegistry {
               : undefined,
       });
     }
+    this.clearCaches();
   }
 
   getAllInterfaces(): InterfaceMetadata[] {
