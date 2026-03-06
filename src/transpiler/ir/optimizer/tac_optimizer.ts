@@ -121,7 +121,10 @@ const hashOperand = (h: number, op: TACOperand): number => {
     case TACOperandKind.Temporary:
       return hashNum(hashByte(h, 0x11), (op as TemporaryOperand).id);
     case TACOperandKind.Constant:
-      return hashConstantValue(hashByte(h, 0x12), (op as ConstantOperand).value);
+      return hashConstantValue(
+        hashByte(h, 0x12),
+        (op as ConstantOperand).value,
+      );
     case TACOperandKind.Label:
       return hashStr(hashByte(h, 0x13), (op as LabelOperand).name);
   }
