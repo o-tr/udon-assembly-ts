@@ -6,7 +6,8 @@ import { DependencyResolver } from "../../../src/transpiler/batch/dependency_res
 
 describe("DependencyResolver external imports", () => {
   it("resolves node_modules .d.ts imports", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-deps-"));
+    const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-deps-"));
+    const tmpDir = fs.realpathSync(rawTmpDir);
     try {
       const srcDir = path.join(tmpDir, "src");
       const nodeModulesDir = path.join(tmpDir, "node_modules", "external-lib");

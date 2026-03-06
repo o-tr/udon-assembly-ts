@@ -26,7 +26,7 @@ export class DependencyResolver {
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
-    const normalized = path.resolve(entryPointPath);
+    const normalized = fs.realpathSync(entryPointPath);
     const cached = this.graphCache.get(normalized);
     if (cached) return cached;
 
@@ -46,12 +46,24 @@ export class DependencyResolver {
     this.graphCache.clear();
   }
 
+  /**
+   * Removes the cached graph for the given *entry point* path.
+   * Only the graph keyed by this exact entry point is evicted.
+   * Graphs of other entry points that transitively depend on this file
+   * are NOT invalidated; call {@link clearCache} to evict everything.
+   */
   invalidate(entryPointPath: string): void {
-    this.graphCache.delete(path.resolve(entryPointPath));
+    let normalized: string;
+    try {
+      normalized = fs.realpathSync(entryPointPath);
+    } catch {
+      normalized = path.resolve(entryPointPath);
+    }
+    this.graphCache.delete(normalized);
   }
 
   getCompilationOrder(entryPoint: string): string[] {
-    const normalized = path.resolve(entryPoint);
+    const normalized = fs.realpathSync(entryPoint);
     const graph = this.buildGraph(normalized);
     return this.resolveDependencies(normalized, graph);
   }
