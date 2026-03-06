@@ -195,6 +195,10 @@ const EVENT_MAP = new Map<string, VrcEventDefinition>(
   VRC_EVENTS.map((event) => [event.tsName, event]),
 );
 
+const UDON_NAME_MAP = new Map<string, VrcEventDefinition>(
+  VRC_EVENTS.map((event) => [event.udonName, event]),
+);
+
 export function isVrcEvent(methodName: string): boolean {
   return EVENT_MAP.has(methodName);
 }
@@ -206,5 +210,5 @@ export function getVrcEventDefinition(
 }
 
 export function isVrcEventLabel(label: string): boolean {
-  return VRC_EVENTS.some((event) => event.udonName === label);
+  return UDON_NAME_MAP.has(label);
 }

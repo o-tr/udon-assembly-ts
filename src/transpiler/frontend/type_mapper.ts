@@ -13,8 +13,12 @@ import { UdonType } from "./types.js";
 
 const warnedTypes = new Set<string>();
 
+const STRING_LITERAL_UNION_RE =
+  /^("[^"]*"|'[^']*')(\s*\|\s*("[^"]*"|'[^']*'))+$/;
+
 export class TypeMapper {
   private typeAliases = new Map<string, TypeSymbol>();
+  private typeCache = new Map<string, TypeSymbol>();
 
   constructor(private enumRegistry?: EnumRegistry) {}
 
@@ -24,10 +28,19 @@ export class TypeMapper {
 
   registerTypeAlias(name: string, symbol: TypeSymbol): void {
     this.typeAliases.set(name, symbol);
+    this.typeCache.clear();
   }
 
   mapTypeScriptType(tsType: string): TypeSymbol {
     const trimmed = tsType.trim();
+    const cached = this.typeCache.get(trimmed);
+    if (cached) return cached;
+    const result = this.mapTypeScriptTypeImpl(trimmed);
+    this.typeCache.set(trimmed, result);
+    return result;
+  }
+
+  private mapTypeScriptTypeImpl(trimmed: string): TypeSymbol {
     if (trimmed.startsWith("readonly ")) {
       return this.mapTypeScriptType(trimmed.slice(9));
     }
@@ -345,10 +358,7 @@ export class TypeMapper {
   }
 
   private isStringLiteralUnionType(typeText: string): boolean {
-    const trimmed = typeText.trim();
-    const literal = `("[^"]*"|'[^']*')`;
-    const pattern = new RegExp(`^${literal}(\\s*\\|\\s*${literal})+$`);
-    return pattern.test(trimmed);
+    return STRING_LITERAL_UNION_RE.test(typeText.trim());
   }
 
   mapUdonType(udonType: UdonType): TypeSymbol {

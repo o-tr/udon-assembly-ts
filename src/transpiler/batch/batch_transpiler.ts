@@ -835,8 +835,9 @@ export class BatchTranspiler {
     const visited = new Set<string>();
     const queue: string[] = [entryPointName];
 
-    while (queue.length > 0) {
-      const current = queue.shift();
+    let queueIdx = 0;
+    while (queueIdx < queue.length) {
+      const current = queue[queueIdx++];
       if (!current || visited.has(current)) continue;
       visited.add(current);
 
