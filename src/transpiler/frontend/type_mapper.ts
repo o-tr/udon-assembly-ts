@@ -41,9 +41,10 @@ export class TypeMapper {
       const kind = this.enumRegistry.getEnumKind(trimmed);
       const result =
         kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
-      if (this.typeCache.get(trimmed) !== result) {
-        // Enum newly registered — clear entire cache so composites (e.g.
-        // Foo[], Array<Foo>) that embedded the old fallback are recomputed.
+      const existing = this.typeCache.get(trimmed);
+      if (existing !== undefined && existing !== result) {
+        // Enum kind changed after a previous fallback was cached — clear
+        // composites (e.g. Foo[], Array<Foo>) that embedded the old value.
         this.typeCache.clear();
       }
       this.typeCache.set(trimmed, result);
