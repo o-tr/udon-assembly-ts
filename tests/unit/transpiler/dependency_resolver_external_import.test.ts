@@ -61,7 +61,8 @@ describe("DependencyResolver external imports", () => {
 
 describe("DependencyResolver graph caching", () => {
   it("returns cached graph on repeated buildGraph calls", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));
+    const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));
+    const tmpDir = fs.realpathSync(rawTmpDir);
     try {
       fs.writeFileSync(
         path.join(tmpDir, "a.ts"),

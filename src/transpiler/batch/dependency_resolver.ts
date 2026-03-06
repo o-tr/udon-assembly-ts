@@ -32,7 +32,11 @@ export class DependencyResolver {
     this.graph = new Map();
     this.visiting.clear();
     this.visitFile(entryPointPath);
-    const result = new Map(this.graph);
+    const result = new Map(
+      Array.from(this.graph.entries()).map(
+        ([k, v]) => [k, new Set(v)] as [string, Set<string>],
+      ),
+    );
     this.graphCache.set(entryPointPath, result);
     return result;
   }
