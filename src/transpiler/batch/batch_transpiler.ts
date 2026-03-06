@@ -162,7 +162,6 @@ export class BatchTranspiler {
       entryFilesToCompile.clear();
       for (const entryFile of entryFiles) {
         try {
-          resolver.buildGraph(entryFile);
           const compilationOrder = resolver.getCompilationOrder(entryFile);
           const hasChanges = compilationOrder.some((file) =>
             changedFiles.has(file),

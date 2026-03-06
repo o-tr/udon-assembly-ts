@@ -27,25 +27,40 @@ export class DependencyResolver {
 
   buildGraph(entryPointPath: string): DependencyGraph {
     const cached = this.graphCache.get(entryPointPath);
-    if (cached) {
-      this.graph = cached;
-      return cached;
-    }
+    if (cached) return cached;
+
     this.graph = new Map();
     this.visiting.clear();
     this.visitFile(entryPointPath);
-    this.graphCache.set(entryPointPath, this.graph);
-    return this.graph;
+    const result = new Map(this.graph);
+    this.graphCache.set(entryPointPath, result);
+    return result;
   }
 
-  resolveDependencies(entryPoint: string): string[] {
+  clearCache(): void {
+    this.graphCache.clear();
+  }
+
+  invalidate(entryPointPath: string): void {
+    this.graphCache.delete(entryPointPath);
+  }
+
+  getCompilationOrder(entryPoint: string): string[] {
+    const graph = this.buildGraph(entryPoint);
+    return this.resolveDependencies(entryPoint, graph);
+  }
+
+  private resolveDependencies(
+    entryPoint: string,
+    graph: DependencyGraph,
+  ): string[] {
     const visited = new Set<string>();
     const order: string[] = [];
 
     const dfs = (file: string) => {
       if (visited.has(file)) return;
       visited.add(file);
-      const deps = this.graph.get(file);
+      const deps = graph.get(file);
       if (deps) {
         for (const dep of deps) dfs(dep);
       }
@@ -54,10 +69,6 @@ export class DependencyResolver {
 
     dfs(entryPoint);
     return order;
-  }
-
-  getCompilationOrder(entryPoint: string): string[] {
-    return this.resolveDependencies(entryPoint);
   }
 
   resolveImmediateDependencies(entryPointPath: string): string[] {
