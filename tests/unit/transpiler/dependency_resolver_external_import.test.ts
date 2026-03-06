@@ -76,7 +76,60 @@ describe("DependencyResolver graph caching", () => {
       const graph1 = resolver.buildGraph(entry);
       const graph2 = resolver.buildGraph(entry);
 
+      expect(graph2).toBe(graph1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clearCache forces rebuild on next buildGraph call", () => {
+    const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));
+    const tmpDir = fs.realpathSync(rawTmpDir);
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "a.ts"),
+        `import { B } from "./b";\nexport class A {}\n`,
+      );
+      fs.writeFileSync(path.join(tmpDir, "b.ts"), `export class B {}\n`);
+
+      const entry = path.join(tmpDir, "a.ts");
+      const resolver = new DependencyResolver(tmpDir);
+
+      const graph1 = resolver.buildGraph(entry);
+      resolver.clearCache();
+      const graph2 = resolver.buildGraph(entry);
+
+      expect(graph2).not.toBe(graph1);
       expect(graph2).toEqual(graph1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("invalidate forces rebuild for a specific entry point", () => {
+    const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));
+    const tmpDir = fs.realpathSync(rawTmpDir);
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "a.ts"),
+        `import { B } from "./b";\nexport class A {}\n`,
+      );
+      fs.writeFileSync(path.join(tmpDir, "b.ts"), `export class B {}\n`);
+
+      const entryA = path.join(tmpDir, "a.ts");
+      const entryB = path.join(tmpDir, "b.ts");
+      const resolver = new DependencyResolver(tmpDir);
+
+      const graphA1 = resolver.buildGraph(entryA);
+      const graphB1 = resolver.buildGraph(entryB);
+      resolver.invalidate(entryA);
+      const graphA2 = resolver.buildGraph(entryA);
+      const graphB2 = resolver.buildGraph(entryB);
+
+      expect(graphA2).not.toBe(graphA1);
+      expect(graphA2).toEqual(graphA1);
+      // B was not invalidated, so it should still be the same cached reference
+      expect(graphB2).toBe(graphB1);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
