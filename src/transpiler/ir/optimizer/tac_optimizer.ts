@@ -74,6 +74,11 @@ const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
 // Tighter limit for the second SSA pass to avoid timeout on large codebases
 const SSA_REACHABLE_BLOCK_LIMIT_SECOND = 10_000;
 
+/** Pre-computed numeric index for each TACInstructionKind (avoids hashing kind strings per instruction). */
+const instructionKindIndex = new Map<string, number>(
+  Object.values(TACInstructionKind).map((k, i) => [k, i]),
+);
+
 /** Feed a string into an FNV-1a hash without allocating intermediate strings. */
 const hashStr = (h: number, s: string): number => {
   for (let i = 0; i < s.length; i++) {
@@ -95,12 +100,22 @@ const hashNum = (h: number, n: number): number => {
 const hashByte = (h: number, b: number): number =>
   Math.imul(h ^ (b & 0xff), 0x01000193);
 
+/** Shared buffer for IEEE 754 double → bytes conversion (avoids allocation per call). */
+const f64Buf = new Float64Array(1);
+const f64Bytes = new Uint8Array(f64Buf.buffer);
+
 /** Hash a constant value without string allocation (except for object JSON). */
 const hashConstantValue = (h: number, value: ConstantValue): number => {
   if (value === null) return hashByte(h, 0x00);
   switch (typeof value) {
-    case "number":
-      return hashNum(hashByte(h, 0x01), value);
+    case "number": {
+      // Hash IEEE 754 bit representation to correctly distinguish floats
+      // (e.g. 1.0 vs 1.5, NaN, Infinity) that hashNum would truncate.
+      f64Buf[0] = value;
+      let hh = hashByte(h, 0x01);
+      for (const b of f64Bytes) hh = hashByte(hh, b);
+      return hh;
+    }
     case "string":
       return hashStr(hashByte(h, 0x02), value);
     case "boolean":
@@ -138,9 +153,8 @@ const computeFingerprint = (insts: TACInstruction[]): number => {
   let h = 0x811c9dc5; // FNV-1a offset basis
   h = hashNum(h, insts.length);
   for (const inst of insts) {
-    // Discriminate by instruction kind index
-    h = hashByte(h, inst.kind.length);
-    h = hashStr(h, inst.kind);
+    // Hash instruction kind as a unique ordinal index
+    h = hashByte(h, instructionKindIndex.get(inst.kind)!);
     switch (inst.kind) {
       case TACInstructionKind.Assignment: {
         const a = inst as AssignmentInstruction;
