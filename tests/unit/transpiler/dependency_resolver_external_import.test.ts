@@ -67,10 +67,7 @@ describe("DependencyResolver graph caching", () => {
         path.join(tmpDir, "a.ts"),
         `import { B } from "./b";\nexport class A {}\n`,
       );
-      fs.writeFileSync(
-        path.join(tmpDir, "b.ts"),
-        `export class B {}\n`,
-      );
+      fs.writeFileSync(path.join(tmpDir, "b.ts"), `export class B {}\n`);
 
       const entry = path.join(tmpDir, "a.ts");
       const resolver = new DependencyResolver(tmpDir);
@@ -92,10 +89,7 @@ describe("DependencyResolver graph caching", () => {
         path.join(tmpDir, "a.ts"),
         `import { B } from "./b";\nexport class A {}\n`,
       );
-      fs.writeFileSync(
-        path.join(tmpDir, "b.ts"),
-        `export class B {}\n`,
-      );
+      fs.writeFileSync(path.join(tmpDir, "b.ts"), `export class B {}\n`);
 
       const entryA = path.join(tmpDir, "a.ts");
       const entryB = path.join(tmpDir, "b.ts");
@@ -120,10 +114,7 @@ describe("DependencyResolver graph caching", () => {
         path.join(tmpDir, "a.ts"),
         `import { B } from "./b";\nexport class A {}\n`,
       );
-      fs.writeFileSync(
-        path.join(tmpDir, "b.ts"),
-        `export class B {}\n`,
-      );
+      fs.writeFileSync(path.join(tmpDir, "b.ts"), `export class B {}\n`);
 
       const entryA = path.join(tmpDir, "a.ts");
       const entryB = path.join(tmpDir, "b.ts");
