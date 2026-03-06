@@ -1,15 +1,32 @@
 import {
+  type ArrayAccessInstruction,
+  type ArrayAssignmentInstruction,
+  type AssignmentInstruction,
+  type BinaryOpInstruction,
+  type CallInstruction,
+  type CastInstruction,
   type ConditionalJumpInstruction,
+  type CopyInstruction,
   LabelInstruction,
+  type MethodCallInstruction,
+  type PhiInstruction,
+  type PropertyGetInstruction,
+  type PropertySetInstruction,
   ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
+  type UnaryOpInstruction,
   type UnconditionalJumpInstruction,
 } from "../tac_instruction.js";
 import {
+  type ConstantOperand,
+  type ConstantValue,
   createLabel,
   type LabelOperand,
+  type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
+  type VariableOperand,
 } from "../tac_operand.js";
 import { buildCFG } from "./analysis/cfg.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
@@ -57,18 +74,204 @@ const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
 // Tighter limit for the second SSA pass to avoid timeout on large codebases
 const SSA_REACHABLE_BLOCK_LIMIT_SECOND = 10_000;
 
-const computeFingerprint = (insts: TACInstruction[]): number => {
-  // FNV-1a 32-bit hash
-  let h = 0x811c9dc5;
-  h = Math.imul(h ^ (insts.length & 0xff), 0x01000193);
-  h = Math.imul(h ^ ((insts.length >> 8) & 0xff), 0x01000193);
-  for (const inst of insts) {
-    const s = inst.toString();
-    for (let i = 0; i < s.length; i++) {
-      h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+/** Pre-computed numeric index for each TACInstructionKind (avoids hashing kind strings per instruction). */
+const instructionKindIndex: Record<string, number> = Object.fromEntries(
+  Object.values(TACInstructionKind).map((k, i) => [k, i]),
+);
+
+/** Feed a string into an FNV-1a hash without allocating intermediate strings. */
+const hashStr = (h: number, s: string): number => {
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  }
+  return h;
+};
+
+/** Feed a numeric value into the hash (up to 32-bit). */
+const hashNum = (h: number, n: number): number => {
+  h = Math.imul(h ^ (n & 0xff), 0x01000193);
+  h = Math.imul(h ^ ((n >> 8) & 0xff), 0x01000193);
+  h = Math.imul(h ^ ((n >> 16) & 0xff), 0x01000193);
+  h = Math.imul(h ^ ((n >> 24) & 0xff), 0x01000193);
+  return h;
+};
+
+/** Hash a single byte tag (for separators, booleans, kind discriminants). */
+const hashByte = (h: number, b: number): number =>
+  Math.imul(h ^ (b & 0xff), 0x01000193);
+
+/** Shared buffer for IEEE 754 double → bytes conversion (avoids allocation per call). */
+const f64Buf = new Float64Array(1);
+const f64Bytes = new Uint8Array(f64Buf.buffer);
+
+/** Hash a constant value without string allocation (except for object JSON). */
+const hashConstantValue = (h: number, value: ConstantValue): number => {
+  if (value === null) return hashByte(h, 0x00);
+  switch (typeof value) {
+    case "number": {
+      // Hash IEEE 754 bit representation to correctly distinguish floats
+      // (e.g. 1.0 vs 1.5, NaN, Infinity) that hashNum would truncate.
+      f64Buf[0] = value;
+      let hh = hashByte(h, 0x01);
+      for (const b of f64Bytes) hh = hashByte(hh, b);
+      return hh;
     }
-    // Separator to distinguish "ab"+"cd" from "a"+"bcd"
-    h = Math.imul(h ^ 0x0a, 0x01000193);
+    case "string":
+      return hashStr(hashByte(h, 0x02), value);
+    case "boolean":
+      return hashByte(hashByte(h, 0x03), value ? 1 : 0);
+    case "bigint":
+      return hashStr(hashByte(h, 0x04), value.toString());
+    default:
+      // object – Record<string, number> | number[]
+      return hashStr(hashByte(h, 0x05), JSON.stringify(value));
+  }
+};
+
+/** Hash a TAC operand structurally. */
+const hashOperand = (h: number, op: TACOperand): number => {
+  switch (op.kind) {
+    case TACOperandKind.Variable:
+      return hashStr(hashByte(h, 0x10), (op as VariableOperand).name);
+    case TACOperandKind.Temporary:
+      return hashNum(hashByte(h, 0x11), (op as TemporaryOperand).id);
+    case TACOperandKind.Constant:
+      return hashConstantValue(
+        hashByte(h, 0x12),
+        (op as ConstantOperand).value,
+      );
+    case TACOperandKind.Label:
+      return hashStr(hashByte(h, 0x13), (op as LabelOperand).name);
+  }
+};
+
+/** Hash an optional operand (uses a sentinel byte for undefined). */
+const hashOptOperand = (h: number, op: TACOperand | undefined): number =>
+  op ? hashOperand(hashByte(h, 0x01), op) : hashByte(h, 0x00);
+
+const computeFingerprint = (insts: TACInstruction[]): number => {
+  let h = 0x811c9dc5; // FNV-1a offset basis
+  h = hashNum(h, insts.length);
+  for (const inst of insts) {
+    // Hash instruction kind as a unique ordinal index
+    h = hashByte(h, instructionKindIndex[inst.kind] ?? 0);
+    switch (inst.kind) {
+      case TACInstructionKind.Assignment: {
+        const a = inst as AssignmentInstruction;
+        h = hashOperand(h, a.dest);
+        h = hashOperand(h, a.src);
+        break;
+      }
+      case TACInstructionKind.BinaryOp: {
+        const b = inst as BinaryOpInstruction;
+        h = hashOperand(h, b.dest);
+        h = hashOperand(h, b.left);
+        h = hashStr(h, b.operator);
+        h = hashOperand(h, b.right);
+        break;
+      }
+      case TACInstructionKind.UnaryOp: {
+        const u = inst as UnaryOpInstruction;
+        h = hashOperand(h, u.dest);
+        h = hashStr(h, u.operator);
+        h = hashOperand(h, u.operand);
+        break;
+      }
+      case TACInstructionKind.Copy: {
+        const c = inst as CopyInstruction;
+        h = hashOperand(h, c.dest);
+        h = hashOperand(h, c.src);
+        break;
+      }
+      case TACInstructionKind.Cast: {
+        const ca = inst as CastInstruction;
+        h = hashOperand(h, ca.dest);
+        h = hashOperand(h, ca.src);
+        break;
+      }
+      case TACInstructionKind.ConditionalJump: {
+        const cj = inst as ConditionalJumpInstruction;
+        h = hashOperand(h, cj.condition);
+        h = hashOperand(h, cj.label);
+        break;
+      }
+      case TACInstructionKind.UnconditionalJump: {
+        const uj = inst as UnconditionalJumpInstruction;
+        h = hashOperand(h, uj.label);
+        break;
+      }
+      case TACInstructionKind.Label: {
+        const li = inst as LabelInstruction;
+        h = hashOperand(h, li.label);
+        break;
+      }
+      case TACInstructionKind.Call: {
+        const cl = inst as CallInstruction;
+        h = hashOptOperand(h, cl.dest);
+        h = hashStr(h, cl.func);
+        h = hashNum(h, cl.args.length);
+        for (const arg of cl.args) h = hashOperand(h, arg);
+        h = hashByte(h, cl.isTailCall ? 1 : 0);
+        break;
+      }
+      case TACInstructionKind.MethodCall: {
+        const mc = inst as MethodCallInstruction;
+        h = hashOptOperand(h, mc.dest);
+        h = hashOperand(h, mc.object);
+        h = hashStr(h, mc.method);
+        h = hashNum(h, mc.args.length);
+        for (const arg of mc.args) h = hashOperand(h, arg);
+        h = hashByte(h, mc.isTailCall ? 1 : 0);
+        break;
+      }
+      case TACInstructionKind.PropertyGet: {
+        const pg = inst as PropertyGetInstruction;
+        h = hashOperand(h, pg.dest);
+        h = hashOperand(h, pg.object);
+        h = hashStr(h, pg.property);
+        break;
+      }
+      case TACInstructionKind.PropertySet: {
+        const ps = inst as PropertySetInstruction;
+        h = hashOperand(h, ps.object);
+        h = hashStr(h, ps.property);
+        h = hashOperand(h, ps.value);
+        break;
+      }
+      case TACInstructionKind.Return: {
+        const r = inst as ReturnInstruction;
+        h = hashOptOperand(h, r.value);
+        if (r.returnVarName) h = hashStr(hashByte(h, 0x01), r.returnVarName);
+        else h = hashByte(h, 0x00);
+        break;
+      }
+      case TACInstructionKind.ArrayAccess: {
+        const aa = inst as ArrayAccessInstruction;
+        h = hashOperand(h, aa.dest);
+        h = hashOperand(h, aa.array);
+        h = hashOperand(h, aa.index);
+        break;
+      }
+      case TACInstructionKind.ArrayAssignment: {
+        const aas = inst as ArrayAssignmentInstruction;
+        h = hashOperand(h, aas.array);
+        h = hashOperand(h, aas.index);
+        h = hashOperand(h, aas.value);
+        break;
+      }
+      case TACInstructionKind.Phi: {
+        const phi = inst as PhiInstruction;
+        h = hashOperand(h, phi.dest);
+        h = hashNum(h, phi.sources.length);
+        for (const src of phi.sources) {
+          h = hashNum(h, src.pred);
+          h = hashOperand(h, src.value);
+        }
+        break;
+      }
+    }
+    // Separator between instructions
+    h = hashByte(h, 0xff);
   }
   return h | 0;
 };
