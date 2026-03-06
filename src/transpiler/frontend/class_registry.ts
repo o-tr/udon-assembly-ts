@@ -162,7 +162,7 @@ export class ClassRegistry {
     const cached = this.mergedMethodsCache.get(className);
     if (cached) return [...cached];
 
-    const chain = this.getInheritanceChain(className).reverse();
+    const chain = this.getInheritanceChain(className).slice().reverse();
     const merged = new Map<string, MethodInfo>();
 
     for (const name of chain) {
@@ -183,7 +183,7 @@ export class ClassRegistry {
     const cached = this.mergedPropertiesCache.get(className);
     if (cached) return [...cached];
 
-    const chain = this.getInheritanceChain(className).reverse();
+    const chain = this.getInheritanceChain(className).slice().reverse();
     const merged = new Map<string, PropertyInfo>();
 
     for (const name of chain) {
