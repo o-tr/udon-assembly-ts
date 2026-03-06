@@ -18,6 +18,7 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
   getDefinedOperandForReuse,
@@ -35,12 +36,12 @@ type ExprValue = { operandKey: string; operand: TACOperand };
 
 export const globalValueNumbering = (
   instructions: TACInstruction[],
-  options?: { useSSA?: boolean },
-): TACInstruction[] => {
+  options?: { useSSA?: boolean } & CFGPassOptions,
+): PassResult => {
   const useSSA = options?.useSSA === true;
   const keyForOperand = useSSA ? operandKeyWithSSA : operandKey;
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const inMaps = new Map<number, Map<string, ExprValue>>();
   const outMaps = new Map<number, Map<string, ExprValue>>();
@@ -102,6 +103,7 @@ export const globalValueNumbering = (
           sameUdonType(existing.operand, bin.dest)
         ) {
           inst = new CopyInstruction(bin.dest, existing.operand);
+          changed = true;
         }
         result.push(inst);
         working.set(exprKey, {
@@ -121,6 +123,7 @@ export const globalValueNumbering = (
           sameUdonType(existing.operand, un.dest)
         ) {
           inst = new CopyInstruction(un.dest, existing.operand);
+          changed = true;
         }
         result.push(inst);
         working.set(exprKey, {
@@ -140,6 +143,7 @@ export const globalValueNumbering = (
           sameUdonType(existing.operand, castInst.dest)
         ) {
           inst = new CopyInstruction(castInst.dest, existing.operand);
+          changed = true;
         }
         result.push(inst);
         working.set(exprKey, {
@@ -159,6 +163,7 @@ export const globalValueNumbering = (
           sameUdonType(existing.operand, getInst.dest)
         ) {
           inst = new CopyInstruction(getInst.dest, existing.operand);
+          changed = true;
         }
         result.push(inst);
         working.set(exprKey, {
@@ -185,6 +190,7 @@ export const globalValueNumbering = (
           sameUdonType(existing.operand, accInst.dest)
         ) {
           inst = new CopyInstruction(accInst.dest, existing.operand);
+          changed = true;
         }
         result.push(inst);
         working.set(exprKey, {
@@ -206,6 +212,7 @@ export const globalValueNumbering = (
           ) {
             const copy = new CopyInstruction(callInst.dest, existing.operand);
             result.push(copy);
+            changed = true;
             continue;
           }
           result.push(inst);
@@ -221,7 +228,7 @@ export const globalValueNumbering = (
     }
   }
 
-  return result;
+  return { instructions: result, changed };
 };
 
 const intersectExpressionMaps = (

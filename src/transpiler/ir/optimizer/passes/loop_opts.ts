@@ -25,6 +25,7 @@ import type {
   VariableOperand,
 } from "../../tac_operand.js";
 import { createTemporary, TACOperandKind } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getMaxTempId,
@@ -300,13 +301,14 @@ const cloneWithTempMap = (
 
 export const optimizeLoopStructures = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length === 0) return instructions;
+): PassResult => {
+  if (instructions.length === 0) return { instructions, changed: false };
 
   const labelIndices = collectLabelIndices(instructions);
   const labelUses = collectLabelUses(instructions);
   const result: TACInstruction[] = [];
   let nextTempId = getMaxTempId(instructions) + 1;
+  let changed = false;
 
   let i = 0;
   while (i < instructions.length) {
@@ -490,9 +492,10 @@ export const optimizeLoopStructures = (
     }
 
     nextTempId = nextTempIdRef.value;
+    changed = true;
 
     i = endIndex + 1;
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };

@@ -26,6 +26,7 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -736,10 +737,10 @@ export const sccpAndPrune = (
   options?: {
     maxWorklistIterations?: number;
     onLimitReached?: "markAllReachable" | "break" | "warn";
-  },
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  } & CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   // Pre-scan: build variable ID map
   const varIds = new VariableIdMap();
@@ -909,12 +910,18 @@ export const sccpAndPrune = (
 
   // Emission: replace operands and fold branches using converged global lattice
   const result: TACInstruction[] = [];
+  let didChange = false;
   for (const block of cfg.blocks) {
     if (!reachable[block.id]) continue;
     localLattice.resetFrom(globalKinds, globalPayloads);
     for (let i = block.start; i <= block.end; i++) {
-      let inst = instructions[i];
-      inst = replaceInstructionWithLatticeMap(inst, localLattice, varIds);
+      const original = instructions[i];
+      const inst = replaceInstructionWithLatticeMap(
+        original,
+        localLattice,
+        varIds,
+      );
+      if (inst !== original) didChange = true;
 
       if (inst.kind === TACInstructionKind.ConditionalJump) {
         const condInst = inst as ConditionalJumpInstruction;
@@ -926,8 +933,10 @@ export const sccpAndPrune = (
         const truthy = condConst ? isTruthyConstant(condConst.value) : null;
         if (truthy === false) {
           result.push(new UnconditionalJumpInstruction(condInst.label));
+          didChange = true;
         } else if (truthy === true) {
           // Always true; skip conditional jump (fallthrough).
+          didChange = true;
         } else {
           result.push(inst);
         }
@@ -939,5 +948,8 @@ export const sccpAndPrune = (
     }
   }
 
-  return result;
+  // Detect if unreachable blocks were pruned
+  if (result.length !== instructions.length) didChange = true;
+
+  return { instructions: result, changed: didChange };
 };

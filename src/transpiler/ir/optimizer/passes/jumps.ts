@@ -14,12 +14,11 @@ import {
 } from "../../tac_operand.js";
 import type { BasicBlock } from "../analysis/cfg.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { PassResult } from "../pass_types.js";
 import { isTruthyConstant } from "./boolean_simplification.js";
 
-export const simplifyJumps = (
-  instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length === 0) return instructions;
+export const simplifyJumps = (instructions: TACInstruction[]): PassResult => {
+  if (instructions.length === 0) return { instructions, changed: false };
 
   const labelAlias = new Map<string, string>();
   for (let i = 0; i < instructions.length; i += 1) {
@@ -105,6 +104,7 @@ export const simplifyJumps = (
     return false;
   };
 
+  let changed = false;
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i += 1) {
     const inst = instructions[i];
@@ -113,6 +113,7 @@ export const simplifyJumps = (
       if (labelInst.label.kind === TACOperandKind.Label) {
         const name = (labelInst.label as LabelOperand).name;
         if (canonicalLabel(name) !== name) {
+          changed = true;
           continue;
         }
       }
@@ -127,12 +128,14 @@ export const simplifyJumps = (
         const canonicalName = canonicalLabel(originalName);
         const resolvedName = resolved.get(canonicalName) ?? canonicalName;
         if (isJumpToNextLabel(i, resolvedName)) {
+          changed = true;
           continue;
         }
         // Rewrite when either alias canonicalization or jump-threading changes
         // the effective target. Without this, we can keep stale alias names
         // after dropping alias label definitions.
         if (resolvedName !== originalName) {
+          changed = true;
           const resolvedLabel = createLabel(resolvedName);
           if (inst.kind === TACInstructionKind.UnconditionalJump) {
             result.push(new UnconditionalJumpInstruction(resolvedLabel));
@@ -147,16 +150,22 @@ export const simplifyJumps = (
     result.push(inst);
   }
 
-  return mergeLinearBlocks(result);
+  const merged = mergeLinearBlocks(result);
+  return {
+    instructions: merged.instructions,
+    changed: changed || merged.changed,
+  };
 };
 
 export const mergeLinearBlocks = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   let current = instructions;
+  let everChanged = false;
   while (true) {
     const cfg = buildCFG(current);
-    if (cfg.blocks.length === 0) return current;
+    if (cfg.blocks.length === 0)
+      return { instructions: current, changed: everChanged };
 
     const labelToBlock = new Map<string, number>();
     for (const block of cfg.blocks) {
@@ -185,7 +194,8 @@ export const mergeLinearBlocks = (
       mergedTargets.add(targetId);
     }
 
-    if (mergeMap.size === 0) return current;
+    if (mergeMap.size === 0)
+      return { instructions: current, changed: everChanged };
 
     const result: TACInstruction[] = [];
     for (const block of cfg.blocks) {
@@ -216,6 +226,7 @@ export const mergeLinearBlocks = (
     }
 
     current = result;
+    everChanged = true;
   }
 };
 

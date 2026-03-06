@@ -6,11 +6,12 @@ import {
 } from "../../tac_instruction.js";
 import type { LabelOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 
 export const eliminateFallthroughJumps = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  if (instructions.length === 0) return instructions;
+): PassResult => {
+  if (instructions.length === 0) return { instructions, changed: false };
 
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i += 1) {
@@ -47,5 +48,8 @@ export const eliminateFallthroughJumps = (
     result.push(inst);
   }
 
-  return result;
+  return {
+    instructions: result,
+    changed: result.length !== instructions.length,
+  };
 };

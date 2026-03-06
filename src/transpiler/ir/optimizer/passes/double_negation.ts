@@ -5,6 +5,7 @@ import {
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
 import { TACOperandKind, type TemporaryOperand } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import {
   countTempUses,
   getDefinedOperandForReuse,
@@ -13,7 +14,7 @@ import { operandKey } from "../utils/operands.js";
 
 export const doubleNegationElimination = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   const tempUses = countTempUses(instructions);
   const lastDefinition = new Map<string, number>();
   const removed = new Set<number>();
@@ -54,11 +55,14 @@ export const doubleNegationElimination = (
     }
   }
 
+  const changed = removed.size > 0 || replacements.size > 0;
+  if (!changed) return { instructions, changed: false };
+
   const result: TACInstruction[] = [];
   for (let i = 0; i < instructions.length; i++) {
     if (removed.has(i)) continue;
     result.push(replacements.get(i) ?? instructions[i]);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

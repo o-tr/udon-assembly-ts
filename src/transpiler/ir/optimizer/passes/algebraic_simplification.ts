@@ -14,19 +14,22 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { operandKey } from "../utils/operands.js";
 import { getOperandType, isIntegerUdonType } from "./constant_folding.js";
 
 export const algebraicSimplification = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   const result: TACInstruction[] = [];
+  let changed = false;
 
   for (const inst of instructions) {
     if (inst.kind === TACInstructionKind.BinaryOp) {
       const simplified = trySimplifyBinaryOp(inst as BinaryOpInstruction);
       if (simplified) {
         result.push(simplified);
+        changed = true;
         continue;
       }
     }
@@ -35,6 +38,7 @@ export const algebraicSimplification = (
       const simplified = trySimplifyUnaryOp(inst as UnaryOpInstruction);
       if (simplified) {
         result.push(simplified);
+        changed = true;
         continue;
       }
     }
@@ -43,6 +47,7 @@ export const algebraicSimplification = (
       const simplified = trySimplifyCast(inst as CastInstruction);
       if (simplified) {
         result.push(simplified);
+        changed = true;
         continue;
       }
     }
@@ -50,7 +55,7 @@ export const algebraicSimplification = (
     result.push(inst);
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };
 
 export const trySimplifyBinaryOp = (

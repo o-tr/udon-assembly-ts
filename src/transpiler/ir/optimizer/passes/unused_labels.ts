@@ -6,11 +6,12 @@ import {
   type UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import type { LabelOperand } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 
 export const eliminateUnusedLabels = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,
-): TACInstruction[] => {
+): PassResult => {
   const referenced = new Set<string>();
   for (const inst of instructions) {
     if (inst.kind === TACInstructionKind.ConditionalJump) {
@@ -27,9 +28,13 @@ export const eliminateUnusedLabels = (
     for (const l of exposedLabels) referenced.add(l);
   }
 
-  return instructions.filter((inst) => {
+  const result = instructions.filter((inst) => {
     if (inst.kind !== TACInstructionKind.Label) return true;
     const label = inst as LabelInstruction;
     return referenced.has((label.label as LabelOperand).name);
   });
+  return {
+    instructions: result,
+    changed: result.length !== instructions.length,
+  };
 };

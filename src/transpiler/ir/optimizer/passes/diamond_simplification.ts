@@ -13,13 +13,14 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import { operandKey } from "../utils/operands.js";
 
 type InstWithDestSrc = { dest: TACOperand; src: TACOperand };
 
 export const simplifyDiamondPatterns = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   // Count label usage (how many jumps target each label)
   const labelUses = new Map<string, number>();
   for (const inst of instructions) {
@@ -40,6 +41,7 @@ export const simplifyDiamondPatterns = (
   }
 
   const result: TACInstruction[] = [];
+  let changed = false;
   let i = 0;
   while (i < instructions.length) {
     // Need at least 6 instructions for the diamond: condJump, assign, uncondJump, label, assign, label
@@ -176,9 +178,10 @@ export const simplifyDiamondPatterns = (
     // Keep both labels for consistency
     result.push(elseLabelInst);
     result.push(joinLabelInst);
+    changed = true;
     i += 6;
   }
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };
 
 const isConstantAssignment = (inst: TACInstruction): boolean => {

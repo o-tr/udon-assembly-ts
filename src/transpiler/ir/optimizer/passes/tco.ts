@@ -5,12 +5,14 @@ import {
   type ReturnInstruction,
   TACInstructionKind,
 } from "../../tac_instruction.js";
+import type { PassResult } from "../pass_types.js";
 import { sameOperand } from "../utils/operands.js";
 
 export const optimizeTailCalls = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   const result: TACInstruction[] = [];
+  let changed = false;
 
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
@@ -29,13 +31,14 @@ export const optimizeTailCalls = (
         // We only set the IR-level hint; do not remove or elide the
         // Return here.
         call.isTailCall = true;
+        changed = true;
       }
     }
 
     result.push(inst);
   }
 
-  return result;
+  return { instructions: changed ? result : instructions, changed };
 };
 
 export default optimizeTailCalls;

@@ -29,6 +29,7 @@ import {
   type VariableOperand,
 } from "../tac_operand.js";
 import { buildCFG } from "./analysis/cfg.js";
+import type { CFG, PassResult } from "./pass_types.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
@@ -360,29 +361,40 @@ export class TACOptimizer {
       iteration: number,
     ): TACInstruction[] => {
       let next = current;
+      let cachedCFG: CFG | null = null;
+
+      const run = (result: PassResult): void => {
+        next = result.instructions;
+        if (result.changed) cachedCFG = null;
+      };
+
+      const getCFG = (): CFG => {
+        if (!cachedCFG) cachedCFG = buildCFG(next);
+        return cachedCFG;
+      };
 
       // Apply constant folding
-      next = constantFolding(next);
+      run(constantFolding(next));
       // Coalesce string concatenation chains
-      next = optimizeStringConcatenation(next);
+      run(optimizeStringConcatenation(next));
       // Apply SCCP and prune unreachable blocks (preserve exposedLabels)
-      next = sccpAndPrune(next, exposedLabels);
+      run(sccpAndPrune(next, exposedLabels, { cachedCFG: getCFG() }));
       // Apply boolean simplifications
-      next = booleanSimplification(next);
+      run(booleanSimplification(next));
       // Simplify diamond patterns (ternary true/false → copy of condition)
-      next = simplifyDiamondPatterns(next);
+      run(simplifyDiamondPatterns(next));
       // Fuse negated comparisons
-      next = negatedComparisonFusion(next);
+      run(negatedComparisonFusion(next));
       // Eliminate double negations
-      next = doubleNegationElimination(next);
+      run(doubleNegationElimination(next));
       // Apply algebraic simplifications and redundant cast removal
-      next = algebraicSimplification(next);
+      run(algebraicSimplification(next));
       // Fold cast chains
-      next = castChainFolding(next);
+      run(castChainFolding(next));
       // Eliminate redundant widening casts used only in comparisons
-      next = narrowTypes(next);
+      run(narrowTypes(next));
       // Reassociate partially-constant binary operations
-      next = reassociate(next);
+      run(reassociate(next));
       // SSA window: build SSA, run SSA-aware passes, then deconstruct
       if (runExpensivePasses) {
         // Check reachable block count before SSA to avoid OOM on huge CFGs.
@@ -391,58 +403,62 @@ export class TACOptimizer {
           iteration === 0
             ? SSA_REACHABLE_BLOCK_LIMIT
             : SSA_REACHABLE_BLOCK_LIMIT_SECOND;
-        const ssaCfg = buildCFG(next);
+        const ssaCfg = getCFG();
         const rpo = computeRPO(ssaCfg);
         if (rpo.length > ssaBlockLimit) {
           console.warn(
             `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${ssaBlockLimit}`,
           );
         } else {
-          const ssa = buildSSA(next);
-          const ssaPre = performPRE(ssa, { useSSA: true });
-          const ssaGvn = globalValueNumbering(ssaPre, { useSSA: true });
-          next = deconstructSSA(ssaGvn);
+          const ssa = buildSSA(next, { cachedCFG: getCFG() });
+          const ssaPre = performPRE(ssa.instructions, { useSSA: true });
+          const ssaGvn = globalValueNumbering(ssaPre.instructions, {
+            useSSA: true,
+          });
+          next = deconstructSSA(ssaGvn.instructions).instructions;
+          // Always invalidate after SSA window
+          cachedCFG = null;
         }
       }
       // Optimize tail calls (call followed immediately by return)
-      next = optimizeTailCalls(next);
+      run(optimizeTailCalls(next));
       // Eliminate single-use temporaries inside basic blocks
-      next = eliminateSingleUseTemporaries(next);
+      run(eliminateSingleUseTemporaries(next, { cachedCFG: getCFG() }));
       // Remove no-op copies/assignments
-      next = eliminateNoopCopies(next);
+      run(eliminateNoopCopies(next));
       // Propagate copies within basic blocks
-      next = propagateCopies(next);
+      run(propagateCopies(next, { cachedCFG: getCFG() }));
       // Remove dead stores using CFG liveness
-      next = eliminateDeadStoresCFG(next);
+      run(eliminateDeadStoresCFG(next, { cachedCFG: getCFG() }));
       // Apply dead code elimination
-      next = deadCodeElimination(next);
+      run(deadCodeElimination(next));
       // Sink computations closer to their only use
-      next = sinkCode(next);
+      run(sinkCode(next, { cachedCFG: getCFG() }));
       // Reorder basic blocks to reduce jumps
-      next = optimizeBlockLayout(next);
+      run(optimizeBlockLayout(next, { cachedCFG: getCFG() }));
       // Remove jumps that fall through to the next label
-      next = eliminateFallthroughJumps(next);
+      run(eliminateFallthroughJumps(next));
       // Remove redundant jumps and thread jump chains
-      next = simplifyJumps(next);
+      run(simplifyJumps(next));
       if (runExpensivePasses) {
         // Hoist loop-invariant code
-        next = performLICM(next);
+        run(performLICM(next, { cachedCFG: getCFG() }));
         // Unswitch loops with loop-invariant conditionals
-        next = unswitchLoops(next);
+        run(unswitchLoops(next));
         // Optimize simple induction variables
-        next = optimizeInductionVariables(next);
+        run(optimizeInductionVariables(next, { cachedCFG: getCFG() }));
         // Unroll simple fixed-count loops
-        next = optimizeLoopStructures(next);
+        run(optimizeLoopStructures(next));
         // Fold scalar Vector3 updates into vector ops
-        next = optimizeVectorSwizzle(next);
+        run(optimizeVectorSwizzle(next));
       }
 
       // Remove unused temporary computations
-      next = eliminateDeadTemporaries(next);
+      run(eliminateDeadTemporaries(next));
       // Merge identical return tails
-      next = mergeTails(next);
+      run(mergeTails(next));
       // Remove unused labels (preserve externally exposed labels)
-      next = eliminateUnusedLabels(next, exposedLabels);
+      run(eliminateUnusedLabels(next, exposedLabels));
       return next;
     };
 
@@ -461,17 +477,29 @@ export class TACOptimizer {
     // Ensure all referenced labels have definitions before temp-reuse passes
     optimized = this.ensureLabelIntegrity(optimized);
 
-    // Deduplicate temporaries holding the same constant value
-    optimized = deduplicateConstants(optimized);
+    {
+      let postCFG: CFG | null = null;
+      const getPostCFG = (): CFG => {
+        if (!postCFG) postCFG = buildCFG(optimized);
+        return postCFG;
+      };
+      const runPost = (result: PassResult): void => {
+        optimized = result.instructions;
+        if (result.changed) postCFG = null;
+      };
 
-    // Apply copy-on-write temporary reuse to reduce heap usage
-    optimized = copyOnWriteTemporaries(optimized);
+      // Deduplicate temporaries holding the same constant value
+      runPost(deduplicateConstants(optimized));
 
-    // Reuse temporary variables to reduce heap usage
-    optimized = reuseTemporaries(optimized);
+      // Apply copy-on-write temporary reuse to reduce heap usage
+      runPost(copyOnWriteTemporaries(optimized, { cachedCFG: getPostCFG() }));
 
-    // Reuse local variables when lifetimes do not overlap
-    optimized = reuseLocalVariables(optimized);
+      // Reuse temporary variables to reduce heap usage
+      runPost(reuseTemporaries(optimized, { cachedCFG: getPostCFG() }));
+
+      // Reuse local variables when lifetimes do not overlap
+      runPost(reuseLocalVariables(optimized, { cachedCFG: getPostCFG() }));
+    }
 
     // Final label integrity check after all passes
     optimized = this.ensureLabelIntegrity(optimized);

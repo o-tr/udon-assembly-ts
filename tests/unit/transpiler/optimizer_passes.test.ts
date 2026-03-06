@@ -4,10 +4,12 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
+import { buildCFG } from "../../../src/transpiler/ir/optimizer/analysis/cfg";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
 import { sinkCode } from "../../../src/transpiler/ir/optimizer/passes/code_sinking";
 import { constantFolding } from "../../../src/transpiler/ir/optimizer/passes/constant_folding";
+import { propagateCopies } from "../../../src/transpiler/ir/optimizer/passes/copy_propagation";
 import {
   deadCodeElimination,
   eliminateDeadStoresCFG,
@@ -53,6 +55,78 @@ const stringify = (insts: { toString(): string }[]) =>
   insts.map((inst) => inst.toString()).join("\n");
 
 describe("optimizer passes", () => {
+  describe("PassResult.changed contract", () => {
+    it("constantFolding returns changed: false on already-folded input", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const instructions = [new ReturnInstruction(a)];
+
+      const result = constantFolding(instructions);
+      expect(result.changed).toBe(false);
+      expect(result.instructions).toBe(instructions);
+    });
+
+    it("constantFolding returns changed: true on foldable input", () => {
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(
+          t0,
+          createConstant(2, PrimitiveTypes.int32),
+          "+",
+          createConstant(3, PrimitiveTypes.int32),
+        ),
+        new ReturnInstruction(t0),
+      ];
+
+      const result = constantFolding(instructions);
+      expect(result.changed).toBe(true);
+    });
+
+    it("propagateCopies returns changed: false when no copies exist", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(
+          t0,
+          a,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+        new ReturnInstruction(t0),
+      ];
+
+      const result = propagateCopies(instructions);
+      expect(result.changed).toBe(false);
+    });
+
+    it("sccpAndPrune returns changed: false on trivial input", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const instructions = [new ReturnInstruction(a)];
+
+      const result = sccpAndPrune(instructions);
+      expect(result.changed).toBe(false);
+    });
+
+    it("CFG-consuming pass with cachedCFG produces identical results", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const b = createVariable("b", PrimitiveTypes.int32);
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(t0, a, "+", b),
+        new ReturnInstruction(t0),
+      ];
+
+      const withoutCache = eliminateDeadStoresCFG(instructions);
+      const cfg = buildCFG(instructions);
+      const withCache = eliminateDeadStoresCFG(instructions, {
+        cachedCFG: cfg,
+      });
+
+      expect(stringify(withCache.instructions)).toBe(
+        stringify(withoutCache.instructions),
+      );
+    });
+  });
+
   it("propagates copies and constants", () => {
     const a = createVariable("a", PrimitiveTypes.int32);
     const b = createVariable("b", PrimitiveTypes.int32);
@@ -67,8 +141,8 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    let optimized = sccpAndPrune(instructions);
-    optimized = constantFolding(optimized);
+    let optimized = sccpAndPrune(instructions).instructions;
+    optimized = constantFolding(optimized).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 2");
@@ -86,10 +160,10 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    let optimized = sccpAndPrune(instructions);
-    optimized = constantFolding(optimized);
-    optimized = eliminateDeadStoresCFG(optimized);
-    optimized = deadCodeElimination(optimized);
+    let optimized = sccpAndPrune(instructions).instructions;
+    optimized = constantFolding(optimized).instructions;
+    optimized = eliminateDeadStoresCFG(optimized).instructions;
+    optimized = deadCodeElimination(optimized).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = 2");
@@ -108,7 +182,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
 
-    const optimized = globalValueNumbering(instructions);
+    const optimized = globalValueNumbering(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("a + b");
@@ -127,10 +201,10 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    let optimized = sccpAndPrune(instructions);
-    optimized = constantFolding(optimized);
-    optimized = eliminateDeadStoresCFG(optimized);
-    optimized = deadCodeElimination(optimized);
+    let optimized = sccpAndPrune(instructions).instructions;
+    optimized = constantFolding(optimized).instructions;
+    optimized = eliminateDeadStoresCFG(optimized).instructions;
+    optimized = deadCodeElimination(optimized).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain('t0 = "Hello World"');
@@ -226,7 +300,7 @@ describe("optimizer passes", () => {
       new UnconditionalJumpInstruction(l1),
     ];
 
-    const reordered = optimizeBlockLayout(instructions);
+    const reordered = optimizeBlockLayout(instructions).instructions;
     const text = stringify(reordered);
 
     expect(text.indexOf("L2:")).toBeGreaterThanOrEqual(0);
@@ -249,7 +323,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(),
     ];
 
-    const reordered = optimizeBlockLayout(instructions);
+    const reordered = optimizeBlockLayout(instructions).instructions;
     const text = stringify(reordered);
 
     expect(text).toContain("L0:");
@@ -273,7 +347,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t2),
     ];
 
-    const optimized = optimizeStringConcatenation(instructions);
+    const optimized = optimizeStringConcatenation(instructions).instructions;
 
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
     expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(3);
@@ -292,7 +366,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t1),
     ];
 
-    const optimized = optimizeStringConcatenation(instructions);
+    const optimized = optimizeStringConcatenation(instructions).instructions;
 
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
     expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(2);
@@ -305,7 +379,7 @@ describe("optimizer passes", () => {
 
     const instructions = [new BinaryOpInstruction(t0, a, "+", b)];
 
-    const optimized = optimizeStringConcatenation(instructions);
+    const optimized = optimizeStringConcatenation(instructions).instructions;
 
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(1);
     expect(optimized.filter((inst) => inst.kind === "Call").length).toBe(0);
@@ -319,7 +393,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(),
     ];
 
-    const optimized = eliminateFallthroughJumps(instructions);
+    const optimized = eliminateFallthroughJumps(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L0");
@@ -335,7 +409,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(),
     ];
 
-    const optimized = eliminateFallthroughJumps(instructions);
+    const optimized = eliminateFallthroughJumps(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L0");
@@ -377,7 +451,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = optimizeLoopStructures(instructions);
+    const optimized = optimizeLoopStructures(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).not.toContain("goto L_start");
@@ -414,7 +488,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimized = optimizeLoopStructures(instructions);
+    const optimized = optimizeLoopStructures(instructions).instructions;
     const text = stringify(optimized);
     const incrementCount = text.split("i = i + 1").length - 1;
 
@@ -458,7 +532,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimized = optimizeLoopStructures(instructions);
+    const optimized = optimizeLoopStructures(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("goto L_start");
@@ -500,7 +574,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = optimizeLoopStructures(instructions);
+    const optimized = optimizeLoopStructures(instructions).instructions;
     const text = stringify(optimized);
     const tempMatches = text.match(/t\d+/g) ?? [];
     const uniqueTemps = new Set(tempMatches);
@@ -537,7 +611,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimized = optimizeLoopStructures(instructions);
+    const optimized = optimizeLoopStructures(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("goto L_start");
@@ -570,7 +644,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimized = optimizeLoopStructures(instructions);
+    const optimized = optimizeLoopStructures(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("goto L_start");
@@ -586,7 +660,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = mergeTails(instructions);
+    const optimized = mergeTails(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("tail_merge_");
@@ -606,7 +680,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = mergeTails(instructions);
+    const optimized = mergeTails(instructions).instructions;
     const text = stringify(optimized);
     const gotoCount = text.split("goto tail_merge_").length - 1;
 
@@ -626,7 +700,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimized = mergeTails(instructions);
+    const optimized = mergeTails(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).not.toContain("tail_merge_");
@@ -668,7 +742,7 @@ describe("optimizer passes", () => {
       new PropertySetInstruction(v, "z", t5),
     ];
 
-    const optimized = optimizeVectorSwizzle(instructions);
+    const optimized = optimizeVectorSwizzle(instructions).instructions;
 
     expect(optimized.filter((inst) => inst.kind === "PropertySet").length).toBe(
       0,
@@ -694,7 +768,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
 
-    const optimized = performPRE(instructions);
+    const optimized = performPRE(instructions).instructions;
     const endLabelIndex = optimized.findIndex(
       (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
     );
@@ -738,7 +812,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t1),
     ];
 
-    const optimized = performPRE(instructions);
+    const optimized = performPRE(instructions).instructions;
     const endLabelIndex = optimized.findIndex(
       (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
     );
@@ -964,7 +1038,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = performLICM(instructions);
+    const optimized = performLICM(instructions).instructions;
     const text = stringify(optimized);
 
     const hoistedIndex = text.indexOf("t0 = a + b");
@@ -1007,7 +1081,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(i),
     ];
 
-    const optimized = optimizeInductionVariables(instructions);
+    const optimized = optimizeInductionVariables(instructions).instructions;
     const text = stringify(optimized);
 
     expect(text).toContain("t0 = t0 + 2");
@@ -1607,7 +1681,7 @@ describe("optimizer passes", () => {
     ];
     // Test the pass directly (not through full optimizer) to avoid other passes
     // eliminating the extra jump and reducing label usage
-    const optimized = simplifyDiamondPatterns(instructions);
+    const optimized = simplifyDiamondPatterns(instructions).instructions;
     const text = stringify(optimized);
     expect(text).toContain("ifFalse");
   });
@@ -1709,7 +1783,7 @@ describe("optimizer passes", () => {
     const result = sccpAndPrune(instructions, undefined, {
       maxWorklistIterations: 100,
       onLimitReached: "break",
-    });
+    }).instructions;
     // Ensure the return instruction contains the propagated constant 5
     const retInst = result.find((inst) => inst.kind === "Return") as
       | ReturnInstruction
@@ -1744,7 +1818,7 @@ describe("optimizer passes", () => {
     const result = sccpAndPrune(instructions, undefined, {
       maxWorklistIterations: 100,
       onLimitReached: "break",
-    });
+    }).instructions;
     // a and b are unknown (no constant), so return should reference a variable
     const retInst2 = result.find((inst) => inst.kind === "Return") as
       | ReturnInstruction
@@ -1813,7 +1887,7 @@ describe("optimizer passes", () => {
       new LabelInstruction(lElse),
       new ReturnInstruction(a),
     ];
-    const optimized = sinkCode(instructions);
+    const optimized = sinkCode(instructions).instructions;
     const text = stringify(optimized);
     // t0 computation should be after the conditional jump, in the then-branch
     const computeIdx = text.indexOf("t0 = a + b");
@@ -1837,7 +1911,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(t0),
     ];
     // gameObject on Component is idempotent; PRE should insert into else-branch
-    const optimized = performPRE(instructions);
+    const optimized = performPRE(instructions).instructions;
     const endLabelIdx = optimized.findIndex(
       (inst) => inst.kind === "Label" && inst.toString().startsWith("L_end:"),
     );
@@ -1862,7 +1936,7 @@ describe("optimizer passes", () => {
       new LabelInstruction(lEnd),
       new ReturnInstruction(t0),
     ];
-    const optimized = performPRE(instructions);
+    const optimized = performPRE(instructions).instructions;
     expect(optimized.filter((inst) => inst.kind === "PropertyGet").length).toBe(
       1,
     );
@@ -1883,7 +1957,7 @@ describe("optimizer passes", () => {
       new LabelInstruction(lEnd),
       new ReturnInstruction(a),
     ];
-    const optimized = mergeTails(instructions);
+    const optimized = mergeTails(instructions).instructions;
     const text = stringify(optimized);
     expect(text).toContain("tail_merge_");
   });
@@ -1937,7 +2011,7 @@ describe("optimizer passes", () => {
       new ReturnInstruction(a),
     ];
 
-    const optimized = unswitchLoops(instructions);
+    const optimized = unswitchLoops(instructions).instructions;
     // After unswitching, the loop should be duplicated
     // The original ifFalse flag should appear before the loops, not inside them
     // There should be more instructions than before (duplication)

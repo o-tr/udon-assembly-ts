@@ -12,6 +12,7 @@ import {
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -87,9 +88,7 @@ const getIntegerRangeForUdonType = (
  * result is only used in comparisons that would produce the same result
  * at the narrower width.
  */
-export const narrowTypes = (
-  instructions: TACInstruction[],
-): TACInstruction[] => {
+export const narrowTypes = (instructions: TACInstruction[]): PassResult => {
   // Phase 1: Find Cast instructions that widen integer types
   const castCandidates = new Map<
     string,
@@ -129,7 +128,7 @@ export const narrowTypes = (
     });
   }
 
-  if (castCandidates.size === 0) return instructions;
+  if (castCandidates.size === 0) return { instructions, changed: false };
 
   // Phase 2: For each cast candidate, check all uses
   const eliminable = new Set<string>();
@@ -210,7 +209,7 @@ export const narrowTypes = (
     }
   }
 
-  if (eliminable.size === 0) return instructions;
+  if (eliminable.size === 0) return { instructions, changed: false };
 
   // Phase 3: Rewrite uses and remove casts
   const result: TACInstruction[] = [];
@@ -255,5 +254,5 @@ export const narrowTypes = (
     result.push(inst);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

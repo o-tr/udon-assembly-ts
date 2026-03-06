@@ -9,6 +9,7 @@ import {
   TACOperandKind,
   type TemporaryOperand,
 } from "../../tac_operand.js";
+import type { PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   rewriteOperands,
@@ -22,7 +23,7 @@ import { getOperandType } from "./constant_folding.js";
  */
 export const deduplicateConstants = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   // Collect definitions for temporaries: count definitions and remember
   // single-def constant assignments.
   const tempInfo = new Map<
@@ -80,7 +81,7 @@ export const deduplicateConstants = (
     }
   }
 
-  if (rewriteMap.size === 0) return instructions;
+  if (rewriteMap.size === 0) return { instructions, changed: false };
 
   // Phase 4: Rewrite uses and remove non-canonical assignments
   const result: TACInstruction[] = [];
@@ -119,5 +120,5 @@ export const deduplicateConstants = (
     result.push(inst);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

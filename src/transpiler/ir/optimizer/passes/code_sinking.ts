@@ -4,6 +4,7 @@ import {
 } from "../../tac_instruction.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -17,9 +18,12 @@ import { buildDomTimestamps, computeIDom, dominates } from "./licm.js";
  * If a value is computed in a block with multiple successors but only
  * used in one successor, sink it into that successor.
  */
-export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+export const sinkCode = (
+  instructions: TACInstruction[],
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   // Build a map from liveness key to all instruction indices that use it
   const useLocations = new Map<string, Set<number>>();
@@ -178,7 +182,7 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
     }
   }
 
-  if (sinkTargets.size === 0) return instructions;
+  if (sinkTargets.size === 0) return { instructions, changed: false };
 
   // Build a map of block start → instructions to insert
   const insertions = new Map<number, TACInstruction[]>();
@@ -227,5 +231,5 @@ export const sinkCode = (instructions: TACInstruction[]): TACInstruction[] => {
     result.push(instructions[i]);
   }
 
-  return result;
+  return { instructions: result, changed: true };
 };

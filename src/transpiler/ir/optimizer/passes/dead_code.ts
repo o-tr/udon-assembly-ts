@@ -3,6 +3,7 @@ import { TACInstructionKind } from "../../tac_instruction.js";
 import type { TACOperand, TemporaryOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
@@ -19,7 +20,7 @@ import { stringSetEqual } from "../utils/sets.js";
  */
 export const deadCodeElimination = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   const result: TACInstruction[] = [];
   let unreachable = false;
 
@@ -45,14 +46,18 @@ export const deadCodeElimination = (
     }
   }
 
-  return result;
+  return {
+    instructions: result,
+    changed: result.length !== instructions.length,
+  };
 };
 
 export const eliminateDeadStoresCFG = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const useMap = new Map<number, Set<string>>();
   const defMap = new Map<number, Set<string>>();
@@ -144,12 +149,15 @@ export const eliminateDeadStoresCFG = (
     result.push(...kept);
   }
 
-  return result;
+  return {
+    instructions: result,
+    changed: result.length !== instructions.length,
+  };
 };
 
 export const eliminateNoopCopies = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   const result: TACInstruction[] = [];
 
   for (const inst of instructions) {
@@ -165,13 +173,17 @@ export const eliminateNoopCopies = (
     result.push(inst);
   }
 
-  return result;
+  return {
+    instructions: result,
+    changed: result.length !== instructions.length,
+  };
 };
 
 export const eliminateDeadTemporaries = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+): PassResult => {
   let current = instructions;
+  let anyChanged = false;
 
   while (true) {
     const uses = new Map<number, number>();
@@ -196,6 +208,7 @@ export const eliminateDeadTemporaries = (
           const id = (defined as TemporaryOperand).id;
           if (!uses.has(id)) {
             changed = true;
+            anyChanged = true;
             continue;
           }
         }
@@ -204,7 +217,7 @@ export const eliminateDeadTemporaries = (
     }
 
     if (!changed) {
-      return result;
+      return { instructions: result, changed: anyChanged };
     }
     current = result;
   }

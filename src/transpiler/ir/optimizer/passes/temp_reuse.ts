@@ -24,6 +24,7 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   countTempUses,
   getDefinedOperandForReuse,
@@ -41,7 +42,8 @@ import { getOperandType } from "./constant_folding.js";
 
 export const copyOnWriteTemporaries = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
+  options?: CFGPassOptions,
+): PassResult => {
   let maxTempId = -1;
   const recordTemp = (operand: TACOperand | undefined) => {
     if (!operand || operand.kind !== TACOperandKind.Temporary) return;
@@ -56,8 +58,8 @@ export const copyOnWriteTemporaries = (
     recordTemp(defined);
   }
 
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
   const blocksInOrder = Array.from(cfg.blocks).sort(
     (a, b) => a.start - b.start,
   );
@@ -80,7 +82,7 @@ export const copyOnWriteTemporaries = (
     }
     return true;
   });
-  if (!isStraightLine) return instructions;
+  if (!isStraightLine) return { instructions, changed: false };
 
   let nextTempId = maxTempId + 1;
   const aliasMap = new Map<number, TemporaryOperand>();
@@ -307,6 +309,7 @@ export const copyOnWriteTemporaries = (
   };
 
   const result: TACInstruction[] = [];
+  let changed = false;
 
   for (const inst of instructions) {
     if (
@@ -321,6 +324,7 @@ export const copyOnWriteTemporaries = (
         getOperandType(dest).udonType === getOperandType(resolvedSrc).udonType
       ) {
         setAlias(dest as TemporaryOperand, resolvedSrc as TemporaryOperand);
+        changed = true;
         continue;
       }
 
@@ -330,6 +334,7 @@ export const copyOnWriteTemporaries = (
 
       if (resolvedSrc !== src) {
         result.push(new AssignmentInstruction(dest, resolvedSrc));
+        changed = true;
       } else {
         result.push(inst);
       }
@@ -354,9 +359,11 @@ export const copyOnWriteTemporaries = (
         );
         resetAlias(newTemp);
         setAlias(set.object as TemporaryOperand, newTemp);
+        changed = true;
       }
 
       const rewritten = rewriteInstruction(inst);
+      if (rewritten !== inst) changed = true;
       result.push(rewritten);
       continue;
     }
@@ -379,9 +386,11 @@ export const copyOnWriteTemporaries = (
         );
         resetAlias(newTemp);
         setAlias(assign.array as TemporaryOperand, newTemp);
+        changed = true;
       }
 
       const rewritten = rewriteInstruction(inst);
+      if (rewritten !== inst) changed = true;
       result.push(rewritten);
       continue;
     }
@@ -405,9 +414,11 @@ export const copyOnWriteTemporaries = (
         );
         resetAlias(newTemp);
         setAlias(call.object as TemporaryOperand, newTemp);
+        changed = true;
       }
 
       const rewritten = rewriteInstruction(inst);
+      if (rewritten !== inst) changed = true;
       result.push(rewritten);
       const defined = getDefinedOperandForReuse(rewritten);
       if (defined?.kind === TACOperandKind.Temporary) {
@@ -417,6 +428,7 @@ export const copyOnWriteTemporaries = (
     }
 
     const rewritten = rewriteInstruction(inst);
+    if (rewritten !== inst) changed = true;
     result.push(rewritten);
     const defined = getDefinedOperandForReuse(rewritten);
     if (defined?.kind === TACOperandKind.Temporary) {
@@ -424,14 +436,15 @@ export const copyOnWriteTemporaries = (
     }
   }
 
-  return result;
+  return { instructions: result, changed };
 };
 
 export const eliminateSingleUseTemporaries = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   const isUdonExternSignature = (signature: string): boolean => {
     return /^[A-Za-z0-9._]+\.__[A-Za-z0-9_]+__(?:[A-Za-z0-9_]+)?__[A-Za-z0-9_]+$/.test(
@@ -454,6 +467,7 @@ export const eliminateSingleUseTemporaries = (
   };
 
   const result: TACInstruction[] = [];
+  let changed = false;
 
   for (const block of cfg.blocks) {
     const blockInstructions = instructions.slice(block.start, block.end + 1);
@@ -502,6 +516,7 @@ export const eliminateSingleUseTemporaries = (
               const rewritten = rewriteProducerDest(inst, nextDest);
               result.push(rewritten);
               i += 1;
+              changed = true;
               continue;
             }
           }
@@ -512,14 +527,15 @@ export const eliminateSingleUseTemporaries = (
     }
   }
 
-  return result;
+  return { instructions: result, changed };
 };
 
 export const reuseTemporaries = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   // Collect all temp ids and their types
   const tempTypes = new Map<number, string>();
@@ -543,7 +559,7 @@ export const reuseTemporaries = (
   // Remove temps with inconsistent types across occurrences
   for (const id of ineligible) tempTypes.delete(id);
 
-  if (tempTypes.size === 0) return instructions;
+  if (tempTypes.size === 0) return { instructions, changed: false };
 
   // 1. Compute def/use sets per block
   // def[b] = temps defined in block b before any use
@@ -722,11 +738,13 @@ export const reuseTemporaries = (
     oldToNew.set(tempId, color);
   }
 
+  let didRewrite = false;
   const rewriteTemp = (operand: TACOperand): TACOperand => {
     if (operand.kind !== TACOperandKind.Temporary) return operand;
     const temp = operand as TemporaryOperand;
     const mapped = oldToNew.get(temp.id);
     if (mapped === undefined || mapped === temp.id) return operand;
+    didRewrite = true;
     return createTemporary(mapped, temp.type);
   };
 
@@ -734,14 +752,18 @@ export const reuseTemporaries = (
     rewriteOperands(inst, rewriteTemp);
   }
 
-  return [...instructions];
+  return {
+    instructions: didRewrite ? [...instructions] : instructions,
+    changed: didRewrite,
+  };
 };
 
 export const reuseLocalVariables = (
   instructions: TACInstruction[],
-): TACInstruction[] => {
-  const cfg = buildCFG(instructions);
-  if (cfg.blocks.length === 0) return instructions;
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
 
   // Collect eligible variables and their types, plus reserved names
   const varTypes = new Map<string, string>();
@@ -786,7 +808,7 @@ export const reuseLocalVariables = (
       .map(([k]) => k),
   );
 
-  if (eligibleVars.size === 0) return instructions;
+  if (eligibleVars.size === 0) return { instructions, changed: false };
 
   // 1. Compute def/use sets per block for eligible variables
   const blockDef: Map<number, Set<string>> = new Map();
@@ -968,11 +990,13 @@ export const reuseLocalVariables = (
     oldToNew.set(varName, assignedName);
   }
 
+  let didRewrite = false;
   const rewriteVar = (operand: TACOperand): TACOperand => {
     if (operand.kind !== TACOperandKind.Variable) return operand;
     const variable = operand as VariableOperand;
     const mapped = oldToNew.get(variable.name);
     if (!mapped || mapped === variable.name) return operand;
+    didRewrite = true;
     return { ...variable, name: mapped } as VariableOperand;
   };
 
@@ -980,7 +1004,10 @@ export const reuseLocalVariables = (
     rewriteOperands(inst, rewriteVar);
   }
 
-  return [...instructions];
+  return {
+    instructions: didRewrite ? [...instructions] : instructions,
+    changed: didRewrite,
+  };
 };
 
 export const isEligibleLocalVariable = (operand: VariableOperand): boolean => {
