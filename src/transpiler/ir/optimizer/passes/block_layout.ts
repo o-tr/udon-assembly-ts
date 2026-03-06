@@ -187,5 +187,8 @@ export const optimizeBlockLayout = (
     }
   }
 
-  return { instructions: result, changed: true };
+  return {
+    instructions: result,
+    changed: result.some((inst, i) => inst !== instructions[i]),
+  };
 };
