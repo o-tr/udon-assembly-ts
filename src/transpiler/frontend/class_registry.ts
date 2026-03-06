@@ -236,6 +236,7 @@ export class ClassRegistry {
       this.topLevelConsts.set(filePath, consts);
     }
 
+    let registeredAnyClass = false;
     for (const stmt of program.statements) {
       if (stmt.kind === ASTNodeKind.InterfaceDeclaration) {
         const interfaceNode = stmt as InterfaceDeclarationNode;
@@ -297,8 +298,11 @@ export class ClassRegistry {
                 )
               : undefined,
       });
+      registeredAnyClass = true;
     }
-    this.clearCaches();
+    if (registeredAnyClass) {
+      this.clearCaches();
+    }
   }
 
   getAllInterfaces(): InterfaceMetadata[] {
