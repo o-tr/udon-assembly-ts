@@ -10,7 +10,7 @@ export type DependencyGraph = Map<string, Set<string>>;
 
 export class DependencyResolver {
   private graph: DependencyGraph = new Map();
-  private graphCache = new Map<string, DependencyGraph>();
+  private graphCache: Map<string, DependencyGraph> = new Map();
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
   private allowCircular: boolean;
@@ -26,18 +26,19 @@ export class DependencyResolver {
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
-    const cached = this.graphCache.get(entryPointPath);
+    const normalized = path.resolve(entryPointPath);
+    const cached = this.graphCache.get(normalized);
     if (cached) return cached;
 
     this.graph = new Map();
     this.visiting.clear();
-    this.visitFile(entryPointPath);
+    this.visitFile(normalized);
     const result = new Map(
       Array.from(this.graph.entries()).map(
         ([k, v]) => [k, new Set(v)] as [string, Set<string>],
       ),
     );
-    this.graphCache.set(entryPointPath, result);
+    this.graphCache.set(normalized, result);
     return result;
   }
 
@@ -46,12 +47,13 @@ export class DependencyResolver {
   }
 
   invalidate(entryPointPath: string): void {
-    this.graphCache.delete(entryPointPath);
+    this.graphCache.delete(path.resolve(entryPointPath));
   }
 
   getCompilationOrder(entryPoint: string): string[] {
-    const graph = this.buildGraph(entryPoint);
-    return this.resolveDependencies(entryPoint, graph);
+    const normalized = path.resolve(entryPoint);
+    const graph = this.buildGraph(normalized);
+    return this.resolveDependencies(normalized, graph);
   }
 
   private resolveDependencies(
