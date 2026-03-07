@@ -38,7 +38,6 @@ export class DependencyResolver {
   clearCache(): void {
     this.graphCache.clear();
     this.localImportCache.clear();
-    this.sharedImportCache?.clear();
   }
 
   /**
@@ -56,7 +55,6 @@ export class DependencyResolver {
     }
     this.graphCache.delete(normalized);
     this.localImportCache.delete(normalized);
-    this.sharedImportCache?.delete(normalized);
   }
 
   getCompilationOrder(entryPoint: string): string[] {
@@ -117,10 +115,10 @@ export class DependencyResolver {
   }
 
   private getModuleTexts(filePath: string): string[] {
-    const shared = this.sharedImportCache?.get(filePath);
-    if (shared) return shared;
     const local = this.localImportCache.get(filePath);
     if (local) return local;
+    const shared = this.sharedImportCache?.get(filePath);
+    if (shared) return shared;
 
     const sourceText = fs.readFileSync(filePath, "utf8");
     const sourceFile = ts.createSourceFile(
