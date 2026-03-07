@@ -26,20 +26,7 @@ export class DependencyResolver {
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
-    const normalized = fs.realpathSync(entryPointPath);
-    const cached = this.graphCache.get(normalized);
-    if (cached) return cached;
-
-    this.graph = new Map();
-    this.visiting.clear();
-    this.visitFile(normalized);
-    const result = new Map(
-      Array.from(this.graph.entries()).map(
-        ([k, v]) => [k, new Set(v)] as [string, Set<string>],
-      ),
-    );
-    this.graphCache.set(normalized, result);
-    return result;
+    return this.buildGraphResolved(fs.realpathSync(entryPointPath));
   }
 
   clearCache(): void {
@@ -64,8 +51,24 @@ export class DependencyResolver {
 
   getCompilationOrder(entryPoint: string): string[] {
     const normalized = fs.realpathSync(entryPoint);
-    const graph = this.buildGraph(normalized);
+    const graph = this.buildGraphResolved(normalized);
     return this.resolveDependencies(normalized, graph);
+  }
+
+  private buildGraphResolved(normalized: string): DependencyGraph {
+    const cached = this.graphCache.get(normalized);
+    if (cached) return cached;
+
+    this.graph = new Map();
+    this.visiting.clear();
+    this.visitFile(normalized);
+    const result = new Map(
+      Array.from(this.graph.entries()).map(
+        ([k, v]) => [k, new Set(v)] as [string, Set<string>],
+      ),
+    );
+    this.graphCache.set(normalized, result);
+    return result;
   }
 
   private resolveDependencies(
