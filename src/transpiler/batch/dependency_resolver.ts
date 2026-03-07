@@ -14,7 +14,8 @@ export class DependencyResolver {
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
   private allowCircular: boolean;
-  private importCache: Map<string, string[]> | null = null;
+  private sharedImportCache: Map<string, string[]> | null = null;
+  private localImportCache: Map<string, string[]> = new Map();
 
   constructor(
     projectRoot: string = process.cwd(),
@@ -27,7 +28,7 @@ export class DependencyResolver {
   }
 
   setImportCache(cache: Map<string, string[]>): void {
-    this.importCache = cache;
+    this.sharedImportCache = cache;
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
@@ -112,8 +113,10 @@ export class DependencyResolver {
   }
 
   private getModuleTexts(filePath: string): string[] {
-    const cached = this.importCache?.get(filePath);
-    if (cached) return cached;
+    const shared = this.sharedImportCache?.get(filePath);
+    if (shared) return shared;
+    const local = this.localImportCache.get(filePath);
+    if (local) return local;
 
     const sourceText = fs.readFileSync(filePath, "utf8");
     const sourceFile = ts.createSourceFile(
@@ -128,7 +131,7 @@ export class DependencyResolver {
       if (!ts.isStringLiteralLike(stmt.moduleSpecifier)) continue;
       moduleTexts.push(stmt.moduleSpecifier.text);
     }
-    this.importCache?.set(filePath, moduleTexts);
+    this.localImportCache.set(filePath, moduleTexts);
     return moduleTexts;
   }
 
