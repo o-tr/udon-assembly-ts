@@ -38,6 +38,7 @@ export class DependencyResolver {
   clearCache(): void {
     this.graphCache.clear();
     this.localImportCache.clear();
+    this.sharedImportCache?.clear();
   }
 
   /**
@@ -55,6 +56,7 @@ export class DependencyResolver {
     }
     this.graphCache.delete(normalized);
     this.localImportCache.delete(normalized);
+    this.sharedImportCache?.delete(normalized);
   }
 
   getCompilationOrder(entryPoint: string): string[] {
