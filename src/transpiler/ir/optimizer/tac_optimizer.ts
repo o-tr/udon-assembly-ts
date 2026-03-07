@@ -359,13 +359,17 @@ export class TACOptimizer {
       current: TACInstruction[],
       runExpensivePasses: boolean,
       iteration: number,
-    ): TACInstruction[] => {
+    ): { instructions: TACInstruction[]; changed: boolean } => {
       let next = current;
       let cachedCFG: CFG | null = null;
+      let anyPassChanged = false;
 
       const run = (result: PassResult): void => {
         next = result.instructions;
-        if (result.changed) cachedCFG = null;
+        if (result.changed) {
+          cachedCFG = null;
+          anyPassChanged = true;
+        }
       };
 
       const getCFG = (): CFG => {
@@ -415,8 +419,12 @@ export class TACOptimizer {
           const ssaGvn = globalValueNumbering(ssaPre.instructions, {
             useSSA: true,
           });
-          next = deconstructSSA(ssaGvn.instructions).instructions;
-          // Always invalidate after SSA window
+          const ssaDecon = deconstructSSA(ssaGvn.instructions);
+          // SSA construction/deconstruction always restructures instructions
+          // (phi-node insertion + variable renaming), so mark as changed and
+          // invalidate the CFG regardless of individual pass reports.
+          anyPassChanged = true;
+          next = ssaDecon.instructions;
           cachedCFG = null;
         }
       }
@@ -459,17 +467,21 @@ export class TACOptimizer {
       run(mergeTails(next));
       // Remove unused labels (preserve externally exposed labels)
       run(eliminateUnusedLabels(next, exposedLabels));
-      return next;
+      return { instructions: next, changed: anyPassChanged };
     };
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const beforeLen = optimized.length;
       const beforeHash = computeFingerprint(optimized);
-      optimized = runAnalysisPasses(optimized, iteration <= 1, iteration);
+      const result = runAnalysisPasses(optimized, iteration <= 1, iteration);
+      optimized = result.instructions;
       if (
         optimized.length === beforeLen &&
         computeFingerprint(optimized) === beforeHash
       ) {
+        break;
+      }
+      if (!result.changed) {
         break;
       }
     }

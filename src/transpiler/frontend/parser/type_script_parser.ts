@@ -82,6 +82,7 @@ export class TypeScriptParser {
   enumRegistry: EnumRegistry;
   genericTypeParamStack: Array<Set<string>> = [];
   destructureCounter = 0;
+  private readonly importCache: Map<string, string[]> = new Map();
 
   constructor(errorCollector?: ErrorCollector) {
     this.symbolTable = new SymbolTable();
@@ -104,12 +105,21 @@ export class TypeScriptParser {
     this.sourceFile = sourceFile;
 
     const statements: ASTNode[] = [];
+    const imports: string[] = [];
     for (const statement of sourceFile.statements) {
+      if (
+        ts.isImportDeclaration(statement) &&
+        statement.moduleSpecifier &&
+        ts.isStringLiteralLike(statement.moduleSpecifier)
+      ) {
+        imports.push(statement.moduleSpecifier.text);
+      }
       const node = this.visitNode(statement);
       if (node) {
         statements.push(node);
       }
     }
+    this.importCache.set(filePath, imports);
 
     const program: ProgramNode = {
       kind: ASTNodeKind.Program,
@@ -140,6 +150,14 @@ export class TypeScriptParser {
    */
   getEnumRegistry(): EnumRegistry {
     return this.enumRegistry;
+  }
+
+  /**
+   * Returns the live import cache shared with {@link DependencyResolver}.
+   * Consumers may add entries but must not replace the Map instance.
+   */
+  getImportCache(): Map<string, string[]> {
+    return this.importCache;
   }
 
   mapTypeWithGenerics = mapTypeWithGenerics;

@@ -14,6 +14,8 @@ export class DependencyResolver {
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
   private allowCircular: boolean;
+  private sharedImportCache: Map<string, string[]> | null = null;
+  private localImportCache: Map<string, string[]> = new Map();
 
   constructor(
     projectRoot: string = process.cwd(),
@@ -25,12 +27,17 @@ export class DependencyResolver {
     this.allowCircular = options?.allowCircular ?? false;
   }
 
+  setImportCache(cache: Map<string, string[]>): void {
+    this.sharedImportCache = cache;
+  }
+
   buildGraph(entryPointPath: string): DependencyGraph {
     return this.buildGraphResolved(fs.realpathSync(entryPointPath));
   }
 
   clearCache(): void {
     this.graphCache.clear();
+    this.localImportCache.clear();
   }
 
   /**
@@ -47,6 +54,7 @@ export class DependencyResolver {
       normalized = path.resolve(entryPointPath);
     }
     this.graphCache.delete(normalized);
+    this.localImportCache.delete(normalized);
   }
 
   getCompilationOrder(entryPoint: string): string[] {
@@ -94,17 +102,9 @@ export class DependencyResolver {
 
   resolveImmediateDependencies(entryPointPath: string): string[] {
     const deps = new Set<string>();
-    const sourceText = fs.readFileSync(entryPointPath, "utf8");
-    const sourceFile = ts.createSourceFile(
-      entryPointPath,
-      sourceText,
-      ts.ScriptTarget.ES2020,
-      true,
-    );
+    const moduleTexts = this.getModuleTexts(entryPointPath);
 
-    for (const stmt of sourceFile.statements) {
-      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-      const moduleText = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
+    for (const moduleText of moduleTexts) {
       const resolved = this.resolveModule(entryPointPath, moduleText);
       if (resolved && this.isResolvableSource(resolved)) {
         deps.add(resolved);
@@ -112,6 +112,29 @@ export class DependencyResolver {
     }
 
     return Array.from(deps);
+  }
+
+  private getModuleTexts(filePath: string): string[] {
+    const local = this.localImportCache.get(filePath);
+    if (local) return local;
+    const shared = this.sharedImportCache?.get(filePath);
+    if (shared) return shared;
+
+    const sourceText = fs.readFileSync(filePath, "utf8");
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      sourceText,
+      ts.ScriptTarget.ES2020,
+      true,
+    );
+    const moduleTexts: string[] = [];
+    for (const stmt of sourceFile.statements) {
+      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+      if (!ts.isStringLiteralLike(stmt.moduleSpecifier)) continue;
+      moduleTexts.push(stmt.moduleSpecifier.text);
+    }
+    this.localImportCache.set(filePath, moduleTexts);
+    return moduleTexts;
   }
 
   private visitFile(filePath: string): void {
@@ -124,19 +147,11 @@ export class DependencyResolver {
     }
     this.visiting.add(filePath);
 
-    const sourceText = fs.readFileSync(filePath, "utf8");
-    const sourceFile = ts.createSourceFile(
-      filePath,
-      sourceText,
-      ts.ScriptTarget.ES2020,
-      true,
-    );
+    const moduleTexts = this.getModuleTexts(filePath);
 
     const deps = new Set<string>();
     this.graph.set(filePath, deps);
-    for (const stmt of sourceFile.statements) {
-      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-      const moduleText = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
+    for (const moduleText of moduleTexts) {
       const resolved = this.resolveModule(filePath, moduleText);
       if (resolved && this.isResolvableSource(resolved)) {
         deps.add(resolved);

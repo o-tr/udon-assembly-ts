@@ -129,6 +129,7 @@ export class BatchTranspiler {
     const resolver = new DependencyResolver(options.sourceDir, {
       allowCircular: options.allowCircular,
     });
+    resolver.setImportCache(parser.getImportCache());
     const reachable = new Set<string>();
     const fallbackDeps = new Set<string>();
     const includeExternal = options.includeExternalDependencies !== false;
