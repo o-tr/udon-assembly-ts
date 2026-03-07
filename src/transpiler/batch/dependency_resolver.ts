@@ -10,6 +10,7 @@ export type DependencyGraph = Map<string, Set<string>>;
 
 export class DependencyResolver {
   private graph: DependencyGraph = new Map();
+  private graphCache: Map<string, DependencyGraph> = new Map();
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
   private allowCircular: boolean;
@@ -25,20 +26,62 @@ export class DependencyResolver {
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
-    this.graph = new Map();
-    this.visiting.clear();
-    this.visitFile(entryPointPath);
-    return this.graph;
+    return this.buildGraphResolved(fs.realpathSync(entryPointPath));
   }
 
-  resolveDependencies(entryPoint: string): string[] {
+  clearCache(): void {
+    this.graphCache.clear();
+  }
+
+  /**
+   * Removes the cached graph for the given *entry point* path.
+   * Only the graph keyed by this exact entry point is evicted.
+   * Graphs of other entry points that transitively depend on this file
+   * are NOT invalidated; call {@link clearCache} to evict everything.
+   */
+  invalidate(entryPointPath: string): void {
+    let normalized: string;
+    try {
+      normalized = fs.realpathSync(entryPointPath);
+    } catch {
+      normalized = path.resolve(entryPointPath);
+    }
+    this.graphCache.delete(normalized);
+  }
+
+  getCompilationOrder(entryPoint: string): string[] {
+    const normalized = fs.realpathSync(entryPoint);
+    const graph = this.buildGraphResolved(normalized);
+    return this.resolveDependencies(normalized, graph);
+  }
+
+  private buildGraphResolved(normalized: string): DependencyGraph {
+    const cached = this.graphCache.get(normalized);
+    if (cached) return cached;
+
+    this.graph = new Map();
+    this.visiting.clear();
+    this.visitFile(normalized);
+    const result = new Map(
+      Array.from(this.graph.entries()).map(
+        ([k, v]) => [k, new Set(v)] as [string, Set<string>],
+      ),
+    );
+    this.graphCache.set(normalized, result);
+    return result;
+  }
+
+  private resolveDependencies(
+    entryPoint: string,
+    graph: DependencyGraph,
+  ): string[] {
     const visited = new Set<string>();
     const order: string[] = [];
 
     const dfs = (file: string) => {
       if (visited.has(file)) return;
       visited.add(file);
-      const deps = this.graph.get(file);
+      const deps = graph.get(file);
       if (deps) {
         for (const dep of deps) dfs(dep);
       }
@@ -47,10 +90,6 @@ export class DependencyResolver {
 
     dfs(entryPoint);
     return order;
-  }
-
-  getCompilationOrder(entryPoint: string): string[] {
-    return this.resolveDependencies(entryPoint);
   }
 
   resolveImmediateDependencies(entryPointPath: string): string[] {
