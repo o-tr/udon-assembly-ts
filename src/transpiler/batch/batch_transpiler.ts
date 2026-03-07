@@ -166,7 +166,10 @@ export class BatchTranspiler {
     // that were not in the original sourceDir file set.
     if (includeExternal && reachable.size > 0) {
       for (const reachableFile of reachable) {
-        if (!fileSet.has(reachableFile) && isTranspilableSource(reachableFile)) {
+        if (
+          !fileSet.has(reachableFile) &&
+          isTranspilableSource(reachableFile)
+        ) {
           try {
             const source = fs.readFileSync(reachableFile, "utf8");
             const program = parser.parse(source, reachableFile);
