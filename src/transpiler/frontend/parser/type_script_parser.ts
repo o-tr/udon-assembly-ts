@@ -82,6 +82,7 @@ export class TypeScriptParser {
   enumRegistry: EnumRegistry;
   genericTypeParamStack: Array<Set<string>> = [];
   destructureCounter = 0;
+  private importCache: Map<string, string[]> = new Map();
 
   constructor(errorCollector?: ErrorCollector) {
     this.symbolTable = new SymbolTable();
@@ -104,12 +105,17 @@ export class TypeScriptParser {
     this.sourceFile = sourceFile;
 
     const statements: ASTNode[] = [];
+    const imports: string[] = [];
     for (const statement of sourceFile.statements) {
+      if (ts.isImportDeclaration(statement) && statement.moduleSpecifier) {
+        imports.push(statement.moduleSpecifier.getText().replace(/['"]/g, ""));
+      }
       const node = this.visitNode(statement);
       if (node) {
         statements.push(node);
       }
     }
+    this.importCache.set(filePath, imports);
 
     const program: ProgramNode = {
       kind: ASTNodeKind.Program,
@@ -119,6 +125,10 @@ export class TypeScriptParser {
     this.errorCollector.throwIfErrors();
 
     return program;
+  }
+
+  getImportsForFile(filePath: string): string[] | undefined {
+    return this.importCache.get(filePath);
   }
 
   /**
@@ -140,6 +150,10 @@ export class TypeScriptParser {
    */
   getEnumRegistry(): EnumRegistry {
     return this.enumRegistry;
+  }
+
+  getImportCache(): Map<string, string[]> {
+    return this.importCache;
   }
 
   mapTypeWithGenerics = mapTypeWithGenerics;

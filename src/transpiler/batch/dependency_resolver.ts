@@ -14,6 +14,7 @@ export class DependencyResolver {
   private visiting: Set<string> = new Set();
   private compilerOptions: ts.CompilerOptions;
   private allowCircular: boolean;
+  private importCache: Map<string, string[]> | null = null;
 
   constructor(
     projectRoot: string = process.cwd(),
@@ -23,6 +24,10 @@ export class DependencyResolver {
     // Default to false to preserve previous behavior of throwing on
     // circular imports unless explicitly allowed.
     this.allowCircular = options?.allowCircular ?? false;
+  }
+
+  setImportCache(cache: Map<string, string[]>): void {
+    this.importCache = cache;
   }
 
   buildGraph(entryPointPath: string): DependencyGraph {
@@ -94,17 +99,27 @@ export class DependencyResolver {
 
   resolveImmediateDependencies(entryPointPath: string): string[] {
     const deps = new Set<string>();
-    const sourceText = fs.readFileSync(entryPointPath, "utf8");
-    const sourceFile = ts.createSourceFile(
-      entryPointPath,
-      sourceText,
-      ts.ScriptTarget.ES2020,
-      true,
-    );
+    const cachedImports = this.importCache?.get(entryPointPath);
+    let moduleTexts: string[];
 
-    for (const stmt of sourceFile.statements) {
-      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-      const moduleText = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
+    if (cachedImports) {
+      moduleTexts = cachedImports;
+    } else {
+      const sourceText = fs.readFileSync(entryPointPath, "utf8");
+      const sourceFile = ts.createSourceFile(
+        entryPointPath,
+        sourceText,
+        ts.ScriptTarget.ES2020,
+        true,
+      );
+      moduleTexts = [];
+      for (const stmt of sourceFile.statements) {
+        if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+        moduleTexts.push(stmt.moduleSpecifier.getText().replace(/['"]/g, ""));
+      }
+    }
+
+    for (const moduleText of moduleTexts) {
       const resolved = this.resolveModule(entryPointPath, moduleText);
       if (resolved && this.isResolvableSource(resolved)) {
         deps.add(resolved);
@@ -124,19 +139,29 @@ export class DependencyResolver {
     }
     this.visiting.add(filePath);
 
-    const sourceText = fs.readFileSync(filePath, "utf8");
-    const sourceFile = ts.createSourceFile(
-      filePath,
-      sourceText,
-      ts.ScriptTarget.ES2020,
-      true,
-    );
+    const cachedImports = this.importCache?.get(filePath);
+    let moduleTexts: string[];
+
+    if (cachedImports) {
+      moduleTexts = cachedImports;
+    } else {
+      const sourceText = fs.readFileSync(filePath, "utf8");
+      const sourceFile = ts.createSourceFile(
+        filePath,
+        sourceText,
+        ts.ScriptTarget.ES2020,
+        true,
+      );
+      moduleTexts = [];
+      for (const stmt of sourceFile.statements) {
+        if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+        moduleTexts.push(stmt.moduleSpecifier.getText().replace(/['"]/g, ""));
+      }
+    }
 
     const deps = new Set<string>();
     this.graph.set(filePath, deps);
-    for (const stmt of sourceFile.statements) {
-      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-      const moduleText = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
+    for (const moduleText of moduleTexts) {
       const resolved = this.resolveModule(filePath, moduleText);
       if (resolved && this.isResolvableSource(resolved)) {
         deps.add(resolved);

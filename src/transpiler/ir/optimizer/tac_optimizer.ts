@@ -355,6 +355,8 @@ export class TACOptimizer {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
+    let anyPassChanged = false;
+
     const runAnalysisPasses = (
       current: TACInstruction[],
       runExpensivePasses: boolean,
@@ -362,10 +364,14 @@ export class TACOptimizer {
     ): TACInstruction[] => {
       let next = current;
       let cachedCFG: CFG | null = null;
+      anyPassChanged = false;
 
       const run = (result: PassResult): void => {
         next = result.instructions;
-        if (result.changed) cachedCFG = null;
+        if (result.changed) {
+          cachedCFG = null;
+          anyPassChanged = true;
+        }
       };
 
       const getCFG = (): CFG => {
@@ -415,9 +421,17 @@ export class TACOptimizer {
           const ssaGvn = globalValueNumbering(ssaPre.instructions, {
             useSSA: true,
           });
-          next = deconstructSSA(ssaGvn.instructions).instructions;
-          // Always invalidate after SSA window
-          cachedCFG = null;
+          const ssaDecon = deconstructSSA(ssaGvn.instructions);
+          if (
+            ssa.changed ||
+            ssaPre.changed ||
+            ssaGvn.changed ||
+            ssaDecon.changed
+          ) {
+            anyPassChanged = true;
+            cachedCFG = null;
+          }
+          next = ssaDecon.instructions;
         }
       }
       // Optimize tail calls (call followed immediately by return)
@@ -466,6 +480,9 @@ export class TACOptimizer {
       const beforeLen = optimized.length;
       const beforeHash = computeFingerprint(optimized);
       optimized = runAnalysisPasses(optimized, iteration <= 1, iteration);
+      if (!anyPassChanged) {
+        break;
+      }
       if (
         optimized.length === beforeLen &&
         computeFingerprint(optimized) === beforeHash
