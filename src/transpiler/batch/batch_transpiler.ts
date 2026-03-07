@@ -47,10 +47,7 @@ import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
 import { DependencyResolver } from "./dependency_resolver.js";
-import {
-  discoverEntryFilesUsingTS,
-  discoverTypeScriptFiles,
-} from "./file_discovery.js";
+import { discoverTypeScriptFiles } from "./file_discovery.js";
 
 function isTranspilableSource(filePath: string): boolean {
   if (filePath.endsWith(".d.ts")) return false;
@@ -96,12 +93,27 @@ export class BatchTranspiler {
     const files = rawFiles.map((f) => fs.realpathSync(f));
     const fileSet = new Set(files);
 
-    const entryFiles = discoverEntryFilesUsingTS({
-      sourceDir: options.sourceDir,
-      excludeDirs: options.excludeDirs,
-    })
-      .map((f) => fs.realpathSync(f))
-      .filter((f) => fileSet.has(f));
+    // Register all source files upfront so that registry.getEntryPoints()
+    // can identify entry files without a separate ts.createSourceFile() pass.
+    const transpilableSourceFiles = files.filter(isTranspilableSource);
+    for (const filePath of transpilableSourceFiles) {
+      try {
+        const source = fs.readFileSync(filePath, "utf8");
+        const program = parser.parse(source, filePath);
+        registry.registerFromProgram(program, filePath, source);
+      } catch (e) {
+        if (options?.verbose) {
+          console.warn(
+            `Failed to read/parse ${filePath}: ${e instanceof Error ? e.message : e}`,
+          );
+        }
+      }
+    }
+
+    // Derive entry files from registry instead of discoverEntryFilesUsingTS
+    const entryFiles = [
+      ...new Set(registry.getEntryPoints().map((ep) => ep.filePath)),
+    ];
 
     const resolver = new DependencyResolver(options.sourceDir, {
       allowCircular: options.allowCircular,
@@ -150,12 +162,37 @@ export class BatchTranspiler {
       for (const dep of fallbackDeps) reachable.add(dep);
     }
 
+    // Register any external files discovered via dependency resolution
+    // that were not in the original sourceDir file set.
+    if (includeExternal && reachable.size > 0) {
+      for (const reachableFile of reachable) {
+        if (!fileSet.has(reachableFile) && isTranspilableSource(reachableFile)) {
+          try {
+            const source = fs.readFileSync(reachableFile, "utf8");
+            const program = parser.parse(source, reachableFile);
+            registry.registerFromProgram(program, reachableFile, source);
+          } catch (e) {
+            if (options?.verbose) {
+              console.warn(
+                `Failed to read/parse external dependency ${reachableFile}: ${e instanceof Error ? e.message : e}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
     const cacheFiles =
       entryFiles.length > 0 && reachable.size > 0
         ? Array.from(reachable)
         : files;
 
     buildExternRegistryFromFiles(cacheFiles);
+    if (options?.verbose) {
+      console.log(
+        `registered ${registry.getAllClasses().length} classes from ${transpilableSourceFiles.length} files.`,
+      );
+    }
     const changedFiles = this.getChangedFiles(cacheFiles, cache);
     const entryFilesToCompile = new Set<string>(entryFiles);
     if (cache) {
@@ -173,43 +210,6 @@ export class BatchTranspiler {
           entryFilesToCompile.add(entryFile);
         }
       }
-    }
-
-    if (entryFiles.length === 0) {
-      // Fallback: register all files
-      for (const filePath of files) {
-        const source = fs.readFileSync(filePath, "utf8");
-        const program = parser.parse(source, filePath);
-        registry.registerFromProgram(program, filePath, source);
-      }
-    } else {
-      const reachableFiles = reachable.size > 0 ? Array.from(reachable) : files;
-      const allTranspilableFiles = includeExternal
-        ? Array.from(new Set([...files, ...reachableFiles]))
-        : reachableFiles;
-      const transpilableFiles =
-        allTranspilableFiles.filter(isTranspilableSource);
-      // Register transpilable files so inline class detection is reliable.
-      for (const filePath of transpilableFiles) {
-        try {
-          const source = fs.readFileSync(filePath, "utf8");
-          const program = parser.parse(source, filePath);
-          registry.registerFromProgram(program, filePath, source);
-        } catch (e) {
-          // parsing errors will be collected by parser's ErrorCollector
-          // but file read or other unexpected errors should be logged for diagnostics
-          if (options?.verbose) {
-            console.warn(
-              `Failed to read/parse ${filePath}: ${e instanceof Error ? e.message : e}`,
-            );
-          }
-        }
-      }
-    }
-    if (options?.verbose) {
-      console.log(
-        `registered ${registry.getAllClasses().length} classes from ${cacheFiles.length} files.`,
-      );
     }
 
     const validator = new InheritanceValidator(registry, errorCollector);
