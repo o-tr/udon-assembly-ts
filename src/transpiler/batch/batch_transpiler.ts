@@ -95,19 +95,24 @@ export class BatchTranspiler {
 
     // Register all source files upfront so that registry.getEntryPoints()
     // can identify entry files without a separate ts.createSourceFile() pass.
-    const transpilableSourceFiles = files.filter(isTranspilableSource);
-    for (const filePath of transpilableSourceFiles) {
+    const parseAndRegisterFile = (filePath: string, label?: string) => {
       try {
         const source = fs.readFileSync(filePath, "utf8");
         const program = parser.parse(source, filePath);
         registry.registerFromProgram(program, filePath, source);
       } catch (e) {
         if (options?.verbose) {
+          const prefix = label ? `${label} ` : "";
           console.warn(
-            `Failed to read/parse ${filePath}: ${e instanceof Error ? e.message : e}`,
+            `Failed to read/parse ${prefix}${filePath}: ${e instanceof Error ? e.message : e}`,
           );
         }
       }
+    };
+
+    const transpilableSourceFiles = files.filter(isTranspilableSource);
+    for (const filePath of transpilableSourceFiles) {
+      parseAndRegisterFile(filePath);
     }
 
     // Derive entry files from registry instead of discoverEntryFilesUsingTS
@@ -164,23 +169,15 @@ export class BatchTranspiler {
 
     // Register any external files discovered via dependency resolution
     // that were not in the original sourceDir file set.
+    let externalFileCount = 0;
     if (includeExternal && reachable.size > 0) {
       for (const reachableFile of reachable) {
         if (
           !fileSet.has(reachableFile) &&
           isTranspilableSource(reachableFile)
         ) {
-          try {
-            const source = fs.readFileSync(reachableFile, "utf8");
-            const program = parser.parse(source, reachableFile);
-            registry.registerFromProgram(program, reachableFile, source);
-          } catch (e) {
-            if (options?.verbose) {
-              console.warn(
-                `Failed to read/parse external dependency ${reachableFile}: ${e instanceof Error ? e.message : e}`,
-              );
-            }
-          }
+          parseAndRegisterFile(reachableFile, "external dependency");
+          externalFileCount++;
         }
       }
     }
@@ -192,8 +189,10 @@ export class BatchTranspiler {
 
     buildExternRegistryFromFiles(cacheFiles);
     if (options?.verbose) {
+      const totalRegisteredFiles =
+        transpilableSourceFiles.length + externalFileCount;
       console.log(
-        `registered ${registry.getAllClasses().length} classes from ${transpilableSourceFiles.length} files.`,
+        `registered ${registry.getAllClasses().length} classes from ${totalRegisteredFiles} files (${transpilableSourceFiles.length} source, ${externalFileCount} external).`,
       );
     }
     const changedFiles = this.getChangedFiles(cacheFiles, cache);
