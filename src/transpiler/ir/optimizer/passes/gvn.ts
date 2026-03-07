@@ -21,8 +21,8 @@ import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
 } from "../utils/instructions.js";
 import {
   operandKey,
@@ -370,37 +370,31 @@ const invalidateExpressionsForSideEffect = (
   map: Map<string, ExprValue>,
   useSSA: boolean,
 ): void => {
-  if (inst.kind === TACInstructionKind.Call) {
-    for (const key of Array.from(map.keys())) {
+  const deleteProps =
+    inst.kind === TACInstructionKind.Call ||
+    inst.kind === TACInstructionKind.PropertySet;
+  const deleteArrays =
+    inst.kind === TACInstructionKind.Call ||
+    inst.kind === TACInstructionKind.ArrayAssignment;
+  if (deleteProps || deleteArrays) {
+    for (const key of map.keys()) {
+      if (deleteArrays && key.startsWith("arrayget|")) {
+        map.delete(key);
+        continue;
+      }
       if (
-        key.startsWith("propget|") ||
-        key.startsWith("propget_idem|") ||
-        key.startsWith("arrayget|")
+        deleteProps &&
+        (key.startsWith("propget|") || key.startsWith("propget_idem|"))
       ) {
         map.delete(key);
       }
     }
   }
-  if (inst.kind === TACInstructionKind.ArrayAssignment) {
-    for (const key of Array.from(map.keys())) {
-      if (key.startsWith("arrayget|")) {
-        map.delete(key);
-      }
-    }
-  }
-  if (inst.kind === TACInstructionKind.PropertySet) {
-    for (const key of Array.from(map.keys())) {
-      if (key.startsWith("propget|") || key.startsWith("propget_idem|")) {
-        map.delete(key);
-      }
-    }
-  }
-  const usedOperands = getUsedOperandsForReuse(inst);
-  for (const operand of usedOperands) {
+  forEachUsedOperand(inst, (operand) => {
     const key = gvnOperandKey(operand, useSSA);
-    if (!key) continue;
+    if (!key) return;
     killExpressionsUsingOperand(map, key);
-  }
+  });
 };
 
 const killExpressionsUsingOperand = (
@@ -408,7 +402,7 @@ const killExpressionsUsingOperand = (
   operandKeyValue: string,
 ): void => {
   const needle = `|${operandKeyValue}|`;
-  for (const [key, value] of Array.from(map.entries())) {
+  for (const [key, value] of map.entries()) {
     if (key.includes(needle) || value.operandKey === operandKeyValue) {
       map.delete(key);
     }
@@ -533,7 +527,7 @@ const updatePropertySetCache = (
 ): void => {
   const objectKey = keyForOperand(inst.object);
   let updated = false;
-  for (const key of Array.from(map.keys())) {
+  for (const key of map.keys()) {
     if (!key.startsWith("propget|") && !key.startsWith("propget_idem|")) {
       continue;
     }

@@ -5,8 +5,8 @@ import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
   type InstWithDestSrc,
   isPureProducer,
 } from "../utils/instructions.js";
@@ -67,13 +67,13 @@ export const eliminateDeadStoresCFG = (
     const def = new Set<string>();
     for (let i = block.start; i <= block.end; i++) {
       const inst = instructions[i];
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         const key = livenessKey(op);
-        if (!key) continue;
+        if (!key) return;
         if (!def.has(key)) {
           use.add(key);
         }
-      }
+      });
       const defined = getDefinedOperandForReuse(inst);
       const defKey = livenessKey(defined);
       if (defKey) {
@@ -91,31 +91,35 @@ export const eliminateDeadStoresCFG = (
     liveOut.set(block.id, new Set());
   }
 
+  const reversedBlocks = cfg.blocks.slice().reverse();
+  const outScratch = new Set<string>();
+  const inScratch = new Set<string>();
   let changed = true;
   while (changed) {
     changed = false;
-    for (const block of cfg.blocks.slice().reverse()) {
-      const out = new Set<string>();
+    for (const block of reversedBlocks) {
+      outScratch.clear();
       for (const succ of block.succs) {
-        const succIn = liveIn.get(succ) ?? new Set();
-        for (const key of succIn) out.add(key);
+        const succIn = liveIn.get(succ);
+        if (succIn) for (const key of succIn) outScratch.add(key);
       }
 
-      const use = useMap.get(block.id) ?? new Set();
-      const def = defMap.get(block.id) ?? new Set();
-      const inSet = new Set<string>(use);
-      for (const key of out) {
-        if (!def.has(key)) inSet.add(key);
+      const use = useMap.get(block.id);
+      const def = defMap.get(block.id);
+      inScratch.clear();
+      if (use) for (const key of use) inScratch.add(key);
+      for (const key of outScratch) {
+        if (!def || !def.has(key)) inScratch.add(key);
       }
 
-      const prevOut = liveOut.get(block.id) ?? new Set();
-      const prevIn = liveIn.get(block.id) ?? new Set();
-      if (!stringSetEqual(prevOut, out)) {
-        liveOut.set(block.id, out);
+      const prevOut = liveOut.get(block.id) ?? new Set<string>();
+      const prevIn = liveIn.get(block.id) ?? new Set<string>();
+      if (!stringSetEqual(prevOut, outScratch)) {
+        liveOut.set(block.id, new Set(outScratch));
         changed = true;
       }
-      if (!stringSetEqual(prevIn, inSet)) {
-        liveIn.set(block.id, inSet);
+      if (!stringSetEqual(prevIn, inScratch)) {
+        liveIn.set(block.id, new Set(inScratch));
         changed = true;
       }
     }
@@ -129,10 +133,6 @@ export const eliminateDeadStoresCFG = (
       const inst = instructions[i];
       const defOp = getDefinedOperandForReuse(inst);
       const defKey = livenessKey(defOp);
-      const uses = getUsedOperandsForReuse(inst)
-        .map((op) => livenessKey(op))
-        .filter((key): key is string => Boolean(key));
-
       if (isPureProducer(inst) && defKey && !live.has(defKey)) {
         continue;
       }
@@ -140,9 +140,10 @@ export const eliminateDeadStoresCFG = (
       if (defKey) {
         live.delete(defKey);
       }
-      for (const key of uses) {
-        live.add(key);
-      }
+      forEachUsedOperand(inst, (op) => {
+        const key = livenessKey(op);
+        if (key) live.add(key);
+      });
       kept.push(inst);
     }
     kept.reverse();
@@ -194,9 +195,7 @@ export const eliminateDeadTemporaries = (
     };
 
     for (const inst of current) {
-      for (const op of getUsedOperandsForReuse(inst)) {
-        recordUse(op);
-      }
+      forEachUsedOperand(inst, recordUse);
     }
 
     let changed = false;

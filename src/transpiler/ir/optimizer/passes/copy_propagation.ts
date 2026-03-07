@@ -10,8 +10,8 @@ import { TACOperandKind } from "../../tac_operand.js";
 import { type BasicBlock, buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
   rewriteOperands,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
@@ -80,8 +80,7 @@ const stepCopyState = (
   // Rewrite used operands with copy sources
   let didRewrite = false;
   if (rewrite) {
-    const used = getUsedOperandsForReuse(inst);
-    for (const operand of used) {
+    forEachUsedOperand(inst, (operand) => {
       const key = livenessKey(operand);
       if (key) {
         const resolved = resolve(copies, key, operand);
@@ -94,7 +93,7 @@ const stepCopyState = (
           });
         }
       }
-    }
+    });
   }
 
   // Track copy definitions (only temp-to-temp)
@@ -118,7 +117,7 @@ const stepCopyState = (
       if (!insertedCopy) {
         copies.delete(defKey);
       }
-      for (const [key, value] of Array.from(copies.entries())) {
+      for (const [key, value] of copies.entries()) {
         if (livenessKey(value) === defKey && key !== defKey) {
           copies.delete(key);
         }

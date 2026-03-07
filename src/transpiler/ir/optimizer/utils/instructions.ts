@@ -21,51 +21,80 @@ import { TACOperandKind } from "../../tac_operand.js";
 export type InstWithDestSrc = { dest: TACOperand; src: TACOperand };
 export type InstWithDest = { dest: TACOperand };
 
-export const getUsedOperandsForReuse = (inst: TACInstruction): TACOperand[] => {
+export const forEachUsedOperand = (
+  inst: TACInstruction,
+  cb: (op: TACOperand) => void,
+): void => {
   switch (inst.kind) {
     case TACInstructionKind.Assignment:
     case TACInstructionKind.Copy:
     case TACInstructionKind.Cast:
-      return [(inst as unknown as InstWithDestSrc).src];
+      cb((inst as unknown as InstWithDestSrc).src);
+      return;
     case TACInstructionKind.BinaryOp: {
       const bin = inst as BinaryOpInstruction;
-      return [bin.left, bin.right];
+      cb(bin.left);
+      cb(bin.right);
+      return;
     }
     case TACInstructionKind.UnaryOp:
-      return [(inst as UnaryOpInstruction).operand];
+      cb((inst as UnaryOpInstruction).operand);
+      return;
     case TACInstructionKind.ConditionalJump:
-      return [(inst as unknown as ConditionalJumpInstruction).condition];
-    case TACInstructionKind.Call:
-      return (inst as unknown as CallInstruction).args ?? [];
+      cb((inst as unknown as ConditionalJumpInstruction).condition);
+      return;
+    case TACInstructionKind.Call: {
+      const args = (inst as unknown as CallInstruction).args;
+      if (args) for (const arg of args) cb(arg);
+      return;
+    }
     case TACInstructionKind.MethodCall: {
       const method = inst as unknown as MethodCallInstruction;
-      return [method.object, ...(method.args ?? [])];
+      cb(method.object);
+      if (method.args) for (const arg of method.args) cb(arg);
+      return;
     }
     case TACInstructionKind.PropertyGet:
-      return [(inst as unknown as PropertyGetInstruction).object];
+      cb((inst as unknown as PropertyGetInstruction).object);
+      return;
     case TACInstructionKind.PropertySet: {
       const set = inst as unknown as PropertySetInstruction;
-      return [set.object, set.value];
+      cb(set.object);
+      cb(set.value);
+      return;
     }
     case TACInstructionKind.Return: {
       const ret = inst as unknown as ReturnInstruction;
-      return ret.value ? [ret.value] : [];
+      if (ret.value) cb(ret.value);
+      return;
     }
     case TACInstructionKind.ArrayAccess: {
       const acc = inst as ArrayAccessInstruction;
-      return [acc.array, acc.index];
+      cb(acc.array);
+      cb(acc.index);
+      return;
     }
     case TACInstructionKind.ArrayAssignment: {
       const assign = inst as ArrayAssignmentInstruction;
-      return [assign.array, assign.index, assign.value];
+      cb(assign.array);
+      cb(assign.index);
+      cb(assign.value);
+      return;
     }
     case TACInstructionKind.Phi: {
       const phi = inst as PhiInstruction;
-      return phi.sources.map((source) => source.value);
+      for (const source of phi.sources) cb(source.value);
+      return;
     }
     default:
-      return [];
+      return;
   }
+};
+
+export const getUsedOperandsForReuse = (inst: TACInstruction): TACOperand[] => {
+  const result: TACOperand[] = [];
+  forEachUsedOperand(inst, (op) => result.push(op));
+  return result;
 };
 
 export const rewriteOperands = (
@@ -262,9 +291,7 @@ export const countTempUses = (
   };
 
   for (const inst of instructions) {
-    for (const op of getUsedOperandsForReuse(inst)) {
-      add(op);
-    }
+    forEachUsedOperand(inst, add);
   }
 
   return counts;
@@ -272,16 +299,16 @@ export const countTempUses = (
 
 export const getMaxTempId = (instructions: TACInstruction[]): number => {
   let maxTempId = -1;
+  const check = (op: TACOperand) => {
+    if (op.kind === TACOperandKind.Temporary) {
+      const id = (op as TemporaryOperand).id;
+      if (id > maxTempId) maxTempId = id;
+    }
+  };
   for (const inst of instructions) {
     const def = getDefinedOperandForReuse(inst);
-    if (def?.kind === TACOperandKind.Temporary) {
-      maxTempId = Math.max(maxTempId, (def as TemporaryOperand).id);
-    }
-    for (const op of getUsedOperandsForReuse(inst)) {
-      if (op.kind === TACOperandKind.Temporary) {
-        maxTempId = Math.max(maxTempId, (op as TemporaryOperand).id);
-      }
-    }
+    if (def) check(def);
+    forEachUsedOperand(inst, check);
   }
   return maxTempId;
 };

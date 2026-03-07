@@ -6,6 +6,7 @@ import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
   getUsedOperandsForReuse,
   isPureProducer,
@@ -28,13 +29,13 @@ export const sinkCode = (
   // Build a map from liveness key to all instruction indices that use it
   const useLocations = new Map<string, Set<number>>();
   for (let i = 0; i < instructions.length; i++) {
-    for (const op of getUsedOperandsForReuse(instructions[i])) {
+    forEachUsedOperand(instructions[i], (op) => {
       const key = livenessKey(op);
-      if (!key) continue;
+      if (!key) return;
       const set = useLocations.get(key) ?? new Set();
       set.add(i);
       useLocations.set(key, set);
-    }
+    });
   }
 
   // Map instruction index → block id
@@ -66,10 +67,10 @@ export const sinkCode = (
     // Get the terminator instruction to check if its operands are used
     const terminator = instructions[block.end];
     const terminatorUsedKeys = new Set<string>();
-    for (const op of getUsedOperandsForReuse(terminator)) {
+    forEachUsedOperand(terminator, (op) => {
       const key = livenessKey(op);
       if (key) terminatorUsedKeys.add(key);
-    }
+    });
 
     for (let i = block.start; i <= block.end; i++) {
       const inst = instructions[i];

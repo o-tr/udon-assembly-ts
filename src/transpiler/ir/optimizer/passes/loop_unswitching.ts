@@ -124,7 +124,7 @@ export const unswitchLoops = (instructions: TACInstruction[]): PassResult => {
 
           while (pending.size > 0) {
             let progress = false;
-            for (const [dk, p] of Array.from(pending.entries())) {
+            for (const [dk, p] of pending.entries()) {
               const srcKey = operandKey(p.src);
               if (!destKeys.has(srcKey)) {
                 insts.push(new CopyInstruction(p.dest, p.src));
@@ -135,13 +135,15 @@ export const unswitchLoops = (instructions: TACInstruction[]): PassResult => {
             }
             if (progress) continue;
             // Cycle exists: break with temp
-            const [[dk, p]] = Array.from(pending.entries());
+            const entry = pending.entries().next();
+            if (entry.done) break;
+            const [dk, p] = entry.value;
             const temp = createTemporary(nextTempId++, p.dest.type);
             insts.push(new CopyInstruction(temp, p.dest));
             pending.delete(dk);
             destKeys.delete(dk);
             // replace any pending entry whose src equals p.dest with temp
-            for (const [k, q] of Array.from(pending.entries())) {
+            for (const [k, q] of pending.entries()) {
               if (operandKey(q.src) === dk) {
                 pending.set(k, { dest: q.dest, src: temp });
               }
