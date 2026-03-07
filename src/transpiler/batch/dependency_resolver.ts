@@ -99,25 +99,7 @@ export class DependencyResolver {
 
   resolveImmediateDependencies(entryPointPath: string): string[] {
     const deps = new Set<string>();
-    const cachedImports = this.importCache?.get(entryPointPath);
-    let moduleTexts: string[];
-
-    if (cachedImports) {
-      moduleTexts = cachedImports;
-    } else {
-      const sourceText = fs.readFileSync(entryPointPath, "utf8");
-      const sourceFile = ts.createSourceFile(
-        entryPointPath,
-        sourceText,
-        ts.ScriptTarget.ES2020,
-        true,
-      );
-      moduleTexts = [];
-      for (const stmt of sourceFile.statements) {
-        if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-        moduleTexts.push(stmt.moduleSpecifier.getText().replace(/['"]/g, ""));
-      }
-    }
+    const moduleTexts = this.getModuleTexts(entryPointPath);
 
     for (const moduleText of moduleTexts) {
       const resolved = this.resolveModule(entryPointPath, moduleText);
@@ -127,6 +109,27 @@ export class DependencyResolver {
     }
 
     return Array.from(deps);
+  }
+
+  private getModuleTexts(filePath: string): string[] {
+    const cached = this.importCache?.get(filePath);
+    if (cached) return cached;
+
+    const sourceText = fs.readFileSync(filePath, "utf8");
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      sourceText,
+      ts.ScriptTarget.ES2020,
+      true,
+    );
+    const moduleTexts: string[] = [];
+    for (const stmt of sourceFile.statements) {
+      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
+      if (!ts.isStringLiteralLike(stmt.moduleSpecifier)) continue;
+      moduleTexts.push(stmt.moduleSpecifier.text);
+    }
+    this.importCache?.set(filePath, moduleTexts);
+    return moduleTexts;
   }
 
   private visitFile(filePath: string): void {
@@ -139,25 +142,7 @@ export class DependencyResolver {
     }
     this.visiting.add(filePath);
 
-    const cachedImports = this.importCache?.get(filePath);
-    let moduleTexts: string[];
-
-    if (cachedImports) {
-      moduleTexts = cachedImports;
-    } else {
-      const sourceText = fs.readFileSync(filePath, "utf8");
-      const sourceFile = ts.createSourceFile(
-        filePath,
-        sourceText,
-        ts.ScriptTarget.ES2020,
-        true,
-      );
-      moduleTexts = [];
-      for (const stmt of sourceFile.statements) {
-        if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-        moduleTexts.push(stmt.moduleSpecifier.getText().replace(/['"]/g, ""));
-      }
-    }
+    const moduleTexts = this.getModuleTexts(filePath);
 
     const deps = new Set<string>();
     this.graph.set(filePath, deps);

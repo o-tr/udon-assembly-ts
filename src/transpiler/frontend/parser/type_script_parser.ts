@@ -107,8 +107,12 @@ export class TypeScriptParser {
     const statements: ASTNode[] = [];
     const imports: string[] = [];
     for (const statement of sourceFile.statements) {
-      if (ts.isImportDeclaration(statement) && statement.moduleSpecifier) {
-        imports.push(statement.moduleSpecifier.getText().replace(/['"]/g, ""));
+      if (
+        ts.isImportDeclaration(statement) &&
+        statement.moduleSpecifier &&
+        ts.isStringLiteralLike(statement.moduleSpecifier)
+      ) {
+        imports.push(statement.moduleSpecifier.text);
       }
       const node = this.visitNode(statement);
       if (node) {
