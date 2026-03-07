@@ -95,11 +95,15 @@ export class BatchTranspiler {
 
     // Register all source files upfront so that registry.getEntryPoints()
     // can identify entry files without a separate ts.createSourceFile() pass.
-    const parseAndRegisterFile = (filePath: string, label?: string) => {
+    const parseAndRegisterFile = (
+      filePath: string,
+      label?: string,
+    ): boolean => {
       try {
         const source = fs.readFileSync(filePath, "utf8");
         const program = parser.parse(source, filePath);
         registry.registerFromProgram(program, filePath, source);
+        return true;
       } catch (e) {
         if (options?.verbose) {
           const prefix = label ? `${label} ` : "";
@@ -107,6 +111,7 @@ export class BatchTranspiler {
             `Failed to read/parse ${prefix}${filePath}: ${e instanceof Error ? e.message : e}`,
           );
         }
+        return false;
       }
     };
 
@@ -176,8 +181,9 @@ export class BatchTranspiler {
           !fileSet.has(reachableFile) &&
           isTranspilableSource(reachableFile)
         ) {
-          parseAndRegisterFile(reachableFile, "external dependency");
-          externalFileCount++;
+          if (parseAndRegisterFile(reachableFile, "external dependency")) {
+            externalFileCount++;
+          }
         }
       }
     }
