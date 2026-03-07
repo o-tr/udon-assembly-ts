@@ -116,8 +116,9 @@ export class BatchTranspiler {
     };
 
     const transpilableSourceFiles = files.filter(isTranspilableSource);
+    let sourceFileCount = 0;
     for (const filePath of transpilableSourceFiles) {
-      parseAndRegisterFile(filePath);
+      if (parseAndRegisterFile(filePath)) sourceFileCount++;
     }
 
     // Derive entry files from registry instead of discoverEntryFilesUsingTS
@@ -195,10 +196,9 @@ export class BatchTranspiler {
 
     buildExternRegistryFromFiles(cacheFiles);
     if (options?.verbose) {
-      const totalRegisteredFiles =
-        transpilableSourceFiles.length + externalFileCount;
+      const totalRegisteredFiles = sourceFileCount + externalFileCount;
       console.log(
-        `registered ${registry.getAllClasses().length} classes from ${totalRegisteredFiles} files (${transpilableSourceFiles.length} source, ${externalFileCount} external).`,
+        `registered ${registry.getAllClasses().length} classes from ${totalRegisteredFiles} files (${sourceFileCount} source, ${externalFileCount} external).`,
       );
     }
     const changedFiles = this.getChangedFiles(cacheFiles, cache);
