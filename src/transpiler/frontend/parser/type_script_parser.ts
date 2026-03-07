@@ -131,10 +131,6 @@ export class TypeScriptParser {
     return program;
   }
 
-  getImportsForFile(filePath: string): string[] | undefined {
-    return this.importCache.get(filePath);
-  }
-
   /**
    * Get the symbol table
    */

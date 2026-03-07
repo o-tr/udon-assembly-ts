@@ -355,16 +355,14 @@ export class TACOptimizer {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
-    let anyPassChanged = false;
-
     const runAnalysisPasses = (
       current: TACInstruction[],
       runExpensivePasses: boolean,
       iteration: number,
-    ): TACInstruction[] => {
+    ): { instructions: TACInstruction[]; changed: boolean } => {
       let next = current;
       let cachedCFG: CFG | null = null;
-      anyPassChanged = false;
+      let anyPassChanged = false;
 
       const run = (result: PassResult): void => {
         next = result.instructions;
@@ -429,9 +427,11 @@ export class TACOptimizer {
             ssaDecon.changed
           ) {
             anyPassChanged = true;
-            cachedCFG = null;
           }
           next = ssaDecon.instructions;
+          // Always invalidate: SSA construction/deconstruction restructures
+          // instructions even when individual passes report no semantic changes.
+          cachedCFG = null;
         }
       }
       // Optimize tail calls (call followed immediately by return)
@@ -473,14 +473,15 @@ export class TACOptimizer {
       run(mergeTails(next));
       // Remove unused labels (preserve externally exposed labels)
       run(eliminateUnusedLabels(next, exposedLabels));
-      return next;
+      return { instructions: next, changed: anyPassChanged };
     };
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const beforeLen = optimized.length;
       const beforeHash = computeFingerprint(optimized);
-      optimized = runAnalysisPasses(optimized, iteration <= 1, iteration);
-      if (!anyPassChanged) {
+      const result = runAnalysisPasses(optimized, iteration <= 1, iteration);
+      optimized = result.instructions;
+      if (!result.changed) {
         break;
       }
       if (
