@@ -420,17 +420,11 @@ export class TACOptimizer {
             useSSA: true,
           });
           const ssaDecon = deconstructSSA(ssaGvn.instructions);
-          if (
-            ssa.changed ||
-            ssaPre.changed ||
-            ssaGvn.changed ||
-            ssaDecon.changed
-          ) {
-            anyPassChanged = true;
-          }
+          // SSA construction/deconstruction always restructures instructions
+          // (phi-node insertion + variable renaming), so mark as changed and
+          // invalidate the CFG regardless of individual pass reports.
+          anyPassChanged = true;
           next = ssaDecon.instructions;
-          // Always invalidate: SSA construction/deconstruction restructures
-          // instructions even when individual passes report no semantic changes.
           cachedCFG = null;
         }
       }
