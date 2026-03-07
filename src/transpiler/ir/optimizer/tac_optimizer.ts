@@ -363,12 +363,21 @@ export class TACOptimizer {
       let next = current;
       let cachedCFG: CFG | null = null;
       let anyPassChanged = false;
+      let prevLen = current.length;
 
       const run = (result: PassResult): void => {
         next = result.instructions;
         if (result.changed) {
-          cachedCFG = null;
           anyPassChanged = true;
+          // Only invalidate CFG if instruction count changed (structural change)
+          // or if the pass explicitly reports a structural change
+          const structural =
+            result.structurallyChanged ??
+            result.instructions.length !== prevLen;
+          if (structural) {
+            cachedCFG = null;
+          }
+          prevLen = result.instructions.length;
         }
       };
 

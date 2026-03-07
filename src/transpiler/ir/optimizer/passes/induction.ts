@@ -14,8 +14,8 @@ import {
 import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
 import {
@@ -73,21 +73,21 @@ export const optimizeInductionVariables = (
     const loopFirstUse = new Map<string, number>();
     for (const index of loopIndices) {
       const inst = instructions[index];
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         const key = livenessKey(op);
         if (key && !loopFirstUse.has(key)) {
           loopFirstUse.set(key, index);
         }
-      }
+      });
     }
 
     const usedOutside = new Set<string>();
     for (let i = 0; i < instructions.length; i++) {
       if (loopIndexSet.has(i)) continue;
-      for (const op of getUsedOperandsForReuse(instructions[i])) {
+      forEachUsedOperand(instructions[i], (op) => {
         const key = livenessKey(op);
         if (key) usedOutside.add(key);
-      }
+      });
     }
 
     const updates = new Map<

@@ -27,8 +27,8 @@ import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   countTempUses,
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
   type InstWithDest,
   type InstWithDestSrc,
   isCopyFromTemp,
@@ -52,10 +52,8 @@ export const copyOnWriteTemporaries = (
   };
 
   for (const inst of instructions) {
-    const used = getUsedOperandsForReuse(inst);
-    for (const operand of used) recordTemp(operand);
-    const defined = getDefinedOperandForReuse(inst);
-    recordTemp(defined);
+    forEachUsedOperand(inst, recordTemp);
+    recordTemp(getDefinedOperandForReuse(inst));
   }
 
   const cfg = options?.cachedCFG ?? buildCFG(instructions);
@@ -552,7 +550,7 @@ export const reuseTemporaries = (
         tempTypes.set(temp.id, typeKey);
       }
     };
-    for (const op of getUsedOperandsForReuse(inst)) collectTemp(op);
+    forEachUsedOperand(inst, collectTemp);
     collectTemp(getDefinedOperandForReuse(inst));
   }
 
@@ -575,12 +573,12 @@ export const reuseTemporaries = (
       const inst = instructions[i];
 
       // Record uses first (before def kills them)
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         if (op.kind === TACOperandKind.Temporary) {
           const id = (op as TemporaryOperand).id;
           if (!def.has(id)) use.add(id);
         }
-      }
+      });
 
       // Then record def
       const defined = getDefinedOperandForReuse(inst);
@@ -690,11 +688,11 @@ export const reuseTemporaries = (
       }
 
       // Add used temps to live set
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         if (op.kind === TACOperandKind.Temporary) {
           live.add((op as TemporaryOperand).id);
         }
-      }
+      });
     }
   }
 
@@ -798,7 +796,7 @@ export const reuseLocalVariables = (
       varTypes.set(name, typeKey);
     };
 
-    for (const op of getUsedOperandsForReuse(inst)) processOperand(op);
+    forEachUsedOperand(inst, processOperand);
     processOperand(getDefinedOperandForReuse(inst));
   }
 
@@ -821,12 +819,12 @@ export const reuseLocalVariables = (
     for (let i = block.start; i <= block.end; i++) {
       const inst = instructions[i];
 
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         if (op.kind === TACOperandKind.Variable) {
           const name = (op as VariableOperand).name;
           if (eligibleVars.has(name) && !def.has(name)) use.add(name);
         }
-      }
+      });
 
       const defined = getDefinedOperandForReuse(inst);
       if (defined?.kind === TACOperandKind.Variable) {
@@ -928,12 +926,12 @@ export const reuseLocalVariables = (
         }
       }
 
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         if (op.kind === TACOperandKind.Variable) {
           const name = (op as VariableOperand).name;
           if (eligibleVars.has(name)) live.add(name);
         }
-      }
+      });
     }
   }
 

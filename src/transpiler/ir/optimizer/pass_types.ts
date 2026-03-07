@@ -5,6 +5,8 @@ import type { BasicBlock } from "./analysis/cfg.js";
 export type PassResult = {
   instructions: TACInstruction[];
   changed: boolean;
+  /** When true, the pass added or removed instructions, invalidating CFG topology. */
+  structurallyChanged?: boolean;
 };
 
 /** The CFG structure as returned by buildCFG. */

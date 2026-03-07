@@ -34,10 +34,20 @@ export const buildCFG = (
   const leaders = new Set<number>();
   leaders.add(0);
 
+  // Track label instructions at leader positions for labelToBlock mapping
+  const labelAtLeader = new Map<number, string[]>();
+
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
     if (inst.kind === TACInstructionKind.Label) {
       leaders.add(i);
+      const labelInst = inst as LabelInstruction;
+      if (labelInst.label.kind === TACOperandKind.Label) {
+        const name = (labelInst.label as LabelOperand).name;
+        const existing = labelAtLeader.get(i);
+        if (existing) existing.push(name);
+        else labelAtLeader.set(i, [name]);
+      }
     }
     if (isBlockTerminator(inst) && i + 1 < instructions.length) {
       leaders.add(i + 1);
@@ -46,6 +56,8 @@ export const buildCFG = (
 
   const sortedLeaders = Array.from(leaders).sort((a, b) => a - b);
   const blocks: BasicBlock[] = [];
+  const labelToBlock = new Map<string, number>();
+
   for (let i = 0; i < sortedLeaders.length; i++) {
     const start = sortedLeaders[i];
     const end =
@@ -53,18 +65,12 @@ export const buildCFG = (
         ? sortedLeaders[i + 1] - 1
         : instructions.length - 1;
     blocks.push({ id: i, start, end, preds: [], succs: [] });
-  }
 
-  const labelToBlock = new Map<string, number>();
-  for (const block of blocks) {
-    for (let i = block.start; i <= block.end; i++) {
-      const inst = instructions[i];
-      if (inst.kind === TACInstructionKind.Label) {
-        const labelInst = inst as LabelInstruction;
-        if (labelInst.label.kind === TACOperandKind.Label) {
-          const label = labelInst.label as LabelOperand;
-          labelToBlock.set(label.name, block.id);
-        }
+    // Map labels at this block's start to the block id
+    const labels = labelAtLeader.get(start);
+    if (labels) {
+      for (const name of labels) {
+        labelToBlock.set(name, i);
       }
     }
   }

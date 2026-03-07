@@ -18,9 +18,9 @@ import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
   getMaxTempId,
-  getUsedOperandsForReuse,
 } from "../utils/instructions.js";
 import { livenessKey, livenessKeyWithSSA } from "../utils/liveness.js";
 import { operandKey, operandKeyWithSSA } from "../utils/operands.js";
@@ -221,7 +221,7 @@ const computeAvailableMaps = (
         if (predMaps.length > 0) {
           const [first, ...rest] = predMaps;
           merged = new Map(first);
-          for (const [key, value] of Array.from(merged.entries())) {
+          for (const [key, value] of merged.entries()) {
             if (rest.some((map) => map.get(key)?.key !== value.key)) {
               merged.delete(key);
             }
@@ -240,7 +240,7 @@ const computeAvailableMaps = (
         const def = getDefinedOperandForReuse(inst);
         const defKey = def ? liveKey(def) : null;
         if (defKey) {
-          for (const key of Array.from(working.keys())) {
+          for (const key of working.keys()) {
             if (key.includes(`|${defKey}|`)) {
               working.delete(key);
             }
@@ -299,7 +299,11 @@ const usesOperandKey = (
   key: string,
   liveKey: (operand: TACOperand | undefined) => string | null,
 ): boolean => {
-  return getUsedOperandsForReuse(inst).some((op) => liveKey(op) === key);
+  let found = false;
+  forEachUsedOperand(inst, (op) => {
+    if (liveKey(op) === key) found = true;
+  });
+  return found;
 };
 
 const definesOperandKey = (
@@ -309,20 +313,6 @@ const definesOperandKey = (
 ): boolean => {
   const def = getDefinedOperandForReuse(inst);
   return !!def && liveKey(def) === key;
-};
-
-const isTempLocalToBlock = (
-  block: { start: number; end: number },
-  instructions: TACInstruction[],
-  tempKey: string,
-  liveKey: (operand: TACOperand | undefined) => string | null,
-): boolean => {
-  for (let i = 0; i < instructions.length; i += 1) {
-    if (i >= block.start && i <= block.end) continue;
-    if (usesOperandKey(instructions[i], tempKey, liveKey)) return false;
-    if (definesOperandKey(instructions[i], tempKey, liveKey)) return false;
-  }
-  return true;
 };
 
 const isOperandAvailableInBlock = (
@@ -381,6 +371,36 @@ export const performPRE = (
   const removeIndices = new Set<number>();
   let nextTempId = getMaxTempId(instructions) + 1;
 
+  // Pre-compute which blocks each operand key appears in (for isTempLocalToBlock)
+  const operandBlocks = new Map<string, Set<number>>();
+  for (const block of cfg.blocks) {
+    for (let i = block.start; i <= block.end; i++) {
+      const inst = instructions[i];
+      forEachUsedOperand(inst, (op) => {
+        const key = liveKey(op);
+        if (!key) return;
+        let set = operandBlocks.get(key);
+        if (!set) {
+          set = new Set();
+          operandBlocks.set(key, set);
+        }
+        set.add(block.id);
+      });
+      const def = getDefinedOperandForReuse(inst);
+      if (def) {
+        const key = liveKey(def);
+        if (key) {
+          let set = operandBlocks.get(key);
+          if (!set) {
+            set = new Set();
+            operandBlocks.set(key, set);
+          }
+          set.add(block.id);
+        }
+      }
+    }
+  }
+
   for (const block of cfg.blocks) {
     const inMap = inMaps.get(block.id) ?? new Map();
     for (let i = block.start; i <= block.end; i += 1) {
@@ -403,7 +423,10 @@ export const performPRE = (
         }
       }
       if (usedBefore) continue;
-      if (!isTempLocalToBlock(block, instructions, destKey, liveKey)) continue;
+      // Check if the temp is only used/defined within this block
+      const tempBlocks = operandBlocks.get(destKey);
+      if (tempBlocks && (tempBlocks.size > 1 || !tempBlocks.has(block.id)))
+        continue;
 
       const exprOps = getExprOperands(inst);
 

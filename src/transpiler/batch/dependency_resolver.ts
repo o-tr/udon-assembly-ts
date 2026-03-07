@@ -16,6 +16,7 @@ export class DependencyResolver {
   private allowCircular: boolean;
   private sharedImportCache: Map<string, string[]> | null = null;
   private localImportCache: Map<string, string[]> = new Map();
+  private resolveCache = new Map<string, string | null>();
 
   constructor(
     projectRoot: string = process.cwd(),
@@ -38,6 +39,7 @@ export class DependencyResolver {
   clearCache(): void {
     this.graphCache.clear();
     this.localImportCache.clear();
+    this.resolveCache.clear();
   }
 
   /**
@@ -70,11 +72,10 @@ export class DependencyResolver {
     this.graph = new Map();
     this.visiting.clear();
     this.visitFile(normalized);
-    const result = new Map(
-      Array.from(this.graph.entries()).map(
-        ([k, v]) => [k, new Set(v)] as [string, Set<string>],
-      ),
-    );
+    const result: DependencyGraph = new Map();
+    for (const [k, v] of this.graph) {
+      result.set(k, new Set(v));
+    }
     this.graphCache.set(normalized, result);
     return result;
   }
@@ -121,17 +122,17 @@ export class DependencyResolver {
     if (shared) return shared;
 
     const sourceText = fs.readFileSync(filePath, "utf8");
-    const sourceFile = ts.createSourceFile(
-      filePath,
-      sourceText,
-      ts.ScriptTarget.ES2020,
-      true,
-    );
     const moduleTexts: string[] = [];
-    for (const stmt of sourceFile.statements) {
-      if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) continue;
-      if (!ts.isStringLiteralLike(stmt.moduleSpecifier)) continue;
-      moduleTexts.push(stmt.moduleSpecifier.text);
+    // Match both `import ... from "mod"` and side-effect `import "mod"` forms.
+    // The trailing `(?:\s*\/\/.*)?` allows an optional single-line comment.
+    const importFromRe =
+      /^\s*import\s+(?:type\s+)?(?:[\s\S]*?)\s+from\s+["']([^"']+)["'];?(?:\s*\/\/.*)?$/gm;
+    const sideEffectRe = /^\s*import\s+["']([^"']+)["'];?(?:\s*\/\/.*)?$/gm;
+    for (const match of sourceText.matchAll(importFromRe)) {
+      moduleTexts.push(match[1]);
+    }
+    for (const match of sourceText.matchAll(sideEffectRe)) {
+      moduleTexts.push(match[1]);
     }
     this.localImportCache.set(filePath, moduleTexts);
     return moduleTexts;
@@ -162,6 +163,19 @@ export class DependencyResolver {
   }
 
   private resolveModule(fromFile: string, modulePath: string): string | null {
+    const cacheKey = `${fromFile}\0${modulePath}`;
+    if (this.resolveCache.has(cacheKey)) {
+      return this.resolveCache.get(cacheKey) ?? null;
+    }
+    const result = this.resolveModuleUncached(fromFile, modulePath);
+    this.resolveCache.set(cacheKey, result);
+    return result;
+  }
+
+  private resolveModuleUncached(
+    fromFile: string,
+    modulePath: string,
+  ): string | null {
     if (!modulePath.startsWith(".")) {
       const resolved = ts.resolveModuleName(
         modulePath,
