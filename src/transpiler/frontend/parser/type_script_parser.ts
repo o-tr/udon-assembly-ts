@@ -156,6 +156,10 @@ export class TypeScriptParser {
     return this.enumRegistry;
   }
 
+  /**
+   * Returns the live import cache shared with {@link DependencyResolver}.
+   * Consumers may add entries but must not replace the Map instance.
+   */
   getImportCache(): Map<string, string[]> {
     return this.importCache;
   }
