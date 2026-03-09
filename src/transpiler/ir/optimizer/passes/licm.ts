@@ -448,5 +448,5 @@ export const performLICM = (
     result.push(...tailInserts);
   }
 
-  return { instructions: result, changed: true };
+  return { instructions: result, changed: true, structurallyChanged: true };
 };

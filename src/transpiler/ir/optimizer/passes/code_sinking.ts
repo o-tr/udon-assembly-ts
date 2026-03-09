@@ -232,5 +232,5 @@ export const sinkCode = (
     result.push(instructions[i]);
   }
 
-  return { instructions: result, changed: true };
+  return { instructions: result, changed: true, structurallyChanged: true };
 };
