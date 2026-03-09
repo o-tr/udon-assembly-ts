@@ -953,11 +953,12 @@ export const sccpAndPrune = (
   }
 
   // Detect if unreachable blocks were pruned
-  if (result.length !== instructions.length) didChange = true;
+  const prunedUnreachable = result.length !== instructions.length;
+  if (prunedUnreachable) didChange = true;
 
   return {
     instructions: result,
     changed: didChange,
-    structurallyChanged: jumpTopologyChanged || undefined,
+    structurallyChanged: jumpTopologyChanged || prunedUnreachable || undefined,
   };
 };

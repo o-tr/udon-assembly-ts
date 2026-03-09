@@ -57,6 +57,7 @@ export class DependencyResolver {
     }
     this.graphCache.delete(normalized);
     this.localImportCache.delete(normalized);
+    this.resolveCache.clear();
   }
 
   getCompilationOrder(entryPoint: string): string[] {
@@ -123,16 +124,41 @@ export class DependencyResolver {
 
     const sourceText = fs.readFileSync(filePath, "utf8");
     const moduleTexts: string[] = [];
-    // Match both `import ... from "mod"` and side-effect `import "mod"` forms.
-    // The trailing `(?:\s*\/\/.*)?` allows an optional single-line comment.
-    const importFromRe =
-      /^\s*import\s+(?:type\s+)?(?:[\s\S]*?)\s+from\s+["']([^"']+)["'];?(?:\s*\/\/.*)?$/gm;
-    const sideEffectRe = /^\s*import\s+["']([^"']+)["'];?(?:\s*\/\/.*)?$/gm;
-    for (const match of sourceText.matchAll(importFromRe)) {
-      moduleTexts.push(match[1]);
-    }
-    for (const match of sourceText.matchAll(sideEffectRe)) {
-      moduleTexts.push(match[1]);
+    // Use ts.createScanner for token-level scanning: much faster than
+    // ts.createSourceFile (no full AST) and safe from false positives
+    // in string/template literals unlike regex-based approaches.
+    const scanner = ts.createScanner(
+      ts.ScriptTarget.ES2020,
+      true,
+      undefined,
+      sourceText,
+    );
+    let token = scanner.scan();
+    while (token !== ts.SyntaxKind.EndOfFileToken) {
+      if (token === ts.SyntaxKind.ImportKeyword) {
+        token = scanner.scan();
+        // Side-effect import: import "path"
+        if (token === ts.SyntaxKind.StringLiteral) {
+          moduleTexts.push(scanner.getTokenValue());
+          token = scanner.scan();
+          continue;
+        }
+        // Skip tokens until `from` keyword or statement end
+        while (
+          token !== ts.SyntaxKind.EndOfFileToken &&
+          token !== ts.SyntaxKind.FromKeyword &&
+          token !== ts.SyntaxKind.SemicolonToken
+        ) {
+          token = scanner.scan();
+        }
+        if (token === ts.SyntaxKind.FromKeyword) {
+          token = scanner.scan();
+          if (token === ts.SyntaxKind.StringLiteral) {
+            moduleTexts.push(scanner.getTokenValue());
+          }
+        }
+      }
+      token = scanner.scan();
     }
     this.localImportCache.set(filePath, moduleTexts);
     return moduleTexts;

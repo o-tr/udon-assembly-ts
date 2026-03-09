@@ -401,6 +401,7 @@ export const performLICM = (
 
       let allInvariant = true;
       forEachUsedOperand(inst, (op) => {
+        if (!allInvariant) return;
         const key = livenessKey(op);
         if (key && loopDefKeys.has(key)) allInvariant = false;
       });
