@@ -301,6 +301,7 @@ const usesOperandKey = (
 ): boolean => {
   let found = false;
   forEachUsedOperand(inst, (op) => {
+    if (found) return;
     if (liveKey(op) === key) found = true;
   });
   return found;

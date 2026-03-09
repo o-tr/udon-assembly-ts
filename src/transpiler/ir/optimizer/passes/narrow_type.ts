@@ -145,6 +145,7 @@ export const narrowTypes = (instructions: TACInstruction[]): PassResult => {
     for (const inst of instructions) {
       let usesCandidate = false;
       forEachUsedOperand(inst, (op) => {
+        if (usesCandidate) return;
         if (livenessKey(op) === destKey) usesCandidate = true;
       });
       if (!usesCandidate) continue;
