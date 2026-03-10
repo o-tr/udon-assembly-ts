@@ -14,8 +14,8 @@ import {
 } from "../../tac_operand.js";
 import type { PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
   rewriteOperands,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
@@ -143,8 +143,11 @@ export const narrowTypes = (instructions: TACInstruction[]): PassResult => {
     if (!range) continue;
 
     for (const inst of instructions) {
-      const usedOps = getUsedOperandsForReuse(inst);
-      const usesCandidate = usedOps.some((op) => livenessKey(op) === destKey);
+      let usesCandidate = false;
+      forEachUsedOperand(inst, (op) => {
+        if (usesCandidate) return;
+        if (livenessKey(op) === destKey) usesCandidate = true;
+      });
       if (!usesCandidate) continue;
       hasUses = true;
 

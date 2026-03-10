@@ -151,9 +151,11 @@ export const simplifyJumps = (instructions: TACInstruction[]): PassResult => {
   }
 
   const merged = mergeLinearBlocks(result);
+  const didChange = changed || merged.changed;
   return {
     instructions: merged.instructions,
-    changed: changed || merged.changed,
+    changed: didChange,
+    structurallyChanged: didChange || undefined,
   };
 };
 

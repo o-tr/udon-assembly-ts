@@ -3,8 +3,8 @@ import type { BasicBlock } from "../analysis/cfg.js";
 import { buildCFG, isBlockTerminator } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
   isPureProducer,
 } from "../utils/instructions.js";
 import { livenessKey } from "../utils/liveness.js";
@@ -285,11 +285,11 @@ const orderHoistedByDeps = (
     progress = false;
     for (let i = 0; i < remaining.length; ) {
       const inst = remaining[i];
-      const deps = new Set(
-        getUsedOperandsForReuse(inst)
-          .map((op) => livenessKey(op))
-          .filter((key): key is string => !!key && defKeySet.has(key)),
-      );
+      const deps = new Set<string>();
+      forEachUsedOperand(inst, (op) => {
+        const key = livenessKey(op);
+        if (key && defKeySet.has(key)) deps.add(key);
+      });
       let ready = true;
       for (const dep of deps) {
         if (!defined.has(dep)) {
@@ -358,23 +358,23 @@ export const performLICM = (
     const useBeforeDef = new Map<string, number>();
     for (const index of loopIndices) {
       const inst = instructions[index];
-      for (const op of getUsedOperandsForReuse(inst)) {
+      forEachUsedOperand(inst, (op) => {
         const key = livenessKey(op);
-        if (!key) continue;
+        if (!key) return;
         const existing = useBeforeDef.get(key);
         if (existing === undefined || index < existing) {
           useBeforeDef.set(key, index);
         }
-      }
+      });
     }
 
     const usedOutside = new Set<string>();
     for (let i = 0; i < instructions.length; i++) {
       if (loopIndexSet.has(i)) continue;
-      for (const op of getUsedOperandsForReuse(instructions[i])) {
+      forEachUsedOperand(instructions[i], (op) => {
         const key = livenessKey(op);
         if (key) usedOutside.add(key);
-      }
+      });
     }
 
     const candidates: Array<{ index: number; inst: TACInstruction }> = [];
@@ -399,11 +399,11 @@ export const performLICM = (
       }
       if (!dominatesLoop) continue;
 
-      const operands = getUsedOperandsForReuse(inst);
-      const allInvariant = operands.every((op) => {
+      let allInvariant = true;
+      forEachUsedOperand(inst, (op) => {
+        if (!allInvariant) return;
         const key = livenessKey(op);
-        if (!key) return true;
-        return !loopDefKeys.has(key);
+        if (key && loopDefKeys.has(key)) allInvariant = false;
       });
       if (!allInvariant) continue;
       candidates.push({ index, inst });
@@ -448,5 +448,5 @@ export const performLICM = (
     result.push(...tailInserts);
   }
 
-  return { instructions: result, changed: true };
+  return { instructions: result, changed: true, structurallyChanged: true };
 };

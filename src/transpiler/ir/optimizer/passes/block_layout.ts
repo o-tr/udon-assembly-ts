@@ -187,8 +187,10 @@ export const optimizeBlockLayout = (
     }
   }
 
+  const didChange = result.some((inst, i) => inst !== instructions[i]);
   return {
     instructions: result,
-    changed: result.some((inst, i) => inst !== instructions[i]),
+    changed: didChange,
+    structurallyChanged: didChange || undefined,
   };
 };

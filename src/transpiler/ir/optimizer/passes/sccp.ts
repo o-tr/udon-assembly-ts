@@ -28,8 +28,8 @@ import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
+  forEachUsedOperand,
   getDefinedOperandForReuse,
-  getUsedOperandsForReuse,
   type InstWithDestSrc,
 } from "../utils/instructions.js";
 import { isTruthyConstant } from "./boolean_simplification.js";
@@ -749,11 +749,11 @@ export const sccpAndPrune = (
     if (defined && defined.kind === TACOperandKind.Variable) {
       varIds.register((defined as VariableOperand).name);
     }
-    for (const op of getUsedOperandsForReuse(inst)) {
+    forEachUsedOperand(inst, (op) => {
       if (op.kind === TACOperandKind.Variable) {
         varIds.register((op as VariableOperand).name);
       }
-    }
+    });
   }
   const numVars = varIds.size;
 
@@ -775,12 +775,12 @@ export const sccpAndPrune = (
   for (const block of cfg.blocks) {
     const usedInBlock = new Set<number>();
     for (let i = block.start; i <= block.end; i++) {
-      for (const op of getUsedOperandsForReuse(instructions[i])) {
+      forEachUsedOperand(instructions[i], (op) => {
         if (op.kind === TACOperandKind.Variable) {
           const id = varIds.tryGetId((op as VariableOperand).name);
           if (id !== -1) usedInBlock.add(id);
         }
-      }
+      });
     }
     for (const varId of usedInBlock) {
       varUseBlocks[varId].push(block.id);
@@ -831,7 +831,8 @@ export const sccpAndPrune = (
     // Prevent unbounded queue growth: periodically compact the array-backed
     // queue when the head advances far enough.
     if (qHead > WORKLIST_COMPACT_THRESHOLD) {
-      queue.splice(0, qHead);
+      queue.copyWithin(0, qHead);
+      queue.length -= qHead;
       qHead = 0;
     }
 
@@ -911,6 +912,7 @@ export const sccpAndPrune = (
   // Emission: replace operands and fold branches using converged global lattice
   const result: TACInstruction[] = [];
   let didChange = false;
+  let jumpTopologyChanged = false;
   for (const block of cfg.blocks) {
     if (!reachable[block.id]) continue;
     localLattice.resetFrom(globalKinds, globalPayloads);
@@ -934,9 +936,11 @@ export const sccpAndPrune = (
         if (truthy === false) {
           result.push(new UnconditionalJumpInstruction(condInst.label));
           didChange = true;
+          jumpTopologyChanged = true;
         } else if (truthy === true) {
           // Always true; skip conditional jump (fallthrough).
           didChange = true;
+          jumpTopologyChanged = true;
         } else {
           result.push(inst);
         }
@@ -949,7 +953,12 @@ export const sccpAndPrune = (
   }
 
   // Detect if unreachable blocks were pruned
-  if (result.length !== instructions.length) didChange = true;
+  const prunedUnreachable = result.length !== instructions.length;
+  if (prunedUnreachable) didChange = true;
 
-  return { instructions: result, changed: didChange };
+  return {
+    instructions: result,
+    changed: didChange,
+    structurallyChanged: jumpTopologyChanged || prunedUnreachable || undefined,
+  };
 };
