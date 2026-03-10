@@ -143,12 +143,16 @@ export class DependencyResolver {
           token = scanner.scan();
           continue;
         }
-        // Skip tokens until `from` keyword or statement end
+        // Skip tokens until `from` keyword at brace depth 0, or statement end
+        let braceDepth = 0;
         while (
           token !== ts.SyntaxKind.EndOfFileToken &&
-          token !== ts.SyntaxKind.FromKeyword &&
           token !== ts.SyntaxKind.SemicolonToken
         ) {
+          if (token === ts.SyntaxKind.OpenBraceToken) braceDepth++;
+          else if (token === ts.SyntaxKind.CloseBraceToken) braceDepth--;
+          else if (token === ts.SyntaxKind.FromKeyword && braceDepth === 0)
+            break;
           token = scanner.scan();
         }
         if (token === ts.SyntaxKind.FromKeyword) {
