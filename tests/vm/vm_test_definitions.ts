@@ -226,4 +226,141 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "data_dictionary.ts",
     expectedLogs: ["set 2 values", "True", "False"],
   },
+  // --- Object literal → DataDictionary conversion ---
+  {
+    name: "object_literal_basic",
+    sourceFile: "object_literal_basic.ts",
+    expectedLogs: ["Alice", "30", "True"],
+  },
+  {
+    name: "object_literal_spread",
+    sourceFile: "object_literal_spread.ts",
+    expectedLogs: ["Alice", "30", "NYC", "3"],
+  },
+  {
+    name: "object_literal_nested",
+    sourceFile: "object_literal_nested.ts",
+    expectedLogs: ["True", "hello"],
+  },
+  // --- Array literal → DataList conversion ---
+  {
+    name: "array_literal_basic",
+    sourceFile: "array_literal_basic.ts",
+    expectedLogs: ["3", "10", "30"],
+  },
+  {
+    name: "array_literal_iteration",
+    sourceFile: "array_literal_iteration.ts",
+    expectedLogs: ["10", "20", "30", "60"],
+  },
+  // --- DataList / DataDictionary deep operations ---
+  {
+    name: "data_list_operations",
+    sourceFile: "data_list_operations.ts",
+    expectedLogs: ["3", "20", "True", "2", "10"],
+  },
+  {
+    name: "data_dictionary_operations",
+    sourceFile: "data_dictionary_operations.ts",
+    expectedLogs: ["Alice", "2", "True", "1", "False"],
+  },
+  {
+    name: "data_dictionary_getkeys",
+    sourceFile: "data_dictionary_getkeys.ts",
+    expectedLogs: ["2", "2"],
+  },
+  {
+    name: "data_dictionary_shallow_clone",
+    sourceFile: "data_dictionary_shallow_clone.ts",
+    expectedLogs: ["Alice", "Alice", "Bob", "Alice"],
+  },
+  // --- Method inlining edge cases ---
+  {
+    name: "inline_cross_method_call",
+    sourceFile: "inline_cross_method_call.ts",
+    expectedLogs: ["15", "25"],
+  },
+  {
+    name: "inline_multiple_returns",
+    sourceFile: "inline_multiple_returns.ts",
+    expectedLogs: ["negative", "zero", "positive"],
+  },
+  {
+    name: "inline_state_read_after_write",
+    sourceFile: "inline_state_read_after_write.ts",
+    expectedLogs: ["5", "15", "20"],
+  },
+  {
+    name: "inline_as_parameter",
+    sourceFile: "inline_as_parameter.ts",
+    expectedLogs: ["42"],
+  },
+  // --- Recursive functions ---
+  {
+    name: "recursive_factorial",
+    sourceFile: "recursive_factorial.ts",
+    expectedLogs: ["1", "1", "6", "120"],
+  },
+  {
+    name: "recursive_with_locals",
+    sourceFile: "recursive_with_locals.ts",
+    expectedLogs: ["55"],
+  },
+  {
+    name: "recursive_fibonacci",
+    sourceFile: "recursive_fibonacci.ts",
+    expectedLogs: ["0", "1", "8", "55"],
+  },
+  // --- For-of iteration ---
+  {
+    name: "for_of_data_list",
+    sourceFile: "for_of_data_list.ts",
+    expectedLogs: ["10", "20", "30", "60"],
+  },
+  {
+    name: "for_of_array",
+    sourceFile: "for_of_array.ts",
+    expectedLogs: ["1", "2", "3", "6"],
+  },
+  // --- Type coercion & edge cases ---
+  {
+    name: "type_coercion_int_float",
+    sourceFile: "type_coercion_int_float.ts",
+    expectedLogs: ["3.14", "6.28", "3", "7"],
+  },
+  {
+    name: "type_coercion_string_number",
+    sourceFile: "type_coercion_string_number.ts",
+    expectedLogs: ["42", "The answer is 42", "100"],
+  },
+  {
+    name: "optional_chaining",
+    sourceFile: "optional_chaining.ts",
+    expectedLogs: ["hello", "fallback"],
+  },
+  {
+    name: "try_catch_error",
+    sourceFile: "try_catch_error.ts",
+    expectedLogs: ["before", "caught", "after"],
+  },
+  {
+    name: "try_catch_basic",
+    sourceFile: "try_catch_basic.ts",
+    expectedLogs: ["before", "after"],
+  },
+  {
+    name: "boolean_to_string_format",
+    sourceFile: "boolean_to_string_format.ts",
+    expectedLogs: ["True", "False", "True", "False"],
+  },
+  {
+    name: "negative_numbers",
+    sourceFile: "negative_numbers.ts",
+    expectedLogs: ["-5", "-10", "5", "-1"],
+  },
+  {
+    name: "cast_as_expression",
+    sourceFile: "cast_as_expression.ts",
+    expectedLogs: ["42", "hello"],
+  },
 ];
