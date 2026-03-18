@@ -18,10 +18,14 @@ class Wrapper {
 export class OptionalChaining extends UdonSharpBehaviour {
   private wrapper: Wrapper = new Wrapper("hello");
 
+  getNullable(): string | null {
+    return null;
+  }
+
   Start(): void {
     const result: string = this.wrapper?.getValue() ?? "default";
     Debug.Log(result);
-    const nullStr: string = (null as unknown as string) ?? "fallback";
+    const nullStr: string = this.getNullable() ?? "fallback";
     Debug.Log(nullStr);
   }
 }
