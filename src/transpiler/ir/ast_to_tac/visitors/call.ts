@@ -1316,6 +1316,17 @@ export function visitCallExpression(
       }
     }
 
+    if (!resolvedReturnType) {
+      const externSig = this.resolveStaticExtern(
+        objectType.name,
+        propAccess.property,
+        "method",
+      );
+      if (externSig) {
+        resolvedReturnType = resolveExternReturnType(externSig);
+      }
+    }
+
     if (resolvedReturnType === PrimitiveTypes.void) {
       this.instructions.push(
         new MethodCallInstruction(
