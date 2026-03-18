@@ -13,7 +13,7 @@ export class OptionalChaining extends UdonSharpBehaviour {
   }
 
   Start(): void {
-    // Test ?. + ?? where left side is non-null
+    // Test ?? where left side is non-null (getNonNull() returns "hello")
     const result: string = this.getNonNull() ?? "default";
     Debug.Log(result);
     // Test ?? where left side is null
