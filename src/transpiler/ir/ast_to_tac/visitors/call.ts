@@ -2322,6 +2322,14 @@ const resolveExternReturnType = (externSig: string): TypeSymbol | null => {
         return null;
     }
   }
+  switch (returnToken) {
+    case "VRCSDK3DataDataToken":
+      return ExternTypes.dataToken;
+    case "VRCSDK3DataDataList":
+      return ExternTypes.dataList;
+    case "VRCSDK3DataDataDictionary":
+      return ExternTypes.dataDictionary;
+  }
   return null;
 };
 

@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 
 describe("collections support", () => {
@@ -351,6 +352,27 @@ describe("collections support", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it("GetValue/get_Item result variables are typed as VRCSDK3DataDataToken, not SystemObject", () => {
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const source = `
+      class Demo {
+        Start(): void {
+          const d: DataDictionary = new DataDictionary();
+          d.SetValue(new DataToken("k"), new DataToken("v"));
+          const val: DataToken = d.GetValue(new DataToken("k"));
+          const list: DataList = new DataList();
+          list.Add(new DataToken(1));
+          const item: DataToken = list.get_Item(0 as UdonInt);
+        }
+      }
+    `;
+    const result = transpiler.transpile(source);
+    const dataSection = result.uasm.split(".code_start")[0];
+    // Temporary variables holding GetValue/get_Item results must be DataToken, not SystemObject
+    expect(dataSection).not.toMatch(/__t\d+: %SystemObject/);
+    expect(dataSection).toMatch(/__t\d+: %VRCSDK3DataDataToken/);
   });
 
   it("Array.from(DataList) produces a copy with ctor and Add", () => {
