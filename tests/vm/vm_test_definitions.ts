@@ -339,6 +339,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["hello", "fallback"],
   },
   {
+    name: "try_catch_error",
+    sourceFile: "try_catch_error.ts",
+    expectedLogs: ["before", "caught", "after"],
+  },
+  {
     name: "try_catch_basic",
     sourceFile: "try_catch_basic.ts",
     expectedLogs: ["before", "after"],
