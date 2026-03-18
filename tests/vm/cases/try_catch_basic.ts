@@ -8,7 +8,7 @@ export class TryCatchBasic extends UdonSharpBehaviour {
     try {
       Debug.Log("before");
       Debug.Log("after");
-    } catch (e) {
+    } catch (_e) {
       Debug.Log("error");
     }
   }

@@ -1,5 +1,5 @@
 import {
-  DataDictionary,
+  type DataDictionary,
   DataToken,
 } from "@ootr/udon-assembly-ts/stubs/DataContainerTypes";
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";

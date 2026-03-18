@@ -1,6 +1,6 @@
 import {
   DataDictionary,
-  DataList,
+  type DataList,
   DataToken,
 } from "@ootr/udon-assembly-ts/stubs/DataContainerTypes";
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";

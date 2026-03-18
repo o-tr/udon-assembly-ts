@@ -1,4 +1,4 @@
-import {
+import type {
   DataList,
   DataToken,
 } from "@ootr/udon-assembly-ts/stubs/DataContainerTypes";

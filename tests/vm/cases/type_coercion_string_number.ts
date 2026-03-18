@@ -7,7 +7,7 @@ export class TypeCoercionStringNumber extends UdonSharpBehaviour {
   Start(): void {
     const num: number = 42;
     Debug.Log(num);
-    const msg: string = "The answer is " + num;
+    const msg: string = `The answer is ${num}`;
     Debug.Log(msg);
     const big: number = 100;
     Debug.Log(big);
