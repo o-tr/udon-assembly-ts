@@ -284,6 +284,34 @@ export function mapCSharpTypeToTypeSymbol(
       return ExternTypes.dataList;
     case "VRC.SDK3.Data.DataDictionary":
       return ExternTypes.dataDictionary;
+    case "UnityEngine.Vector2":
+      return ExternTypes.vector2;
+    case "UnityEngine.Vector3":
+      return ExternTypes.vector3;
+    case "UnityEngine.Vector4":
+      return ExternTypes.vector4;
+    case "UnityEngine.Quaternion":
+      return ExternTypes.quaternion;
+    case "UnityEngine.Color":
+      return ExternTypes.color;
+    case "UnityEngine.Transform":
+      return ExternTypes.transform;
+    case "UnityEngine.GameObject":
+      return ExternTypes.gameObject;
+    case "UnityEngine.AudioSource":
+      return ExternTypes.audioSource;
+    case "UnityEngine.AudioClip":
+      return ExternTypes.audioClip;
+    case "UnityEngine.Animator":
+      return ExternTypes.animator;
+    case "UnityEngine.Component":
+      return ExternTypes.component;
+    case "System.Type":
+      return ExternTypes.systemType;
+    case "VRC.SDKBase.VRCPlayerApi":
+      return ExternTypes.vrcPlayerApi;
+    case "VRC.Udon.UdonBehaviour":
+      return ExternTypes.udonBehaviour;
     default:
       return null;
   }

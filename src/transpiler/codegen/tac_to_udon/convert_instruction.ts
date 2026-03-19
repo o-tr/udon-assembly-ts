@@ -117,6 +117,20 @@ export function convertInstruction(
         } else {
           this.pushOperand(binInst.right);
         }
+      } else if (isShift && rightType !== "Int32") {
+        // Shift operators require Int32 right operand; coerce if needed
+        this.pushOperand(binInst.left);
+        const shiftTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(shiftTmpName, this.nextAddress++);
+        this.variableTypes.set(shiftTmpName, "Int32");
+        this.pushOperand(binInst.right);
+        this.instructions.push(new PushInstruction(shiftTmpName));
+        const shiftSig = this.getConvertExternSignature(rightType, "Int32");
+        this.externSignatures.add(shiftSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(shiftSig), true),
+        );
+        this.instructions.push(new PushInstruction(shiftTmpName));
       } else {
         this.pushOperand(binInst.left);
         this.pushOperand(binInst.right);
