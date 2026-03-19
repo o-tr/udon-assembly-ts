@@ -6,6 +6,7 @@ import {
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  mapCSharpTypeToTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -42,6 +43,7 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
@@ -102,6 +104,15 @@ function resolvePropertyTypeFromType(
     (candidate) => candidate.name === property,
   );
   if (prop) return prop.type;
+
+  // Consult type metadata registry for extern/stub types (e.g. DataToken, DataList)
+  const metadata = typeMetadataRegistry.getMemberMetadata(
+    baseType.name,
+    property,
+  );
+  if (metadata && metadata.kind === "property") {
+    return mapCSharpTypeToTypeSymbol(metadata.returnCsharpType);
+  }
 
   return null;
 }
@@ -1441,6 +1452,19 @@ export function visitOptionalChainingExpression(
   return result;
 }
 
+const NUMERIC_UDON_TYPES = new Set([
+  UdonType.Byte,
+  UdonType.SByte,
+  UdonType.Int16,
+  UdonType.UInt16,
+  UdonType.Int32,
+  UdonType.UInt32,
+  UdonType.Int64,
+  UdonType.UInt64,
+  UdonType.Single,
+  UdonType.Double,
+]);
+
 export function visitAsExpression(
   this: ASTToTACConverter,
   node: AsExpressionNode,
@@ -1452,7 +1476,18 @@ export function visitAsExpression(
   }
   const targetTypeSymbol = this.typeMapper.mapTypeScriptType(targetTypeText);
   const result = this.newTemp(targetTypeSymbol);
-  this.instructions.push(new CopyInstruction(result, operand));
+  const srcType = this.getOperandType(operand);
+  // Use CastInstruction for numeric type conversions (e.g. float→int);
+  // use COPY for same-type or reference-type casts.
+  if (
+    srcType.udonType !== targetTypeSymbol.udonType &&
+    NUMERIC_UDON_TYPES.has(srcType.udonType) &&
+    NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType)
+  ) {
+    this.instructions.push(new CastInstruction(result, operand));
+  } else {
+    this.instructions.push(new CopyInstruction(result, operand));
+  }
   return result;
 }
 

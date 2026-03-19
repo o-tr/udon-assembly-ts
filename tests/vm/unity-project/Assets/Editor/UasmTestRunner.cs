@@ -153,13 +153,18 @@ public static class UasmTestRunner
         };
 
         var capturedLogs = new List<string>();
+        var capturedErrors = new List<string>();
 
-        // Log capture handler - only capture LogType.Log, exclude our own messages
+        // Log capture handler - capture LogType.Log and errors for diagnostics
         Application.LogCallback logHandler = (message, stackTrace, type) =>
         {
             if (type == LogType.Log && !message.StartsWith("[UasmTestRunner]"))
             {
                 capturedLogs.Add(message);
+            }
+            else if (type == LogType.Error || type == LogType.Exception || type == LogType.Warning)
+            {
+                capturedErrors.Add($"[{type}] {message}");
             }
         };
 
@@ -247,7 +252,7 @@ public static class UasmTestRunner
                         result.error = $"Expected error: VM returned {execResult}";
                         return result;
                     }
-                    result.error = $"VM execution returned non-zero: {execResult}";
+                    result.error = $"VM execution returned non-zero: {execResult}{FormatVmErrors(capturedErrors)}";
                     result.capturedLogs = capturedLogs.ToArray();
                     return result;
                 }
@@ -269,7 +274,7 @@ public static class UasmTestRunner
             // Compare logs
             if (capturedLogs.Count != result.expectedLogs.Length)
             {
-                result.error = $"Log count mismatch: expected {result.expectedLogs.Length}, got {capturedLogs.Count}";
+                result.error = $"Log count mismatch: expected {result.expectedLogs.Length}, got {capturedLogs.Count}{FormatVmErrors(capturedErrors)}";
                 return result;
             }
 
@@ -277,7 +282,7 @@ public static class UasmTestRunner
             {
                 if (capturedLogs[i] != result.expectedLogs[i])
                 {
-                    result.error = $"Log[{i}]: expected '{result.expectedLogs[i]}', got '{capturedLogs[i]}'";
+                    result.error = $"Log[{i}]: expected '{result.expectedLogs[i]}', got '{capturedLogs[i]}'{FormatVmErrors(capturedErrors)}";
                     return result;
                 }
             }
@@ -286,17 +291,25 @@ public static class UasmTestRunner
         }
         catch (Exception e)
         {
+            var errorSuffix = FormatVmErrors(capturedErrors);
             if (testDef.expectError)
             {
                 result.passed = true;
-                result.error = $"Expected error: {e.GetType().Name}: {e.Message}";
+                result.error = $"Expected error: {e.GetType().Name}: {e.Message}{errorSuffix}";
                 result.capturedLogs = capturedLogs.ToArray();
                 return result;
             }
-            result.error = $"{e.GetType().Name}: {e.Message}\n{e.StackTrace}";
+            result.error = $"{e.GetType().Name}: {e.Message}\n{e.StackTrace}{errorSuffix}";
             result.capturedLogs = capturedLogs.ToArray();
         }
 
         return result;
+    }
+
+    private static string FormatVmErrors(List<string> capturedErrors)
+    {
+        return capturedErrors.Count > 0
+            ? "\nVM diagnostics:\n" + string.Join("\n", capturedErrors)
+            : "";
     }
 }

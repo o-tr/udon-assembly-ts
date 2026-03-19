@@ -294,7 +294,7 @@ describe("collections support", () => {
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDK3DataDataDictionary.__GetValue__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+          "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
         ),
       ),
     ).toBe(true);

@@ -1,4 +1,6 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
+import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
+import { mapTypeScriptToCSharp } from "../../../codegen/udon_type_resolver.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -6,6 +8,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  mapCSharpTypeToTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -1312,6 +1315,65 @@ export function visitCallExpression(
           resolvedReturnType = this.typeMapper.mapTypeScriptType(
             method.returnType,
           );
+        }
+      }
+    }
+
+    // Consult type metadata registry for extern/stub types (overload-aware)
+    if (!resolvedReturnType) {
+      const overloads = typeMetadataRegistry.getMemberOverloads(
+        objectType.name,
+        propAccess.property,
+      );
+      if (
+        overloads.length === 1 &&
+        overloads[0].paramCsharpTypes.length === evaluatedArgs.length
+      ) {
+        resolvedReturnType =
+          mapCSharpTypeToTypeSymbol(overloads[0].returnCsharpType) ?? null;
+      } else if (overloads.length > 1) {
+        const mappedArgTypes = evaluatedArgs.map((arg) =>
+          mapTypeScriptToCSharp(this.getOperandType(arg).name),
+        );
+        let bestScore = -1;
+        let bestMeta: (typeof overloads)[number] | undefined;
+        for (const member of overloads) {
+          if (member.paramCsharpTypes.length !== mappedArgTypes.length)
+            continue;
+          let score = 0;
+          let matched = true;
+          for (let i = 0; i < member.paramCsharpTypes.length; i++) {
+            if (member.paramCsharpTypes[i] === mappedArgTypes[i]) {
+              score += 2;
+            } else if (member.paramCsharpTypes[i] === "System.Object") {
+              // Parameter accepts any type (weaker match)
+              score += 1;
+            } else if (mappedArgTypes[i] === "System.Object") {
+              // Argument type is unknown/widened — don't bias scoring,
+              // just allow the match without adding score
+            } else {
+              matched = false;
+              break;
+            }
+          }
+          if (matched && score > bestScore) {
+            bestScore = score;
+            bestMeta = member;
+          }
+        }
+        if (bestMeta && bestScore > 0) {
+          resolvedReturnType =
+            mapCSharpTypeToTypeSymbol(bestMeta.returnCsharpType) ?? null;
+        } else if (bestMeta && evaluatedArgs.length === 0) {
+          // Zero-arg call: only resolve if exactly one 0-param overload exists,
+          // otherwise the selection is ambiguous.
+          const zeroParamCount = overloads.filter(
+            (o) => o.paramCsharpTypes.length === 0,
+          ).length;
+          if (zeroParamCount === 1) {
+            resolvedReturnType =
+              mapCSharpTypeToTypeSymbol(bestMeta.returnCsharpType) ?? null;
+          }
         }
       }
     }

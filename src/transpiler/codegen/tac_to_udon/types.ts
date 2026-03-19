@@ -24,6 +24,61 @@ export function isIntegerType(
   );
 }
 
+export function isNumericType(
+  this: TACToUdonConverter,
+  typeName: string,
+): boolean {
+  return this.isFloatType(typeName) || this.isIntegerType(typeName);
+}
+
+// C#/.NET numeric promotion rank (higher = wider).
+const NUMERIC_RANK: Record<string, number> = {
+  Byte: 1,
+  SByte: 1,
+  Int16: 2,
+  UInt16: 2,
+  Int32: 3,
+  UInt32: 3,
+  Int64: 4,
+  UInt64: 4,
+  Single: 5,
+  Double: 6,
+};
+
+// C# promotes all narrow integer arithmetic (byte, sbyte, short, ushort) to int.
+// Mixed-sign at the same width follows the same rule for ranks 1–2.
+const MIXED_SIGN_PROMOTION: Record<number, string> = {
+  1: "Int32", // Byte + SByte → int (C# promotes all narrow types to int)
+  2: "Int32", // Int16 + UInt16 → int
+  3: "Int64", // Int32 + UInt32 → long
+};
+
+/**
+ * Returns the promoted type for a binary operation between two numeric types,
+ * following C#/.NET implicit numeric promotion rules.
+ */
+export function getPromotedNumericType(
+  this: TACToUdonConverter,
+  a: string,
+  b: string,
+): string {
+  const rankA = NUMERIC_RANK[a];
+  const rankB = NUMERIC_RANK[b];
+  if (rankA === undefined || rankB === undefined) {
+    // Caller should ensure both are numeric; return first as no-op fallback
+    return a;
+  }
+  if (rankA === rankB && a !== b) {
+    // Same width but different signedness
+    // Int64 + UInt64: no lossless integer target in C# (compile error CS0034).
+    // Use Double as the widest available type; note precision loss is possible
+    // for values beyond ~2^53 (~15.9 decimal digits).
+    if (rankA === 4) return "Double";
+    return MIXED_SIGN_PROMOTION[rankA] ?? a;
+  }
+  return rankA >= rankB ? a : b;
+}
+
 export function mapUdonTypeToTs(
   this: TACToUdonConverter,
   typeName: string,

@@ -56,24 +56,194 @@ export function convertInstruction(
 
     case TACInstructionKind.BinaryOp: {
       const binInst = inst as TACBinaryOpInstruction;
-      this.pushOperand(binInst.left);
-      this.pushOperand(binInst.right);
-
-      // Push result address before EXTERN (Udon VM calling convention)
-      const destAddr = this.getOperandAddress(binInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-
-      // Call extern for operation
       const leftOp = binInst.left as
         | VariableOperand
         | ConstantOperand
         | TemporaryOperand;
+      const rightOp = binInst.right as
+        | VariableOperand
+        | ConstantOperand
+        | TemporaryOperand;
       const leftType = leftOp.type?.udonType ?? "Single";
-      const externSig = this.getExternForBinaryOp(binInst.operator, leftType);
-      this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
+      const rightType = rightOp.type?.udonType ?? "Single";
+
+      // Shift operators require Int32 right operand; skip promotion for those.
+      const isShift = binInst.operator === "<<" || binInst.operator === ">>";
+      // Coerce operands to a common promoted type if numeric types differ
+      const promotedType =
+        !isShift &&
+        leftType !== rightType &&
+        this.isNumericType(leftType) &&
+        this.isNumericType(rightType)
+          ? this.getPromotedNumericType(leftType, rightType)
+          : leftType;
+
+      if (
+        !isShift &&
+        this.isNumericType(leftType) &&
+        this.isNumericType(rightType) &&
+        (promotedType !== leftType || promotedType !== rightType)
+      ) {
+        // Helper: coerce a single operand, returning the push-able name
+        const coerceOperand = (
+          operand: typeof binInst.left,
+          srcType: string,
+        ): string | null => {
+          if (srcType === promotedType) return null; // no conversion needed
+          const tmpName = `__tcoerce_${this.nextAddress}`;
+          this.variableAddresses.set(tmpName, this.nextAddress++);
+          this.variableTypes.set(tmpName, promotedType);
+          this.pushOperand(operand);
+          this.instructions.push(new PushInstruction(tmpName));
+          const sig = this.getConvertExternSignature(srcType, promotedType);
+          this.externSignatures.add(sig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(sig), true),
+          );
+          return tmpName;
+        };
+
+        const leftTmp = coerceOperand(binInst.left, leftType);
+        const rightTmp = coerceOperand(binInst.right, rightType);
+
+        // Push (possibly coerced) operands for the binary op
+        if (leftTmp) {
+          this.instructions.push(new PushInstruction(leftTmp));
+        } else {
+          this.pushOperand(binInst.left);
+        }
+        if (rightTmp) {
+          this.instructions.push(new PushInstruction(rightTmp));
+        } else {
+          this.pushOperand(binInst.right);
+        }
+      } else if (isShift && rightType !== "Int32") {
+        // Shift operators require Int32 right operand; coerce if needed.
+        // NOTE: This block pushes [left, coerced-right] onto the stack,
+        // matching the operand layout expected by the needsResultConversion
+        // and non-conversion paths below.
+        this.pushOperand(binInst.left);
+        const shiftTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(shiftTmpName, this.nextAddress++);
+        this.variableTypes.set(shiftTmpName, "Int32");
+        this.pushOperand(binInst.right);
+        this.instructions.push(new PushInstruction(shiftTmpName));
+        const shiftSig = this.getConvertExternSignature(rightType, "Int32");
+        this.externSignatures.add(shiftSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(shiftSig), true),
+        );
+        // Re-push coerced Int32 value as the right operand for the binary op.
+        // Stack is now [left, shiftTmpName] — matching the plain-push path.
+        this.instructions.push(new PushInstruction(shiftTmpName));
+      } else {
+        this.pushOperand(binInst.left);
+        this.pushOperand(binInst.right);
+      }
+
+      // Determine if the result needs to be truncated back to the dest type.
+      // Comparison ops always return Boolean regardless of promoted type,
+      // so only arithmetic ops can produce a wider-than-dest result.
+      const destType = this.getOperandUdonType(binInst.dest);
+      const isComparison =
+        binInst.operator === "<" ||
+        binInst.operator === ">" ||
+        binInst.operator === "<=" ||
+        binInst.operator === ">=" ||
+        binInst.operator === "==" ||
+        binInst.operator === "!=";
+      // destType differs from promotedType: either narrowing (promoted wider
+      // type back to original dest) or widening (e.g. Int32 result into Int64 dest).
+      const needsResultConversion =
+        !isComparison &&
+        this.isNumericType(destType) &&
+        promotedType !== destType;
+
+      if (needsResultConversion) {
+        // Write promoted result to a temp slot, then convert to dest type
+        const promotedTmpName = `__tpromoted_${this.nextAddress}`;
+        this.variableAddresses.set(promotedTmpName, this.nextAddress++);
+        this.variableTypes.set(promotedTmpName, promotedType);
+        this.instructions.push(new PushInstruction(promotedTmpName));
+
+        const externSig = this.getExternForBinaryOp(
+          binInst.operator,
+          promotedType,
+        );
+        this.externSignatures.add(externSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(externSig), true),
+        );
+
+        // Convert promoted result back to dest type
+        const destAddr = this.getOperandAddress(binInst.dest);
+
+        if (this.isFloatType(promotedType) && this.isIntegerType(destType)) {
+          // Float→int requires Math.Truncate before Convert (matching
+          // CastInstruction semantics). Convert to Double first if needed,
+          // then truncate, then convert to target integer type.
+          let doubleSrc = promotedTmpName;
+          if (promotedType === "Single") {
+            const dblTmp = `__tpromoted_dbl_${this.nextAddress}`;
+            this.variableAddresses.set(dblTmp, this.nextAddress++);
+            this.variableTypes.set(dblTmp, "Double");
+            this.instructions.push(new PushInstruction(promotedTmpName));
+            this.instructions.push(new PushInstruction(dblTmp));
+            const toDblSig = this.getConvertExternSignature("Single", "Double");
+            this.externSignatures.add(toDblSig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(toDblSig), true),
+            );
+            doubleSrc = dblTmp;
+          }
+          // Math.Truncate Double → Double
+          const truncDblTmp = `__tpromoted_trunc_${this.nextAddress}`;
+          this.variableAddresses.set(truncDblTmp, this.nextAddress++);
+          this.variableTypes.set(truncDblTmp, "Double");
+          this.instructions.push(new PushInstruction(doubleSrc));
+          this.instructions.push(new PushInstruction(truncDblTmp));
+          const truncateSig = this.getTruncateExternSignature();
+          this.externSignatures.add(truncateSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(truncateSig), true),
+          );
+          // Convert truncated Double → target integer type
+          this.instructions.push(new PushInstruction(truncDblTmp));
+          this.instructions.push(new PushInstruction(destAddr));
+          const toIntSig = this.getConvertExternSignature("Double", destType);
+          this.externSignatures.add(toIntSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(toIntSig), true),
+          );
+        } else {
+          // Numeric conversion: int→int, int→float, or float→float.
+          // (float→int is handled above with Math.Truncate semantics.)
+          this.instructions.push(new PushInstruction(promotedTmpName));
+          this.instructions.push(new PushInstruction(destAddr));
+          const convSig = this.getConvertExternSignature(
+            promotedType,
+            destType,
+          );
+          this.externSignatures.add(convSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(convSig), true),
+          );
+        }
+      } else {
+        // Push result address before EXTERN (Udon VM calling convention)
+        const destAddr = this.getOperandAddress(binInst.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+
+        // Call extern for operation using the promoted type
+        const externSig = this.getExternForBinaryOp(
+          binInst.operator,
+          promotedType,
+        );
+        this.externSignatures.add(externSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(externSig), true),
+        );
+      }
       break;
     }
 

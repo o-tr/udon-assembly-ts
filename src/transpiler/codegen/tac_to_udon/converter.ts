@@ -30,8 +30,10 @@ import {
 import {
   extractInlineClassName,
   getOperandTsTypeName,
+  getPromotedNumericType,
   isFloatType,
   isIntegerType,
+  isNumericType,
   mapUdonTypeToTs,
 } from "./types.js";
 
@@ -247,6 +249,8 @@ export class TACToUdonConverter {
 
   isFloatType = isFloatType;
   isIntegerType = isIntegerType;
+  isNumericType = isNumericType;
+  getPromotedNumericType = getPromotedNumericType;
   mapUdonTypeToTs = mapUdonTypeToTs;
   getOperandTsTypeName = getOperandTsTypeName;
   extractInlineClassName = extractInlineClassName;

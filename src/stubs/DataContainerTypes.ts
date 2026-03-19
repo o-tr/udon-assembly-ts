@@ -4,7 +4,7 @@
  * VRC.SDK3.Data の DataList / DataDictionary をTypeScript側で表現するための
  * コンパイル用スタブ。
  */
-import { UdonStub } from "./UdonDecorators.js";
+import { UdonExtern, UdonStub } from "./UdonDecorators.js";
 import type { UdonInt } from "./UdonTypes.js";
 
 @UdonStub("VRC.SDK3.Data.DataList")
@@ -80,6 +80,7 @@ export class DataDictionary {
     | ((...args: DataToken[]) => void);
 
   SetValue(_key: DataToken, _value: DataToken): void {}
+  @UdonExtern({ name: "get_Item" })
   GetValue(_key: DataToken): DataToken {
     return new DataToken();
   }

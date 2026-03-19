@@ -242,3 +242,86 @@ export const ExternTypes = {
 };
 
 export const ObjectType = new ObjectTypeSymbol();
+
+/**
+ * Maps a C# type name (from type metadata registry) to a TypeSymbol.
+ */
+export function mapCSharpTypeToTypeSymbol(
+  csharpType: string,
+): TypeSymbol | null {
+  // Handle array types by mapping the element type
+  if (csharpType.endsWith("[]")) {
+    const elementType = mapCSharpTypeToTypeSymbol(csharpType.slice(0, -2));
+    if (elementType) {
+      return new ArrayTypeSymbol(elementType);
+    }
+    return null;
+  }
+
+  switch (csharpType) {
+    case "System.String":
+      return PrimitiveTypes.string;
+    case "System.Boolean":
+      return PrimitiveTypes.boolean;
+    case "System.Byte":
+      return PrimitiveTypes.byte;
+    case "System.SByte":
+      return PrimitiveTypes.sbyte;
+    case "System.Int16":
+      return PrimitiveTypes.int16;
+    case "System.UInt16":
+      return PrimitiveTypes.uint16;
+    case "System.Int32":
+      return PrimitiveTypes.int32;
+    case "System.UInt32":
+      return PrimitiveTypes.uint32;
+    case "System.Int64":
+      return PrimitiveTypes.int64;
+    case "System.UInt64":
+      return PrimitiveTypes.uint64;
+    case "System.Single":
+      return PrimitiveTypes.single;
+    case "System.Double":
+      return PrimitiveTypes.double;
+    case "System.Object":
+      return ObjectType;
+    case "System.Void":
+      return PrimitiveTypes.void;
+    case "VRC.SDK3.Data.DataToken":
+      return ExternTypes.dataToken;
+    case "VRC.SDK3.Data.DataList":
+      return ExternTypes.dataList;
+    case "VRC.SDK3.Data.DataDictionary":
+      return ExternTypes.dataDictionary;
+    case "UnityEngine.Vector2":
+      return ExternTypes.vector2;
+    case "UnityEngine.Vector3":
+      return ExternTypes.vector3;
+    case "UnityEngine.Vector4":
+      return ExternTypes.vector4;
+    case "UnityEngine.Quaternion":
+      return ExternTypes.quaternion;
+    case "UnityEngine.Color":
+      return ExternTypes.color;
+    case "UnityEngine.Transform":
+      return ExternTypes.transform;
+    case "UnityEngine.GameObject":
+      return ExternTypes.gameObject;
+    case "UnityEngine.AudioSource":
+      return ExternTypes.audioSource;
+    case "UnityEngine.AudioClip":
+      return ExternTypes.audioClip;
+    case "UnityEngine.Animator":
+      return ExternTypes.animator;
+    case "UnityEngine.Component":
+      return ExternTypes.component;
+    case "System.Type":
+      return ExternTypes.systemType;
+    case "VRC.SDKBase.VRCPlayerApi":
+      return ExternTypes.vrcPlayerApi;
+    case "VRC.Udon.UdonBehaviour":
+      return ExternTypes.udonBehaviour;
+    default:
+      return null;
+  }
+}
