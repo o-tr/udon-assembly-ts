@@ -678,7 +678,10 @@ export function visitCallExpression(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
         } else if (node.typeArguments?.[0]) {
-          // Pre-populate DataList with N default elements for typed Array<T>(N)
+          // Pre-populate DataList with N default elements for typed Array<T>(N).
+          // NOTE: Only constant-length arrays are pre-populated. Runtime-length
+          // arrays (e.g., new Array<number>(someVar)) result in an empty DataList
+          // and subsequent indexed access will fail at runtime.
           let count = 0;
           if (isConstantIntegerLength) {
             count = (argOperand as ConstantOperand).value as number;
@@ -1317,12 +1320,13 @@ export function visitCallExpression(
           ?.get(this.currentClassName)
           ?.get(propAccess.property);
         if (layout) {
-          // Register return site in the shared registry
+          // Register return site in the shared registry (scoped by class + method)
           const returnLabel = this.newLabel("recursive_return") as LabelOperand;
-          let registry = this.recursiveReturnSites.get(propAccess.property);
+          const registryKey = `${this.currentClassName}.${propAccess.property}`;
+          let registry = this.recursiveReturnSites.get(registryKey);
           if (!registry) {
             registry = { sites: [], nextIndex: 0 };
-            this.recursiveReturnSites.set(propAccess.property, registry);
+            this.recursiveReturnSites.set(registryKey, registry);
           }
           const returnSiteIdx = registry.nextIndex++;
           registry.sites.push({
@@ -1376,13 +1380,13 @@ export function visitCallExpression(
             // 4. Set return site index for dispatch table
             const returnSiteIdxVar = createVariable(
               `__returnSiteIdx_${propAccess.property}`,
-              PrimitiveTypes.single,
+              PrimitiveTypes.int32,
               { isLocal: true },
             );
             this.instructions.push(
               new AssignmentInstruction(
                 returnSiteIdxVar,
-                createConstant(returnSiteIdx, PrimitiveTypes.single),
+                createConstant(returnSiteIdx, PrimitiveTypes.int32),
               ),
             );
 
@@ -1450,13 +1454,13 @@ export function visitCallExpression(
           // Set return site index
           const returnSiteIdxVar = createVariable(
             `__returnSiteIdx_${propAccess.property}`,
-            PrimitiveTypes.single,
+            PrimitiveTypes.int32,
             { isLocal: true },
           );
           this.instructions.push(
             new AssignmentInstruction(
               returnSiteIdxVar,
-              createConstant(returnSiteIdx, PrimitiveTypes.single),
+              createConstant(returnSiteIdx, PrimitiveTypes.int32),
             ),
           );
           // Initialize recursion depth to 0

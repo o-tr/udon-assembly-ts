@@ -566,81 +566,6 @@ export function collectRecursiveLocals(
   return Array.from(locals.entries()).map(([name, type]) => ({ name, type }));
 }
 
-export function emitRecursivePrologue(this: ASTToTACConverter): void {
-  const context = this.currentRecursiveContext;
-  if (!context) return;
-
-  const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
-  const depthTemp = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
-    new BinaryOpInstruction(
-      depthTemp,
-      depthVar,
-      "+",
-      createConstant(1, PrimitiveTypes.int32),
-    ),
-  );
-  this.instructions.push(new CopyInstruction(depthVar, depthTemp));
-
-  for (let index = 0; index < context.locals.length; index++) {
-    const local = context.locals[index];
-    const stackVarInfo = context.stackVars[index];
-    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
-    const localVar = createVariable(local.name, local.type, {
-      isLocal: true,
-    });
-    // Wrap local value as DataToken and use DataList.set_Item
-    const token = this.wrapDataToken(localVar);
-    this.instructions.push(
-      new MethodCallInstruction(undefined, stackVar, "set_Item", [
-        depthVar,
-        token,
-      ]),
-    );
-  }
-}
-
-export function emitRecursiveEpilogue(
-  this: ASTToTACConverter,
-  options?: { skipDepthDecrement?: boolean },
-): void {
-  const context = this.currentRecursiveContext;
-  if (!context) return;
-
-  const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
-
-  for (let index = 0; index < context.locals.length; index++) {
-    const local = context.locals[index];
-    const stackVarInfo = context.stackVars[index];
-    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
-    // Use DataList.get_Item to get DataToken, then unwrap
-    const token = this.newTemp(ExternTypes.dataToken);
-    this.instructions.push(
-      new MethodCallInstruction(token, stackVar, "get_Item", [depthVar]),
-    );
-    const unwrapped = this.unwrapDataToken(token, local.type);
-    this.instructions.push(
-      new CopyInstruction(
-        createVariable(local.name, local.type, { isLocal: true }),
-        unwrapped,
-      ),
-    );
-  }
-
-  if (!options?.skipDepthDecrement) {
-    const depthTemp = this.newTemp(PrimitiveTypes.int32);
-    this.instructions.push(
-      new BinaryOpInstruction(
-        depthTemp,
-        depthVar,
-        "-",
-        createConstant(1, PrimitiveTypes.int32),
-      ),
-    );
-    this.instructions.push(new CopyInstruction(depthVar, depthTemp));
-  }
-}
-
 /**
  * Push all locals onto per-local DataList stacks at the current SP.
  * Used at each self-call site BEFORE the JUMP to the recursive method.
@@ -857,12 +782,15 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
 
   const returnSiteIdxVar = createVariable(
     `__returnSiteIdx_${methodName}`,
-    PrimitiveTypes.single,
+    PrimitiveTypes.int32,
     { isLocal: true },
   );
 
   // Use shared registry which includes both Start and self-call return sites
-  const registry = this.recursiveReturnSites.get(methodName);
+  // currentClassName is always set when processing a class method, but guard defensively
+  if (!this.currentClassName) return;
+  const registryKey = `${this.currentClassName}.${methodName}`;
+  const registry = this.recursiveReturnSites.get(registryKey);
   const allSites = registry?.sites ?? context.returnSites;
 
   for (const site of allSites) {
@@ -872,7 +800,7 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
         cmpResult,
         returnSiteIdxVar,
         "!=",
-        createConstant(site.index, PrimitiveTypes.single),
+        createConstant(site.index, PrimitiveTypes.int32),
       ),
     );
     const siteLabel = createLabel(site.labelName);

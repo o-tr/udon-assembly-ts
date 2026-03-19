@@ -55,8 +55,6 @@ import {
   emitCallSitePop,
   emitCallSitePush,
   emitEntryPointPropertyInit,
-  emitRecursiveEpilogue,
-  emitRecursivePrologue,
   emitReturnSiteDispatch,
   mapInlineProperty,
   maybeTrackInlineInstanceAssignment,
@@ -169,7 +167,7 @@ export class ASTToTACConverter {
       }
     | undefined;
   /**
-   * Shared return site registries keyed by method name.
+   * Shared return site registries keyed by "className.methodName".
    * Both callers (from Start) and the recursive method itself register here.
    */
   recursiveReturnSites: Map<
@@ -263,6 +261,7 @@ export class ASTToTACConverter {
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.pendingTopLevelInits = [];
+    this.recursiveReturnSites = new Map();
 
     // Separate top-level const declarations from other statements
     const topLevelConsts: VariableDeclarationNode[] = [];
@@ -505,8 +504,6 @@ export class ASTToTACConverter {
   mapInlineProperty = mapInlineProperty;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;
   collectRecursiveLocals = collectRecursiveLocals;
-  emitRecursivePrologue = emitRecursivePrologue;
-  emitRecursiveEpilogue = emitRecursiveEpilogue;
   emitCallSitePush = emitCallSitePush;
   emitCallSitePop = emitCallSitePop;
   emitReturnSiteDispatch = emitReturnSiteDispatch;

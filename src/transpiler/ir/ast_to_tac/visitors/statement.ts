@@ -57,6 +57,12 @@ import {
 import { countSelfCalls } from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
+/**
+ * Maximum number of entries pre-allocated in each recursion stack DataList.
+ * Limits the supported recursion depth for @RecursiveMethod-annotated methods.
+ */
+const MAX_RECURSION_STACK_DEPTH = 16;
+
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
     case ASTNodeKind.VariableDeclaration:
@@ -879,7 +885,7 @@ export function visitClassDeclaration(
       const returnSiteIdxVarName = `__returnSiteIdx_${method.name}`;
       locals.push({
         name: returnSiteIdxVarName,
-        type: PrimitiveTypes.single,
+        type: PrimitiveTypes.int32,
       });
       // Add return export variable to the recursion stack locals
       // so it gets saved/restored at each call site.
@@ -949,7 +955,7 @@ export function visitClassDeclaration(
             createConstant(-1, PrimitiveTypes.int32),
           ),
         );
-        const maxRecursionDepth = 16;
+        const maxRecursionDepth = MAX_RECURSION_STACK_DEPTH;
         const defaultToken = this.wrapDataToken(
           createConstant(0, PrimitiveTypes.single),
         );
