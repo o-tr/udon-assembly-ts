@@ -30,6 +30,7 @@ import {
 import {
   extractInlineClassName,
   getOperandTsTypeName,
+  getPromotedNumericType,
   isFloatType,
   isIntegerType,
   isNumericType,
@@ -249,6 +250,7 @@ export class TACToUdonConverter {
   isFloatType = isFloatType;
   isIntegerType = isIntegerType;
   isNumericType = isNumericType;
+  getPromotedNumericType = getPromotedNumericType;
   mapUdonTypeToTs = mapUdonTypeToTs;
   getOperandTsTypeName = getOperandTsTypeName;
   extractInlineClassName = extractInlineClassName;

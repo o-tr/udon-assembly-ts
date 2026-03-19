@@ -67,27 +67,54 @@ export function convertInstruction(
       const leftType = leftOp.type?.udonType ?? "Single";
       const rightType = rightOp.type?.udonType ?? "Single";
 
-      // Coerce right operand if numeric types differ
-      if (
+      // Shift operators require Int32 right operand; skip promotion for those.
+      const isShift = binInst.operator === "<<" || binInst.operator === ">>";
+      // Coerce operands to a common promoted type if numeric types differ
+      const promotedType =
+        !isShift &&
         leftType !== rightType &&
         this.isNumericType(leftType) &&
         this.isNumericType(rightType)
-      ) {
-        // Convert right operand to match left type
-        this.pushOperand(binInst.right);
-        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-        this.variableTypes.set(coerceTmpName, leftType);
-        this.instructions.push(new PushInstruction(coerceTmpName));
-        const coerceSig = this.getConvertExternSignature(rightType, leftType);
-        this.externSignatures.add(coerceSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(coerceSig), true),
-        );
+          ? this.getPromotedNumericType(leftType, rightType)
+          : leftType;
 
-        // Now push left and coerced right for the binary op
-        this.pushOperand(binInst.left);
-        this.instructions.push(new PushInstruction(coerceTmpName));
+      if (
+        !isShift &&
+        (promotedType !== leftType || promotedType !== rightType)
+      ) {
+        // Helper: coerce a single operand, returning the push-able name
+        const coerceOperand = (
+          operand: typeof binInst.left,
+          srcType: string,
+        ): string | null => {
+          if (srcType === promotedType) return null; // no conversion needed
+          const tmpName = `__tcoerce_${this.nextAddress}`;
+          this.variableAddresses.set(tmpName, this.nextAddress++);
+          this.variableTypes.set(tmpName, promotedType);
+          this.pushOperand(operand);
+          this.instructions.push(new PushInstruction(tmpName));
+          const sig = this.getConvertExternSignature(srcType, promotedType);
+          this.externSignatures.add(sig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(sig), true),
+          );
+          return tmpName;
+        };
+
+        const leftTmp = coerceOperand(binInst.left, leftType);
+        const rightTmp = coerceOperand(binInst.right, rightType);
+
+        // Push (possibly coerced) operands for the binary op
+        if (leftTmp) {
+          this.instructions.push(new PushInstruction(leftTmp));
+        } else {
+          this.pushOperand(binInst.left);
+        }
+        if (rightTmp) {
+          this.instructions.push(new PushInstruction(rightTmp));
+        } else {
+          this.pushOperand(binInst.right);
+        }
       } else {
         this.pushOperand(binInst.left);
         this.pushOperand(binInst.right);
@@ -97,8 +124,11 @@ export function convertInstruction(
       const destAddr = this.getOperandAddress(binInst.dest);
       this.instructions.push(new PushInstruction(destAddr));
 
-      // Call extern for operation
-      const externSig = this.getExternForBinaryOp(binInst.operator, leftType);
+      // Call extern for operation using the promoted type
+      const externSig = this.getExternForBinaryOp(
+        binInst.operator,
+        promotedType,
+      );
       this.externSignatures.add(externSig);
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),

@@ -31,6 +31,47 @@ export function isNumericType(
   return this.isFloatType(typeName) || this.isIntegerType(typeName);
 }
 
+// C#/.NET numeric promotion rank (higher = wider).
+const NUMERIC_RANK: Record<string, number> = {
+  Byte: 1,
+  SByte: 1,
+  Int16: 2,
+  UInt16: 2,
+  Int32: 3,
+  UInt32: 3,
+  Int64: 4,
+  UInt64: 4,
+  Single: 5,
+  Double: 6,
+};
+
+// When signed + unsigned at the same width, C# promotes to the next wider
+// signed type (except Int64 + UInt64 → UInt64).
+const MIXED_SIGN_PROMOTION: Record<number, string> = {
+  1: "Int16", // Byte + SByte
+  2: "Int32", // Int16 + UInt16
+  3: "Int64", // Int32 + UInt32
+};
+
+/**
+ * Returns the promoted type for a binary operation between two numeric types,
+ * following C#/.NET implicit numeric promotion rules.
+ */
+export function getPromotedNumericType(
+  this: TACToUdonConverter,
+  a: string,
+  b: string,
+): string {
+  const rankA = NUMERIC_RANK[a] ?? 3;
+  const rankB = NUMERIC_RANK[b] ?? 3;
+  if (rankA === rankB && a !== b) {
+    // Same width but different signedness
+    if (rankA === 4) return "UInt64"; // Int64 + UInt64 → UInt64
+    return MIXED_SIGN_PROMOTION[rankA] ?? a;
+  }
+  return rankA >= rankB ? a : b;
+}
+
 export function mapUdonTypeToTs(
   this: TACToUdonConverter,
   typeName: string,

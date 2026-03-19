@@ -1,5 +1,6 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
+import { mapTypeScriptToCSharp } from "../../../codegen/udon_type_resolver.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -1320,15 +1321,45 @@ export function visitCallExpression(
       }
     }
 
-    // Consult type metadata registry for extern/stub types
+    // Consult type metadata registry for extern/stub types (overload-aware)
     if (!resolvedReturnType) {
-      const memberMeta = typeMetadataRegistry.getMemberMetadata(
+      const overloads = typeMetadataRegistry.getMemberOverloads(
         objectType.name,
         propAccess.property,
       );
-      if (memberMeta) {
+      if (overloads.length === 1) {
         resolvedReturnType =
-          mapCSharpTypeToTypeSymbol(memberMeta.returnCsharpType) ?? null;
+          mapCSharpTypeToTypeSymbol(overloads[0].returnCsharpType) ?? null;
+      } else if (overloads.length > 1) {
+        const mappedArgTypes = evaluatedArgs.map((arg) =>
+          mapTypeScriptToCSharp(this.getOperandType(arg).name),
+        );
+        let bestScore = -1;
+        let bestMeta: (typeof overloads)[number] | undefined;
+        for (const member of overloads) {
+          if (member.paramCsharpTypes.length !== mappedArgTypes.length)
+            continue;
+          let score = 0;
+          let matched = true;
+          for (let i = 0; i < member.paramCsharpTypes.length; i++) {
+            if (member.paramCsharpTypes[i] === mappedArgTypes[i]) {
+              score += 2;
+            } else if (member.paramCsharpTypes[i] === "System.Object") {
+              score += 1;
+            } else {
+              matched = false;
+              break;
+            }
+          }
+          if (matched && score > bestScore) {
+            bestScore = score;
+            bestMeta = member;
+          }
+        }
+        if (bestMeta) {
+          resolvedReturnType =
+            mapCSharpTypeToTypeSymbol(bestMeta.returnCsharpType) ?? null;
+        }
       }
     }
 

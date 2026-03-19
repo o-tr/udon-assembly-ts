@@ -87,9 +87,12 @@ export function getExternForBinaryOp(
 
   const csharpType = udonTypeToCSharp(typeStr);
   const csharpReturn = udonTypeToCSharp(returnType);
+  // Shift operators always take Int32 as the right (shift-amount) operand in C#
+  const isShift = operator === "<<" || operator === ">>";
+  const rightParamType = isShift ? "System.Int32" : csharpType;
   return createUdonExternSignature(
     methodName,
-    [csharpType, csharpType],
+    [csharpType, rightParamType],
     csharpReturn,
   );
 }

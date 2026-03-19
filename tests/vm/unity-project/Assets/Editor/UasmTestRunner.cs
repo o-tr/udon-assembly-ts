@@ -252,8 +252,7 @@ public static class UasmTestRunner
                         result.error = $"Expected error: VM returned {execResult}";
                         return result;
                     }
-                    var errInfo = capturedErrors.Count > 0 ? "\n" + string.Join("\n", capturedErrors) : "";
-                    result.error = $"VM execution returned non-zero: {execResult}{errInfo}";
+                    result.error = $"VM execution returned non-zero: {execResult}{FormatVmErrors(capturedErrors)}";
                     result.capturedLogs = capturedLogs.ToArray();
                     return result;
                 }
@@ -292,10 +291,7 @@ public static class UasmTestRunner
         }
         catch (Exception e)
         {
-            // Append captured error/exception logs for diagnostics
-            var errorSuffix = capturedErrors.Count > 0
-                ? "\nVM errors:\n" + string.Join("\n", capturedErrors)
-                : "";
+            var errorSuffix = FormatVmErrors(capturedErrors);
             if (testDef.expectError)
             {
                 result.passed = true;
@@ -308,5 +304,12 @@ public static class UasmTestRunner
         }
 
         return result;
+    }
+
+    private static string FormatVmErrors(List<string> capturedErrors)
+    {
+        return capturedErrors.Count > 0
+            ? "\nVM errors:\n" + string.Join("\n", capturedErrors)
+            : "";
     }
 }
