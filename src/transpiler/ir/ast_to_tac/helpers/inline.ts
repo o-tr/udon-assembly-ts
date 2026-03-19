@@ -25,16 +25,18 @@ import {
   type WhileStatementNode,
 } from "../../../frontend/types.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
+  MethodCallInstruction,
+  ReturnInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
+  createLabel,
   createVariable,
   type TACOperand,
   TACOperandKind,
@@ -583,17 +585,25 @@ export function emitRecursivePrologue(this: ASTToTACConverter): void {
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
-    const stackVar = createVariable(stackVarInfo.name, stackVarInfo.type);
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
+    // Wrap local value as DataToken and use DataList.set_Item
+    const token = this.wrapDataToken(localVar);
     this.instructions.push(
-      new ArrayAssignmentInstruction(stackVar, depthVar, localVar),
+      new MethodCallInstruction(undefined, stackVar, "set_Item", [
+        depthVar,
+        token,
+      ]),
     );
   }
 }
 
-export function emitRecursiveEpilogue(this: ASTToTACConverter): void {
+export function emitRecursiveEpilogue(
+  this: ASTToTACConverter,
+  options?: { skipDepthDecrement?: boolean },
+): void {
   const context = this.currentRecursiveContext;
   if (!context) return;
 
@@ -602,27 +612,76 @@ export function emitRecursiveEpilogue(this: ASTToTACConverter): void {
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
-    const stackVar = createVariable(stackVarInfo.name, stackVarInfo.type);
-    const temp = this.newTemp(local.type);
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+    // Use DataList.get_Item to get DataToken, then unwrap
+    const token = this.newTemp(ExternTypes.dataToken);
     this.instructions.push(
-      new ArrayAccessInstruction(temp, stackVar, depthVar),
+      new MethodCallInstruction(token, stackVar, "get_Item", [depthVar]),
     );
+    const unwrapped = this.unwrapDataToken(token, local.type);
     this.instructions.push(
       new CopyInstruction(
         createVariable(local.name, local.type, { isLocal: true }),
-        temp,
+        unwrapped,
       ),
     );
   }
 
-  const depthTemp = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
-    new BinaryOpInstruction(
-      depthTemp,
-      depthVar,
-      "-",
-      createConstant(1, PrimitiveTypes.int32),
-    ),
+  if (!options?.skipDepthDecrement) {
+    const depthTemp = this.newTemp(PrimitiveTypes.int32);
+    this.instructions.push(
+      new BinaryOpInstruction(
+        depthTemp,
+        depthVar,
+        "-",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+    );
+    this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+  }
+}
+
+/**
+ * Emit a dispatch table that replaces JUMP_INDIRECT for recursive returns.
+ * After the epilogue restores __returnSiteIdx, this checks the index against
+ * each known return site and jumps to the corresponding label.
+ * If no return site matches (depth == 0, initial call), emit a normal return.
+ */
+export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
+  const context = this.currentRecursiveContext;
+  if (!context) return;
+
+  const methodName = this.currentMethodName;
+  if (!methodName) return;
+
+  const returnSiteIdxVar = createVariable(
+    `__returnSiteIdx_${methodName}`,
+    PrimitiveTypes.single,
+    { isLocal: true },
   );
-  this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+
+  // Use shared registry which includes both Start and self-call return sites
+  const registry = this.recursiveReturnSites.get(methodName);
+  const allSites = registry?.sites ?? context.returnSites;
+
+  for (const site of allSites) {
+    const cmpResult = this.newTemp(PrimitiveTypes.boolean);
+    this.instructions.push(
+      new BinaryOpInstruction(
+        cmpResult,
+        returnSiteIdxVar,
+        "!=",
+        createConstant(site.index, PrimitiveTypes.single),
+      ),
+    );
+    const siteLabel = createLabel(site.labelName);
+    this.instructions.push(
+      new ConditionalJumpInstruction(cmpResult, siteLabel),
+    );
+  }
+
+  // Fallback: initial caller returns normally (halt / 0xFFFFFFFC)
+  this.instructions.push(
+    new ReturnInstruction(undefined, this.currentReturnVar),
+  );
 }

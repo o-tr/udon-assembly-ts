@@ -25,6 +25,8 @@ export enum TACInstructionKind {
   ArrayAccess = "ArrayAccess",
   ArrayAssignment = "ArrayAssignment",
   Phi = "Phi",
+  JumpIndirect = "JumpIndirect",
+  LoadLabelAddress = "LoadLabelAddress",
 }
 
 /**
@@ -291,6 +293,35 @@ export class ArrayAssignmentInstruction implements TACInstruction {
 
   toString(): string {
     return `${operandToString(this.array)}[${operandToString(this.index)}] = ${operandToString(this.value)}`;
+  }
+}
+
+/**
+ * Jump indirect: jump to address stored in variable
+ */
+export class JumpIndirectInstruction implements TACInstruction {
+  kind = TACInstructionKind.JumpIndirect as const;
+
+  constructor(public variable: TACOperand) {}
+
+  toString(): string {
+    return `jump_indirect ${operandToString(this.variable)}`;
+  }
+}
+
+/**
+ * Load label address: dest = address of label
+ */
+export class LoadLabelAddressInstruction implements TACInstruction {
+  kind = TACInstructionKind.LoadLabelAddress as const;
+
+  constructor(
+    public dest: TACOperand,
+    public labelName: string,
+  ) {}
+
+  toString(): string {
+    return `${operandToString(this.dest)} = &${this.labelName}`;
   }
 }
 

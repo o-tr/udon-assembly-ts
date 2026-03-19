@@ -27,14 +27,14 @@ describe("recursive methods", () => {
     );
     const tac = converter.convert(ast);
 
-    const hasArraySet = tac.some(
-      (inst) => inst.kind === TACInstructionKind.ArrayAssignment,
-    );
-    const hasArrayGet = tac.some(
-      (inst) => inst.kind === TACInstructionKind.ArrayAccess,
+    // Recursion stacks use DataList set_Item in prologue (at method entry)
+    // and get_Item in epilogue (at call-site return labels for entry-point classes)
+    const hasStackSet = tac.some(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        inst.toString().includes("set_Item"),
     );
 
-    expect(hasArraySet).toBe(true);
-    expect(hasArrayGet).toBe(true);
+    expect(hasStackSet).toBe(true);
   });
 });

@@ -21,6 +21,7 @@ import {
   ArrayAssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   CopyInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -57,9 +58,23 @@ export function assignToTarget(
       arrayType instanceof DataListTypeSymbol ||
       arrayType.name === ExternTypes.dataList.name
     ) {
+      // Coerce index to Int32 if it's a float type
+      let coercedIndex = index;
+      const indexType = this.getOperandType(index);
+      if (
+        indexType.udonType === UdonType.Single ||
+        indexType.udonType === UdonType.Double
+      ) {
+        const intIndex = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(intIndex, index));
+        coercedIndex = intIndex;
+      }
       const token = this.wrapDataToken(value);
       this.instructions.push(
-        new MethodCallInstruction(undefined, array, "set_Item", [index, token]),
+        new MethodCallInstruction(undefined, array, "set_Item", [
+          coercedIndex,
+          token,
+        ]),
       );
       return value;
     }

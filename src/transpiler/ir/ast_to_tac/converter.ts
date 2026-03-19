@@ -55,6 +55,7 @@ import {
   emitEntryPointPropertyInit,
   emitRecursiveEpilogue,
   emitRecursivePrologue,
+  emitReturnSiteDispatch,
   mapInlineProperty,
   maybeTrackInlineInstanceAssignment,
   tryResolveUnitySelfReference,
@@ -158,8 +159,19 @@ export class ASTToTACConverter {
         locals: Array<{ name: string; type: TypeSymbol }>;
         depthVar: string;
         stackVars: Array<{ name: string; type: TypeSymbol }>;
+        returnSites: Array<{ index: number; labelName: string }>;
+        nextReturnSiteIndex: number;
+        dispatchLabel?: TACOperand;
       }
     | undefined;
+  /**
+   * Shared return site registries keyed by method name.
+   * Both callers (from Start) and the recursive method itself register here.
+   */
+  recursiveReturnSites: Map<
+    string,
+    { sites: Array<{ index: number; labelName: string }>; nextIndex: number }
+  > = new Map();
   loopContextStack: Array<{
     breakLabel: TACOperand;
     continueLabel: TACOperand;
@@ -491,6 +503,7 @@ export class ASTToTACConverter {
   collectRecursiveLocals = collectRecursiveLocals;
   emitRecursivePrologue = emitRecursivePrologue;
   emitRecursiveEpilogue = emitRecursiveEpilogue;
+  emitReturnSiteDispatch = emitReturnSiteDispatch;
 
   emitTryInstructionsWithChecks = emitTryInstructionsWithChecks;
   getCheckOperand = getCheckOperand;

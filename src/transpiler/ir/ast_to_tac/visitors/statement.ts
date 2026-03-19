@@ -160,6 +160,19 @@ export function visitVariableDeclaration(
         }
       }
     }
+    // When declared type is ArrayTypeSymbol but initializer is new Array<T>()
+    // (CallExpression), use the DataList type for correct runtime operations.
+    // This does NOT apply to array literals [1, 2, 3] which also produce DataList
+    // but are handled differently in existing code paths.
+    if (
+      destType instanceof ArrayTypeSymbol &&
+      node.initializer?.kind === ASTNodeKind.CallExpression
+    ) {
+      const inferredType = this.getOperandType(src);
+      if (inferredType instanceof DataListTypeSymbol) {
+        destType = inferredType;
+      }
+    }
   }
 
   const isLocal = this.symbolTable.getCurrentScope() > 0;
@@ -653,7 +666,7 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
-  if (this.currentRecursiveContext) {
+  if (this.currentRecursiveContext && this.currentMethodName) {
     const valueOperand = node.value
       ? this.visitExpression(node.value)
       : undefined;
@@ -663,10 +676,39 @@ export function visitReturnStatement(
     if (tempValue && valueOperand) {
       this.instructions.push(new CopyInstruction(tempValue, valueOperand));
     }
-    this.emitRecursiveEpilogue();
-    this.instructions.push(
-      new ReturnInstruction(tempValue, this.currentReturnVar),
-    );
+    // Copy return value to the return export variable before epilogue
+    if (tempValue && this.currentReturnVar) {
+      const returnVar = createVariable(
+        this.currentReturnVar,
+        this.getOperandType(tempValue),
+      );
+      this.instructions.push(new CopyInstruction(returnVar, tempValue));
+    }
+    // Decrement depth before dispatch (but don't restore locals yet)
+    if (this.currentRecursiveContext) {
+      const depthVar = createVariable(
+        this.currentRecursiveContext.depthVar,
+        PrimitiveTypes.int32,
+      );
+      const depthTemp = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          depthTemp,
+          depthVar,
+          "-",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+    }
+    // Jump to dispatch (uses the current siteIdx, before epilogue restores it)
+    if (this.currentRecursiveContext?.dispatchLabel) {
+      this.instructions.push(
+        new UnconditionalJumpInstruction(
+          this.currentRecursiveContext.dispatchLabel,
+        ),
+      );
+    }
     return;
   }
   const inlineContext =
@@ -786,6 +828,9 @@ export function visitClassDeclaration(
           locals: Array<{ name: string; type: TypeSymbol }>;
           depthVar: string;
           stackVars: Array<{ name: string; type: TypeSymbol }>;
+          returnSites: Array<{ index: number; labelName: string }>;
+          nextReturnSiteIndex: number;
+          dispatchLabel?: TACOperand;
         }
       | undefined;
     if (eventDef) {
@@ -817,14 +862,85 @@ export function visitClassDeclaration(
 
     if (method.isRecursive) {
       const locals = this.collectRecursiveLocals(method);
+      // Remap parameter names to their export names (e.g., "n" → "__0_n__param")
+      // because the method body uses export names, not local names
+      for (const local of locals) {
+        const exportName = this.currentParamExportMap.get(local.name);
+        if (exportName) {
+          local.name = exportName;
+        }
+      }
+      // Add __returnSiteIdx to the recursion stack locals.
+      const returnSiteIdxVarName = `__returnSiteIdx_${method.name}`;
+      locals.push({
+        name: returnSiteIdxVarName,
+        type: PrimitiveTypes.single,
+      });
+
       const depthVar = `__recursionDepth_${method.name}`;
       const stackVars = locals.map((local) => ({
         name: `__recursionStack_${method.name}_${local.name}`,
-        type: new ArrayTypeSymbol(local.type),
+        type: ExternTypes.dataList as TypeSymbol,
       }));
 
-      recursionContext = { locals, depthVar, stackVars };
+      recursionContext = {
+        locals,
+        depthVar,
+        stackVars,
+        returnSites: [],
+        nextReturnSiteIndex: 0,
+        dispatchLabel: this.newLabel("recursive_dispatch"),
+      };
       this.currentRecursiveContext = recursionContext;
+
+      // Allocate recursion stack DataLists on first entry (depth == 0)
+      const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+      const isFirstEntry = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          isFirstEntry,
+          depthVarOp,
+          "==",
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      const skipAllocLabel = this.newLabel("skip_stack_alloc");
+      this.instructions.push(
+        new ConditionalJumpInstruction(isFirstEntry, skipAllocLabel),
+      );
+      // ConditionalJump: if isFirstEntry is FALSE (depth!=0) → jump to skip
+      // If TRUE (depth==0) → fall through to allocation
+
+      {
+        const maxRecursionDepth = 64;
+        const defaultToken = this.wrapDataToken(
+          createConstant(0, PrimitiveTypes.single),
+        );
+        for (const stackVarInfo of stackVars) {
+          const stackVar = createVariable(
+            stackVarInfo.name,
+            ExternTypes.dataList,
+          );
+          const externSig = this.requireExternSignature(
+            "DataList",
+            "ctor",
+            "method",
+            [],
+            "DataList",
+          );
+          this.instructions.push(new CallInstruction(stackVar, externSig, []));
+          // Pre-populate with default tokens for indexed set_Item access
+          for (let i = 0; i < maxRecursionDepth; i++) {
+            this.instructions.push(
+              new MethodCallInstruction(undefined, stackVar, "Add", [
+                defaultToken,
+              ]),
+            );
+          }
+        }
+      }
+      this.instructions.push(new LabelInstruction(skipAllocLabel));
+      // Prologue: save current locals to stack at method entry
       this.emitRecursivePrologue();
     }
 
@@ -848,11 +964,26 @@ export function visitClassDeclaration(
 
     this.visitBlockStatement(method.body);
     if (this.currentRecursiveContext) {
-      this.emitRecursiveEpilogue();
+      // Method-end: jump to dispatch WITHOUT epilogue (dispatch uses current siteIdx)
+      if (this.currentRecursiveContext.dispatchLabel) {
+        this.instructions.push(
+          new UnconditionalJumpInstruction(
+            this.currentRecursiveContext.dispatchLabel,
+          ),
+        );
+      }
+      // Shared dispatch label: all return paths jump here
+      if (this.currentRecursiveContext.dispatchLabel) {
+        this.instructions.push(
+          new LabelInstruction(this.currentRecursiveContext.dispatchLabel),
+        );
+      }
+      this.emitReturnSiteDispatch();
+    } else {
+      this.instructions.push(
+        new ReturnInstruction(undefined, this.currentReturnVar),
+      );
     }
-    this.instructions.push(
-      new ReturnInstruction(undefined, this.currentReturnVar),
-    );
     this.symbolTable.exitScope();
     this.currentReturnVar = undefined;
     this.currentRecursiveContext = undefined;

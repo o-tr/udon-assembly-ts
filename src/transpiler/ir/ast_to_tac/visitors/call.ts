@@ -41,7 +41,9 @@ import {
 import {
   type ConstantOperand,
   createConstant,
+  createLabel,
   createVariable,
+  type LabelOperand,
   type TACOperand,
   TACOperandKind,
   type VariableOperand,
@@ -675,6 +677,28 @@ export function visitCallExpression(
           this.instructions.push(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
+        } else if (node.typeArguments?.[0]) {
+          // Pre-populate DataList with N default elements for typed Array<T>(N)
+          let count = 0;
+          if (isConstantIntegerLength) {
+            count = (argOperand as ConstantOperand).value as number;
+          } else if (
+            isNumericLength &&
+            argOperand.kind === TACOperandKind.Constant
+          ) {
+            count = (argOperand as ConstantOperand).value as number;
+          }
+          if (count > 0) {
+            const defaultValue = createConstant(0, arrayType);
+            const defaultToken = this.wrapDataToken(defaultValue);
+            for (let i = 0; i < count; i++) {
+              this.instructions.push(
+                new MethodCallInstruction(undefined, listResult, "Add", [
+                  defaultToken,
+                ]),
+              );
+            }
+          }
         }
         return listResult;
       }
@@ -1276,6 +1300,105 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult != null) return inlineResult;
+      }
+    }
+    // Recursive self-method call: use JUMP-based mechanism
+    if (
+      propAccess.object.kind === ASTNodeKind.ThisExpression &&
+      this.currentClassName &&
+      this.entryPointClasses.has(this.currentClassName)
+    ) {
+      const classNode = this.classMap.get(this.currentClassName);
+      const methodDef = classNode?.methods.find(
+        (m) => m.name === propAccess.property,
+      );
+      if (methodDef?.isRecursive) {
+        const layout = this.udonBehaviourLayouts
+          ?.get(this.currentClassName)
+          ?.get(propAccess.property);
+        if (layout) {
+          // Set parameters
+          for (let i = 0; i < evaluatedArgs.length; i++) {
+            const paramExportName = layout.parameterExportNames[i];
+            if (paramExportName) {
+              const paramVar = createVariable(
+                paramExportName,
+                layout.parameterTypes[i] ?? PrimitiveTypes.single,
+              );
+              this.instructions.push(
+                new CopyInstruction(paramVar, evaluatedArgs[i]),
+              );
+            }
+          }
+          // Set return site index for dispatch table
+          const returnLabel = this.newLabel("recursive_return") as LabelOperand;
+          // Use shared registry so both Start calls and self-calls register
+          let registry = this.recursiveReturnSites.get(
+            propAccess.property,
+          );
+          if (!registry) {
+            registry = { sites: [], nextIndex: 0 };
+            this.recursiveReturnSites.set(propAccess.property, registry);
+          }
+          const returnSiteIdx = registry.nextIndex++;
+          registry.sites.push({
+            index: returnSiteIdx,
+            labelName: returnLabel.name,
+          });
+          // Also push to current context if available (for the dispatch table)
+          if (this.currentRecursiveContext) {
+            this.currentRecursiveContext.returnSites.push({
+              index: returnSiteIdx,
+              labelName: returnLabel.name,
+            });
+          }
+          const returnSiteIdxVar = createVariable(
+            `__returnSiteIdx_${propAccess.property}`,
+            PrimitiveTypes.single,
+            { isLocal: true },
+          );
+          this.instructions.push(
+            new AssignmentInstruction(
+              returnSiteIdxVar,
+              createConstant(returnSiteIdx, PrimitiveTypes.single),
+            ),
+          );
+          // Initialize recursion depth to 0 on first call from non-recursive context
+          if (!this.currentRecursiveContext) {
+            const depthVar = createVariable(
+              `__recursionDepth_${propAccess.property}`,
+              PrimitiveTypes.int32,
+            );
+            this.instructions.push(
+              new CopyInstruction(
+                depthVar,
+                createConstant(0, PrimitiveTypes.int32),
+              ),
+            );
+          }
+          // JUMP to method entry (prologue runs at method entry)
+          const methodLabel = createLabel(layout.exportMethodName);
+          this.instructions.push(new UnconditionalJumpInstruction(methodLabel));
+          // Return label (dispatch brings us back here)
+          this.instructions.push(new LabelInstruction(returnLabel));
+          // Epilogue: restore CALLER's locals (including siteIdx) from stack
+          // Skip depth decrement — depth is decremented at the dispatch point
+          // (early-return or method-end) to avoid issues with multiple self-calls
+          if (this.currentRecursiveContext) {
+            this.emitRecursiveEpilogue({ skipDepthDecrement: true });
+          }
+          // Read return value
+          if (layout.returnExportName) {
+            const retVar = createVariable(
+              layout.returnExportName,
+              layout.returnType,
+            );
+            const result = this.newTemp(layout.returnType);
+            this.instructions.push(new CopyInstruction(result, retVar));
+            return result;
+          }
+          return VOID_RETURN;
+        }
       }
     }
     // Entry point class self-method: inline the body
