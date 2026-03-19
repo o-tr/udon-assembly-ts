@@ -80,6 +80,8 @@ export function convertInstruction(
 
       if (
         !isShift &&
+        this.isNumericType(leftType) &&
+        this.isNumericType(rightType) &&
         (promotedType !== leftType || promotedType !== rightType)
       ) {
         // Helper: coerce a single operand, returning the push-able name
@@ -120,19 +122,59 @@ export function convertInstruction(
         this.pushOperand(binInst.right);
       }
 
-      // Push result address before EXTERN (Udon VM calling convention)
-      const destAddr = this.getOperandAddress(binInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
+      // Determine if the result needs to be truncated back to the dest type.
+      // Comparison ops always return Boolean regardless of promoted type,
+      // so only arithmetic ops can produce a wider-than-dest result.
+      const destType = this.getOperandUdonType(binInst.dest);
+      const isComparison =
+        binInst.operator === "<" ||
+        binInst.operator === ">" ||
+        binInst.operator === "<=" ||
+        binInst.operator === ">=" ||
+        binInst.operator === "==" ||
+        binInst.operator === "!=";
+      const needsTruncate = !isComparison && promotedType !== destType;
 
-      // Call extern for operation using the promoted type
-      const externSig = this.getExternForBinaryOp(
-        binInst.operator,
-        promotedType,
-      );
-      this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
+      if (needsTruncate) {
+        // Write promoted result to a temp slot, then convert to dest type
+        const promotedTmpName = `__tpromoted_${this.nextAddress}`;
+        this.variableAddresses.set(promotedTmpName, this.nextAddress++);
+        this.variableTypes.set(promotedTmpName, promotedType);
+        this.instructions.push(new PushInstruction(promotedTmpName));
+
+        const externSig = this.getExternForBinaryOp(
+          binInst.operator,
+          promotedType,
+        );
+        this.externSignatures.add(externSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(externSig), true),
+        );
+
+        // Convert promoted result back to dest type
+        const destAddr = this.getOperandAddress(binInst.dest);
+        this.instructions.push(new PushInstruction(promotedTmpName));
+        this.instructions.push(new PushInstruction(destAddr));
+        const truncSig = this.getConvertExternSignature(promotedType, destType);
+        this.externSignatures.add(truncSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(truncSig), true),
+        );
+      } else {
+        // Push result address before EXTERN (Udon VM calling convention)
+        const destAddr = this.getOperandAddress(binInst.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+
+        // Call extern for operation using the promoted type
+        const externSig = this.getExternForBinaryOp(
+          binInst.operator,
+          promotedType,
+        );
+        this.externSignatures.add(externSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(externSig), true),
+        );
+      }
       break;
     }
 

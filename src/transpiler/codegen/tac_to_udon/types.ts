@@ -66,7 +66,7 @@ export function getPromotedNumericType(
   const rankB = NUMERIC_RANK[b] ?? 3;
   if (rankA === rankB && a !== b) {
     // Same width but different signedness
-    if (rankA === 4) return "UInt64"; // Int64 + UInt64 → UInt64
+    if (rankA === 4) return "Double"; // Int64 + UInt64: no lossless integer target; use Double
     return MIXED_SIGN_PROMOTION[rankA] ?? a;
   }
   return rankA >= rankB ? a : b;

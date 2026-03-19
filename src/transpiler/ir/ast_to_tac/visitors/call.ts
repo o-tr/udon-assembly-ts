@@ -1327,7 +1327,10 @@ export function visitCallExpression(
         objectType.name,
         propAccess.property,
       );
-      if (overloads.length === 1) {
+      if (
+        overloads.length === 1 &&
+        overloads[0].paramCsharpTypes.length === evaluatedArgs.length
+      ) {
         resolvedReturnType =
           mapCSharpTypeToTypeSymbol(overloads[0].returnCsharpType) ?? null;
       } else if (overloads.length > 1) {
