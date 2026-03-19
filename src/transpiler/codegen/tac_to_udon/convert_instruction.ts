@@ -147,7 +147,10 @@ export function convertInstruction(
         binInst.operator === ">=" ||
         binInst.operator === "==" ||
         binInst.operator === "!=";
-      const needsTruncate = !isComparison && promotedType !== destType;
+      const needsTruncate =
+        !isComparison &&
+        this.isNumericType(destType) &&
+        promotedType !== destType;
 
       if (needsTruncate) {
         // Write promoted result to a temp slot, then convert to dest type
@@ -206,7 +209,8 @@ export function convertInstruction(
             new ExternInstruction(this.getExternSymbol(toIntSig), true),
           );
         } else {
-          // Simple numeric conversion (int→int widening/narrowing)
+          // Numeric conversion: int→int, int→float, or float→float.
+          // (float→int is handled above with Math.Truncate semantics.)
           this.instructions.push(new PushInstruction(promotedTmpName));
           this.instructions.push(new PushInstruction(destAddr));
           const convSig = this.getConvertExternSignature(

@@ -1345,7 +1345,10 @@ export function visitCallExpression(
           for (let i = 0; i < member.paramCsharpTypes.length; i++) {
             if (member.paramCsharpTypes[i] === mappedArgTypes[i]) {
               score += 2;
-            } else if (member.paramCsharpTypes[i] === "System.Object") {
+            } else if (
+              member.paramCsharpTypes[i] === "System.Object" ||
+              mappedArgTypes[i] === "System.Object"
+            ) {
               score += 1;
             } else {
               matched = false;
