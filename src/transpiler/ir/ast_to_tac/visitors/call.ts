@@ -1361,7 +1361,12 @@ export function visitCallExpression(
             bestMeta = member;
           }
         }
-        if (bestMeta) {
+        if (bestMeta && (bestScore > 0 || evaluatedArgs.length === 0)) {
+          // Resolve when at least one argument had a concrete type match,
+          // or when the call has zero arguments (score 0 simply means
+          // "nothing to score", not ambiguity).
+          // When all args are System.Object and score === 0, resolution is
+          // ambiguous — fall back to null (→ ObjectType downstream).
           resolvedReturnType =
             mapCSharpTypeToTypeSymbol(bestMeta.returnCsharpType) ?? null;
         }
