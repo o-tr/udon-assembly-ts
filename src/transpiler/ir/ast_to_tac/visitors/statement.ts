@@ -60,6 +60,11 @@ import { resolveTypeFromNode } from "./expression.js";
 /**
  * Maximum number of entries pre-allocated in each recursion stack DataList.
  * Limits the supported recursion depth for @RecursiveMethod-annotated methods.
+ *
+ * WARNING: Recursion deeper than this limit causes an out-of-bounds DataList
+ * write at runtime (Udon VM exception). There is no overflow guard at push
+ * time — the DataList is fixed-size. Increase this value if deeper recursion
+ * is needed, at the cost of larger generated UASM.
  */
 const MAX_RECURSION_STACK_DEPTH = 16;
 

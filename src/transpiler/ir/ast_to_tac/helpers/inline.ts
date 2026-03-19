@@ -787,6 +787,9 @@ export function countSelfCalls(
         break;
       }
       case ASTNodeKind.FunctionExpression: {
+        // NOTE: self-calls inside closures are counted here even though they
+        // go through a different runtime path (not the JUMP dispatch).
+        // This may over-allocate __selfCallResult_* slots but is benign.
         const funcNode = node as FunctionExpressionNode;
         visitNode(funcNode.body);
         break;

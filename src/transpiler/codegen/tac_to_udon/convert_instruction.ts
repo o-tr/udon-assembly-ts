@@ -662,20 +662,6 @@ export function convertInstruction(
       throw new Error("Phi instructions must be lowered before codegen");
     }
 
-    case TACInstructionKind.JumpIndirect: {
-      // JumpIndirect is no longer emitted; replaced by dispatch table pattern.
-      throw new Error(
-        "JumpIndirect TAC instruction should not be emitted. Use dispatch table pattern instead.",
-      );
-    }
-
-    case TACInstructionKind.LoadLabelAddress: {
-      // LoadLabelAddress is no longer emitted; replaced by dispatch table pattern.
-      throw new Error(
-        "LoadLabelAddress TAC instruction should not be emitted. Use dispatch table pattern instead.",
-      );
-    }
-
     default: {
       const _exhaustive: never = inst.kind as never;
       throw new Error(`Unhandled TACInstructionKind: ${_exhaustive}`);
