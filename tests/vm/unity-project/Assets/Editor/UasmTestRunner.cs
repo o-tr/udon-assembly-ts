@@ -274,7 +274,7 @@ public static class UasmTestRunner
             // Compare logs
             if (capturedLogs.Count != result.expectedLogs.Length)
             {
-                result.error = $"Log count mismatch: expected {result.expectedLogs.Length}, got {capturedLogs.Count}";
+                result.error = $"Log count mismatch: expected {result.expectedLogs.Length}, got {capturedLogs.Count}{FormatVmErrors(capturedErrors)}";
                 return result;
             }
 
@@ -282,7 +282,7 @@ public static class UasmTestRunner
             {
                 if (capturedLogs[i] != result.expectedLogs[i])
                 {
-                    result.error = $"Log[{i}]: expected '{result.expectedLogs[i]}', got '{capturedLogs[i]}'";
+                    result.error = $"Log[{i}]: expected '{result.expectedLogs[i]}', got '{capturedLogs[i]}'{FormatVmErrors(capturedErrors)}";
                     return result;
                 }
             }
