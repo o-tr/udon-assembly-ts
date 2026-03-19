@@ -73,4 +73,40 @@ describe("recursive methods", () => {
     expect(result.uasm).toContain("set_Item");
     expect(result.uasm).toContain("get_Item");
   });
+
+  it("should handle recursive calls inside try/catch", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+
+      function RecursiveMethod(_t: object, _k: string, d: PropertyDescriptor): PropertyDescriptor { return d; }
+
+      @UdonBehaviour()
+      export class TryCatchRecursion extends UdonSharpBehaviour {
+        @RecursiveMethod
+        factorial(n: number): number {
+          try {
+            if (n <= 1) return 1;
+            return n * this.factorial(n - 1);
+          } catch {
+            return 0;
+          }
+        }
+
+        Start(): void {
+          this.factorial(5);
+        }
+      }
+    `;
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const result = transpiler.transpile(source);
+
+    // Dispatch table and push/pop should still be present for try/catch path
+    expect(result.uasm).toContain("JUMP_IF_FALSE,");
+    expect(result.uasm).toContain("JUMP, 0xFFFFFFFC");
+    expect(result.uasm).toContain("__returnSiteIdx_factorial");
+    expect(result.uasm).toContain("Inequality");
+    expect(result.uasm).toContain("set_Item");
+    expect(result.uasm).toContain("get_Item");
+  });
 });

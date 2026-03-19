@@ -690,6 +690,12 @@ export function visitCallExpression(
             argOperand.kind === TACOperandKind.Constant
           ) {
             count = (argOperand as ConstantOperand).value as number;
+          } else if (isNumericLength) {
+            console.warn(
+              "transpiler: new Array<T>(n) with a runtime-length variable is not supported. " +
+                "The resulting DataList will be empty; indexed access will fail at runtime. " +
+                "Use a constant length or build the array with a loop.",
+            );
           }
           if (count > 0) {
             const defaultValue = createConstant(0, arrayType);
@@ -1340,8 +1346,11 @@ export function visitCallExpression(
             });
           }
 
-          if (this.currentRecursiveContext) {
-            // === CALL SITE WITHIN RECURSIVE METHOD ===
+          if (
+            this.currentRecursiveContext &&
+            propAccess.property === this.currentMethodName
+          ) {
+            // === SELF-CALL WITHIN RECURSIVE METHOD ===
             // Order: push FIRST (save caller's state), then set params/returnSiteIdx/depth
 
             // 1. Push all locals to stack (save caller's current state)

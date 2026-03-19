@@ -567,7 +567,7 @@ export class UdonAssembler {
 
     const lines: string[] = [];
 
-    // Compute label addresses early so @label references in data section can be resolved
+    // Compute label addresses early for resolving JUMP/JUMP_IF_FALSE targets
     const { labelAddresses, canonicalLabels } = this.computeLabelAddressInfo(
       effectiveInstructions,
       exportLabels,

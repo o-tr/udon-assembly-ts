@@ -16,6 +16,7 @@ import {
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
+  type FunctionExpressionNode,
   type IfStatementNode,
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
@@ -523,6 +524,9 @@ export function collectRecursiveLocals(
       case ASTNodeKind.TryCatchStatement: {
         const tryNode = node as TryCatchStatementNode;
         visitNode(tryNode.tryBody);
+        if (tryNode.catchVariable) {
+          locals.set(tryNode.catchVariable, ObjectType);
+        }
         if (tryNode.catchBody) visitNode(tryNode.catchBody);
         if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
         break;
@@ -563,6 +567,14 @@ export function collectRecursiveLocals(
       case ASTNodeKind.AsExpression: {
         const asNode = node as AsExpressionNode;
         visitNode(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.FunctionExpression: {
+        const funcNode = node as FunctionExpressionNode;
+        for (const param of funcNode.parameters) {
+          locals.set(param.name, param.type);
+        }
+        visitNode(funcNode.body);
         break;
       }
       default:
@@ -772,6 +784,11 @@ export function countSelfCalls(
       case ASTNodeKind.AsExpression: {
         const asNode = node as AsExpressionNode;
         visitNode(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.FunctionExpression: {
+        const funcNode = node as FunctionExpressionNode;
+        visitNode(funcNode.body);
         break;
       }
       default:

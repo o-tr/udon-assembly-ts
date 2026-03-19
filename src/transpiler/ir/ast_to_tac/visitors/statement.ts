@@ -903,10 +903,12 @@ export function visitClassDeclaration(
       // that is part of the push/pop set, ensuring results survive when
       // a sibling call re-enters the method body.
       for (let i = 0; i < selfCallCount; i++) {
-        locals.push({
-          name: `__selfCallResult_${method.name}_${i}`,
-          type: layout?.returnType ?? PrimitiveTypes.single,
-        });
+        if (layout?.returnExportName) {
+          locals.push({
+            name: `__selfCallResult_${method.name}_${i}`,
+            type: layout.returnType ?? PrimitiveTypes.single,
+          });
+        }
       }
 
       const depthVar = `__recursionDepth_${method.name}`;
@@ -981,6 +983,9 @@ export function visitClassDeclaration(
             );
           }
         }
+        // Note: returnSiteIdx is NOT initialized here because the caller
+        // always sets it before JUMP. The dispatch table's fallback
+        // (JUMP 0xFFFFFFFC) handles any unmatched index defensively.
       }
       this.instructions.push(new LabelInstruction(skipAllocLabel));
       // No prologue at method entry — save/restore happens at each call site
@@ -1006,7 +1011,28 @@ export function visitClassDeclaration(
 
     this.visitBlockStatement(method.body);
     if (this.currentRecursiveContext) {
-      // Method-end: jump to dispatch WITHOUT epilogue (dispatch uses current siteIdx)
+      // Method-end fallthrough: decrement depth to match early-return behavior.
+      // Well-formed recursive methods always have explicit return statements,
+      // so this path is typically unreachable (all returns go through
+      // visitReturnStatement which decrements depth before dispatch).
+      // However, for defensive correctness we emit the decrement anyway.
+      {
+        const depthVarEnd = createVariable(
+          this.currentRecursiveContext.depthVar,
+          PrimitiveTypes.int32,
+        );
+        const depthTmpEnd = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            depthTmpEnd,
+            depthVarEnd,
+            "-",
+            createConstant(1, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new CopyInstruction(depthVarEnd, depthTmpEnd));
+      }
+      // Jump to dispatch (dispatch uses current siteIdx)
       if (this.currentRecursiveContext.dispatchLabel) {
         this.instructions.push(
           new UnconditionalJumpInstruction(

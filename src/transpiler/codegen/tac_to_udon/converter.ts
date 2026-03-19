@@ -46,7 +46,6 @@ export class TACToUdonConverter {
   instructions: UdonInstruction[] = [];
   variableAddresses: Map<string, number> = new Map();
   variableTypes: Map<string, string> = new Map();
-  variableValues: Map<string, unknown> = new Map();
   tempAddresses: Map<number, number> = new Map();
   tempTypes: Map<number, string> = new Map();
   constantAddresses: Map<string, number> = new Map();
@@ -69,7 +68,6 @@ export class TACToUdonConverter {
     this.instructions = [];
     this.variableAddresses.clear();
     this.variableTypes.clear();
-    this.variableValues.clear();
     this.tempAddresses.clear();
     this.tempTypes.clear();
     this.constantAddresses.clear();
@@ -200,7 +198,7 @@ export class TACToUdonConverter {
     // Variables
     for (const [name, addr] of this.variableAddresses) {
       const type = this.variableTypes.get(name) ?? "Single";
-      const value: unknown = this.variableValues.get(name) ?? null;
+      const value: unknown = null;
       entries.push([name, addr, type, value]);
     }
 
