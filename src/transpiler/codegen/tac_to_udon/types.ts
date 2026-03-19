@@ -45,12 +45,12 @@ const NUMERIC_RANK: Record<string, number> = {
   Double: 6,
 };
 
-// When signed + unsigned at the same width, C# promotes to the next wider
-// signed type (except Int64 + UInt64 → UInt64).
+// C# promotes all narrow integer arithmetic (byte, sbyte, short, ushort) to int.
+// Mixed-sign at the same width follows the same rule for ranks 1–2.
 const MIXED_SIGN_PROMOTION: Record<number, string> = {
-  1: "Int16", // Byte + SByte
-  2: "Int32", // Int16 + UInt16
-  3: "Int64", // Int32 + UInt32
+  1: "Int32", // Byte + SByte → int (C# promotes all narrow types to int)
+  2: "Int32", // Int16 + UInt16 → int
+  3: "Int64", // Int32 + UInt32 → long
 };
 
 /**

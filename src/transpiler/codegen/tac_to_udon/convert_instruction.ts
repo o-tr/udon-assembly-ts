@@ -118,7 +118,10 @@ export function convertInstruction(
           this.pushOperand(binInst.right);
         }
       } else if (isShift && rightType !== "Int32") {
-        // Shift operators require Int32 right operand; coerce if needed
+        // Shift operators require Int32 right operand; coerce if needed.
+        // NOTE: This block pushes [left, coerced-right] onto the stack,
+        // matching the operand layout expected by the needsResultConversion
+        // and non-conversion paths below.
         this.pushOperand(binInst.left);
         const shiftTmpName = `__tcoerce_${this.nextAddress}`;
         this.variableAddresses.set(shiftTmpName, this.nextAddress++);
