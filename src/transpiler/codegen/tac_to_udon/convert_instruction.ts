@@ -147,12 +147,14 @@ export function convertInstruction(
         binInst.operator === ">=" ||
         binInst.operator === "==" ||
         binInst.operator === "!=";
-      const needsTruncate =
+      // destType differs from promotedType: either narrowing (promoted wider
+      // type back to original dest) or widening (e.g. Int32 result into Int64 dest).
+      const needsResultConversion =
         !isComparison &&
         this.isNumericType(destType) &&
         promotedType !== destType;
 
-      if (needsTruncate) {
+      if (needsResultConversion) {
         // Write promoted result to a temp slot, then convert to dest type
         const promotedTmpName = `__tpromoted_${this.nextAddress}`;
         this.variableAddresses.set(promotedTmpName, this.nextAddress++);

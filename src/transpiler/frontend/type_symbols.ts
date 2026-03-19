@@ -249,6 +249,15 @@ export const ObjectType = new ObjectTypeSymbol();
 export function mapCSharpTypeToTypeSymbol(
   csharpType: string,
 ): TypeSymbol | null {
+  // Handle array types by mapping the element type
+  if (csharpType.endsWith("[]")) {
+    const elementType = mapCSharpTypeToTypeSymbol(csharpType.slice(0, -2));
+    if (elementType) {
+      return new ArrayTypeSymbol(elementType);
+    }
+    return null;
+  }
+
   switch (csharpType) {
     case "System.String":
       return PrimitiveTypes.string;
