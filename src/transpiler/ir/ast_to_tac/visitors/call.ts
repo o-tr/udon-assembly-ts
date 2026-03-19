@@ -1345,11 +1345,12 @@ export function visitCallExpression(
           for (let i = 0; i < member.paramCsharpTypes.length; i++) {
             if (member.paramCsharpTypes[i] === mappedArgTypes[i]) {
               score += 2;
-            } else if (
-              member.paramCsharpTypes[i] === "System.Object" ||
-              mappedArgTypes[i] === "System.Object"
-            ) {
+            } else if (member.paramCsharpTypes[i] === "System.Object") {
+              // Parameter accepts any type (weaker match)
               score += 1;
+            } else if (mappedArgTypes[i] === "System.Object") {
+              // Argument type is unknown/widened — don't bias scoring,
+              // just allow the match without adding score
             } else {
               matched = false;
               break;
