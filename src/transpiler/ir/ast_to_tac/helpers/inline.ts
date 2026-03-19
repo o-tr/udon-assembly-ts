@@ -13,11 +13,13 @@ import {
   type BlockStatementNode,
   type CallExpressionNode,
   type ClassDeclarationNode,
+  type ConditionalExpressionNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type FunctionExpressionNode,
   type IfStatementNode,
+  type NullCoalescingExpressionNode,
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
@@ -554,6 +556,19 @@ export function collectRecursiveLocals(
         visitNode(unNode.operand);
         break;
       }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        visitNode(condNode.condition);
+        visitNode(condNode.whenTrue);
+        visitNode(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const nullCoalesce = node as NullCoalescingExpressionNode;
+        visitNode(nullCoalesce.left);
+        visitNode(nullCoalesce.right);
+        break;
+      }
       case ASTNodeKind.PropertyAccessExpression: {
         const propNode = node as PropertyAccessExpressionNode;
         visitNode(propNode.object);
@@ -763,6 +778,19 @@ export function countSelfCalls(
       case ASTNodeKind.UnaryExpression: {
         const unNode = node as UnaryExpressionNode;
         visitNode(unNode.operand);
+        break;
+      }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        visitNode(condNode.condition);
+        visitNode(condNode.whenTrue);
+        visitNode(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const nullCoalesce = node as NullCoalescingExpressionNode;
+        visitNode(nullCoalesce.left);
+        visitNode(nullCoalesce.right);
         break;
       }
       case ASTNodeKind.AssignmentExpression: {

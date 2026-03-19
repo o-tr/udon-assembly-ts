@@ -797,6 +797,10 @@ export function visitClassDeclaration(
   const isUdonBehaviourClass =
     classLayout !== null ||
     node.decorators.some((decorator) => decorator.name === "UdonBehaviour");
+  // Process Start first so its recursive-call return sites are registered in
+  // recursiveReturnSites BEFORE other methods' dispatch tables are emitted.
+  // This ordering guarantees that emitReturnSiteDispatch() sees all return
+  // sites (from both Start and self-calls) when building the dispatch table.
   const startIndex = node.methods.findIndex((m) => m.name === "Start");
   const orderedMethods =
     startIndex >= 0
@@ -1048,7 +1052,10 @@ export function visitClassDeclaration(
           ),
         );
       }
-      // Shared dispatch label: all return paths jump here
+      // Shared dispatch label: all return paths jump here.
+      // The registry is fully populated at this point because Start is
+      // compiled first (see orderedMethods above), so all external caller
+      // return sites are already registered before this dispatch is emitted.
       if (this.currentRecursiveContext.dispatchLabel) {
         this.instructions.push(
           new LabelInstruction(this.currentRecursiveContext.dispatchLabel),
