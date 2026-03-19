@@ -62,8 +62,12 @@ export function getPromotedNumericType(
   a: string,
   b: string,
 ): string {
-  const rankA = NUMERIC_RANK[a] ?? 3;
-  const rankB = NUMERIC_RANK[b] ?? 3;
+  const rankA = NUMERIC_RANK[a];
+  const rankB = NUMERIC_RANK[b];
+  if (rankA === undefined || rankB === undefined) {
+    // Caller should ensure both are numeric; return first as no-op fallback
+    return a;
+  }
   if (rankA === rankB && a !== b) {
     // Same width but different signedness
     if (rankA === 4) return "Double"; // Int64 + UInt64: no lossless integer target; use Double

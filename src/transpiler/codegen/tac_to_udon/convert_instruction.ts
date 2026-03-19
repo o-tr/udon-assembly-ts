@@ -153,13 +153,57 @@ export function convertInstruction(
 
         // Convert promoted result back to dest type
         const destAddr = this.getOperandAddress(binInst.dest);
-        this.instructions.push(new PushInstruction(promotedTmpName));
-        this.instructions.push(new PushInstruction(destAddr));
-        const truncSig = this.getConvertExternSignature(promotedType, destType);
-        this.externSignatures.add(truncSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(truncSig), true),
-        );
+
+        if (this.isFloatType(promotedType) && this.isIntegerType(destType)) {
+          // Float→int requires Math.Truncate before Convert (matching
+          // CastInstruction semantics). Convert to Double first if needed,
+          // then truncate, then convert to target integer type.
+          let doubleSrc = promotedTmpName;
+          if (promotedType === "Single") {
+            const dblTmp = `__tpromoted_dbl_${this.nextAddress}`;
+            this.variableAddresses.set(dblTmp, this.nextAddress++);
+            this.variableTypes.set(dblTmp, "Double");
+            this.instructions.push(new PushInstruction(promotedTmpName));
+            this.instructions.push(new PushInstruction(dblTmp));
+            const toDblSig = this.getConvertExternSignature("Single", "Double");
+            this.externSignatures.add(toDblSig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(toDblSig), true),
+            );
+            doubleSrc = dblTmp;
+          }
+          // Math.Truncate Double → Double
+          const truncDblTmp = `__tpromoted_trunc_${this.nextAddress}`;
+          this.variableAddresses.set(truncDblTmp, this.nextAddress++);
+          this.variableTypes.set(truncDblTmp, "Double");
+          this.instructions.push(new PushInstruction(doubleSrc));
+          this.instructions.push(new PushInstruction(truncDblTmp));
+          const truncateSig = this.getTruncateExternSignature();
+          this.externSignatures.add(truncateSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(truncateSig), true),
+          );
+          // Convert truncated Double → target integer type
+          this.instructions.push(new PushInstruction(truncDblTmp));
+          this.instructions.push(new PushInstruction(destAddr));
+          const toIntSig = this.getConvertExternSignature("Double", destType);
+          this.externSignatures.add(toIntSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(toIntSig), true),
+          );
+        } else {
+          // Simple numeric conversion (int→int widening/narrowing)
+          this.instructions.push(new PushInstruction(promotedTmpName));
+          this.instructions.push(new PushInstruction(destAddr));
+          const convSig = this.getConvertExternSignature(
+            promotedType,
+            destType,
+          );
+          this.externSignatures.add(convSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(convSig), true),
+          );
+        }
       } else {
         // Push result address before EXTERN (Udon VM calling convention)
         const destAddr = this.getOperandAddress(binInst.dest);

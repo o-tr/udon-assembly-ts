@@ -242,3 +242,49 @@ export const ExternTypes = {
 };
 
 export const ObjectType = new ObjectTypeSymbol();
+
+/**
+ * Maps a C# type name (from type metadata registry) to a TypeSymbol.
+ */
+export function mapCSharpTypeToTypeSymbol(
+  csharpType: string,
+): TypeSymbol | null {
+  switch (csharpType) {
+    case "System.String":
+      return PrimitiveTypes.string;
+    case "System.Boolean":
+      return PrimitiveTypes.boolean;
+    case "System.Byte":
+      return PrimitiveTypes.byte;
+    case "System.SByte":
+      return PrimitiveTypes.sbyte;
+    case "System.Int16":
+      return PrimitiveTypes.int16;
+    case "System.UInt16":
+      return PrimitiveTypes.uint16;
+    case "System.Int32":
+      return PrimitiveTypes.int32;
+    case "System.UInt32":
+      return PrimitiveTypes.uint32;
+    case "System.Int64":
+      return PrimitiveTypes.int64;
+    case "System.UInt64":
+      return PrimitiveTypes.uint64;
+    case "System.Single":
+      return PrimitiveTypes.single;
+    case "System.Double":
+      return PrimitiveTypes.double;
+    case "System.Object":
+      return ObjectType;
+    case "System.Void":
+      return PrimitiveTypes.void;
+    case "VRC.SDK3.Data.DataToken":
+      return ExternTypes.dataToken;
+    case "VRC.SDK3.Data.DataList":
+      return ExternTypes.dataList;
+    case "VRC.SDK3.Data.DataDictionary":
+      return ExternTypes.dataDictionary;
+    default:
+      return null;
+  }
+}

@@ -8,6 +8,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  mapCSharpTypeToTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -50,10 +51,7 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
-import {
-  mapCSharpTypeToTypeSymbol,
-  resolveTypeFromNode,
-} from "./expression.js";
+import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 
