@@ -76,8 +76,22 @@ export function mapCSharpTypeToTypeSymbol(
       return PrimitiveTypes.string;
     case "System.Boolean":
       return PrimitiveTypes.boolean;
+    case "System.Byte":
+      return PrimitiveTypes.byte;
+    case "System.SByte":
+      return PrimitiveTypes.sbyte;
+    case "System.Int16":
+      return PrimitiveTypes.int16;
+    case "System.UInt16":
+      return PrimitiveTypes.uint16;
     case "System.Int32":
       return PrimitiveTypes.int32;
+    case "System.UInt32":
+      return PrimitiveTypes.uint32;
+    case "System.Int64":
+      return PrimitiveTypes.int64;
+    case "System.UInt64":
+      return PrimitiveTypes.uint64;
     case "System.Single":
       return PrimitiveTypes.single;
     case "System.Double":

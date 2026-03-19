@@ -74,7 +74,6 @@ export function convertInstruction(
         this.isNumericType(rightType)
       ) {
         // Convert right operand to match left type
-        this.pushOperand(binInst.left);
         this.pushOperand(binInst.right);
         const coerceTmpName = `__tcoerce_${this.nextAddress}`;
         this.variableAddresses.set(coerceTmpName, this.nextAddress++);
@@ -87,7 +86,6 @@ export function convertInstruction(
         );
 
         // Now push left and coerced right for the binary op
-        // Left is already pushed, we need to re-push since EXTERN consumed the stack
         this.pushOperand(binInst.left);
         this.instructions.push(new PushInstruction(coerceTmpName));
       } else {
