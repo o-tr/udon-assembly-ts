@@ -1361,14 +1361,19 @@ export function visitCallExpression(
             bestMeta = member;
           }
         }
-        if (bestMeta && (bestScore > 0 || evaluatedArgs.length === 0)) {
-          // Resolve when at least one argument had a concrete type match,
-          // or when the call has zero arguments (score 0 simply means
-          // "nothing to score", not ambiguity).
-          // When all args are System.Object and score === 0, resolution is
-          // ambiguous — fall back to null (→ ObjectType downstream).
+        if (bestMeta && bestScore > 0) {
           resolvedReturnType =
             mapCSharpTypeToTypeSymbol(bestMeta.returnCsharpType) ?? null;
+        } else if (bestMeta && evaluatedArgs.length === 0) {
+          // Zero-arg call: only resolve if exactly one 0-param overload exists,
+          // otherwise the selection is ambiguous.
+          const zeroParamCount = overloads.filter(
+            (o) => o.paramCsharpTypes.length === 0,
+          ).length;
+          if (zeroParamCount === 1) {
+            resolvedReturnType =
+              mapCSharpTypeToTypeSymbol(bestMeta.returnCsharpType) ?? null;
+          }
         }
       }
     }
