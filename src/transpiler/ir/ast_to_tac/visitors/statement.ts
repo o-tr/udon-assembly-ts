@@ -54,6 +54,7 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
+import { countSelfCalls } from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
@@ -827,9 +828,11 @@ export function visitClassDeclaration(
       | {
           locals: Array<{ name: string; type: TypeSymbol }>;
           depthVar: string;
+          spVar: string;
           stackVars: Array<{ name: string; type: TypeSymbol }>;
           returnSites: Array<{ index: number; labelName: string }>;
           nextReturnSiteIndex: number;
+          nextSelfCallResultIndex?: number;
           dispatchLabel?: TACOperand;
         }
       | undefined;
@@ -861,6 +864,8 @@ export function visitClassDeclaration(
     }
 
     if (method.isRecursive) {
+      const selfCallCount = countSelfCalls(method.name, method.body);
+
       const locals = this.collectRecursiveLocals(method);
       // Remap parameter names to their export names (e.g., "n" → "__0_n__param")
       // because the method body uses export names, not local names
@@ -876,8 +881,30 @@ export function visitClassDeclaration(
         name: returnSiteIdxVarName,
         type: PrimitiveTypes.single,
       });
+      // Add return export variable to the recursion stack locals
+      // so it gets saved/restored at each call site.
+      const layout = this.udonBehaviourLayouts
+        ?.get(node.name)
+        ?.get(method.name);
+      if (layout?.returnExportName) {
+        locals.push({
+          name: layout.returnExportName,
+          type: layout.returnType,
+        });
+      }
+      // Add self-call result variables that survive across sibling calls.
+      // Each self-call site captures the return value into a named variable
+      // that is part of the push/pop set, ensuring results survive when
+      // a sibling call re-enters the method body.
+      for (let i = 0; i < selfCallCount; i++) {
+        locals.push({
+          name: `__selfCallResult_${method.name}_${i}`,
+          type: layout?.returnType ?? PrimitiveTypes.single,
+        });
+      }
 
       const depthVar = `__recursionDepth_${method.name}`;
+      const spVar = `__recursionSP_${method.name}`;
       const stackVars = locals.map((local) => ({
         name: `__recursionStack_${method.name}_${local.name}`,
         type: ExternTypes.dataList as TypeSymbol,
@@ -886,9 +913,11 @@ export function visitClassDeclaration(
       recursionContext = {
         locals,
         depthVar,
+        spVar,
         stackVars,
         returnSites: [],
         nextReturnSiteIndex: 0,
+        nextSelfCallResultIndex: 0,
         dispatchLabel: this.newLabel("recursive_dispatch"),
       };
       this.currentRecursiveContext = recursionContext;
@@ -912,7 +941,15 @@ export function visitClassDeclaration(
       // If TRUE (depth==0) → fall through to allocation
 
       {
-        const maxRecursionDepth = 64;
+        // Initialize stack pointer to -1
+        const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+        this.instructions.push(
+          new CopyInstruction(
+            spVarOp,
+            createConstant(-1, PrimitiveTypes.int32),
+          ),
+        );
+        const maxRecursionDepth = 16;
         const defaultToken = this.wrapDataToken(
           createConstant(0, PrimitiveTypes.single),
         );
@@ -940,8 +977,7 @@ export function visitClassDeclaration(
         }
       }
       this.instructions.push(new LabelInstruction(skipAllocLabel));
-      // Prologue: save current locals to stack at method entry
-      this.emitRecursivePrologue();
+      // No prologue at method entry — save/restore happens at each call site
     }
 
     // Inject non-literal top-level const initialization at the start of _start/Start

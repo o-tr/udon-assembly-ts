@@ -1317,6 +1317,123 @@ export function visitCallExpression(
           ?.get(this.currentClassName)
           ?.get(propAccess.property);
         if (layout) {
+          // Register return site in the shared registry
+          const returnLabel = this.newLabel("recursive_return") as LabelOperand;
+          let registry = this.recursiveReturnSites.get(propAccess.property);
+          if (!registry) {
+            registry = { sites: [], nextIndex: 0 };
+            this.recursiveReturnSites.set(propAccess.property, registry);
+          }
+          const returnSiteIdx = registry.nextIndex++;
+          registry.sites.push({
+            index: returnSiteIdx,
+            labelName: returnLabel.name,
+          });
+          if (this.currentRecursiveContext) {
+            this.currentRecursiveContext.returnSites.push({
+              index: returnSiteIdx,
+              labelName: returnLabel.name,
+            });
+          }
+
+          if (this.currentRecursiveContext) {
+            // === CALL SITE WITHIN RECURSIVE METHOD ===
+            // Order: push FIRST (save caller's state), then set params/returnSiteIdx/depth
+
+            // 1. Push all locals to stack (save caller's current state)
+            this.emitCallSitePush();
+
+            // 2. Increment depth so re-entry skips stack allocation
+            const depthVarOp = createVariable(
+              this.currentRecursiveContext.depthVar,
+              PrimitiveTypes.int32,
+            );
+            const depthInc = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                depthInc,
+                depthVarOp,
+                "+",
+                createConstant(1, PrimitiveTypes.int32),
+              ),
+            );
+            this.instructions.push(new CopyInstruction(depthVarOp, depthInc));
+
+            // 3. Set parameters for the callee
+            for (let i = 0; i < evaluatedArgs.length; i++) {
+              const paramExportName = layout.parameterExportNames[i];
+              if (paramExportName) {
+                const paramVar = createVariable(
+                  paramExportName,
+                  layout.parameterTypes[i] ?? PrimitiveTypes.single,
+                );
+                this.instructions.push(
+                  new CopyInstruction(paramVar, evaluatedArgs[i]),
+                );
+              }
+            }
+
+            // 4. Set return site index for dispatch table
+            const returnSiteIdxVar = createVariable(
+              `__returnSiteIdx_${propAccess.property}`,
+              PrimitiveTypes.single,
+              { isLocal: true },
+            );
+            this.instructions.push(
+              new AssignmentInstruction(
+                returnSiteIdxVar,
+                createConstant(returnSiteIdx, PrimitiveTypes.single),
+              ),
+            );
+
+            // 5. JUMP to method entry
+            const methodLabel = createLabel(layout.exportMethodName);
+            this.instructions.push(
+              new UnconditionalJumpInstruction(methodLabel),
+            );
+
+            // 6. Return label (dispatch brings us back here)
+            this.instructions.push(new LabelInstruction(returnLabel));
+
+            // 7. Read return value into temp BEFORE pop
+            let result: TACOperand = VOID_RETURN;
+            let capturedTemp: TACOperand | undefined;
+            if (layout.returnExportName) {
+              const retVar = createVariable(
+                layout.returnExportName,
+                layout.returnType,
+              );
+              capturedTemp = this.newTemp(layout.returnType);
+              this.instructions.push(new CopyInstruction(capturedTemp, retVar));
+            }
+
+            // 8. Pop all locals from stack (restore caller's state)
+            this.emitCallSitePop();
+
+            // 9. Copy captured result into a named selfCallResult variable
+            //    that is part of the push/pop set (survives sibling calls)
+            if (capturedTemp && layout.returnExportName) {
+              const selfCallIdx =
+                this.currentRecursiveContext.nextSelfCallResultIndex ?? 0;
+              this.currentRecursiveContext.nextSelfCallResultIndex =
+                selfCallIdx + 1;
+              const selfCallResultVar = createVariable(
+                `__selfCallResult_${propAccess.property}_${selfCallIdx}`,
+                layout.returnType,
+                { isLocal: true },
+              );
+              this.instructions.push(
+                new CopyInstruction(selfCallResultVar, capturedTemp),
+              );
+              result = selfCallResultVar;
+            }
+
+            return result;
+          }
+
+          // === CALL FROM NON-RECURSIVE CONTEXT (e.g., Start) ===
+          // No push/pop needed, just set params and jump
+
           // Set parameters
           for (let i = 0; i < evaluatedArgs.length; i++) {
             const paramExportName = layout.parameterExportNames[i];
@@ -1330,28 +1447,7 @@ export function visitCallExpression(
               );
             }
           }
-          // Set return site index for dispatch table
-          const returnLabel = this.newLabel("recursive_return") as LabelOperand;
-          // Use shared registry so both Start calls and self-calls register
-          let registry = this.recursiveReturnSites.get(
-            propAccess.property,
-          );
-          if (!registry) {
-            registry = { sites: [], nextIndex: 0 };
-            this.recursiveReturnSites.set(propAccess.property, registry);
-          }
-          const returnSiteIdx = registry.nextIndex++;
-          registry.sites.push({
-            index: returnSiteIdx,
-            labelName: returnLabel.name,
-          });
-          // Also push to current context if available (for the dispatch table)
-          if (this.currentRecursiveContext) {
-            this.currentRecursiveContext.returnSites.push({
-              index: returnSiteIdx,
-              labelName: returnLabel.name,
-            });
-          }
+          // Set return site index
           const returnSiteIdxVar = createVariable(
             `__returnSiteIdx_${propAccess.property}`,
             PrimitiveTypes.single,
@@ -1363,41 +1459,33 @@ export function visitCallExpression(
               createConstant(returnSiteIdx, PrimitiveTypes.single),
             ),
           );
-          // Initialize recursion depth to 0 on first call from non-recursive context
-          if (!this.currentRecursiveContext) {
-            const depthVar = createVariable(
-              `__recursionDepth_${propAccess.property}`,
-              PrimitiveTypes.int32,
-            );
-            this.instructions.push(
-              new CopyInstruction(
-                depthVar,
-                createConstant(0, PrimitiveTypes.int32),
-              ),
-            );
-          }
-          // JUMP to method entry (prologue runs at method entry)
+          // Initialize recursion depth to 0
+          const depthVar = createVariable(
+            `__recursionDepth_${propAccess.property}`,
+            PrimitiveTypes.int32,
+          );
+          this.instructions.push(
+            new CopyInstruction(
+              depthVar,
+              createConstant(0, PrimitiveTypes.int32),
+            ),
+          );
+          // JUMP to method entry
           const methodLabel = createLabel(layout.exportMethodName);
           this.instructions.push(new UnconditionalJumpInstruction(methodLabel));
           // Return label (dispatch brings us back here)
           this.instructions.push(new LabelInstruction(returnLabel));
-          // Epilogue: restore CALLER's locals (including siteIdx) from stack
-          // Skip depth decrement — depth is decremented at the dispatch point
-          // (early-return or method-end) to avoid issues with multiple self-calls
-          if (this.currentRecursiveContext) {
-            this.emitRecursiveEpilogue({ skipDepthDecrement: true });
-          }
           // Read return value
+          let result: TACOperand = VOID_RETURN;
           if (layout.returnExportName) {
             const retVar = createVariable(
               layout.returnExportName,
               layout.returnType,
             );
-            const result = this.newTemp(layout.returnType);
+            result = this.newTemp(layout.returnType);
             this.instructions.push(new CopyInstruction(result, retVar));
-            return result;
           }
-          return VOID_RETURN;
+          return result;
         }
       }
     }

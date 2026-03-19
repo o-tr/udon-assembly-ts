@@ -642,6 +642,207 @@ export function emitRecursiveEpilogue(
 }
 
 /**
+ * Push all locals onto per-local DataList stacks at the current SP.
+ * Used at each self-call site BEFORE the JUMP to the recursive method.
+ * Increments SP first, then saves all locals at the new SP index.
+ */
+export function emitCallSitePush(this: ASTToTACConverter): void {
+  const context = this.currentRecursiveContext;
+  if (!context) return;
+
+  const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
+
+  // SP++
+  const spTemp = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spTemp,
+      spVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  this.instructions.push(new CopyInstruction(spVar, spTemp));
+
+  // Save each local at stack[SP]
+  for (let index = 0; index < context.locals.length; index++) {
+    const local = context.locals[index];
+    const stackVarInfo = context.stackVars[index];
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+    const localVar = createVariable(local.name, local.type, {
+      isLocal: true,
+    });
+    const token = this.wrapDataToken(localVar);
+    this.instructions.push(
+      new MethodCallInstruction(undefined, stackVar, "set_Item", [
+        spVar,
+        token,
+      ]),
+    );
+  }
+}
+
+/**
+ * Pop all locals from per-local DataList stacks at the current SP.
+ * Used at each self-call site AFTER the return label (after reading the return value).
+ * Restores all locals from the current SP index, then decrements SP.
+ */
+export function emitCallSitePop(this: ASTToTACConverter): void {
+  const context = this.currentRecursiveContext;
+  if (!context) return;
+
+  const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
+
+  // Restore each local from stack[SP]
+  for (let index = 0; index < context.locals.length; index++) {
+    const local = context.locals[index];
+    const stackVarInfo = context.stackVars[index];
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+    const token = this.newTemp(ExternTypes.dataToken);
+    this.instructions.push(
+      new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
+    );
+    const unwrapped = this.unwrapDataToken(token, local.type);
+    this.instructions.push(
+      new CopyInstruction(
+        createVariable(local.name, local.type, { isLocal: true }),
+        unwrapped,
+      ),
+    );
+  }
+
+  // SP--
+  const spTemp = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spTemp,
+      spVar,
+      "-",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  this.instructions.push(new CopyInstruction(spVar, spTemp));
+}
+
+/**
+ * Count the number of self-recursive calls (this.methodName(...)) in a method body.
+ * Used to pre-allocate selfCallResult variables that survive across sibling calls.
+ */
+export function countSelfCalls(
+  methodName: string,
+  body: BlockStatementNode,
+): number {
+  let count = 0;
+  const visitNode = (node: ASTNode): void => {
+    switch (node.kind) {
+      case ASTNodeKind.CallExpression: {
+        const callNode = node as CallExpressionNode;
+        if (callNode.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propAccess = callNode.callee as PropertyAccessExpressionNode;
+          if (
+            propAccess.object.kind === ASTNodeKind.ThisExpression &&
+            propAccess.property === methodName
+          ) {
+            count++;
+          }
+        }
+        visitNode(callNode.callee);
+        for (const arg of callNode.arguments) visitNode(arg);
+        break;
+      }
+      case ASTNodeKind.BlockStatement: {
+        const block = node as BlockStatementNode;
+        for (const stmt of block.statements) visitNode(stmt);
+        break;
+      }
+      case ASTNodeKind.IfStatement: {
+        const ifNode = node as IfStatementNode;
+        visitNode(ifNode.condition);
+        visitNode(ifNode.thenBranch);
+        if (ifNode.elseBranch) visitNode(ifNode.elseBranch);
+        break;
+      }
+      case ASTNodeKind.WhileStatement: {
+        const whileNode = node as WhileStatementNode;
+        visitNode(whileNode.condition);
+        visitNode(whileNode.body);
+        break;
+      }
+      case ASTNodeKind.ForStatement: {
+        const forNode = node as ForStatementNode;
+        if (forNode.initializer) visitNode(forNode.initializer);
+        if (forNode.condition) visitNode(forNode.condition);
+        if (forNode.incrementor) visitNode(forNode.incrementor);
+        visitNode(forNode.body);
+        break;
+      }
+      case ASTNodeKind.ForOfStatement: {
+        const forOfNode = node as ForOfStatementNode;
+        visitNode(forOfNode.iterable);
+        visitNode(forOfNode.body);
+        break;
+      }
+      case ASTNodeKind.DoWhileStatement: {
+        const doNode = node as DoWhileStatementNode;
+        visitNode(doNode.body);
+        visitNode(doNode.condition);
+        break;
+      }
+      case ASTNodeKind.SwitchStatement: {
+        const switchNode = node as SwitchStatementNode;
+        visitNode(switchNode.expression);
+        for (const clause of switchNode.cases) {
+          if (clause.expression) visitNode(clause.expression);
+          for (const stmt of clause.statements) visitNode(stmt);
+        }
+        break;
+      }
+      case ASTNodeKind.ReturnStatement: {
+        const retNode = node as ReturnStatementNode;
+        if (retNode.value) visitNode(retNode.value);
+        break;
+      }
+      case ASTNodeKind.BinaryExpression: {
+        const binNode = node as BinaryExpressionNode;
+        visitNode(binNode.left);
+        visitNode(binNode.right);
+        break;
+      }
+      case ASTNodeKind.UnaryExpression: {
+        const unNode = node as UnaryExpressionNode;
+        visitNode(unNode.operand);
+        break;
+      }
+      case ASTNodeKind.AssignmentExpression: {
+        const assignNode = node as AssignmentExpressionNode;
+        visitNode(assignNode.target);
+        visitNode(assignNode.value);
+        break;
+      }
+      case ASTNodeKind.VariableDeclaration: {
+        const varNode = node as VariableDeclarationNode;
+        if (varNode.initializer) visitNode(varNode.initializer);
+        break;
+      }
+      case ASTNodeKind.PropertyAccessExpression: {
+        const propNode = node as PropertyAccessExpressionNode;
+        visitNode(propNode.object);
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        const asNode = node as AsExpressionNode;
+        visitNode(asNode.expression);
+        break;
+      }
+      default:
+        break;
+    }
+  };
+  visitNode(body);
+  return count;
+}
+
+/**
  * Emit a dispatch table that replaces JUMP_INDIRECT for recursive returns.
  * After the epilogue restores __returnSiteIdx, this checks the index against
  * each known return site and jumps to the corresponding label.

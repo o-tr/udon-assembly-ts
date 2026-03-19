@@ -27,14 +27,14 @@ describe("recursive methods", () => {
     );
     const tac = converter.convert(ast);
 
-    // Recursion stacks use DataList set_Item in prologue (at method entry)
-    // and get_Item in epilogue (at call-site return labels for entry-point classes)
-    const hasStackSet = tac.some(
+    // Recursion stacks are pre-populated with DataList.Add at method entry.
+    // Push/pop (set_Item/get_Item) happens at each call site for entry-point classes.
+    const hasStackAlloc = tac.some(
       (inst) =>
         inst.kind === TACInstructionKind.MethodCall &&
-        inst.toString().includes("set_Item"),
+        inst.toString().includes("Add"),
     );
 
-    expect(hasStackSet).toBe(true);
+    expect(hasStackAlloc).toBe(true);
   });
 });

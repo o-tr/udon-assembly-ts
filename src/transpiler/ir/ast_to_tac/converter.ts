@@ -52,6 +52,8 @@ import {
 import { requireExternSignature } from "./helpers/extern.js";
 import {
   collectRecursiveLocals,
+  emitCallSitePop,
+  emitCallSitePush,
   emitEntryPointPropertyInit,
   emitRecursiveEpilogue,
   emitRecursivePrologue,
@@ -158,9 +160,11 @@ export class ASTToTACConverter {
     | {
         locals: Array<{ name: string; type: TypeSymbol }>;
         depthVar: string;
+        spVar: string;
         stackVars: Array<{ name: string; type: TypeSymbol }>;
         returnSites: Array<{ index: number; labelName: string }>;
         nextReturnSiteIndex: number;
+        nextSelfCallResultIndex?: number;
         dispatchLabel?: TACOperand;
       }
     | undefined;
@@ -503,6 +507,8 @@ export class ASTToTACConverter {
   collectRecursiveLocals = collectRecursiveLocals;
   emitRecursivePrologue = emitRecursivePrologue;
   emitRecursiveEpilogue = emitRecursiveEpilogue;
+  emitCallSitePush = emitCallSitePush;
+  emitCallSitePop = emitCallSitePop;
   emitReturnSiteDispatch = emitReturnSiteDispatch;
 
   emitTryInstructionsWithChecks = emitTryInstructionsWithChecks;
