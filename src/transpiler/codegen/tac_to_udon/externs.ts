@@ -152,6 +152,10 @@ export function getConvertMethodName(
       ? targetType.slice("System".length)
       : targetType;
   switch (shortType) {
+    case "Byte":
+      return "ToByte";
+    case "SByte":
+      return "ToSByte";
     case "Int16":
       return "ToInt16";
     case "UInt16":

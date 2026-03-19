@@ -70,7 +70,10 @@ export function getPromotedNumericType(
   }
   if (rankA === rankB && a !== b) {
     // Same width but different signedness
-    if (rankA === 4) return "Double"; // Int64 + UInt64: no lossless integer target; use Double
+    // Int64 + UInt64: no lossless integer target in C# (compile error CS0034).
+    // Use Double as the widest available type; note precision loss is possible
+    // for values beyond ~2^53 (~15.9 decimal digits).
+    if (rankA === 4) return "Double";
     return MIXED_SIGN_PROMOTION[rankA] ?? a;
   }
   return rankA >= rankB ? a : b;

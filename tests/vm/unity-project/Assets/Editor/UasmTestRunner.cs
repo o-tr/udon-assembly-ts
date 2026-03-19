@@ -162,7 +162,7 @@ public static class UasmTestRunner
             {
                 capturedLogs.Add(message);
             }
-            else if (type == LogType.Error || type == LogType.Exception)
+            else if (type == LogType.Error || type == LogType.Exception || type == LogType.Warning)
             {
                 capturedErrors.Add($"[{type}] {message}");
             }
