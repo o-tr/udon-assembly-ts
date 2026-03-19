@@ -24,6 +24,13 @@ export function isIntegerType(
   );
 }
 
+export function isNumericType(
+  this: TACToUdonConverter,
+  typeName: string,
+): boolean {
+  return this.isFloatType(typeName) || this.isIntegerType(typeName);
+}
+
 export function mapUdonTypeToTs(
   this: TACToUdonConverter,
   typeName: string,

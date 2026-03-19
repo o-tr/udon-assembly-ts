@@ -1,4 +1,5 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
+import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -48,7 +49,10 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
-import { resolveTypeFromNode } from "./expression.js";
+import {
+  mapCSharpTypeToTypeSymbol,
+  resolveTypeFromNode,
+} from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 
@@ -1313,6 +1317,18 @@ export function visitCallExpression(
             method.returnType,
           );
         }
+      }
+    }
+
+    // Consult type metadata registry for extern/stub types
+    if (!resolvedReturnType) {
+      const memberMeta = typeMetadataRegistry.getMemberMetadata(
+        objectType.name,
+        propAccess.property,
+      );
+      if (memberMeta) {
+        resolvedReturnType =
+          mapCSharpTypeToTypeSymbol(memberMeta.returnCsharpType) ?? null;
       }
     }
 

@@ -56,19 +56,50 @@ export function convertInstruction(
 
     case TACInstructionKind.BinaryOp: {
       const binInst = inst as TACBinaryOpInstruction;
-      this.pushOperand(binInst.left);
-      this.pushOperand(binInst.right);
+      const leftOp = binInst.left as
+        | VariableOperand
+        | ConstantOperand
+        | TemporaryOperand;
+      const rightOp = binInst.right as
+        | VariableOperand
+        | ConstantOperand
+        | TemporaryOperand;
+      const leftType = leftOp.type?.udonType ?? "Single";
+      const rightType = rightOp.type?.udonType ?? "Single";
+
+      // Coerce right operand if numeric types differ
+      if (
+        leftType !== rightType &&
+        this.isNumericType(leftType) &&
+        this.isNumericType(rightType)
+      ) {
+        // Convert right operand to match left type
+        this.pushOperand(binInst.left);
+        this.pushOperand(binInst.right);
+        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+        this.variableTypes.set(coerceTmpName, leftType);
+        this.instructions.push(new PushInstruction(coerceTmpName));
+        const coerceSig = this.getConvertExternSignature(rightType, leftType);
+        this.externSignatures.add(coerceSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(coerceSig), true),
+        );
+
+        // Now push left and coerced right for the binary op
+        // Left is already pushed, we need to re-push since EXTERN consumed the stack
+        this.pushOperand(binInst.left);
+        this.instructions.push(new PushInstruction(coerceTmpName));
+      } else {
+        this.pushOperand(binInst.left);
+        this.pushOperand(binInst.right);
+      }
 
       // Push result address before EXTERN (Udon VM calling convention)
       const destAddr = this.getOperandAddress(binInst.dest);
       this.instructions.push(new PushInstruction(destAddr));
 
       // Call extern for operation
-      const leftOp = binInst.left as
-        | VariableOperand
-        | ConstantOperand
-        | TemporaryOperand;
-      const leftType = leftOp.type?.udonType ?? "Single";
       const externSig = this.getExternForBinaryOp(binInst.operator, leftType);
       this.externSignatures.add(externSig);
       this.instructions.push(

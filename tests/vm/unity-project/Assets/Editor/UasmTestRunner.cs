@@ -153,13 +153,18 @@ public static class UasmTestRunner
         };
 
         var capturedLogs = new List<string>();
+        var capturedErrors = new List<string>();
 
-        // Log capture handler - only capture LogType.Log, exclude our own messages
+        // Log capture handler - capture LogType.Log and errors for diagnostics
         Application.LogCallback logHandler = (message, stackTrace, type) =>
         {
             if (type == LogType.Log && !message.StartsWith("[UasmTestRunner]"))
             {
                 capturedLogs.Add(message);
+            }
+            else if (type == LogType.Error || type == LogType.Exception)
+            {
+                capturedErrors.Add($"[{type}] {message}");
             }
         };
 
@@ -247,7 +252,8 @@ public static class UasmTestRunner
                         result.error = $"Expected error: VM returned {execResult}";
                         return result;
                     }
-                    result.error = $"VM execution returned non-zero: {execResult}";
+                    var errInfo = capturedErrors.Count > 0 ? "\n" + string.Join("\n", capturedErrors) : "";
+                    result.error = $"VM execution returned non-zero: {execResult}{errInfo}";
                     result.capturedLogs = capturedLogs.ToArray();
                     return result;
                 }
@@ -286,14 +292,18 @@ public static class UasmTestRunner
         }
         catch (Exception e)
         {
+            // Append captured error/exception logs for diagnostics
+            var errorSuffix = capturedErrors.Count > 0
+                ? "\nVM errors:\n" + string.Join("\n", capturedErrors)
+                : "";
             if (testDef.expectError)
             {
                 result.passed = true;
-                result.error = $"Expected error: {e.GetType().Name}: {e.Message}";
+                result.error = $"Expected error: {e.GetType().Name}: {e.Message}{errorSuffix}";
                 result.capturedLogs = capturedLogs.ToArray();
                 return result;
             }
-            result.error = $"{e.GetType().Name}: {e.Message}\n{e.StackTrace}";
+            result.error = $"{e.GetType().Name}: {e.Message}\n{e.StackTrace}{errorSuffix}";
             result.capturedLogs = capturedLogs.ToArray();
         }
 
