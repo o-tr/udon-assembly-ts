@@ -15,6 +15,7 @@ import {
   type ContinueStatementNode,
   type DoWhileStatementNode,
   type EnumDeclarationNode,
+  type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
@@ -107,11 +108,8 @@ export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
     case ASTNodeKind.ThrowStatement:
       this.visitThrowStatement(node as ThrowStatementNode);
       break;
-    case ASTNodeKind.AssignmentExpression:
-      this.visitExpression(node);
-      break;
-    case ASTNodeKind.CallExpression:
-      this.visitExpression(node);
+    case ASTNodeKind.ExpressionStatement:
+      this.visitExpression((node as ExpressionStatementNode).expression);
       break;
   }
 }

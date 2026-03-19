@@ -445,4 +445,22 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "template_literal_complex.ts",
     expectedLogs: ["result: 30", "Alice is True", "1-2-3"],
   },
+  // --- Bug fix: increment/decrement operators ---
+  {
+    name: "increment_operators",
+    sourceFile: "increment_operators.ts",
+    expectedLogs: ["6", "5", "8", "5"],
+  },
+  // --- Bug fix: compound assignment operators ---
+  {
+    name: "compound_assignment_operators",
+    sourceFile: "compound_assignment_operators.ts",
+    expectedLogs: ["15", "12", "24", "6", "2", "7.5", "15"],
+  },
+  // --- Bug fix: Convert overload resolution ---
+  {
+    name: "convert_overload",
+    sourceFile: "convert_overload.ts",
+    expectedLogs: ["4", "42", "42"],
+  },
 ];

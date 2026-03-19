@@ -8,6 +8,7 @@ import {
   ASTNodeKind,
   type AssignmentExpressionNode,
   type ClassDeclarationNode,
+  type ExpressionStatementNode,
   type ForStatementNode,
   type MethodDeclarationNode,
   type PropertyAccessExpressionNode,
@@ -62,8 +63,10 @@ describe("TypeScript Parser Phase 2", () => {
     const ast = parser.parse(source);
     const classDecl = ast.statements[0] as ClassDeclarationNode;
     const method = classDecl.methods[0] as MethodDeclarationNode;
-    const assignment = method.body.statements[0] as AssignmentExpressionNode;
+    const exprStmt = method.body.statements[0] as ExpressionStatementNode;
+    expect(exprStmt.kind).toBe(ASTNodeKind.ExpressionStatement);
 
+    const assignment = exprStmt.expression as AssignmentExpressionNode;
     expect(assignment.kind).toBe(ASTNodeKind.AssignmentExpression);
     const target = assignment.target as PropertyAccessExpressionNode;
     expect(target.kind).toBe(ASTNodeKind.PropertyAccessExpression);

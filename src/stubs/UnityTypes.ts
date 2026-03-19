@@ -5,7 +5,7 @@
  * UdonSharp実行時はUnityEngine側の型が使用される。
  */
 
-import { UdonStub } from "./UdonDecorators.js";
+import { UdonExtern, UdonStub } from "./UdonDecorators.js";
 import type { UdonFloat, UdonInt } from "./UdonTypes.js";
 
 @UdonStub("UnityEngine.Object")
@@ -254,18 +254,27 @@ export class Debug {
   static Log(_message: string): void;
   static Log(_message: number): void;
   static Log(_message: boolean): void;
+  @UdonExtern({
+    signature: "UnityEngineDebug.__Log__SystemObject__SystemVoid",
+  })
   static Log(_message: unknown): void {}
 
   static LogWarning(_message: object): void;
   static LogWarning(_message: string): void;
   static LogWarning(_message: number): void;
   static LogWarning(_message: boolean): void;
+  @UdonExtern({
+    signature: "UnityEngineDebug.__LogWarning__SystemObject__SystemVoid",
+  })
   static LogWarning(_message: unknown): void {}
 
   static LogError(_message: object): void;
   static LogError(_message: string): void;
   static LogError(_message: number): void;
   static LogError(_message: boolean): void;
+  @UdonExtern({
+    signature: "UnityEngineDebug.__LogError__SystemObject__SystemVoid",
+  })
   static LogError(_message: unknown): void {}
 }
 

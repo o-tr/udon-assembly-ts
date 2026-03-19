@@ -220,8 +220,8 @@ export function visitUpdateExpression(
   node: UpdateExpressionNode,
 ): TACOperand {
   const oldValue = this.visitExpression(node.operand);
-  const delta = createConstant(1, PrimitiveTypes.int32);
   const resultType = this.getOperandType(oldValue);
+  const delta = createConstant(1, resultType);
   const newValue = this.newTemp(resultType);
   this.instructions.push(
     new BinaryOpInstruction(newValue, oldValue, node.operator, delta),

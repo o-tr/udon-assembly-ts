@@ -100,6 +100,7 @@ export enum ASTNodeKind {
   TypeofExpression = "TypeofExpression",
   OptionalChainingExpression = "OptionalChainingExpression",
   UpdateExpression = "UpdateExpression",
+  ExpressionStatement = "ExpressionStatement",
 }
 
 /**
@@ -170,6 +171,16 @@ export interface UpdateExpressionNode extends ASTNode {
   operator: "+" | "-";
   operand: ASTNode;
   isPostfix: boolean;
+}
+
+/**
+ * Expression used as a statement (e.g., x++; x += 5; foo();)
+ * Wraps an inner expression so that visitStatement can handle
+ * all expression-statements generically.
+ */
+export interface ExpressionStatementNode extends ASTNode {
+  kind: ASTNodeKind.ExpressionStatement;
+  expression: ASTNode;
 }
 
 /**

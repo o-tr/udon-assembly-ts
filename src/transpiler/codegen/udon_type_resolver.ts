@@ -65,6 +65,7 @@ export const TS_TO_CSHARP = new Map<string, string>([
   ["boolean", "System.Boolean"],
   ["string", "System.String"],
   ["object", "System.Object"],
+  ["unknown", "System.Object"],
   ["void", "System.Void"],
   ["int", "System.Int32"],
   ["float", "System.Single"],

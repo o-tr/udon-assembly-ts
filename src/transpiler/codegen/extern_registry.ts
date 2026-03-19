@@ -201,6 +201,18 @@ function addMember(
   };
   const list = members.get(tsName);
   if (list) {
+    // When an explicit @UdonExtern signature is provided on one overload,
+    // propagate it to all previously registered overloads that lack one.
+    // This handles the pattern where TypeScript convenience overloads
+    // (e.g. Debug.Log(string), Debug.Log(number)) all map to a single
+    // Udon VM extern (e.g. Debug.Log(Object)).
+    if (signature) {
+      for (const existing of list) {
+        if (!existing.externSignature) {
+          existing.externSignature = signature;
+        }
+      }
+    }
     list.push(entry);
   } else {
     members.set(tsName, [entry]);

@@ -383,10 +383,14 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult) return inlineResult;
+        const paramTypeNamesForAccess = evaluatedArgs.map(
+          (arg) => this.getOperandType(arg)?.name ?? "Single",
+        );
         const externSig = this.resolveStaticExtern(
           objectName,
           access.property,
           "method",
+          paramTypeNamesForAccess,
         );
         if (externSig) {
           const returnType = resolveExternReturnType(externSig) ?? ObjectType;
@@ -912,10 +916,14 @@ export function visitCallExpression(
     }
 
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
+      const paramTypeNames = evaluatedArgs.map(
+        (arg) => this.getOperandType(arg)?.name ?? "Single",
+      );
       const externSig = this.resolveStaticExtern(
         (propAccess.object as IdentifierNode).name,
         propAccess.property,
         "method",
+        paramTypeNames,
       );
       if (externSig) {
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
@@ -2727,11 +2735,17 @@ export function resolveStaticExtern(
   typeName: string,
   memberName: string,
   accessType: "method" | "getter",
+  paramTypes?: string[],
 ): string | null {
-  const direct = resolveExternSignature(typeName, memberName, accessType);
+  const direct = resolveExternSignature(
+    typeName,
+    memberName,
+    accessType,
+    paramTypes,
+  );
   if (direct) return direct;
   if (accessType === "getter") {
-    return resolveExternSignature(typeName, memberName, "method");
+    return resolveExternSignature(typeName, memberName, "method", paramTypes);
   }
   return null;
 }

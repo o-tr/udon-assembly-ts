@@ -15,6 +15,7 @@ import {
   type CaseClauseNode,
   type ContinueStatementNode,
   type DoWhileStatementNode,
+  type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IdentifierNode,
@@ -69,7 +70,12 @@ export function visitNode(
     case ts.SyntaxKind.Block:
       return this.visitBlock(node as ts.Block);
     case ts.SyntaxKind.ExpressionStatement:
-      return this.visitExpression((node as ts.ExpressionStatement).expression);
+      return {
+        kind: ASTNodeKind.ExpressionStatement,
+        expression: this.visitExpression(
+          (node as ts.ExpressionStatement).expression,
+        ),
+      } as ExpressionStatementNode;
     case ts.SyntaxKind.ReturnStatement:
       return this.visitReturnStatement(node as ts.ReturnStatement);
     case ts.SyntaxKind.ClassDeclaration:
