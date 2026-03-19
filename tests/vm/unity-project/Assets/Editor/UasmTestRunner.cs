@@ -309,7 +309,7 @@ public static class UasmTestRunner
     private static string FormatVmErrors(List<string> capturedErrors)
     {
         return capturedErrors.Count > 0
-            ? "\nVM errors:\n" + string.Join("\n", capturedErrors)
+            ? "\nVM diagnostics:\n" + string.Join("\n", capturedErrors)
             : "";
     }
 }

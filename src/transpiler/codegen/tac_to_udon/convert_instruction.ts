@@ -133,6 +133,8 @@ export function convertInstruction(
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(shiftSig), true),
         );
+        // Re-push coerced Int32 value as the right operand for the binary op.
+        // Stack is now [left, shiftTmpName] — matching the plain-push path.
         this.instructions.push(new PushInstruction(shiftTmpName));
       } else {
         this.pushOperand(binInst.left);
