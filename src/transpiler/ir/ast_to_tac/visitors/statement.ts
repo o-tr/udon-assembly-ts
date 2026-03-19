@@ -935,12 +935,14 @@ export function visitClassDeclaration(
       };
       this.currentRecursiveContext = recursionContext;
 
-      // Allocate recursion stack DataLists on first entry (depth == 0)
+      // Allocate recursion stack DataLists on first entry (depth == 0).
+      // depthIsZero = (depth == 0); JUMP_IF_FALSE jumps when depthIsZero
+      // is false (i.e., depth != 0) → skips allocation on re-entry.
       const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
-      const isFirstEntry = this.newTemp(PrimitiveTypes.boolean);
+      const depthIsZero = this.newTemp(PrimitiveTypes.boolean);
       this.instructions.push(
         new BinaryOpInstruction(
-          isFirstEntry,
+          depthIsZero,
           depthVarOp,
           "==",
           createConstant(0, PrimitiveTypes.int32),
@@ -948,10 +950,8 @@ export function visitClassDeclaration(
       );
       const skipAllocLabel = this.newLabel("skip_stack_alloc");
       this.instructions.push(
-        new ConditionalJumpInstruction(isFirstEntry, skipAllocLabel),
+        new ConditionalJumpInstruction(depthIsZero, skipAllocLabel),
       );
-      // ConditionalJump: if isFirstEntry is FALSE (depth!=0) → jump to skip
-      // If TRUE (depth==0) → fall through to allocation
 
       {
         // Initialize stack pointer to -1
@@ -963,6 +963,9 @@ export function visitClassDeclaration(
           ),
         );
         const maxRecursionDepth = MAX_RECURSION_STACK_DEPTH;
+        // Default token is Single-typed regardless of each stack's actual local type.
+        // This is safe because emitCallSitePush always overwrites slots via set_Item
+        // before emitCallSitePop reads them; the defaults are never consumed at runtime.
         const defaultToken = this.wrapDataToken(
           createConstant(0, PrimitiveTypes.single),
         );
