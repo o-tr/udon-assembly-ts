@@ -363,4 +363,86 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "cast_as_expression.ts",
     expectedLogs: ["42", "hello"],
   },
+  // --- Numeric type promotion tests ---
+  {
+    name: "numeric_type_promotion",
+    sourceFile: "numeric_type_promotion.ts",
+    expectedLogs: ["13", "35", "False", "True", "3"],
+  },
+  {
+    name: "int_arithmetic",
+    sourceFile: "int_arithmetic.ts",
+    expectedLogs: ["3", "1", "-3", "14", "9", "5"],
+  },
+  // --- Bitwise & shift operator tests ---
+  {
+    name: "bitwise_operators",
+    sourceFile: "bitwise_operators.ts",
+    expectedLogs: ["15", "255", "240", "255"],
+  },
+  {
+    name: "shift_operators",
+    sourceFile: "shift_operators.ts",
+    expectedLogs: ["16", "64", "-4", "1024"],
+  },
+  // --- Type cast edge cases ---
+  {
+    name: "cast_float_to_int",
+    sourceFile: "cast_float_to_int.ts",
+    expectedLogs: ["3", "-3", "0", "100"],
+    // Tests CastInstruction path: Single→Double→Math.Truncate→Int32
+  },
+  // --- Restricted type runtime init ---
+  {
+    name: "restricted_type_init",
+    sourceFile: "restricted_type_init.ts",
+    expectedLogs: ["True", "False", "True"],
+  },
+  // --- Switch statement advanced patterns ---
+  {
+    name: "switch_fallthrough",
+    sourceFile: "switch_fallthrough.ts",
+    expectedLogs: ["one", "two", "b-two", "c-default"],
+  },
+  {
+    name: "switch_string",
+    sourceFile: "switch_string.ts",
+    expectedLogs: ["matched hello", "default"],
+  },
+  // --- Deep nested control flow ---
+  {
+    name: "nested_control_flow_deep",
+    sourceFile: "nested_control_flow_deep.ts",
+    expectedLogs: ["6", "3", "12"],
+  },
+  // --- Mixed type compound assignment ---
+  {
+    name: "compound_assignment_mixed",
+    sourceFile: "compound_assignment_mixed.ts",
+    expectedLogs: ["3", "55", "2", "7.5"],
+  },
+  // --- Boolean coercion in logical NOT ---
+  {
+    name: "boolean_coercion_not",
+    sourceFile: "boolean_coercion_not.ts",
+    expectedLogs: ["False", "True", "True", "correct"],
+  },
+  // --- Unary negation on typed integers ---
+  {
+    name: "unary_negation_typed",
+    sourceFile: "unary_negation_typed.ts",
+    expectedLogs: ["-10", "-42", "42"],
+  },
+  // --- Large float literal runtime parse ---
+  {
+    name: "large_float_literal",
+    sourceFile: "large_float_literal.ts",
+    expectedLogs: ["True", "True"],
+  },
+  // --- Complex template literals ---
+  {
+    name: "template_literal_complex",
+    sourceFile: "template_literal_complex.ts",
+    expectedLogs: ["result: 30", "Alice is True", "1-2-3"],
+  },
 ];
