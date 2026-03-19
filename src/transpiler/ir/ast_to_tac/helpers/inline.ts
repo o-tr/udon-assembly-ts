@@ -20,6 +20,7 @@ import {
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
+  type TryCatchStatementNode,
   type UnaryExpressionNode,
   type VariableDeclarationNode,
   type WhileStatementNode,
@@ -519,6 +520,13 @@ export function collectRecursiveLocals(
         }
         break;
       }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        visitNode(tryNode.tryBody);
+        if (tryNode.catchBody) visitNode(tryNode.catchBody);
+        if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
+        break;
+      }
       case ASTNodeKind.CallExpression: {
         const callNode = node as CallExpressionNode;
         visitNode(callNode.callee);
@@ -720,6 +728,13 @@ export function countSelfCalls(
           if (clause.expression) visitNode(clause.expression);
           for (const stmt of clause.statements) visitNode(stmt);
         }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        visitNode(tryNode.tryBody);
+        if (tryNode.catchBody) visitNode(tryNode.catchBody);
+        if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
         break;
       }
       case ASTNodeKind.ReturnStatement: {
