@@ -384,7 +384,7 @@ export function visitCallExpression(
         );
         if (inlineResult) return inlineResult;
         const paramTypeNamesForAccess = evaluatedArgs.map(
-          (arg) => this.getOperandType(arg)?.name ?? "Single",
+          (arg) => this.getOperandType(arg)?.name ?? "Object",
         );
         const externSig = this.resolveStaticExtern(
           objectName,
@@ -917,7 +917,7 @@ export function visitCallExpression(
 
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const paramTypeNames = evaluatedArgs.map(
-        (arg) => this.getOperandType(arg)?.name ?? "Single",
+        (arg) => this.getOperandType(arg)?.name ?? "Object",
       );
       const externSig = this.resolveStaticExtern(
         (propAccess.object as IdentifierNode).name,
