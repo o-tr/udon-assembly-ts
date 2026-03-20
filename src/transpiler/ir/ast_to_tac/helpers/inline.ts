@@ -723,9 +723,23 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   // Skip the overflow handler in the normal path
   const afterOverflowLabel = this.newLabel("after_overflow");
   this.instructions.push(new UnconditionalJumpInstruction(afterOverflowLabel));
-  // Overflow handler: emit RETURN which exits the entire event handler
-  // (JUMP 0xFFFFFFFC in Udon VM), silently aborting the current call.
+  // Overflow handler: log an error for observability, then RETURN which exits
+  // the entire event handler (JUMP 0xFFFFFFFC in Udon VM).
   this.instructions.push(new LabelInstruction(overflowLabel));
+  const logErrorExtern = this.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const overflowMsg = createConstant(
+    `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded. Aborting event handler.`,
+    ObjectType,
+  );
+  this.instructions.push(
+    new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+  );
   this.instructions.push(
     new ReturnInstruction(undefined, this.currentReturnVar),
   );

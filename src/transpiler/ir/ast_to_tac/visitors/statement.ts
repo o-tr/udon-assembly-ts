@@ -872,6 +872,7 @@ export function visitClassDeclaration(
     let expectedSelfCallCount: number | undefined;
     let expectedTryCatchCount: number | undefined;
     let tryCounterBeforeMethod: number | undefined;
+    let hasReturnExport = false;
     if (method.isRecursive) {
       const selfCallCount = countSelfCalls(method.name, method.body);
       expectedSelfCallCount = selfCallCount;
@@ -901,6 +902,7 @@ export function visitClassDeclaration(
       const layout = this.udonBehaviourLayouts
         ?.get(node.name)
         ?.get(method.name);
+      hasReturnExport = !!layout?.returnExportName;
       if (layout?.returnExportName) {
         locals.push({
           name: layout.returnExportName,
@@ -924,7 +926,6 @@ export function visitClassDeclaration(
       // so we predict the IDs from the current counter value.
       const tryCatchCount = countTryCatchBlocks(method.body);
       expectedTryCatchCount = tryCatchCount;
-      tryCounterBeforeMethod = this.tryCounter;
       for (let i = 0; i < tryCatchCount; i++) {
         const tryId = this.tryCounter + i;
         locals.push({
@@ -1071,15 +1072,20 @@ export function visitClassDeclaration(
       this.emitEntryPointPropertyInit(node);
     }
 
+    // Capture tryCounter immediately before body traversal to minimize the
+    // window for intervening emissions (e.g. emitEntryPointPropertyInit)
+    // that could shift the counter.
+    tryCounterBeforeMethod = this.tryCounter;
     this.visitBlockStatement(method.body);
     // Assert that countSelfCalls and code-gen agree on the number of self-calls.
-    // Only meaningful for entry-point classes where JUMP-based dispatch is used.
-    // Non-entry-point classes use inline inlining and don't increment
-    // nextSelfCallResultIndex, so the assertion would always fire falsely.
+    // Only meaningful for entry-point classes where JUMP-based dispatch is used
+    // AND the method has a return value (nextSelfCallResultIndex is only
+    // incremented when layout.returnExportName is truthy).
     if (
       expectedSelfCallCount !== undefined &&
       this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined &&
-      this.entryPointClasses.has(node.name)
+      this.entryPointClasses.has(node.name) &&
+      hasReturnExport
     ) {
       const emitted = this.currentRecursiveContext.nextSelfCallResultIndex;
       if (emitted > expectedSelfCallCount) {

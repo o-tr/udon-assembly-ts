@@ -694,8 +694,10 @@ export function visitCallExpression(
           ) {
             count = (argOperand as ConstantOperand).value as number;
           } else if (isNumericLength) {
-            throw new Error(
-              "new Array<T>(n) with a runtime-length variable is not supported. " +
+            // Runtime-length Array<T>(n) cannot be pre-populated at compile time.
+            // Emit a warning and produce an empty DataList (best-effort).
+            console.warn(
+              "new Array<T>(n) with a runtime-length variable produces an empty DataList. " +
                 "Use a constant length or build the array with a loop.",
             );
           }
