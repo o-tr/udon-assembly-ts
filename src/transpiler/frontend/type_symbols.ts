@@ -227,8 +227,8 @@ const SIGNED_TYPES = new Set<UdonType>([
 
 /**
  * C#/.NET same-rank signed/unsigned promotion: when a signed and unsigned
- * type share the same rank, the result promotes to the next wider signed type.
- *   sbyte + byte   → short (Int16)
+ * type share the same rank, the result promotes per C# implicit conversion:
+ *   sbyte + byte   → int   (Int32)  — C# promotes all narrow types to int
  *   short + ushort → int   (Int32)
  *   int   + uint   → long  (Int64)
  *   long  + ulong  → compile error in C#; we fall back to Int64.
@@ -240,7 +240,7 @@ let _sameRankPromotion: Partial<Record<number, PrimitiveTypeSymbol>> | null =
 function getSameRankPromotion(): Partial<Record<number, PrimitiveTypeSymbol>> {
   if (!_sameRankPromotion) {
     _sameRankPromotion = {
-      1: PrimitiveTypes.int16, // sbyte + byte → short
+      1: PrimitiveTypes.int32, // sbyte + byte → int (C# promotes narrow types to int)
       2: PrimitiveTypes.int32, // short + ushort → int
       3: PrimitiveTypes.int64, // int + uint → long
       4: PrimitiveTypes.int64, // long + ulong → long (C# error; best-effort)

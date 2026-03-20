@@ -328,6 +328,10 @@ const emitMapEntriesList = (
     new ConditionalJumpInstruction(condTemp, loopEnd),
   );
 
+  // keyToken/valueToken/pairList temps are reused across loop iterations.
+  // This is safe because DataList.Add and wrapDataToken copy the current
+  // value at call time; overwriting the temp on the next iteration does
+  // not affect previously added entries.
   const keyToken = converter.newTemp(ExternTypes.dataToken);
   converter.instructions.push(
     new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
