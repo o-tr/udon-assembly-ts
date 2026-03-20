@@ -54,19 +54,12 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
-import { countSelfCalls, countTryCatchBlocks } from "../helpers/inline.js";
+import {
+  countSelfCalls,
+  countTryCatchBlocks,
+  MAX_RECURSION_STACK_DEPTH,
+} from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
-
-/**
- * Maximum number of entries pre-allocated in each recursion stack DataList.
- * Limits the supported recursion depth for @RecursiveMethod-annotated methods.
- *
- * WARNING: Recursion deeper than this limit causes an out-of-bounds DataList
- * write at runtime (Udon VM exception). There is no overflow guard at push
- * time — the DataList is fixed-size. Increase this value if deeper recursion
- * is needed, at the cost of larger generated UASM.
- */
-const MAX_RECURSION_STACK_DEPTH = 16;
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
@@ -962,31 +955,38 @@ export function visitClassDeclaration(
       };
       this.currentRecursiveContext = recursionContext;
 
-      // Allocate recursion stack DataLists on first entry (depth == 0).
-      // depthIsZero = (depth == 0); JUMP_IF_FALSE jumps when depthIsZero
-      // is false (i.e., depth != 0) → skips allocation on re-entry.
-      const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
-      const depthIsZero = this.newTemp(PrimitiveTypes.boolean);
+      // Allocate recursion stack DataLists once (first invocation only).
+      // Uses a boolean flag instead of depth==0 check to avoid re-allocating
+      // on every external call (which sets depth to 0 before jumping).
+      const stackInitFlagName = `__stackInitialized_${method.name}`;
+      const stackInitFlag = createVariable(
+        stackInitFlagName,
+        PrimitiveTypes.boolean,
+      );
+      // notInitialized = !stackInitFlag
+      // ConditionalJump is "ifFalse goto": jumps when notInitialized is FALSE
+      // (i.e., already initialized) → skips allocation. Falls through when TRUE
+      // (not initialized) → runs allocation.
+      const notInitialized = this.newTemp(PrimitiveTypes.boolean);
       this.instructions.push(
         new BinaryOpInstruction(
-          depthIsZero,
-          depthVarOp,
+          notInitialized,
+          stackInitFlag,
           "==",
-          createConstant(0, PrimitiveTypes.int32),
+          createConstant(false, PrimitiveTypes.boolean),
         ),
       );
       const skipAllocLabel = this.newLabel("skip_stack_alloc");
       this.instructions.push(
-        new ConditionalJumpInstruction(depthIsZero, skipAllocLabel),
+        new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
       );
 
       {
-        // Initialize stack pointer to -1
-        const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+        // Mark as initialized
         this.instructions.push(
           new CopyInstruction(
-            spVarOp,
-            createConstant(-1, PrimitiveTypes.int32),
+            stackInitFlag,
+            createConstant(true, PrimitiveTypes.boolean),
           ),
         );
         const maxRecursionDepth = MAX_RECURSION_STACK_DEPTH;
@@ -1023,6 +1023,33 @@ export function visitClassDeclaration(
         // (JUMP 0xFFFFFFFC) handles any unmatched index defensively.
       }
       this.instructions.push(new LabelInstruction(skipAllocLabel));
+      // Always reset SP to -1 at depth-0 entry (both first and subsequent calls).
+      // This is outside the alloc guard because SP must be reset on every
+      // top-level invocation, even when stacks are already initialized.
+      {
+        const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+        const depthIsZero = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            depthIsZero,
+            depthVarOp,
+            "==",
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+        const skipSpResetLabel = this.newLabel("skip_sp_reset");
+        this.instructions.push(
+          new ConditionalJumpInstruction(depthIsZero, skipSpResetLabel),
+        );
+        const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+        this.instructions.push(
+          new CopyInstruction(
+            spVarOp,
+            createConstant(-1, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new LabelInstruction(skipSpResetLabel));
+      }
       // No prologue at method entry — save/restore happens at each call site
     }
 

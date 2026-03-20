@@ -694,9 +694,8 @@ export function visitCallExpression(
           ) {
             count = (argOperand as ConstantOperand).value as number;
           } else if (isNumericLength) {
-            console.warn(
-              "transpiler: new Array<T>(n) with a runtime-length variable is not supported. " +
-                "The resulting DataList will be empty; indexed access will fail at runtime. " +
+            throw new Error(
+              "new Array<T>(n) with a runtime-length variable is not supported. " +
                 "Use a constant length or build the array with a loop.",
             );
           }

@@ -4,6 +4,13 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
+
+/**
+ * Maximum recursion depth for @RecursiveMethod. Shared between stack
+ * allocation (statement.ts) and the overflow guard (emitCallSitePush).
+ */
+export const MAX_RECURSION_STACK_DEPTH = 16;
+
 import {
   type ArrayAccessExpressionNode,
   type ArrayLiteralExpressionNode,
@@ -44,6 +51,7 @@ import {
   LabelInstruction,
   MethodCallInstruction,
   ReturnInstruction,
+  UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
@@ -659,6 +667,25 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
 
   const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
 
+  // Guard: abort if depth has reached MAX_RECURSION_STACK_DEPTH.
+  // Without this, set_Item would write beyond the pre-populated DataList bounds.
+  // ConditionalJumpInstruction is "ifFalse goto", so we check (depth < MAX)
+  // and jump to the overflow return when false (i.e., depth >= MAX).
+  const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
+  const depthOk = this.newTemp(PrimitiveTypes.boolean);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      depthOk,
+      depthVar,
+      "<",
+      createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
+    ),
+  );
+  const overflowLabel = this.newLabel("recursion_overflow");
+  this.instructions.push(
+    new ConditionalJumpInstruction(depthOk, overflowLabel),
+  );
+
   // SP++
   const spTemp = this.newTemp(PrimitiveTypes.int32);
   this.instructions.push(
@@ -687,6 +714,16 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       ]),
     );
   }
+
+  // Skip the overflow handler in the normal path
+  const afterOverflowLabel = this.newLabel("after_overflow");
+  this.instructions.push(new UnconditionalJumpInstruction(afterOverflowLabel));
+  // Overflow handler: halt the method by returning immediately
+  this.instructions.push(new LabelInstruction(overflowLabel));
+  this.instructions.push(
+    new ReturnInstruction(undefined, this.currentReturnVar),
+  );
+  this.instructions.push(new LabelInstruction(afterOverflowLabel));
 }
 
 /**
