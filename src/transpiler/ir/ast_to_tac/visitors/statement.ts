@@ -1066,9 +1066,11 @@ export function visitClassDeclaration(
         // (JUMP 0xFFFFFFFC) handles any unmatched index defensively.
       }
       this.instructions.push(new LabelInstruction(skipAllocLabel));
-      // Always reset SP to -1 at depth-0 entry (both first and subsequent calls).
-      // This is outside the alloc guard because SP must be reset on every
-      // top-level invocation, even when stacks are already initialized.
+      // Always reset SP to -1 at top-level entry (both first and subsequent calls).
+      // Uses depth <= 0 to cover both the heap-initialized state (depth == 0)
+      // and the post-completion state (depth == -1) left after a compiled caller's
+      // invocation, which decrements depth before returning to the dispatch table.
+      // This ensures SendCustomEvent and other non-compiled callers reset SP correctly.
       {
         const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
         const depthIsZero = this.newTemp(PrimitiveTypes.boolean);
@@ -1076,7 +1078,7 @@ export function visitClassDeclaration(
           new BinaryOpInstruction(
             depthIsZero,
             depthVarOp,
-            "==",
+            "<=",
             createConstant(0, PrimitiveTypes.int32),
           ),
         );
@@ -1089,6 +1091,15 @@ export function visitClassDeclaration(
           new CopyInstruction(
             spVarOp,
             createConstant(-1, PrimitiveTypes.int32),
+          ),
+        );
+        // Also reset depth to 0 to normalize the post-completion -1 state.
+        // Without this, depth stays at -1, and the first self-call increments
+        // it to 0, causing the SP reset to fire again on re-entry.
+        this.instructions.push(
+          new CopyInstruction(
+            depthVarOp,
+            createConstant(0, PrimitiveTypes.int32),
           ),
         );
         this.instructions.push(new LabelInstruction(skipSpResetLabel));
@@ -1405,6 +1416,21 @@ export function visitThrowStatement(
         new UnconditionalJumpInstruction(inlineContext.returnLabel),
       );
     } else {
+      // If inside a recursive context, reset depth to 0 before aborting.
+      // Without this, a subsequent VRC direct call (SendCustomEvent) would
+      // see stale depth > 0, skip SP reset, and corrupt the recursion stack.
+      if (this.currentRecursiveContext) {
+        const depthVar = createVariable(
+          this.currentRecursiveContext.depthVar,
+          PrimitiveTypes.int32,
+        );
+        this.instructions.push(
+          new CopyInstruction(
+            depthVar,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+      }
       this.instructions.push(
         new ReturnInstruction(undefined, this.currentReturnVar),
       );
