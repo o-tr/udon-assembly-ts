@@ -161,7 +161,6 @@ export class ASTToTACConverter {
         spVar: string;
         stackVars: Array<{ name: string; type: TypeSymbol }>;
         returnSites: Array<{ index: number; labelName: string }>;
-        nextReturnSiteIndex: number;
         nextSelfCallResultIndex?: number;
         dispatchLabel?: TACOperand;
       }

@@ -58,12 +58,14 @@ export function assignToTarget(
       arrayType instanceof DataListTypeSymbol ||
       arrayType.name === ExternTypes.dataList.name
     ) {
-      // Coerce index to Int32 if it's a float type
+      // Coerce index to Int32 if it's not already an integer type
       let coercedIndex = index;
       const indexType = this.getOperandType(index);
       if (
         indexType.udonType === UdonType.Single ||
-        indexType.udonType === UdonType.Double
+        indexType.udonType === UdonType.Double ||
+        indexType.udonType === UdonType.Int64 ||
+        indexType.udonType === UdonType.UInt64
       ) {
         const intIndex = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(new CastInstruction(intIndex, index));

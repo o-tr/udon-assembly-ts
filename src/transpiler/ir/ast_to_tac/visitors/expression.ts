@@ -1059,13 +1059,26 @@ export function visitArrayAccessExpression(
     arrayType instanceof DataListTypeSymbol ||
     arrayType.name === ExternTypes.dataList.name
   ) {
+    // Coerce index to Int32 if it's not already an integer type
+    let coercedIndex = index;
+    const indexType = this.getOperandType(index);
+    if (
+      indexType.udonType === UdonType.Single ||
+      indexType.udonType === UdonType.Double ||
+      indexType.udonType === UdonType.Int64 ||
+      indexType.udonType === UdonType.UInt64
+    ) {
+      const intIndex = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CastInstruction(intIndex, index));
+      coercedIndex = intIndex;
+    }
     const elementType =
       arrayType instanceof DataListTypeSymbol
         ? arrayType.elementType
         : ObjectType;
     const tokenResult = this.newTemp(ExternTypes.dataToken);
     this.instructions.push(
-      new MethodCallInstruction(tokenResult, array, "get_Item", [index]),
+      new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
     );
     if (arrayType instanceof DataListTypeSymbol) {
       return this.unwrapDataToken(tokenResult, elementType);

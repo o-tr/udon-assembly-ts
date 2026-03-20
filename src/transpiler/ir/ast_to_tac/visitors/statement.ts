@@ -797,18 +797,19 @@ export function visitClassDeclaration(
   const isUdonBehaviourClass =
     classLayout !== null ||
     node.decorators.some((decorator) => decorator.name === "UdonBehaviour");
-  // Process Start first so its recursive-call return sites are registered in
-  // recursiveReturnSites BEFORE other methods' dispatch tables are emitted.
-  // This ordering guarantees that emitReturnSiteDispatch() sees all return
-  // sites (from both Start and self-calls) when building the dispatch table.
-  const startIndex = node.methods.findIndex((m) => m.name === "Start");
-  const orderedMethods =
-    startIndex >= 0
-      ? [
-          node.methods[startIndex],
-          ...node.methods.filter((_, i) => i !== startIndex),
-        ]
-      : [...node.methods];
+  // Process non-recursive methods before recursive ones so that all
+  // external caller return sites are registered in recursiveReturnSites
+  // BEFORE any recursive method's dispatch table is emitted.
+  // Within the non-recursive group, Start is placed first (it contains
+  // property initialization and top-level const setup).
+  const nonRecursive = node.methods.filter((m) => !m.isRecursive);
+  const recursive = node.methods.filter((m) => m.isRecursive);
+  const startIndex = nonRecursive.findIndex((m) => m.name === "Start");
+  if (startIndex > 0) {
+    const [start] = nonRecursive.splice(startIndex, 1);
+    nonRecursive.unshift(start);
+  }
+  const orderedMethods = [...nonRecursive, ...recursive];
   for (const method of orderedMethods) {
     this.currentMethodName = method.name;
     const eventDef = getVrcEventDefinition(method.name);
@@ -846,7 +847,6 @@ export function visitClassDeclaration(
           spVar: string;
           stackVars: Array<{ name: string; type: TypeSymbol }>;
           returnSites: Array<{ index: number; labelName: string }>;
-          nextReturnSiteIndex: number;
           nextSelfCallResultIndex?: number;
           dispatchLabel?: TACOperand;
         }
@@ -933,7 +933,6 @@ export function visitClassDeclaration(
         spVar,
         stackVars,
         returnSites: [],
-        nextReturnSiteIndex: 0,
         nextSelfCallResultIndex: 0,
         dispatchLabel: this.newLabel("recursive_dispatch"),
       };
@@ -1053,9 +1052,9 @@ export function visitClassDeclaration(
         );
       }
       // Shared dispatch label: all return paths jump here.
-      // The registry is fully populated at this point because Start is
-      // compiled first (see orderedMethods above), so all external caller
-      // return sites are already registered before this dispatch is emitted.
+      // The registry is fully populated at this point because all
+      // non-recursive methods are compiled first (see orderedMethods above),
+      // so all external caller return sites are already registered.
       if (this.currentRecursiveContext.dispatchLabel) {
         this.instructions.push(
           new LabelInstruction(this.currentRecursiveContext.dispatchLabel),

@@ -1444,8 +1444,13 @@ export function visitCallExpression(
             return result;
           }
 
-          // === CALL FROM NON-RECURSIVE CONTEXT (e.g., Start) ===
-          // No push/pop needed, just set params and jump
+          // === EXTERNAL CALL (non-recursive caller, or cross-method call) ===
+          // This path handles both non-recursive methods (Start, OnInteract)
+          // and recursive method A calling a different recursive method B.
+          // No push/pop needed: each method has independent recursion stacks,
+          // so B's execution doesn't corrupt A's locals. Callers are always
+          // sequential in UdonSharp, so __returnSiteIdx is safe to overwrite.
+          // NOTE: Mutual recursion (A↔B) is NOT supported by @RecursiveMethod.
 
           // Set parameters
           for (let i = 0; i < evaluatedArgs.length; i++) {
