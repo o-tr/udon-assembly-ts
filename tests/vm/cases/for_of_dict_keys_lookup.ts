@@ -14,14 +14,16 @@ export class ForOfDictKeysLookup extends UdonSharpBehaviour {
     dict.SetValue(new DataToken("a"), new DataToken(10));
     dict.SetValue(new DataToken("b"), new DataToken(20));
 
-    // Iterate keys and look up values
+    // Accumulate sum and count to avoid relying on iteration order
     const keys: DataList = dict.GetKeys();
+    let sum: number = 0;
     let count: number = 0;
     for (const key of keys) {
       const val: DataToken = dict.GetValue(key);
-      Debug.Log(val.Float);
+      sum = sum + val.Float;
       count = count + 1;
     }
+    Debug.Log(sum); // 30
     Debug.Log(count); // 2
   }
 }

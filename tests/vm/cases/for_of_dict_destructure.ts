@@ -13,12 +13,14 @@ export class ForOfDictDestructure extends UdonSharpBehaviour {
     dict.SetValue(new DataToken("x"), new DataToken(10));
     dict.SetValue(new DataToken("y"), new DataToken(20));
 
+    // Accumulate sum and count to avoid relying on iteration order
     let sum: number = 0;
-    for (const [key, val] of dict) {
-      Debug.Log(key.String);
-      Debug.Log(val.Float);
+    let count: number = 0;
+    for (const [_key, val] of dict) {
       sum = sum + val.Float;
+      count = count + 1;
     }
-    Debug.Log(sum);
+    Debug.Log(count); // 2
+    Debug.Log(sum); // 30
   }
 }

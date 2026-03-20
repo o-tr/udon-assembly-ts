@@ -15,6 +15,7 @@ export class NumericCastChain extends UdonSharpBehaviour {
     Debug.Log(intA); // 3
 
     // float -> int -> float (round-trip loses decimal)
+    // @ts-expect-error UdonInt→UdonFloat is a runtime numeric cast in the transpiler
     const backToFloat: UdonFloat = intA as UdonFloat;
     Debug.Log(backToFloat); // 3
 
@@ -26,6 +27,7 @@ export class NumericCastChain extends UdonSharpBehaviour {
     // int arithmetic then cast to float
     const intC: UdonInt = 15 as UdonInt;
     const intD: UdonInt = 2 as UdonInt;
+    // @ts-expect-error UdonInt→UdonFloat casts are runtime numeric conversions in the transpiler
     const floatResult: UdonFloat = (intC as UdonFloat) / (intD as UdonFloat);
     Debug.Log(floatResult); // 7.5
   }

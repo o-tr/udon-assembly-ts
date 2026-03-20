@@ -12,6 +12,10 @@ export const isSetCollectionType = (
   type.name === ExternTypes.dataDictionary.name &&
   type.elementType !== undefined;
 
+// Note: unlike isSetCollectionType, this returns `boolean` (not a type guard)
+// because it also matches ExternTypeSymbol and other non-CollectionTypeSymbol
+// types that represent DataDictionary. Callers should not rely on type
+// narrowing from this check.
 export const isMapCollectionType = (type: TypeSymbol | null): boolean => {
   if (!type) return false;
   // CollectionTypeSymbol with DataDictionary name and no elementType → map

@@ -103,4 +103,13 @@ export class DataDictionary {
   ShallowClone(): DataDictionary {
     return new DataDictionary();
   }
+
+  [Symbol.iterator](): Iterator<[DataToken, DataToken]> {
+    return {
+      next: () => ({
+        done: true,
+        value: [new DataToken(), new DataToken()] as [DataToken, DataToken],
+      }),
+    };
+  }
 }

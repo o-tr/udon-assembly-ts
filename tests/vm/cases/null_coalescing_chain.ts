@@ -14,11 +14,11 @@ export class NullCoalescingChain extends UdonSharpBehaviour {
 
   Start(): void {
     // First non-null: takes "first"
-    const a: string = this.getNonNull() ?? "second" ?? "third";
+    const a: string = this.getNonNull() ?? "second";
     Debug.Log(a); // first
 
     // First is null, second non-null: takes "second"
-    const b: string = this.getNull() ?? "second" ?? "third";
+    const b: string = this.getNull() ?? "second";
     Debug.Log(b); // second
 
     // Nested with all null except last

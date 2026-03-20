@@ -218,6 +218,23 @@ const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
   [UdonType.Double]: 6,
 };
 
+const SIGNED_TYPES = new Set<UdonType>([
+  UdonType.SByte,
+  UdonType.Int16,
+  UdonType.Int32,
+  UdonType.Int64,
+]);
+
+/**
+ * C#/.NET same-rank signed/unsigned promotion: when a signed and unsigned
+ * type share the same rank, the result promotes to the next wider signed type.
+ *   sbyte + byte   → short (Int16)
+ *   short + ushort → int   (Int32)
+ *   int   + uint   → long  (Int64)
+ *   long  + ulong  → compile error in C#; we fall back to Int64.
+ */
+let SAME_RANK_PROMOTION: Partial<Record<number, PrimitiveTypeSymbol>> = {};
+
 /**
  * Returns the promoted numeric type for a binary operation between two
  * TypeSymbols, following C#/.NET implicit numeric promotion rules.
@@ -230,8 +247,16 @@ export function getPromotedType(
   const rankA = NUMERIC_RANK[a.udonType];
   const rankB = NUMERIC_RANK[b.udonType];
   if (rankA === undefined || rankB === undefined) return null;
-  if (rankA >= rankB) return a;
-  return b;
+  if (rankA > rankB) return a;
+  if (rankB > rankA) return b;
+  // Same rank: if one is signed and one unsigned, promote to next wider signed type
+  const aIsSigned = SIGNED_TYPES.has(a.udonType);
+  const bIsSigned = SIGNED_TYPES.has(b.udonType);
+  if (aIsSigned !== bIsSigned) {
+    const promoted = SAME_RANK_PROMOTION[rankA];
+    if (promoted) return promoted;
+  }
+  return a;
 }
 
 export const PrimitiveTypes = {
@@ -248,6 +273,14 @@ export const PrimitiveTypes = {
   int64: new PrimitiveTypeSymbol("long", UdonType.Int64),
   uint64: new PrimitiveTypeSymbol("ulong", UdonType.UInt64),
   double: new PrimitiveTypeSymbol("double", UdonType.Double),
+};
+
+// Populate same-rank signed/unsigned promotion table now that PrimitiveTypes exists
+SAME_RANK_PROMOTION = {
+  1: PrimitiveTypes.int16, // sbyte + byte → short
+  2: PrimitiveTypes.int32, // short + ushort → int
+  3: PrimitiveTypes.int64, // int + uint → long
+  4: PrimitiveTypes.int64, // long + ulong → long (C# error; best-effort fallback)
 };
 
 export const ExternTypes = {

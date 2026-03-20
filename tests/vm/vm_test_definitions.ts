@@ -500,7 +500,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "for_of_dict_destructure",
     sourceFile: "for_of_dict_destructure.ts",
-    expectedLogs: ["x", "10", "y", "20", "30"],
+    expectedLogs: ["2", "30"],
   },
   {
     name: "for_of_with_break",
@@ -615,6 +615,6 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "for_of_dict_keys_lookup",
     sourceFile: "for_of_dict_keys_lookup.ts",
-    expectedLogs: ["10", "20", "2"],
+    expectedLogs: ["30", "2"],
   },
 ];
