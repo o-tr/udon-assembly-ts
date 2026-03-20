@@ -13,6 +13,7 @@ import {
   ASTNodeKind,
   type AssignmentExpressionNode,
   type IdentifierNode,
+  needsInt32IndexCoercion,
   type PropertyAccessExpressionNode,
   UdonType,
   type UpdateExpressionNode,
@@ -61,17 +62,7 @@ export function assignToTarget(
       // Coerce index to Int32 for DataList.set_Item (expects SystemInt32)
       let coercedIndex = index;
       const indexType = this.getOperandType(index);
-      if (
-        indexType.udonType === UdonType.Single ||
-        indexType.udonType === UdonType.Double ||
-        indexType.udonType === UdonType.Int64 ||
-        indexType.udonType === UdonType.UInt64 ||
-        indexType.udonType === UdonType.UInt32 ||
-        indexType.udonType === UdonType.Int16 ||
-        indexType.udonType === UdonType.UInt16 ||
-        indexType.udonType === UdonType.Byte ||
-        indexType.udonType === UdonType.SByte
-      ) {
+      if (needsInt32IndexCoercion(indexType.udonType)) {
         const intIndex = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(new CastInstruction(intIndex, index));
         coercedIndex = intIndex;

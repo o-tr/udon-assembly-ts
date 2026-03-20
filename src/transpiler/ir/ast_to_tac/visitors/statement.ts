@@ -876,8 +876,10 @@ export function visitClassDeclaration(
       }
     }
 
+    let expectedSelfCallCount: number | undefined;
     if (method.isRecursive) {
       const selfCallCount = countSelfCalls(method.name, method.body);
+      expectedSelfCallCount = selfCallCount;
       console.info(
         `transpiler: @RecursiveMethod ${node.name}.${method.name} — ` +
           `max recursion depth is ${MAX_RECURSION_STACK_DEPTH}. ` +
@@ -1024,6 +1026,21 @@ export function visitClassDeclaration(
     }
 
     this.visitBlockStatement(method.body);
+    // Assert that countSelfCalls and code-gen agree on the number of self-calls.
+    // A mismatch means a walker gap: some AST node wrapping a self-call was
+    // not traversed, causing __selfCallResult_* to be missing from push/pop.
+    if (
+      expectedSelfCallCount !== undefined &&
+      this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined &&
+      this.currentRecursiveContext.nextSelfCallResultIndex >
+        expectedSelfCallCount
+    ) {
+      throw new Error(
+        `[BUG] countSelfCalls returned ${expectedSelfCallCount} but code-gen ` +
+          `emitted ${this.currentRecursiveContext.nextSelfCallResultIndex} ` +
+          `self-call sites for ${node.name}.${method.name}`,
+      );
+    }
     if (this.currentRecursiveContext) {
       // Method-end fallthrough: decrement depth to match early-return behavior.
       // Well-formed recursive methods always have explicit return statements,
