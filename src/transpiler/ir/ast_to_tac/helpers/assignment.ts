@@ -65,7 +65,8 @@ export function assignToTarget(
         indexType.udonType === UdonType.Single ||
         indexType.udonType === UdonType.Double ||
         indexType.udonType === UdonType.Int64 ||
-        indexType.udonType === UdonType.UInt64
+        indexType.udonType === UdonType.UInt64 ||
+        indexType.udonType === UdonType.UInt32
       ) {
         const intIndex = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(new CastInstruction(intIndex, index));

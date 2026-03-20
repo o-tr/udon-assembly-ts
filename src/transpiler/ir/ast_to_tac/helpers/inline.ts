@@ -5,6 +5,7 @@ import {
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
+  type ArrayAccessExpressionNode,
   type ArrayLiteralExpressionNode,
   type ASTNode,
   ASTNodeKind,
@@ -18,7 +19,6 @@ import {
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
-  type FunctionExpressionNode,
   type IfStatementNode,
   type NullCoalescingExpressionNode,
   type PropertyAccessExpressionNode,
@@ -586,16 +586,19 @@ export function collectRecursiveLocals(
         break;
       }
       case ASTNodeKind.FunctionExpression: {
-        const funcNode = node as FunctionExpressionNode;
-        for (const param of funcNode.parameters) {
-          locals.set(param.name, param.type);
-        }
-        visitNode(funcNode.body);
+        // Do NOT recurse into closure bodies: variables declared inside a
+        // closure are not part of the enclosing method's recursion locals.
         break;
       }
       case ASTNodeKind.ArrayLiteralExpression: {
         const arrNode = node as ArrayLiteralExpressionNode;
         for (const elem of arrNode.elements) visitNode(elem.value);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accNode = node as ArrayAccessExpressionNode;
+        visitNode(accNode.array);
+        visitNode(accNode.index);
         break;
       }
       default:
@@ -821,16 +824,20 @@ export function countSelfCalls(
         break;
       }
       case ASTNodeKind.FunctionExpression: {
-        // NOTE: self-calls inside closures are counted here even though they
-        // go through a different runtime path (not the JUMP dispatch).
-        // This may over-allocate __selfCallResult_* slots but is benign.
-        const funcNode = node as FunctionExpressionNode;
-        visitNode(funcNode.body);
+        // Do NOT recurse into closure bodies: self-calls inside a closure
+        // go through a different runtime path and should not count toward
+        // the __selfCallResult_* pre-allocation for the enclosing method.
         break;
       }
       case ASTNodeKind.ArrayLiteralExpression: {
         const arrNode = node as ArrayLiteralExpressionNode;
         for (const elem of arrNode.elements) visitNode(elem.value);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accNode = node as ArrayAccessExpressionNode;
+        visitNode(accNode.array);
+        visitNode(accNode.index);
         break;
       }
       default:
