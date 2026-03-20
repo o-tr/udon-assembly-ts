@@ -700,6 +700,14 @@ export function visitCallExpression(
                 "Use a constant length or build the array with a loop.",
             );
           }
+          const MAX_ARRAY_PREPOPULATE = 1024;
+          if (count > MAX_ARRAY_PREPOPULATE) {
+            console.warn(
+              `transpiler: new Array<T>(${count}) exceeds pre-population limit of ${MAX_ARRAY_PREPOPULATE}. ` +
+                "The resulting DataList will be empty; use a smaller constant or build with a loop.",
+            );
+            count = 0;
+          }
           if (count > 0) {
             const defaultValue = createConstant(0, arrayType);
             const defaultToken = this.wrapDataToken(defaultValue);
