@@ -1060,6 +1060,7 @@ export function visitArrayAccessExpression(
     arrayType.name === ExternTypes.dataList.name
   ) {
     // Coerce index to Int32 if it's not already an integer type
+    // Coerce index to Int32 for DataList.get_Item (expects SystemInt32)
     let coercedIndex = index;
     const indexType = this.getOperandType(index);
     if (
@@ -1067,7 +1068,11 @@ export function visitArrayAccessExpression(
       indexType.udonType === UdonType.Double ||
       indexType.udonType === UdonType.Int64 ||
       indexType.udonType === UdonType.UInt64 ||
-      indexType.udonType === UdonType.UInt32
+      indexType.udonType === UdonType.UInt32 ||
+      indexType.udonType === UdonType.Int16 ||
+      indexType.udonType === UdonType.UInt16 ||
+      indexType.udonType === UdonType.Byte ||
+      indexType.udonType === UdonType.SByte
     ) {
       const intIndex = this.newTemp(PrimitiveTypes.int32);
       this.instructions.push(new CastInstruction(intIndex, index));

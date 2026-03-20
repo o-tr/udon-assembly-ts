@@ -616,7 +616,10 @@ export function visitCallExpression(
           argType.udonType === UdonType.Byte ||
           argType.udonType === UdonType.SByte;
 
-        const isConstantIntegerLength =
+        // Float-typed constant whose value is a whole number (e.g., 5.0).
+        // Handled separately from isNumericLength (integer types) because
+        // TypeScript number literals default to Single/Double in Udon.
+        const isWholeFloatConstant =
           argOperand.kind === TACOperandKind.Constant &&
           (argType.udonType === UdonType.Single ||
             argType.udonType === UdonType.Double) &&
@@ -672,7 +675,7 @@ export function visitCallExpression(
           return listResult;
         }
 
-        if (!isNumericLength && !isConstantIntegerLength) {
+        if (!isNumericLength && !isWholeFloatConstant) {
           const token = this.wrapDataToken(argOperand);
           this.instructions.push(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
@@ -683,7 +686,7 @@ export function visitCallExpression(
           // arrays (e.g., new Array<number>(someVar)) result in an empty DataList
           // and subsequent indexed access will fail at runtime.
           let count = 0;
-          if (isConstantIntegerLength) {
+          if (isWholeFloatConstant) {
             count = (argOperand as ConstantOperand).value as number;
           } else if (
             isNumericLength &&

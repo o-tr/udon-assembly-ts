@@ -868,8 +868,11 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
   );
 
   // Use shared registry which includes both Start and self-call return sites
-  // currentClassName is always set when processing a class method, but guard defensively
-  if (!this.currentClassName) return;
+  if (!this.currentClassName) {
+    throw new Error(
+      `emitReturnSiteDispatch: missing currentClassName for method ${methodName}`,
+    );
+  }
   const registryKey = `${this.currentClassName}.${methodName}`;
   const registry = this.recursiveReturnSites.get(registryKey);
   const allSites = registry?.sites ?? context.returnSites;
