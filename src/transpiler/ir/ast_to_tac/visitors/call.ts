@@ -695,10 +695,11 @@ export function visitCallExpression(
             count = (argOperand as ConstantOperand).value as number;
           } else if (isNumericLength) {
             // Runtime-length Array<T>(n) cannot be pre-populated at compile time.
-            // Emit an error diagnostic and produce an empty DataList (best-effort).
-            console.error(
-              "[udon-assembly-ts] new Array<T>(n) with a runtime-length integer " +
-                "produces an empty DataList. Use a constant length or build the array with a loop.",
+            // The resulting empty DataList would silently produce wrong values at runtime,
+            // so we abort compilation with a clear error message.
+            throw new Error(
+              "[udon-assembly-ts] new Array<T>(n) with a runtime-length variable " +
+                "cannot be pre-populated. Use a constant length or build the array with a loop.",
             );
           }
           const MAX_ARRAY_PREPOPULATE = 1024;
