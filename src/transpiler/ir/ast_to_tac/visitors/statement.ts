@@ -840,6 +840,7 @@ export function visitClassDeclaration(
           returnSites: Array<{ index: number; labelName: string }>;
           nextSelfCallResultIndex?: number;
           dispatchLabel?: TACOperand;
+          overflowLabel?: TACOperand;
         }
       | undefined;
     if (eventDef) {
@@ -882,6 +883,18 @@ export function visitClassDeclaration(
           "Exceeding this limit will silently abort the active event handler.",
       );
 
+      // KNOWN LIMITATION: Only user-declared variables (parameters, let/const,
+      // for-of loop vars, catch vars) are saved/restored across self-call
+      // boundaries. Compiler-generated temporaries (__t_*) are NOT included
+      // in the push/pop set. This means sub-expressions evaluated BEFORE a
+      // self-call that are used AFTER it may be silently corrupted.
+      // Example: `(n + 1) * this.factorial(n - 1)` — the temp for `(n + 1)`
+      // will be overwritten by the callee. Workaround: assign sub-expressions
+      // to local variables before self-calls:
+      //   const left = n + 1;
+      //   return left * this.factorial(n - 1);
+      // A full fix would require liveness analysis to identify temps that are
+      // live across self-call boundaries and include them in the push/pop set.
       const locals = this.collectRecursiveLocals(method);
       // Remap parameter names to their export names (e.g., "n" → "__0_n__param")
       // because the method body uses export names, not local names
@@ -953,6 +966,7 @@ export function visitClassDeclaration(
         returnSites: [],
         nextSelfCallResultIndex: 0,
         dispatchLabel: this.newLabel("recursive_dispatch"),
+        overflowLabel: this.newLabel("recursion_overflow"),
       };
       this.currentRecursiveContext = recursionContext;
 
@@ -1051,7 +1065,40 @@ export function visitClassDeclaration(
         );
         this.instructions.push(new LabelInstruction(skipSpResetLabel));
       }
-      // No prologue at method entry — save/restore happens at each call site
+      // Shared overflow handler: emitted once per method, jumped to from each
+      // call site's depth check in emitCallSitePush.
+      // Placed here (before body traversal) so the normal execution path jumps
+      // past it. Uses JUMP 0xFFFFFFFC (ReturnInstruction) which exits the
+      // entire active event handler.
+      {
+        const overflowTarget = recursionContext.overflowLabel;
+        if (!overflowTarget) {
+          throw new Error("overflowLabel not set in recursive context");
+        }
+        const afterOverflowLabel = this.newLabel("after_overflow");
+        this.instructions.push(
+          new UnconditionalJumpInstruction(afterOverflowLabel),
+        );
+        this.instructions.push(new LabelInstruction(overflowTarget));
+        const logErrorExtern = this.requireExternSignature(
+          "Debug",
+          "LogError",
+          "method",
+          ["object"],
+          "void",
+        );
+        const overflowMsg = createConstant(
+          `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${node.name}.${method.name}. Aborting event handler.`,
+          PrimitiveTypes.string,
+        );
+        this.instructions.push(
+          new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+        );
+        this.instructions.push(
+          new ReturnInstruction(undefined, this.currentReturnVar),
+        );
+        this.instructions.push(new LabelInstruction(afterOverflowLabel));
+      }
     }
 
     // Inject non-literal top-level const initialization at the start of _start/Start
@@ -1096,6 +1143,10 @@ export function visitClassDeclaration(
         );
       }
       if (emitted < expectedSelfCallCount) {
+        // Warn-only (not error): over-counted variables are added to the
+        // push/pop set but never written or read by code-gen. They are
+        // push/pop-balanced by construction, so correctness is preserved —
+        // the only cost is slightly more stack save/restore overhead.
         console.warn(
           `[WARN] countSelfCalls over-counted: expected ${expectedSelfCallCount} ` +
             `but emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +

@@ -51,7 +51,6 @@ import {
   LabelInstruction,
   MethodCallInstruction,
   ReturnInstruction,
-  UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
@@ -675,7 +674,8 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   // Guard: abort if depth has reached MAX_RECURSION_STACK_DEPTH.
   // Without this, set_Item would write beyond the pre-populated DataList bounds.
   // ConditionalJumpInstruction is "ifFalse goto", so we check (depth < MAX)
-  // and jump to the overflow return when false (i.e., depth >= MAX).
+  // and jump to the shared overflow handler (emitted once in the method
+  // prologue) when false (i.e., depth >= MAX).
   const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
   const depthOk = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
@@ -686,9 +686,13 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
     ),
   );
-  const overflowLabel = this.newLabel("recursion_overflow");
+  if (!context.overflowLabel) {
+    throw new Error(
+      "emitCallSitePush: overflowLabel not set in recursive context",
+    );
+  }
   this.instructions.push(
-    new ConditionalJumpInstruction(depthOk, overflowLabel),
+    new ConditionalJumpInstruction(depthOk, context.overflowLabel),
   );
 
   // SP++
@@ -719,31 +723,6 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       ]),
     );
   }
-
-  // Skip the overflow handler in the normal path
-  const afterOverflowLabel = this.newLabel("after_overflow");
-  this.instructions.push(new UnconditionalJumpInstruction(afterOverflowLabel));
-  // Overflow handler: log an error for observability, then RETURN which exits
-  // the entire event handler (JUMP 0xFFFFFFFC in Udon VM).
-  this.instructions.push(new LabelInstruction(overflowLabel));
-  const logErrorExtern = this.requireExternSignature(
-    "Debug",
-    "LogError",
-    "method",
-    ["object"],
-    "void",
-  );
-  const overflowMsg = createConstant(
-    `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded. Aborting event handler.`,
-    PrimitiveTypes.string,
-  );
-  this.instructions.push(
-    new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
-  );
-  this.instructions.push(
-    new ReturnInstruction(undefined, this.currentReturnVar),
-  );
-  this.instructions.push(new LabelInstruction(afterOverflowLabel));
 }
 
 /**

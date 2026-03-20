@@ -695,10 +695,10 @@ export function visitCallExpression(
             count = (argOperand as ConstantOperand).value as number;
           } else if (isNumericLength) {
             // Runtime-length Array<T>(n) cannot be pre-populated at compile time.
-            // Emit a warning and produce an empty DataList (best-effort).
-            console.warn(
-              "new Array<T>(n) with a runtime-length variable produces an empty DataList. " +
-                "Use a constant length or build the array with a loop.",
+            // Emit an error diagnostic and produce an empty DataList (best-effort).
+            console.error(
+              "[udon-assembly-ts] new Array<T>(n) with a runtime-length integer " +
+                "produces an empty DataList. Use a constant length or build the array with a loop.",
             );
           }
           const MAX_ARRAY_PREPOPULATE = 1024;
@@ -1343,7 +1343,11 @@ export function visitCallExpression(
           const registryKey = `${this.currentClassName}.${propAccess.property}`;
           let registry = this.recursiveReturnSites.get(registryKey);
           if (!registry) {
-            registry = { sites: [], nextIndex: 0 };
+            // Start at index 1 to reserve 0 as a sentinel "no external caller".
+            // Udon heap-initializes Int32 to 0, so if the method is invoked
+            // directly by the VRC runtime (no compiled caller sets returnSiteIdx),
+            // index 0 won't match any dispatch entry and the fallback RETURN fires.
+            registry = { sites: [], nextIndex: 1 };
             this.recursiveReturnSites.set(registryKey, registry);
           }
           const returnSiteIdx = registry.nextIndex++;
