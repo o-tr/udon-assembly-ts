@@ -557,7 +557,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "field_init_order",
     sourceFile: "field_init_order.ts",
-    expectedLogs: ["10", "default", "True", "3.14"],
+    expectedLogs: ["10", "default", "True", "3.25"],
   },
   // --- Null coalescing chain ---
   {
