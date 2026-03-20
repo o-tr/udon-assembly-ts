@@ -13,11 +13,13 @@ export class StringConcatBinaryFallback extends UdonSharpBehaviour {
     // The chain flattener cannot detect this as a string chain because the
     // left sub-expression (a + b) is not string-typed.
     // This exercises the ToString fallback at expression.ts:441-473.
-    const s1: string = `${a + b} items`;
+    // biome-ignore lint/style/useTemplate: intentionally testing binary + fallback path, not template literals
+    const s1: string = a + b + " items";
     Debug.Log(s1); // 8 items
 
     // Mirror case: string on the left, non-string on the right
-    const s2: string = `total: ${a + b}`;
+    // biome-ignore lint/style/useTemplate: intentionally testing binary + fallback path, not template literals
+    const s2: string = "total: " + (a + b);
     Debug.Log(s2); // total: 8
   }
 }

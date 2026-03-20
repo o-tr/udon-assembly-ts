@@ -85,7 +85,6 @@ export const emitMapEntriesList = (
   );
 
   const loopStart = converter.newLabel("map_entries_start");
-  const loopContinue = converter.newLabel("map_entries_continue");
   const loopEnd = converter.newLabel("map_entries_end");
 
   converter.instructions.push(new LabelInstruction(loopStart));
@@ -125,7 +124,6 @@ export const emitMapEntriesList = (
     new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
   );
 
-  converter.instructions.push(new LabelInstruction(loopContinue));
   converter.instructions.push(
     new BinaryOpInstruction(
       indexVar,
