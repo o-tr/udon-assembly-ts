@@ -8,7 +8,7 @@ export class MixedNumericComparison extends UdonSharpBehaviour {
   Start(): void {
     const intVal: UdonInt = 3 as UdonInt;
     const floatVal: number = 3.0;
-    const floatVal2: number = 3.14;
+    const floatVal2: number = 3.25;
 
     // int == float (equal)
     Debug.Log(intVal === floatVal); // True

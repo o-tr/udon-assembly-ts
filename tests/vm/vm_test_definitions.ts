@@ -13,7 +13,8 @@ export interface VmTestCase {
 
 // Note: numeric Debug.Log output format depends on Udon's boxing behavior.
 // TypeScript `number` maps to SystemSingle (float).
-// C# float.ToString() omits decimal for whole numbers: 15f -> "15", 3.14f -> "3.14".
+// C# float.ToString() omits decimal for whole numbers: 15f -> "15", 3.25f -> "3.25".
+// Tests use single-precision-exact values (e.g., 3.25 instead of 3.14) to avoid platform-dependent formatting.
 // If the VM output format differs, adjust expectedLogs accordingly.
 
 export const VM_TEST_CASES: VmTestCase[] = [
@@ -157,7 +158,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "type_conversion",
     sourceFile: "type_conversion.ts",
-    expectedLogs: ["3.14", "100", "-42", "True", "False"],
+    expectedLogs: ["3.25", "100", "-42", "True", "False"],
   },
   // --- Variable mutation & accumulation ---
   {
@@ -326,7 +327,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "type_coercion_int_float",
     sourceFile: "type_coercion_int_float.ts",
-    expectedLogs: ["3.14", "6.28", "3", "7"],
+    expectedLogs: ["3.25", "6.5", "3", "7"],
   },
   {
     name: "type_coercion_string_number",
