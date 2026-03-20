@@ -10,9 +10,10 @@ export class StringConcatBinaryFallback extends UdonSharpBehaviour {
     const b: UdonInt = 3 as UdonInt;
 
     // Left operand is non-string (int + int result), right is string literal.
-    // The chain flattener cannot detect this as a string chain because the
-    // left sub-expression (a + b) is not string-typed.
-    // This exercises the ToString fallback at expression.ts:441-473.
+    // flattenStringConcatChain returns null here because recursion into (a + b)
+    // finds neither operand is string-typed, so the chain builder aborts.
+    // This exercises the pairwise ToString + String.Concat fallback in
+    // visitBinaryExpression (expression.ts:441-473).
     // biome-ignore lint/style/useTemplate: intentionally testing binary + fallback path, not template literals
     const s1: string = a + b + " items";
     Debug.Log(s1); // 8 items

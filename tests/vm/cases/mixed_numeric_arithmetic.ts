@@ -21,7 +21,7 @@ export class MixedNumericArithmetic extends UdonSharpBehaviour {
     const divided: number = 7.5 / intVal;
     Debug.Log(divided); // 0.75
 
-    // Chained mixed: (int + float) * int
+    // Chained mixed: (int + float) * int → (10 + 1.5) * 2 = 23
     const chained: number = (intVal + floatVal) * 2;
     Debug.Log(chained); // 23
   }
