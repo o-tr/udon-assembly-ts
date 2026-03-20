@@ -735,7 +735,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   );
   const overflowMsg = createConstant(
     `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded. Aborting event handler.`,
-    ObjectType,
+    PrimitiveTypes.string,
   );
   this.instructions.push(
     new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
