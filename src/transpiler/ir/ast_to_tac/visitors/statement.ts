@@ -891,7 +891,7 @@ export function visitClassDeclaration(
         }
       }
       // Add __returnSiteIdx to the recursion stack locals.
-      const returnSiteIdxVarName = `__returnSiteIdx_${method.name}`;
+      const returnSiteIdxVarName = `__returnSiteIdx_${node.name}_${method.name}`;
       locals.push({
         name: returnSiteIdxVarName,
         type: PrimitiveTypes.int32,
@@ -914,7 +914,7 @@ export function visitClassDeclaration(
       for (let i = 0; i < selfCallCount; i++) {
         if (layout?.returnExportName) {
           locals.push({
-            name: `__selfCallResult_${method.name}_${i}`,
+            name: `__selfCallResult_${node.name}_${method.name}_${i}`,
             type: layout.returnType ?? PrimitiveTypes.single,
           });
         }
@@ -937,10 +937,10 @@ export function visitClassDeclaration(
         });
       }
 
-      const depthVar = `__recursionDepth_${method.name}`;
-      const spVar = `__recursionSP_${method.name}`;
+      const depthVar = `__recursionDepth_${node.name}_${method.name}`;
+      const spVar = `__recursionSP_${node.name}_${method.name}`;
       const stackVars = locals.map((local) => ({
-        name: `__recursionStack_${method.name}_${local.name}`,
+        name: `__recursionStack_${node.name}_${method.name}_${local.name}`,
         type: ExternTypes.dataList as TypeSymbol,
       }));
 
@@ -958,7 +958,7 @@ export function visitClassDeclaration(
       // Allocate recursion stack DataLists once (first invocation only).
       // Uses a boolean flag instead of depth==0 check to avoid re-allocating
       // on every external call (which sets depth to 0 before jumping).
-      const stackInitFlagName = `__stackInitialized_${method.name}`;
+      const stackInitFlagName = `__stackInitialized_${node.name}_${method.name}`;
       const stackInitFlag = createVariable(
         stackInitFlagName,
         PrimitiveTypes.boolean,
@@ -1073,11 +1073,13 @@ export function visitClassDeclaration(
 
     this.visitBlockStatement(method.body);
     // Assert that countSelfCalls and code-gen agree on the number of self-calls.
-    // A mismatch means a walker gap: some AST node wrapping a self-call was
-    // not traversed, causing __selfCallResult_* to be missing from push/pop.
+    // Only meaningful for entry-point classes where JUMP-based dispatch is used.
+    // Non-entry-point classes use inline inlining and don't increment
+    // nextSelfCallResultIndex, so the assertion would always fire falsely.
     if (
       expectedSelfCallCount !== undefined &&
-      this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined
+      this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined &&
+      this.entryPointClasses.has(node.name)
     ) {
       const emitted = this.currentRecursiveContext.nextSelfCallResultIndex;
       if (emitted > expectedSelfCallCount) {

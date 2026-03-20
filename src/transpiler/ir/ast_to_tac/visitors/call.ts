@@ -1398,7 +1398,7 @@ export function visitCallExpression(
 
             // 4. Set return site index for dispatch table
             const returnSiteIdxVar = createVariable(
-              `__returnSiteIdx_${propAccess.property}`,
+              `__returnSiteIdx_${this.currentClassName}_${propAccess.property}`,
               PrimitiveTypes.int32,
               { isLocal: true },
             );
@@ -1441,7 +1441,7 @@ export function visitCallExpression(
               this.currentRecursiveContext.nextSelfCallResultIndex =
                 selfCallIdx + 1;
               const selfCallResultVar = createVariable(
-                `__selfCallResult_${propAccess.property}_${selfCallIdx}`,
+                `__selfCallResult_${this.currentClassName}_${propAccess.property}_${selfCallIdx}`,
                 layout.returnType,
                 { isLocal: true },
               );
@@ -1477,7 +1477,7 @@ export function visitCallExpression(
           }
           // Set return site index
           const returnSiteIdxVar = createVariable(
-            `__returnSiteIdx_${propAccess.property}`,
+            `__returnSiteIdx_${this.currentClassName}_${propAccess.property}`,
             PrimitiveTypes.int32,
             { isLocal: true },
           );
@@ -1489,7 +1489,7 @@ export function visitCallExpression(
           );
           // Initialize recursion depth to 0
           const depthVar = createVariable(
-            `__recursionDepth_${propAccess.property}`,
+            `__recursionDepth_${this.currentClassName}_${propAccess.property}`,
             PrimitiveTypes.int32,
           );
           this.instructions.push(

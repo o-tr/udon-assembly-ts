@@ -1011,7 +1011,7 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
   if (!methodName) return;
 
   const returnSiteIdxVar = createVariable(
-    `__returnSiteIdx_${methodName}`,
+    `__returnSiteIdx_${this.currentClassName}_${methodName}`,
     PrimitiveTypes.int32,
     { isLocal: true },
   );

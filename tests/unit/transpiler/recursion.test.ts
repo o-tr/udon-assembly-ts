@@ -67,7 +67,7 @@ describe("recursive methods", () => {
     expect(result.uasm).toContain("JUMP_IF_FALSE,");
     expect(result.uasm).toContain("JUMP, 0xFFFFFFFC");
     // Return site index variable and inequality check for dispatch
-    expect(result.uasm).toContain("__returnSiteIdx_factorial");
+    expect(result.uasm).toContain("__returnSiteIdx_Factorial_factorial");
     expect(result.uasm).toContain("Inequality");
     // Call-site push/pop via DataList set_Item/get_Item
     expect(result.uasm).toContain("set_Item");
@@ -104,7 +104,9 @@ describe("recursive methods", () => {
     // Dispatch table and push/pop should still be present for try/catch path
     expect(result.uasm).toContain("JUMP_IF_FALSE,");
     expect(result.uasm).toContain("JUMP, 0xFFFFFFFC");
-    expect(result.uasm).toContain("__returnSiteIdx_factorial");
+    expect(result.uasm).toContain(
+      "__returnSiteIdx_TryCatchRecursion_factorial",
+    );
     expect(result.uasm).toContain("Inequality");
     expect(result.uasm).toContain("set_Item");
     expect(result.uasm).toContain("get_Item");
