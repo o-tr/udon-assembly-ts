@@ -83,6 +83,7 @@ export function resolveExternSignature(
             memberName,
           );
           if (overloads.length === 0) return undefined;
+          if (overloads.length === 1) return overloads[0];
           const mappedParams = paramTypes.map(mapTypeScriptToCSharp);
           return selectOverload(overloads, mappedParams);
         })()
