@@ -162,8 +162,8 @@ export class ASTToTACConverter {
         stackVars: Array<{ name: string; type: TypeSymbol }>;
         returnSites: Array<{ index: number; labelName: string }>;
         nextSelfCallResultIndex?: number;
-        dispatchLabel?: TACOperand;
-        overflowLabel?: TACOperand;
+        dispatchLabel: TACOperand;
+        overflowLabel: TACOperand;
       }
     | undefined;
   /**

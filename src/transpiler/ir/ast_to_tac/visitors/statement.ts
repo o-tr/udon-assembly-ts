@@ -719,9 +719,7 @@ export function visitReturnStatement(
         ),
       );
       this.instructions.push(new CopyInstruction(depthVar, depthTemp));
-      if (dispatchLabel) {
-        this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
-      }
+      this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
     }
     return;
   }
@@ -848,8 +846,8 @@ export function visitClassDeclaration(
           stackVars: Array<{ name: string; type: TypeSymbol }>;
           returnSites: Array<{ index: number; labelName: string }>;
           nextSelfCallResultIndex?: number;
-          dispatchLabel?: TACOperand;
-          overflowLabel?: TACOperand;
+          dispatchLabel: TACOperand;
+          overflowLabel: TACOperand;
         }
       | undefined;
     if (eventDef) {
@@ -1073,10 +1071,10 @@ export function visitClassDeclaration(
       // This ensures SendCustomEvent and other non-compiled callers reset SP correctly.
       {
         const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
-        const depthIsZero = this.newTemp(PrimitiveTypes.boolean);
+        const depthAtTopLevel = this.newTemp(PrimitiveTypes.boolean);
         this.instructions.push(
           new BinaryOpInstruction(
-            depthIsZero,
+            depthAtTopLevel,
             depthVarOp,
             "<=",
             createConstant(0, PrimitiveTypes.int32),
@@ -1084,7 +1082,7 @@ export function visitClassDeclaration(
         );
         const skipSpResetLabel = this.newLabel("skip_sp_reset");
         this.instructions.push(
-          new ConditionalJumpInstruction(depthIsZero, skipSpResetLabel),
+          new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
         );
         const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
         this.instructions.push(
@@ -1110,15 +1108,13 @@ export function visitClassDeclaration(
       // past it. Uses JUMP 0xFFFFFFFC (ReturnInstruction) which exits the
       // entire active event handler.
       {
-        const overflowTarget = recursionContext.overflowLabel;
-        if (!overflowTarget) {
-          throw new Error("overflowLabel not set in recursive context");
-        }
         const afterOverflowLabel = this.newLabel("after_overflow");
         this.instructions.push(
           new UnconditionalJumpInstruction(afterOverflowLabel),
         );
-        this.instructions.push(new LabelInstruction(overflowTarget));
+        this.instructions.push(
+          new LabelInstruction(recursionContext.overflowLabel),
+        );
         const logErrorExtern = this.requireExternSignature(
           "Debug",
           "LogError",

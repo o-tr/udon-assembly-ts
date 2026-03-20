@@ -686,11 +686,6 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
     ),
   );
-  if (!context.overflowLabel) {
-    throw new Error(
-      "emitCallSitePush: overflowLabel not set in recursive context",
-    );
-  }
   this.instructions.push(
     new ConditionalJumpInstruction(depthOk, context.overflowLabel),
   );
