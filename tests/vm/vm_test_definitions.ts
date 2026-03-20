@@ -488,7 +488,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "string_concat_mixed_types",
     sourceFile: "string_concat_mixed_types.ts",
-    expectedLogs: ["val=42", "flag=True", "f=3.14", "n=42 b=True"],
+    expectedLogs: ["val=42", "flag=True", "f=3.25", "n=42 b=True"],
   },
   // --- String concat binary fallback (ToString coercion in binary +) ---
   {

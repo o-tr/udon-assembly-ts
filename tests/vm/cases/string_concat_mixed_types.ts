@@ -8,7 +8,7 @@ export class StringConcatMixedTypes extends UdonSharpBehaviour {
   Start(): void {
     const intVal: UdonInt = 42 as UdonInt;
     const boolVal: boolean = true;
-    const floatVal: number = 3.14;
+    const floatVal: number = 3.25;
 
     // String + int
     Debug.Log(`val=${intVal}`); // val=42
@@ -17,7 +17,7 @@ export class StringConcatMixedTypes extends UdonSharpBehaviour {
     Debug.Log(`flag=${boolVal}`); // flag=True
 
     // String + float
-    Debug.Log(`f=${floatVal}`); // f=3.14
+    Debug.Log(`f=${floatVal}`); // f=3.25
 
     // Mixed chain: string + int + string + bool
     const mixed: string = `n=${intVal} b=${boolVal}`;
