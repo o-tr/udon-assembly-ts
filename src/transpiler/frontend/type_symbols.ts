@@ -202,6 +202,38 @@ export class ObjectTypeSymbol extends TypeSymbol {
   }
 }
 
+/**
+ * Numeric promotion rank (C#/.NET rules). Higher = wider type.
+ */
+const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
+  [UdonType.Byte]: 1,
+  [UdonType.SByte]: 1,
+  [UdonType.Int16]: 2,
+  [UdonType.UInt16]: 2,
+  [UdonType.Int32]: 3,
+  [UdonType.UInt32]: 3,
+  [UdonType.Int64]: 4,
+  [UdonType.UInt64]: 4,
+  [UdonType.Single]: 5,
+  [UdonType.Double]: 6,
+};
+
+/**
+ * Returns the promoted numeric type for a binary operation between two
+ * TypeSymbols, following C#/.NET implicit numeric promotion rules.
+ * Returns null if either type is not numeric.
+ */
+export function getPromotedType(
+  a: TypeSymbol,
+  b: TypeSymbol,
+): TypeSymbol | null {
+  const rankA = NUMERIC_RANK[a.udonType];
+  const rankB = NUMERIC_RANK[b.udonType];
+  if (rankA === undefined || rankB === undefined) return null;
+  if (rankA >= rankB) return a;
+  return b;
+}
+
 export const PrimitiveTypes = {
   int32: new PrimitiveTypeSymbol("int", UdonType.Int32),
   single: new PrimitiveTypeSymbol("float", UdonType.Single),

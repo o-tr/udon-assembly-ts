@@ -2124,7 +2124,7 @@ function visitSetMethodCall(
 function visitMapMethodCall(
   converter: ASTToTACConverter,
   mapOperand: TACOperand,
-  mapType: CollectionTypeSymbol,
+  mapType: TypeSymbol,
   propAccess: PropertyAccessExpressionNode,
   rawArgs: ASTNode[],
 ): TACOperand | null {

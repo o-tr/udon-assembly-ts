@@ -5,6 +5,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getPromotedType,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
   ObjectType,
@@ -427,16 +428,53 @@ export function visitBinaryExpression(
       return resultOperand;
     }
   }
-  const left = this.visitExpression(node.left);
-  const right = this.visitExpression(node.right);
+  let left = this.visitExpression(node.left);
+  let right = this.visitExpression(node.right);
 
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
   );
+  const leftType = this.getOperandType(left);
+  const rightType = this.getOperandType(right);
+
+  // String concatenation with mixed types: call ToString on non-string operand
+  if (
+    node.operator === "+" &&
+    (leftType.udonType === UdonType.String ||
+      rightType.udonType === UdonType.String)
+  ) {
+    if (leftType.udonType !== UdonType.String) {
+      const strLeft = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(strLeft, left, "ToString", []),
+      );
+      left = strLeft;
+    }
+    if (rightType.udonType !== UdonType.String) {
+      const strRight = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(strRight, right, "ToString", []),
+      );
+      right = strRight;
+    }
+    const concatExtern = this.requireExternSignature(
+      "System.String",
+      "Concat",
+      "method",
+      ["string", "string"],
+      "System.String",
+    );
+    const result = this.newTemp(PrimitiveTypes.string);
+    this.instructions.push(
+      new CallInstruction(result, concatExtern, [left, right]),
+    );
+    return result;
+  }
+
   const resultType = isComparison
     ? PrimitiveTypes.boolean
-    : this.getOperandType(left);
+    : (getPromotedType(leftType, rightType) ?? leftType);
   const result = this.newTemp(resultType);
 
   this.instructions.push(

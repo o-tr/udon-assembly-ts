@@ -500,13 +500,19 @@ export function visitForOfStatement(
   }
   if (isDestructured) {
     const names = node.variable as string[];
+    // Elements from DataList.get_Item are DataTokens, not generic Objects.
+    // Using DataToken type ensures property accesses (e.g., .String, .Float)
+    // resolve to the correct extern signatures.
+    const destructuredType = isDataList ? ExternTypes.dataToken : ObjectType;
     for (let i = 0; i < names.length; i += 1) {
       const name = names[i];
       if (!this.symbolTable.hasInCurrentScope(name)) {
-        this.symbolTable.addSymbol(name, ObjectType, false, false);
+        this.symbolTable.addSymbol(name, destructuredType, false, false);
       }
-      const targetVar = createVariable(name, ObjectType, { isLocal: true });
-      const elementValue = this.newTemp(ObjectType);
+      const targetVar = createVariable(name, destructuredType, {
+        isLocal: true,
+      });
+      const elementValue = this.newTemp(destructuredType);
       this.instructions.push(
         new MethodCallInstruction(elementValue, elementVar, "get_Item", [
           createConstant(i, PrimitiveTypes.int32),
