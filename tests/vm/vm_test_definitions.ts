@@ -561,8 +561,8 @@ export const VM_TEST_CASES: VmTestCase[] = [
   },
   // --- Null coalescing with method returns ---
   {
-    name: "optional_chaining_method",
-    sourceFile: "optional_chaining_method.ts",
+    name: "null_coalescing_method_returns",
+    sourceFile: "null_coalescing_method_returns.ts",
     expectedLogs: ["hello", "was-null", "deep", "hello"],
   },
   // --- Try-catch advanced ---

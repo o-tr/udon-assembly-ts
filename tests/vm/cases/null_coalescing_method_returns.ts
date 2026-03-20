@@ -3,7 +3,7 @@ import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehavi
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
-export class OptionalChainingMethod extends UdonSharpBehaviour {
+export class NullCoalescingMethodReturns extends UdonSharpBehaviour {
   getNonNull(): string | null {
     return "hello";
   }

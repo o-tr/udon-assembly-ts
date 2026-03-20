@@ -232,8 +232,22 @@ const SIGNED_TYPES = new Set<UdonType>([
  *   short + ushort → int   (Int32)
  *   int   + uint   → long  (Int64)
  *   long  + ulong  → compile error in C#; we fall back to Int64.
+ *
+ * Lazily initialised because it references PrimitiveTypes (defined below).
  */
-let SAME_RANK_PROMOTION: Partial<Record<number, PrimitiveTypeSymbol>> = {};
+let _sameRankPromotion: Partial<Record<number, PrimitiveTypeSymbol>> | null =
+  null;
+function getSameRankPromotion(): Partial<Record<number, PrimitiveTypeSymbol>> {
+  if (!_sameRankPromotion) {
+    _sameRankPromotion = {
+      1: PrimitiveTypes.int16, // sbyte + byte → short
+      2: PrimitiveTypes.int32, // short + ushort → int
+      3: PrimitiveTypes.int64, // int + uint → long
+      4: PrimitiveTypes.int64, // long + ulong → long (C# error; best-effort)
+    };
+  }
+  return _sameRankPromotion;
+}
 
 /**
  * Returns the promoted numeric type for a binary operation between two
@@ -253,7 +267,7 @@ export function getPromotedType(
   const aIsSigned = SIGNED_TYPES.has(a.udonType);
   const bIsSigned = SIGNED_TYPES.has(b.udonType);
   if (aIsSigned !== bIsSigned) {
-    const promoted = SAME_RANK_PROMOTION[rankA];
+    const promoted = getSameRankPromotion()[rankA];
     if (promoted) return promoted;
   }
   return a;
@@ -273,14 +287,6 @@ export const PrimitiveTypes = {
   int64: new PrimitiveTypeSymbol("long", UdonType.Int64),
   uint64: new PrimitiveTypeSymbol("ulong", UdonType.UInt64),
   double: new PrimitiveTypeSymbol("double", UdonType.Double),
-};
-
-// Populate same-rank signed/unsigned promotion table now that PrimitiveTypes exists
-SAME_RANK_PROMOTION = {
-  1: PrimitiveTypes.int16, // sbyte + byte → short
-  2: PrimitiveTypes.int32, // short + ushort → int
-  3: PrimitiveTypes.int64, // int + uint → long
-  4: PrimitiveTypes.int64, // long + ulong → long (C# error; best-effort fallback)
 };
 
 export const ExternTypes = {

@@ -104,6 +104,7 @@ export class DataDictionary {
     return new DataDictionary();
   }
 
+  // Allow `for..of` in TypeScript sources; actual iteration happens in the Udon VM.
   [Symbol.iterator](): Iterator<[DataToken, DataToken]> {
     return {
       next: () => ({
