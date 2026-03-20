@@ -1515,6 +1515,15 @@ export function visitCallExpression(
           this.instructions.push(new UnconditionalJumpInstruction(methodLabel));
           // Return label (dispatch brings us back here)
           this.instructions.push(new LabelInstruction(returnLabel));
+          // Reset returnSiteIdx to 0 (sentinel) after dispatch returns here.
+          // Without this, a subsequent VRC direct call (SendCustomEvent) would
+          // see the stale index and dispatch back to this caller's return label.
+          this.instructions.push(
+            new AssignmentInstruction(
+              returnSiteIdxVar,
+              createConstant(0, PrimitiveTypes.int32),
+            ),
+          );
           // Read return value
           let result: TACOperand = VOID_RETURN;
           if (layout.returnExportName) {
