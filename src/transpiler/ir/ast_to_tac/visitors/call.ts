@@ -1485,7 +1485,10 @@ export function visitCallExpression(
               );
             }
           }
-          // Set return site index
+          // Set return site index.
+          // NOTE: currentClassName is used here as the callee's class name.
+          // This is correct because recursive dispatch only supports same-class
+          // calls (this.method() form). Cross-class recursive calls are not supported.
           const returnSiteIdxVar = createVariable(
             `__returnSiteIdx_${this.currentClassName}_${propAccess.property}`,
             PrimitiveTypes.int32,

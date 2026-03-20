@@ -874,6 +874,7 @@ export function visitClassDeclaration(
     let expectedTryCatchCount: number | undefined;
     let tryCounterBeforeMethod: number | undefined;
     let hasReturnExport = false;
+    let earlyInitDone = false;
     if (method.isRecursive) {
       const selfCallCount = countSelfCalls(method.name, method.body);
       expectedSelfCallCount = selfCallCount;
@@ -934,12 +935,30 @@ export function visitClassDeclaration(
           });
         }
       }
-      // Add compiler-synthesized try/catch error flag/value variables.
-      // These are created by visitTryCatchStatement using tryCounter-based IDs,
-      // so we predict the IDs from the current counter value.
-      const tryCatchCount = countTryCatchBlocks(method.body);
-      expectedTryCatchCount = tryCatchCount;
-      for (let i = 0; i < tryCatchCount; i++) {
+      // Emit property/constructor initialization and top-level const injection
+      // BEFORE the recursion prologue, so that this.tryCounter reflects any
+      // try/catch blocks emitted by property initializers. This ensures the
+      // predicted __error_flag/value variable IDs match the actual IDs assigned
+      // during method body traversal.
+      if (
+        method.name === "Start" &&
+        this.pendingTopLevelInits.length > 0 &&
+        this.entryPointClasses.has(node.name)
+      ) {
+        for (const tlc of this.pendingTopLevelInits) {
+          this.visitVariableDeclaration(tlc);
+        }
+        this.pendingTopLevelInits = [];
+      }
+      if (method.name === "Start" && this.entryPointClasses.has(node.name)) {
+        this.emitEntryPointPropertyInit(node);
+      }
+      earlyInitDone = true;
+
+      // Now predict try/catch variable names using the updated tryCounter.
+      expectedTryCatchCount = countTryCatchBlocks(method.body);
+      tryCounterBeforeMethod = this.tryCounter;
+      for (let i = 0; i < expectedTryCatchCount; i++) {
         const tryId = this.tryCounter + i;
         locals.push({
           name: `__error_flag_${tryId}`,
@@ -1102,8 +1121,10 @@ export function visitClassDeclaration(
     }
 
     // Inject non-literal top-level const initialization at the start of _start/Start
-    // Only for entry-point classes whose Start becomes the actual _start label
+    // Only for entry-point classes whose Start becomes the actual _start label.
+    // Skip if already done in the recursive method prologue (earlyInitDone).
     if (
+      !earlyInitDone &&
       method.name === "Start" &&
       this.pendingTopLevelInits.length > 0 &&
       this.entryPointClasses.has(node.name)
@@ -1114,15 +1135,22 @@ export function visitClassDeclaration(
       this.pendingTopLevelInits = [];
     }
 
-    // Entry-point class property initialization + constructor body in _start/Start
-    if (method.name === "Start" && this.entryPointClasses.has(node.name)) {
+    // Entry-point class property initialization + constructor body in _start/Start.
+    // Skip if already done in the recursive method prologue (earlyInitDone).
+    if (
+      !earlyInitDone &&
+      method.name === "Start" &&
+      this.entryPointClasses.has(node.name)
+    ) {
       this.emitEntryPointPropertyInit(node);
     }
 
-    // Capture tryCounter immediately before body traversal to minimize the
-    // window for intervening emissions (e.g. emitEntryPointPropertyInit)
-    // that could shift the counter.
-    tryCounterBeforeMethod = this.tryCounter;
+    // Capture tryCounter immediately before body traversal.
+    // For recursive methods, tryCounterBeforeMethod is already captured
+    // in the prologue (after earlyInit). For non-recursive methods, capture here.
+    if (tryCounterBeforeMethod === undefined) {
+      tryCounterBeforeMethod = this.tryCounter;
+    }
     this.visitBlockStatement(method.body);
     // Assert that countSelfCalls and code-gen agree on the number of self-calls.
     // Only meaningful for entry-point classes where JUMP-based dispatch is used
@@ -1168,11 +1196,15 @@ export function visitClassDeclaration(
     ) {
       const actualTryCatchCount = this.tryCounter - tryCounterBeforeMethod;
       if (actualTryCatchCount !== expectedTryCatchCount) {
+        // Hard throw is intentional: the predicted __error_flag/value variables
+        // would be missing from the recursion stack, causing silent state
+        // corruption across self-call boundaries.
         throw new Error(
           `countTryCatchBlocks returned ${expectedTryCatchCount} but ` +
             `code-gen emitted ${actualTryCatchCount} try/catch blocks ` +
             `for ${node.name}.${method.name}. ` +
-            "This may happen if a try/catch appears inside an inlined forEach callback.",
+            "Using try/catch inside forEach callbacks within @RecursiveMethod is not supported. " +
+            "Workaround: extract the try/catch body into a separate non-recursive helper method.",
         );
       }
     }
