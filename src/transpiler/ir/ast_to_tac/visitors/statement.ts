@@ -671,7 +671,18 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
-  if (this.currentRecursiveContext && this.currentMethodName) {
+  // Check inlineReturnStack FIRST: if we are inside an inlined method body,
+  // return must go to the inline return label, not the recursive dispatch.
+  // currentRecursiveContext remains set from the enclosing recursive method
+  // during inlining, so checking it first would incorrectly decrement depth
+  // and jump to the dispatch table.
+  const inlineContext =
+    this.inlineReturnStack[this.inlineReturnStack.length - 1];
+  if (
+    !inlineContext &&
+    this.currentRecursiveContext &&
+    this.currentMethodName
+  ) {
     const valueOperand = node.value
       ? this.visitExpression(node.value)
       : undefined;
@@ -714,8 +725,6 @@ export function visitReturnStatement(
     }
     return;
   }
-  const inlineContext =
-    this.inlineReturnStack[this.inlineReturnStack.length - 1];
   if (inlineContext) {
     if (node.value) {
       const value = this.visitExpression(node.value);
@@ -1164,17 +1173,15 @@ export function visitClassDeclaration(
     ) {
       const emitted = this.currentRecursiveContext.nextSelfCallResultIndex;
       if (emitted > expectedSelfCallCount) {
-        // Warn-only (not error): this can legitimately happen when a self-call
-        // appears inside an inlined forEach callback body. countSelfCalls
-        // deliberately skips FunctionExpression nodes, but the inlined code-gen
-        // still emits JUMP-based self-calls. The extra __selfCallResult_*
-        // variables beyond the pre-allocated count are still correctly
-        // push/pop-balanced; the only cost is that the pre-allocated set is
-        // smaller than the actual set (the code-gen allocates on demand).
-        console.warn(
-          `[WARN] countSelfCalls under-counted: expected ${expectedSelfCallCount} ` +
-            `but code-gen emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
-            "This may happen if a self-call appears inside an inlined forEach callback.",
+        // Hard error: the extra __selfCallResult_* variables (indices >=
+        // expectedSelfCallCount) are NOT in the push/pop set, so they would
+        // be silently overwritten by deeper recursive frames. This typically
+        // happens when a self-call appears inside an inlined forEach callback.
+        throw new Error(
+          `countSelfCalls returned ${expectedSelfCallCount} but ` +
+            `code-gen emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
+            "Self-calls inside forEach callbacks within @RecursiveMethod are not supported. " +
+            "Workaround: extract the forEach body into a separate non-recursive helper method.",
         );
       }
       if (emitted < expectedSelfCallCount) {
