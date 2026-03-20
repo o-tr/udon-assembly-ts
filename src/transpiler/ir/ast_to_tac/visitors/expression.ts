@@ -440,7 +440,9 @@ export function visitBinaryExpression(
   const leftType = this.getOperandType(left);
   const rightType = this.getOperandType(right);
 
-  // String concatenation with mixed types: call ToString on non-string operand
+  // String concatenation with mixed types: call ToString on non-string operand.
+  // Reached when (a) useStringBuilder is false, or (b) useStringBuilder is true
+  // but flattenStringConcatChain returned null (e.g. left sub-expr is non-string).
   if (
     node.operator === "+" &&
     (leftType.udonType === UdonType.String ||

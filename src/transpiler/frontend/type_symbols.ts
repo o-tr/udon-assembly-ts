@@ -270,6 +270,7 @@ export function getPromotedType(
     const promoted = getSameRankPromotion()[rankA];
     if (promoted) return promoted;
   }
+  // Same rank, same signedness: no promotion needed.
   return a;
 }
 
