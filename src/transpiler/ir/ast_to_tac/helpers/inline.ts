@@ -519,6 +519,11 @@ export function collectRecursiveLocals(
             : ObjectType;
           locals.set(forOfNode.variable, mappedType);
         }
+        if (forOfNode.destructureProperties) {
+          for (const entry of forOfNode.destructureProperties) {
+            locals.set(entry.name, ObjectType);
+          }
+        }
         visitNode(forOfNode.iterable);
         visitNode(forOfNode.body);
         break;
@@ -718,7 +723,8 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   // Skip the overflow handler in the normal path
   const afterOverflowLabel = this.newLabel("after_overflow");
   this.instructions.push(new UnconditionalJumpInstruction(afterOverflowLabel));
-  // Overflow handler: halt the method by returning immediately
+  // Overflow handler: emit RETURN which exits the entire event handler
+  // (JUMP 0xFFFFFFFC in Udon VM), silently aborting the current call.
   this.instructions.push(new LabelInstruction(overflowLabel));
   this.instructions.push(
     new ReturnInstruction(undefined, this.currentReturnVar),

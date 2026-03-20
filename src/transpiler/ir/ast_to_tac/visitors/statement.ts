@@ -878,7 +878,7 @@ export function visitClassDeclaration(
       console.info(
         `transpiler: @RecursiveMethod ${node.name}.${method.name} — ` +
           `max recursion depth is ${MAX_RECURSION_STACK_DEPTH}. ` +
-          "Exceeding this limit will cause a runtime error in the Udon VM.",
+          "Exceeding this limit will silently abort the active event handler.",
       );
 
       const locals = this.collectRecursiveLocals(method);
@@ -1084,8 +1084,9 @@ export function visitClassDeclaration(
       const emitted = this.currentRecursiveContext.nextSelfCallResultIndex;
       if (emitted > expectedSelfCallCount) {
         throw new Error(
-          `[BUG] countSelfCalls returned ${expectedSelfCallCount} but code-gen ` +
-            `emitted ${emitted} self-call sites for ${node.name}.${method.name}`,
+          `countSelfCalls returned ${expectedSelfCallCount} but code-gen ` +
+            `emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
+            "This may happen if a self-call appears inside an inlined forEach callback.",
         );
       }
       if (emitted < expectedSelfCallCount) {
@@ -1104,9 +1105,10 @@ export function visitClassDeclaration(
       const actualTryCatchCount = this.tryCounter - tryCounterBeforeMethod;
       if (actualTryCatchCount !== expectedTryCatchCount) {
         throw new Error(
-          `[BUG] countTryCatchBlocks returned ${expectedTryCatchCount} but ` +
+          `countTryCatchBlocks returned ${expectedTryCatchCount} but ` +
             `code-gen emitted ${actualTryCatchCount} try/catch blocks ` +
-            `for ${node.name}.${method.name}`,
+            `for ${node.name}.${method.name}. ` +
+            "This may happen if a try/catch appears inside an inlined forEach callback.",
         );
       }
     }

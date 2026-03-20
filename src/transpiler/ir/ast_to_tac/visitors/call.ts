@@ -1396,7 +1396,10 @@ export function visitCallExpression(
               }
             }
 
-            // 4. Set return site index for dispatch table
+            // 4. Set return site index for dispatch table.
+            // This must come AFTER emitCallSitePush (step 1) because push
+            // saves the caller's returnSiteIdx. If we set it first, the
+            // callee's index would be pushed instead of the caller's.
             const returnSiteIdxVar = createVariable(
               `__returnSiteIdx_${this.currentClassName}_${propAccess.property}`,
               PrimitiveTypes.int32,
