@@ -732,6 +732,48 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
 }
 
 /**
+ * Count the number of TryCatchStatement nodes in a method body.
+ * Used to predict compiler-synthesized __error_flag_* / __error_value_*
+ * variable names for inclusion in the recursion push/pop set.
+ */
+export function countTryCatchBlocks(body: BlockStatementNode): number {
+  let count = 0;
+  const visitNode = (node: ASTNode): void => {
+    // Do not recurse into closures — they have separate try/catch scope
+    if (node.kind === ASTNodeKind.FunctionExpression) return;
+    if (node.kind === ASTNodeKind.TryCatchStatement) {
+      count++;
+      const tryNode = node as TryCatchStatementNode;
+      visitNode(tryNode.tryBody);
+      if (tryNode.catchBody) visitNode(tryNode.catchBody);
+      if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
+    } else if (node.kind === ASTNodeKind.BlockStatement) {
+      for (const stmt of (node as BlockStatementNode).statements) {
+        visitNode(stmt);
+      }
+    } else if (node.kind === ASTNodeKind.IfStatement) {
+      const ifNode = node as IfStatementNode;
+      visitNode(ifNode.thenBranch);
+      if (ifNode.elseBranch) visitNode(ifNode.elseBranch);
+    } else if (node.kind === ASTNodeKind.WhileStatement) {
+      visitNode((node as WhileStatementNode).body);
+    } else if (node.kind === ASTNodeKind.DoWhileStatement) {
+      visitNode((node as DoWhileStatementNode).body);
+    } else if (node.kind === ASTNodeKind.ForStatement) {
+      visitNode((node as ForStatementNode).body);
+    } else if (node.kind === ASTNodeKind.ForOfStatement) {
+      visitNode((node as ForOfStatementNode).body);
+    } else if (node.kind === ASTNodeKind.SwitchStatement) {
+      for (const c of (node as SwitchStatementNode).cases) {
+        for (const stmt of c.statements) visitNode(stmt);
+      }
+    }
+  };
+  visitNode(body);
+  return count;
+}
+
+/**
  * Count the number of self-recursive calls (this.methodName(...)) in a method body.
  * Used to pre-allocate selfCallResult variables that survive across sibling calls.
  */

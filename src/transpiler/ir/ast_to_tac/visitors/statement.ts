@@ -54,7 +54,7 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
-import { countSelfCalls } from "../helpers/inline.js";
+import { countSelfCalls, countTryCatchBlocks } from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 /**
@@ -877,6 +877,8 @@ export function visitClassDeclaration(
     }
 
     let expectedSelfCallCount: number | undefined;
+    let expectedTryCatchCount: number | undefined;
+    let tryCounterBeforeMethod: number | undefined;
     if (method.isRecursive) {
       const selfCallCount = countSelfCalls(method.name, method.body);
       expectedSelfCallCount = selfCallCount;
@@ -923,6 +925,23 @@ export function visitClassDeclaration(
             type: layout.returnType ?? PrimitiveTypes.single,
           });
         }
+      }
+      // Add compiler-synthesized try/catch error flag/value variables.
+      // These are created by visitTryCatchStatement using tryCounter-based IDs,
+      // so we predict the IDs from the current counter value.
+      const tryCatchCount = countTryCatchBlocks(method.body);
+      expectedTryCatchCount = tryCatchCount;
+      tryCounterBeforeMethod = this.tryCounter;
+      for (let i = 0; i < tryCatchCount; i++) {
+        const tryId = this.tryCounter + i;
+        locals.push({
+          name: `__error_flag_${tryId}`,
+          type: PrimitiveTypes.boolean,
+        });
+        locals.push({
+          name: `__error_value_${tryId}`,
+          type: ObjectType,
+        });
       }
 
       const depthVar = `__recursionDepth_${method.name}`;
@@ -1031,15 +1050,36 @@ export function visitClassDeclaration(
     // not traversed, causing __selfCallResult_* to be missing from push/pop.
     if (
       expectedSelfCallCount !== undefined &&
-      this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined &&
-      this.currentRecursiveContext.nextSelfCallResultIndex >
-        expectedSelfCallCount
+      this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined
     ) {
-      throw new Error(
-        `[BUG] countSelfCalls returned ${expectedSelfCallCount} but code-gen ` +
-          `emitted ${this.currentRecursiveContext.nextSelfCallResultIndex} ` +
-          `self-call sites for ${node.name}.${method.name}`,
-      );
+      const emitted = this.currentRecursiveContext.nextSelfCallResultIndex;
+      if (emitted > expectedSelfCallCount) {
+        throw new Error(
+          `[BUG] countSelfCalls returned ${expectedSelfCallCount} but code-gen ` +
+            `emitted ${emitted} self-call sites for ${node.name}.${method.name}`,
+        );
+      }
+      if (emitted < expectedSelfCallCount) {
+        console.warn(
+          `[WARN] countSelfCalls over-counted: expected ${expectedSelfCallCount} ` +
+            `but emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
+            "Extra __selfCallResult_* variables waste stack space.",
+        );
+      }
+    }
+    // Verify that countTryCatchBlocks predicted the correct number of try/catch blocks.
+    if (
+      expectedTryCatchCount !== undefined &&
+      tryCounterBeforeMethod !== undefined
+    ) {
+      const actualTryCatchCount = this.tryCounter - tryCounterBeforeMethod;
+      if (actualTryCatchCount !== expectedTryCatchCount) {
+        throw new Error(
+          `[BUG] countTryCatchBlocks returned ${expectedTryCatchCount} but ` +
+            `code-gen emitted ${actualTryCatchCount} try/catch blocks ` +
+            `for ${node.name}.${method.name}`,
+        );
+      }
     }
     if (this.currentRecursiveContext) {
       // Method-end fallthrough: decrement depth to match early-return behavior.
