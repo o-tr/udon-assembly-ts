@@ -1059,7 +1059,6 @@ export function visitArrayAccessExpression(
     arrayType instanceof DataListTypeSymbol ||
     arrayType.name === ExternTypes.dataList.name
   ) {
-    // Coerce index to Int32 if it's not already an integer type
     // Coerce index to Int32 for DataList.get_Item (expects SystemInt32)
     let coercedIndex = index;
     const indexType = this.getOperandType(index);

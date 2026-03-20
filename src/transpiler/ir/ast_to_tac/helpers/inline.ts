@@ -875,6 +875,10 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
   }
   const registryKey = `${this.currentClassName}.${methodName}`;
   const registry = this.recursiveReturnSites.get(registryKey);
+  // The registry is always populated because non-recursive methods are
+  // compiled before recursive ones (see orderedMethods in statement.ts).
+  // Fall back to context.returnSites only for self-call-only methods
+  // (no external callers registered a return site).
   const allSites = registry?.sites ?? context.returnSites;
 
   for (const site of allSites) {

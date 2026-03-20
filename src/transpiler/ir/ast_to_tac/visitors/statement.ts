@@ -878,6 +878,11 @@ export function visitClassDeclaration(
 
     if (method.isRecursive) {
       const selfCallCount = countSelfCalls(method.name, method.body);
+      console.info(
+        `transpiler: @RecursiveMethod ${node.name}.${method.name} — ` +
+          `max recursion depth is ${MAX_RECURSION_STACK_DEPTH}. ` +
+          "Exceeding this limit will cause a runtime error in the Udon VM.",
+      );
 
       const locals = this.collectRecursiveLocals(method);
       // Remap parameter names to their export names (e.g., "n" → "__0_n__param")
