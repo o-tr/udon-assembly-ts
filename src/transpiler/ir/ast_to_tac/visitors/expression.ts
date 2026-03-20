@@ -366,9 +366,11 @@ export function visitBinaryExpression(
     return this.visitShortCircuitOr(node);
   }
   // Attempt to detect chained string concatenation (a + b + c ...)
-  if (node.operator === "+") {
+  // Only run the chain flattener when useStringBuilder is true;
+  // otherwise the pairwise string-concat fallback below handles it.
+  if (node.operator === "+" && this.useStringBuilder) {
     const chain = flattenStringConcatChain(this, node);
-    if (chain && this.useStringBuilder) {
+    if (chain) {
       const partsOperands: TACOperand[] = [];
       for (const partNode of chain) {
         let partOperand: TACOperand;

@@ -44,6 +44,21 @@ export const isMapCollectionType = (type: TypeSymbol | null): boolean => {
 };
 
 /**
+ * Emits a GetKeys call on a DataDictionary and returns the resulting DataList operand.
+ */
+export const emitMapKeysList = (
+  converter: ASTToTACConverter,
+  mapOperand: TACOperand,
+  keyType: TypeSymbol,
+): TACOperand => {
+  const keysList = converter.newTemp(new DataListTypeSymbol(keyType));
+  converter.instructions.push(
+    new MethodCallInstruction(keysList, mapOperand, "GetKeys", []),
+  );
+  return keysList;
+};
+
+/**
  * Emits TAC instructions that build a DataList of [key, value] pair lists
  * from a DataDictionary, suitable for for-of destructuring iteration.
  *
@@ -54,10 +69,7 @@ export const emitMapEntriesList = (
   mapOperand: TACOperand,
   keyType: TypeSymbol = ExternTypes.dataToken,
 ): TACOperand => {
-  const keysList = converter.newTemp(new DataListTypeSymbol(keyType));
-  converter.instructions.push(
-    new MethodCallInstruction(keysList, mapOperand, "GetKeys", []),
-  );
+  const keysList = emitMapKeysList(converter, mapOperand, keyType);
 
   const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
   const entriesResult = converter.newTemp(entriesType);

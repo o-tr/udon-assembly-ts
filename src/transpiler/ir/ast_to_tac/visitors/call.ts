@@ -49,6 +49,7 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import {
   emitMapEntriesList,
+  emitMapKeysList,
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
@@ -110,19 +111,6 @@ const emitSetKeysList = (
   const listResult = converter.newTemp(listType);
   converter.instructions.push(
     new MethodCallInstruction(listResult, setOperand, "GetKeys", []),
-  );
-  return listResult;
-};
-
-const emitMapKeysList = (
-  converter: ASTToTACConverter,
-  mapOperand: TACOperand,
-  keyType: TypeSymbol,
-): TACOperand => {
-  const listType = new DataListTypeSymbol(keyType);
-  const listResult = converter.newTemp(listType);
-  converter.instructions.push(
-    new MethodCallInstruction(listResult, mapOperand, "GetKeys", []),
   );
   return listResult;
 };
