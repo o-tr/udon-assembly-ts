@@ -13,7 +13,7 @@ export class StringConcatBinaryFallback extends UdonSharpBehaviour {
     // flattenStringConcatChain returns null here because recursion into (a + b)
     // finds neither operand is string-typed, so the chain builder aborts.
     // This exercises the pairwise ToString + String.Concat fallback in
-    // visitBinaryExpression (expression.ts:441-473).
+    // visitBinaryExpression (the mixed-type string concat guard).
     // biome-ignore lint/style/useTemplate: intentionally testing binary + fallback path, not template literals
     const s1: string = a + b + " items";
     Debug.Log(s1); // 8 items
