@@ -9,7 +9,7 @@ export class MathfBasic extends UdonSharpBehaviour {
     Debug.Log(Mathf.Abs(-5 as UdonFloat));
     Debug.Log(Mathf.Min(3 as UdonFloat, 7 as UdonFloat));
     Debug.Log(Mathf.Max(3 as UdonFloat, 7 as UdonFloat));
-    Debug.Log(Mathf.Floor(3.7 as UdonFloat));
-    Debug.Log(Mathf.Ceil(3.2 as UdonFloat));
+    Debug.Log(Mathf.Floor(3.75 as UdonFloat));
+    Debug.Log(Mathf.Ceil(3.25 as UdonFloat));
   }
 }

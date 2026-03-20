@@ -10,7 +10,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class NumericCastChain extends UdonSharpBehaviour {
   Start(): void {
     // float -> int (truncation)
-    const a: number = 3.7;
+    const a: number = 3.75;
     const intA: UdonInt = a as UdonInt;
     Debug.Log(intA); // 3
 
@@ -20,7 +20,7 @@ export class NumericCastChain extends UdonSharpBehaviour {
     Debug.Log(backToFloat); // 3
 
     // Another truncation
-    const b: number = 7.9;
+    const b: number = 7.5;
     const intB: UdonInt = b as UdonInt;
     Debug.Log(intB); // 7
 
