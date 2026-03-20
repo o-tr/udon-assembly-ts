@@ -16,16 +16,22 @@ import {
   type CallExpressionNode,
   type ClassDeclarationNode,
   type ConditionalExpressionNode,
+  type DeleteExpressionNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
   type NullCoalescingExpressionNode,
+  type ObjectLiteralExpressionNode,
+  type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
+  type TemplateExpressionNode,
+  type ThrowStatementNode,
   type TryCatchStatementNode,
   type UnaryExpressionNode,
+  type UpdateExpressionNode,
   type VariableDeclarationNode,
   type WhileStatementNode,
 } from "../../../frontend/types.js";
@@ -580,6 +586,11 @@ export function collectRecursiveLocals(
         if (retNode.value) visitNode(retNode.value);
         break;
       }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        visitNode(throwNode.expression);
+        break;
+      }
       case ASTNodeKind.AsExpression: {
         const asNode = node as AsExpressionNode;
         visitNode(asNode.expression);
@@ -599,6 +610,33 @@ export function collectRecursiveLocals(
         const accNode = node as ArrayAccessExpressionNode;
         visitNode(accNode.array);
         visitNode(accNode.index);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const tmplNode = node as TemplateExpressionNode;
+        for (const part of tmplNode.parts) {
+          if (part.kind === "expression") visitNode(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) visitNode(prop.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        visitNode(delNode.target);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        visitNode(optNode.object);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        visitNode(updNode.operand);
         break;
       }
       default:
@@ -778,6 +816,11 @@ export function countSelfCalls(
         if (retNode.value) visitNode(retNode.value);
         break;
       }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        visitNode(throwNode.expression);
+        break;
+      }
       case ASTNodeKind.BinaryExpression: {
         const binNode = node as BinaryExpressionNode;
         visitNode(binNode.left);
@@ -840,6 +883,33 @@ export function countSelfCalls(
         visitNode(accNode.index);
         break;
       }
+      case ASTNodeKind.TemplateExpression: {
+        const tmplNode = node as TemplateExpressionNode;
+        for (const part of tmplNode.parts) {
+          if (part.kind === "expression") visitNode(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) visitNode(prop.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        visitNode(delNode.target);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        visitNode(optNode.object);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        visitNode(updNode.operand);
+        break;
+      }
       default:
         break;
     }
@@ -897,7 +967,10 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
     );
   }
 
-  // Fallback: initial caller returns normally (halt / 0xFFFFFFFC)
+  // Defensive fallback: should be unreachable in correct code because every
+  // return-site index that can be live at method exit is registered in allSites.
+  // Reached only if the method is never called (allSites is empty) or if
+  // returnSiteIdx holds an unregistered value.
   this.instructions.push(
     new ReturnInstruction(undefined, this.currentReturnVar),
   );
