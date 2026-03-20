@@ -5,6 +5,7 @@ import {
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
+  type ArrayLiteralExpressionNode,
   type ASTNode,
   ASTNodeKind,
   type AsExpressionNode,
@@ -592,6 +593,11 @@ export function collectRecursiveLocals(
         visitNode(funcNode.body);
         break;
       }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const elem of arrNode.elements) visitNode(elem.value);
+        break;
+      }
       default:
         break;
     }
@@ -820,6 +826,11 @@ export function countSelfCalls(
         // This may over-allocate __selfCallResult_* slots but is benign.
         const funcNode = node as FunctionExpressionNode;
         visitNode(funcNode.body);
+        break;
+      }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const elem of arrNode.elements) visitNode(elem.value);
         break;
       }
       default:

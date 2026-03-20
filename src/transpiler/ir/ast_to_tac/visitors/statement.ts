@@ -696,8 +696,11 @@ export function visitReturnStatement(
       );
       this.instructions.push(new CopyInstruction(returnVar, tempValue));
     }
-    // Decrement depth before dispatch (but don't restore locals yet)
-    if (this.currentRecursiveContext) {
+    // Decrement depth and jump to dispatch.
+    // dispatchLabel is always set when currentRecursiveContext is created,
+    // so this block is guaranteed to execute fully (decrement + jump).
+    {
+      const { dispatchLabel } = this.currentRecursiveContext;
       const depthVar = createVariable(
         this.currentRecursiveContext.depthVar,
         PrimitiveTypes.int32,
@@ -712,14 +715,9 @@ export function visitReturnStatement(
         ),
       );
       this.instructions.push(new CopyInstruction(depthVar, depthTemp));
-    }
-    // Jump to dispatch (uses the current siteIdx, before epilogue restores it)
-    if (this.currentRecursiveContext?.dispatchLabel) {
-      this.instructions.push(
-        new UnconditionalJumpInstruction(
-          this.currentRecursiveContext.dispatchLabel,
-        ),
-      );
+      if (dispatchLabel) {
+        this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
+      }
     }
     return;
   }
