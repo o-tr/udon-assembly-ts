@@ -490,6 +490,12 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "string_concat_mixed_types.ts",
     expectedLogs: ["val=42", "flag=True", "f=3.14", "n=42 b=True"],
   },
+  // --- String concat binary fallback (ToString coercion in binary +) ---
+  {
+    name: "string_concat_binary_fallback",
+    sourceFile: "string_concat_binary_fallback.ts",
+    expectedLogs: ["8 items", "total: 8"],
+  },
   // --- Array index write/read ---
   {
     name: "array_index_write_read",
