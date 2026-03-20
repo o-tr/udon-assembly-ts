@@ -12,7 +12,7 @@ export class ObjectLiteralSpread extends UdonSharpBehaviour {
     // Test ShallowClone + additional SetValue (spread pattern equivalent)
     const base: DataDictionary = new DataDictionary();
     base.SetValue(new DataToken("name"), new DataToken("Alice"));
-    base.SetValue(new DataToken("age"), new DataToken(30));
+    base.SetValue(new DataToken("age"), new DataToken(30.0));
     const extended: DataDictionary = base.ShallowClone();
     extended.SetValue(new DataToken("city"), new DataToken("NYC"));
     const nameVal: DataToken = extended.GetValue(new DataToken("name"));
