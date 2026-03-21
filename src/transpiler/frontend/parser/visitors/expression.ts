@@ -484,7 +484,15 @@ export function visitNameofExpression(
     );
   }
   const arg = node.arguments[0];
-  const name = ts.isIdentifier(arg) ? arg.text : arg.getText();
+  let name: string;
+  if (ts.isIdentifier(arg)) {
+    name = arg.text;
+  } else if (ts.isPropertyAccessExpression(arg)) {
+    // nameof(this.myField) → "myField" (last identifier only, matching C# semantics)
+    name = arg.name.text;
+  } else {
+    name = arg.getText();
+  }
   return {
     kind: ASTNodeKind.NameofExpression,
     name,
