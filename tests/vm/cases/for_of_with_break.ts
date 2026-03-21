@@ -10,7 +10,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class ForOfWithBreak extends UdonSharpBehaviour {
   Start(): void {
     const list: DataList = new DataList();
-    list.Add(new DataToken(1));
+    list.Add(new DataToken(1)); // Float-typed token: number maps to SystemSingle
     list.Add(new DataToken(2));
     list.Add(new DataToken(3));
     list.Add(new DataToken(4));
