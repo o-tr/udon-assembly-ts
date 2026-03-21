@@ -51,6 +51,8 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
+  emitMapEntriesList,
+  emitMapKeysList,
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
@@ -116,19 +118,6 @@ const emitSetKeysList = (
   return listResult;
 };
 
-const emitMapKeysList = (
-  converter: ASTToTACConverter,
-  mapOperand: TACOperand,
-  keyType: TypeSymbol,
-): TACOperand => {
-  const listType = new DataListTypeSymbol(keyType);
-  const listResult = converter.newTemp(listType);
-  converter.instructions.push(
-    new MethodCallInstruction(listResult, mapOperand, "GetKeys", []),
-  );
-  return listResult;
-};
-
 const emitMapValuesList = (
   converter: ASTToTACConverter,
   mapOperand: TACOperand,
@@ -140,89 +129,6 @@ const emitMapValuesList = (
     new MethodCallInstruction(listResult, mapOperand, "GetValues", []),
   );
   return listResult;
-};
-
-const emitMapEntriesList = (
-  converter: ASTToTACConverter,
-  mapOperand: TACOperand,
-  keyType: TypeSymbol,
-): TACOperand => {
-  const keysList = emitMapKeysList(converter, mapOperand, keyType);
-  const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
-  const entriesResult = converter.newTemp(entriesType);
-  const listCtorSig = converter.requireExternSignature(
-    "DataList",
-    "ctor",
-    "method",
-    [],
-    "DataList",
-  );
-  converter.instructions.push(
-    new CallInstruction(entriesResult, listCtorSig, []),
-  );
-
-  const indexVar = converter.newTemp(PrimitiveTypes.int32);
-  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new AssignmentInstruction(
-      indexVar,
-      createConstant(0, PrimitiveTypes.int32),
-    ),
-  );
-  converter.instructions.push(
-    new PropertyGetInstruction(lengthVar, keysList, "Count"),
-  );
-
-  const loopStart = converter.newLabel("map_entries_start");
-  const loopContinue = converter.newLabel("map_entries_continue");
-  const loopEnd = converter.newLabel("map_entries_end");
-
-  converter.instructions.push(new LabelInstruction(loopStart));
-  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
-  converter.instructions.push(
-    new ConditionalJumpInstruction(condTemp, loopEnd),
-  );
-
-  const keyToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
-    new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
-  );
-  const valueToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
-    new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
-  );
-
-  const pairList = converter.newTemp(
-    new DataListTypeSymbol(ExternTypes.dataToken),
-  );
-  converter.instructions.push(new CallInstruction(pairList, listCtorSig, []));
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
-  );
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
-  );
-  const pairToken = converter.wrapDataToken(pairList);
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
-  );
-
-  converter.instructions.push(new LabelInstruction(loopContinue));
-  converter.instructions.push(
-    new BinaryOpInstruction(
-      indexVar,
-      indexVar,
-      "+",
-      createConstant(1, PrimitiveTypes.int32),
-    ),
-  );
-  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  converter.instructions.push(new LabelInstruction(loopEnd));
-
-  return entriesResult;
 };
 
 export function visitCallExpression(
@@ -2400,7 +2306,7 @@ function visitSetMethodCall(
 function visitMapMethodCall(
   converter: ASTToTACConverter,
   mapOperand: TACOperand,
-  mapType: CollectionTypeSymbol,
+  mapType: TypeSymbol,
   propAccess: PropertyAccessExpressionNode,
   rawArgs: ASTNode[],
 ): TACOperand | null {

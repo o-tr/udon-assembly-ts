@@ -5,9 +5,9 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getPromotedType,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
-  numericUdonTypeToSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -27,8 +27,6 @@ import {
   type LiteralNode,
   type NameofExpressionNode,
   type NullCoalescingExpressionNode,
-  getPromotedUdonType,
-  isNumericUdonType,
   needsInt32IndexCoercion,
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
@@ -79,32 +77,26 @@ function widenNumericOperands(
   left: TACOperand,
   right: TACOperand,
 ): { left: TACOperand; right: TACOperand; widened: boolean } {
-  const leftType = converter.getOperandType(left).udonType;
-  const rightType = converter.getOperandType(right).udonType;
-  if (
-    leftType === rightType ||
-    !isNumericUdonType(leftType) ||
-    !isNumericUdonType(rightType)
-  ) {
+  const leftSym = converter.getOperandType(left);
+  const rightSym = converter.getOperandType(right);
+  if (leftSym.udonType === rightSym.udonType) {
     return { left, right, widened: false };
   }
-  const promoted = getPromotedUdonType(leftType, rightType);
-  const promotedSymbol =
-    promoted != null ? numericUdonTypeToSymbol[promoted] : undefined;
-  if (!promotedSymbol) {
+  const promoted = getPromotedType(leftSym, rightSym);
+  if (!promoted) {
     return { left, right, widened: false };
   }
   let newLeft = left;
   let newRight = right;
   let widened = false;
-  if (leftType !== promoted) {
-    const w = converter.newTemp(promotedSymbol);
+  if (leftSym.udonType !== promoted.udonType) {
+    const w = converter.newTemp(promoted);
     converter.instructions.push(new CastInstruction(w, left));
     newLeft = w;
     widened = true;
   }
-  if (rightType !== promoted) {
-    const w = converter.newTemp(promotedSymbol);
+  if (rightSym.udonType !== promoted.udonType) {
+    const w = converter.newTemp(promoted);
     converter.instructions.push(new CastInstruction(w, right));
     newRight = w;
     widened = true;
@@ -415,9 +407,11 @@ export function visitBinaryExpression(
     return this.visitShortCircuitOr(node);
   }
   // Attempt to detect chained string concatenation (a + b + c ...)
-  if (node.operator === "+") {
+  // Only run the chain flattener when useStringBuilder is true;
+  // otherwise the pairwise string-concat fallback below handles it.
+  if (node.operator === "+" && this.useStringBuilder) {
     const chain = flattenStringConcatChain(this, node);
-    if (chain && this.useStringBuilder) {
+    if (chain) {
       const partsOperands: TACOperand[] = [];
       for (const partNode of chain) {
         let partOperand: TACOperand;
@@ -477,19 +471,66 @@ export function visitBinaryExpression(
       return resultOperand;
     }
   }
-  const leftRaw = this.visitExpression(node.left);
-  const rightRaw = this.visitExpression(node.right);
+  // flattenStringConcatChain uses resolveTypeFromNode (read-only type
+  // inspection) and never calls visitExpression, so visiting left/right
+  // here does not double-evaluate any sub-expression.
+  let left = this.visitExpression(node.left);
+  let right = this.visitExpression(node.right);
 
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
   );
+  const leftType = this.getOperandType(left);
+  const rightType = this.getOperandType(right);
+
+  // String concatenation with mixed types: call ToString on non-string operand.
+  // Entry conditions:
+  //   (a) useStringBuilder is false → chain detection skipped entirely; all
+  //       string + non-string binary exprs are handled here.
+  //   (b) useStringBuilder is true AND flattenStringConcatChain returned null
+  //       (e.g., left sub-expr like `(intA + intB)` has no string-typed leaf).
+  if (
+    node.operator === "+" &&
+    (leftType.udonType === UdonType.String ||
+      rightType.udonType === UdonType.String)
+  ) {
+    if (leftType.udonType !== UdonType.String) {
+      const strLeft = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(strLeft, left, "ToString", []),
+      );
+      left = strLeft;
+    }
+    if (rightType.udonType !== UdonType.String) {
+      const strRight = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(strRight, right, "ToString", []),
+      );
+      right = strRight;
+    }
+    const concatExtern = this.requireExternSignature(
+      "System.String",
+      "Concat",
+      "method",
+      ["string", "string"],
+      "System.String",
+    );
+    const result = this.newTemp(PrimitiveTypes.string);
+    this.instructions.push(
+      new CallInstruction(result, concatExtern, [left, right]),
+    );
+    return result;
+  }
+
   const isShift = node.operator === "<<" || node.operator === ">>";
 
   // Widen narrower operand when both are numeric and types differ (skip shifts).
-  const { left, right } = isShift
-    ? { left: leftRaw, right: rightRaw }
-    : widenNumericOperands(this, leftRaw, rightRaw);
+  if (!isShift) {
+    const w = widenNumericOperands(this, left, right);
+    left = w.left;
+    right = w.right;
+  }
 
   const resultType = isComparison
     ? PrimitiveTypes.boolean

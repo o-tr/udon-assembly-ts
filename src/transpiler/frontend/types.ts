@@ -56,44 +56,11 @@ const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
   [UdonType.Double]: 6,
 };
 
-// C# promotes mixed-sign at the same width to a wider type.
-const MIXED_SIGN_PROMOTION: Record<number, UdonType> = {
-  1: UdonType.Int32, // Byte + SByte → int
-  2: UdonType.Int32, // Int16 + UInt16 → int
-  3: UdonType.Int64, // Int32 + UInt32 → long
-};
-
 /**
  * Returns true when the given UdonType is a numeric type.
  */
 export function isNumericUdonType(t: UdonType): boolean {
   return NUMERIC_RANK[t] !== undefined;
-}
-
-/**
- * Returns the promoted type for a binary operation between two numeric types,
- * following C#/.NET implicit numeric promotion rules.
- * Returns null if either type is non-numeric.
- */
-export function getPromotedUdonType(
-  a: UdonType,
-  b: UdonType,
-): UdonType | null {
-  const rankA = NUMERIC_RANK[a];
-  const rankB = NUMERIC_RANK[b];
-  if (rankA === undefined || rankB === undefined) return null;
-  if (a === b) return a;
-  if (rankA === rankB) {
-    // Same width, different signedness
-    // Int64 + UInt64: C# treats this as a compile error (CS0034) because
-    // no lossless integer type covers both. We intentionally promote to
-    // Double (matching the codegen in codegen/tac_to_udon/types.ts) to
-    // keep the transpiler permissive; note precision loss is possible for
-    // values beyond ~2^53.
-    if (rankA === 4) return UdonType.Double;
-    return MIXED_SIGN_PROMOTION[rankA] ?? a;
-  }
-  return rankA >= rankB ? a : b;
 }
 
 /**
