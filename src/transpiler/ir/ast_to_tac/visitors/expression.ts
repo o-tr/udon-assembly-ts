@@ -430,6 +430,9 @@ export function visitBinaryExpression(
       return resultOperand;
     }
   }
+  // flattenStringConcatChain uses resolveTypeFromNode (read-only type
+  // inspection) and never calls visitExpression, so visiting left/right
+  // here does not double-evaluate any sub-expression.
   let left = this.visitExpression(node.left);
   let right = this.visitExpression(node.right);
 

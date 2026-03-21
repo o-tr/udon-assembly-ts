@@ -106,6 +106,8 @@ export const emitMapEntriesList = (
   converter.instructions.push(
     new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
   );
+  // ConditionalJumpInstruction jumps when the condition is FALSE,
+  // so this exits the loop when indexVar >= lengthVar.
   converter.instructions.push(
     new ConditionalJumpInstruction(condTemp, loopEnd),
   );

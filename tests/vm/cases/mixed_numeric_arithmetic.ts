@@ -15,7 +15,7 @@ export class MixedNumericArithmetic extends UdonSharpBehaviour {
 
     // int * float -> float
     const product: number = intVal * 2.0;
-    Debug.Log(product); // 20
+    Debug.Log(product); // 20.0 → "20"
 
     // float / int -> float
     const divided: number = 7.5 / intVal;
