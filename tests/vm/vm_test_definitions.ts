@@ -113,6 +113,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["big", "small", "False", "True"],
   },
   {
+    name: "shortcircuit_side_effects",
+    sourceFile: "shortcircuit_side_effects.ts",
+    expectedLogs: ["False", "0", "True", "0", "True", "1", "True", "2"],
+  },
+  {
     name: "enum_usage",
     sourceFile: "enum_usage.ts",
     expectedLogs: ["3", "is right", "right"],
@@ -167,9 +172,24 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["15", "12", "24", "6", "2", "15"],
   },
   {
+    name: "compound_assignment_lhs_eval",
+    sourceFile: "compound_assignment_lhs_eval.ts",
+    expectedLogs: ["15", "1", "15", "3", "1", "3"],
+  },
+  {
     name: "increment_decrement",
     sourceFile: "increment_decrement.ts",
     expectedLogs: ["1", "2", "1", "55", "120"],
+  },
+  {
+    name: "update_expression_semantics",
+    sourceFile: "update_expression_semantics.ts",
+    expectedLogs: ["5", "6", "6", "6", "11", "11"],
+  },
+  {
+    name: "update_statement_effect",
+    sourceFile: "update_statement_effect.ts",
+    expectedLogs: ["2", "1"],
   },
   // --- Local variables & early returns ---
   {

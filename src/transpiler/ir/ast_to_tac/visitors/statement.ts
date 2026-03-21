@@ -116,6 +116,29 @@ export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
       break;
     case ASTNodeKind.ExpressionStatement:
       this.visitExpression((node as ExpressionStatementNode).expression);
+  break;
+    case ASTNodeKind.AssignmentExpression:
+    case ASTNodeKind.CallExpression:
+    case ASTNodeKind.BinaryExpression:
+    case ASTNodeKind.UnaryExpression:
+    case ASTNodeKind.ConditionalExpression:
+    case ASTNodeKind.NullCoalescingExpression:
+    case ASTNodeKind.TemplateExpression:
+    case ASTNodeKind.Literal:
+    case ASTNodeKind.Identifier:
+    case ASTNodeKind.ThisExpression:
+    case ASTNodeKind.SuperExpression:
+    case ASTNodeKind.ObjectLiteralExpression:
+    case ASTNodeKind.DeleteExpression:
+    case ASTNodeKind.ArrayLiteralExpression:
+    case ASTNodeKind.PropertyAccessExpression:
+    case ASTNodeKind.AsExpression:
+    case ASTNodeKind.ArrayAccessExpression:
+    case ASTNodeKind.NameofExpression:
+    case ASTNodeKind.TypeofExpression:
+    case ASTNodeKind.OptionalChainingExpression:
+    case ASTNodeKind.UpdateExpression:
+      this.visitExpression(node);
       break;
   }
 }
