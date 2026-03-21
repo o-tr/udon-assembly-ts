@@ -23,6 +23,7 @@ import {
   type LiteralNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
+  isNumericUdonType,
   UdonType,
 } from "../../../frontend/types.js";
 import {
@@ -714,7 +715,20 @@ export function visitCallExpression(
             );
           }
           if (count > 0) {
-            const defaultValue = createConstant(0, arrayType);
+            // Choose a type-appropriate zero/default value.
+            let defaultVal: number | string | boolean;
+            if (isNumericUdonType(arrayType.udonType)) {
+              defaultVal = 0;
+            } else if (arrayType.udonType === UdonType.String) {
+              defaultVal = "";
+            } else if (arrayType.udonType === UdonType.Boolean) {
+              defaultVal = false;
+            } else {
+              throw new Error(
+                `[udon-assembly-ts] new Array<T>(N) pre-population is only supported for numeric, string, and boolean element types. Got: ${arrayType.name}`,
+              );
+            }
+            const defaultValue = createConstant(defaultVal, arrayType);
             const defaultToken = this.wrapDataToken(defaultValue);
             for (let i = 0; i < count; i++) {
               this.instructions.push(

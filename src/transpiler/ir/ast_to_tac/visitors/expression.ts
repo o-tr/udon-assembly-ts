@@ -7,6 +7,7 @@ import {
   ExternTypes,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
+  numericUdonTypeToSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -26,6 +27,8 @@ import {
   type LiteralNode,
   type NameofExpressionNode,
   type NullCoalescingExpressionNode,
+  getPromotedUdonType,
+  isNumericUdonType,
   needsInt32IndexCoercion,
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
@@ -307,17 +310,40 @@ export function visitBinaryExpression(
     "^=": "^",
   };
   if (compoundOps[node.operator]) {
-    const left = this.visitExpression(node.left);
-    const right = this.visitExpression(node.right);
+    let left = this.visitExpression(node.left);
+    let right = this.visitExpression(node.right);
+    const baseOp = compoundOps[node.operator];
+    const isShiftOp = baseOp === "<<" || baseOp === ">>";
+    // Widen narrower operand for compound assignment (skip shifts).
+    if (!isShiftOp) {
+      const leftType = this.getOperandType(left).udonType;
+      const rightType = this.getOperandType(right).udonType;
+      if (
+        leftType !== rightType &&
+        isNumericUdonType(leftType) &&
+        isNumericUdonType(rightType)
+      ) {
+        const promoted = getPromotedUdonType(leftType, rightType);
+        const promotedSymbol =
+          promoted != null ? numericUdonTypeToSymbol[promoted] : undefined;
+        if (promotedSymbol) {
+          if (leftType !== promoted) {
+            const widened = this.newTemp(promotedSymbol);
+            this.instructions.push(new CastInstruction(widened, left));
+            left = widened;
+          }
+          if (rightType !== promoted) {
+            const widened = this.newTemp(promotedSymbol);
+            this.instructions.push(new CastInstruction(widened, right));
+            right = widened;
+          }
+        }
+      }
+    }
     const resultType = this.getOperandType(left);
     const newValue = this.newTemp(resultType);
     this.instructions.push(
-      new BinaryOpInstruction(
-        newValue,
-        left,
-        compoundOps[node.operator],
-        right,
-      ),
+      new BinaryOpInstruction(newValue, left, baseOp, right),
     );
     return this.assignToTarget(node.left, newValue);
   }
@@ -428,13 +454,42 @@ export function visitBinaryExpression(
       return resultOperand;
     }
   }
-  const left = this.visitExpression(node.left);
-  const right = this.visitExpression(node.right);
+  let left = this.visitExpression(node.left);
+  let right = this.visitExpression(node.right);
 
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
   );
+  const isShift = node.operator === "<<" || node.operator === ">>";
+
+  // Widen narrower operand when both are numeric and types differ (skip shifts).
+  if (!isShift) {
+    const leftType = this.getOperandType(left).udonType;
+    const rightType = this.getOperandType(right).udonType;
+    if (
+      leftType !== rightType &&
+      isNumericUdonType(leftType) &&
+      isNumericUdonType(rightType)
+    ) {
+      const promoted = getPromotedUdonType(leftType, rightType);
+      const promotedSymbol =
+        promoted != null ? numericUdonTypeToSymbol[promoted] : undefined;
+      if (promotedSymbol) {
+        if (leftType !== promoted) {
+          const widened = this.newTemp(promotedSymbol);
+          this.instructions.push(new CastInstruction(widened, left));
+          left = widened;
+        }
+        if (rightType !== promoted) {
+          const widened = this.newTemp(promotedSymbol);
+          this.instructions.push(new CastInstruction(widened, right));
+          right = widened;
+        }
+      }
+    }
+  }
+
   const resultType = isComparison
     ? PrimitiveTypes.boolean
     : this.getOperandType(left);

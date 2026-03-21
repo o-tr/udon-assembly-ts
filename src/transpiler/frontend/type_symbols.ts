@@ -218,6 +218,24 @@ export const PrimitiveTypes = {
   double: new PrimitiveTypeSymbol("double", UdonType.Double),
 };
 
+/**
+ * Lookup from UdonType to its PrimitiveTypeSymbol for numeric types.
+ */
+export const numericUdonTypeToSymbol: Partial<
+  Record<UdonType, PrimitiveTypeSymbol>
+> = {
+  [UdonType.Byte]: PrimitiveTypes.byte,
+  [UdonType.SByte]: PrimitiveTypes.sbyte,
+  [UdonType.Int16]: PrimitiveTypes.int16,
+  [UdonType.UInt16]: PrimitiveTypes.uint16,
+  [UdonType.Int32]: PrimitiveTypes.int32,
+  [UdonType.UInt32]: PrimitiveTypes.uint32,
+  [UdonType.Int64]: PrimitiveTypes.int64,
+  [UdonType.UInt64]: PrimitiveTypes.uint64,
+  [UdonType.Single]: PrimitiveTypes.single,
+  [UdonType.Double]: PrimitiveTypes.double,
+};
+
 export const ExternTypes = {
   vector2: new ExternTypeSymbol("Vector2", UdonType.Vector2),
   vector3: new ExternTypeSymbol("Vector3", UdonType.Vector3),

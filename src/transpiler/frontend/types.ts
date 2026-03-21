@@ -42,6 +42,55 @@ export enum UdonType {
   DataToken = "DataToken",
 }
 
+// C#/.NET numeric promotion rank (higher = wider).
+const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
+  [UdonType.Byte]: 1,
+  [UdonType.SByte]: 1,
+  [UdonType.Int16]: 2,
+  [UdonType.UInt16]: 2,
+  [UdonType.Int32]: 3,
+  [UdonType.UInt32]: 3,
+  [UdonType.Int64]: 4,
+  [UdonType.UInt64]: 4,
+  [UdonType.Single]: 5,
+  [UdonType.Double]: 6,
+};
+
+// C# promotes mixed-sign at the same width to a wider type.
+const MIXED_SIGN_PROMOTION: Record<number, UdonType> = {
+  1: UdonType.Int32, // Byte + SByte → int
+  2: UdonType.Int32, // Int16 + UInt16 → int
+  3: UdonType.Int64, // Int32 + UInt32 → long
+};
+
+/**
+ * Returns true when the given UdonType is a numeric type.
+ */
+export function isNumericUdonType(t: UdonType): boolean {
+  return NUMERIC_RANK[t] !== undefined;
+}
+
+/**
+ * Returns the promoted type for a binary operation between two numeric types,
+ * following C#/.NET implicit numeric promotion rules.
+ * Returns null if either type is non-numeric.
+ */
+export function getPromotedUdonType(
+  a: UdonType,
+  b: UdonType,
+): UdonType | null {
+  const rankA = NUMERIC_RANK[a];
+  const rankB = NUMERIC_RANK[b];
+  if (rankA === undefined || rankB === undefined) return null;
+  if (a === b) return a;
+  if (rankA === rankB) {
+    // Same width, different signedness
+    if (rankA === 4) return UdonType.Double; // Int64 + UInt64
+    return MIXED_SIGN_PROMOTION[rankA] ?? a;
+  }
+  return rankA >= rankB ? a : b;
+}
+
 /**
  * Returns true when the given UdonType is numeric but not Int32,
  * meaning it needs an explicit cast before being used as a DataList index.
