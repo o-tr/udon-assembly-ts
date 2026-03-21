@@ -51,6 +51,7 @@ import {
   LabelInstruction,
   MethodCallInstruction,
   ReturnInstruction,
+  UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
@@ -731,6 +732,37 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
 
   const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
 
+  // Guard: SP must be >= 0 before pop (mirrors the depth guard in push).
+  // If this fires it indicates a push/pop imbalance in code-gen.
+  const spOk = this.newTemp(PrimitiveTypes.boolean);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spOk,
+      spVar,
+      ">=",
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  const skipPopLabel = this.newLabel("skip_pop_underflow");
+  this.instructions.push(new ConditionalJumpInstruction(spOk, skipPopLabel));
+  const logErrorExtern = this.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const underflowMsg = createConstant(
+    "[udon-assembly-ts] Stack underflow: pop without matching push.",
+    PrimitiveTypes.string,
+  );
+  this.instructions.push(
+    new CallInstruction(undefined, logErrorExtern, [underflowMsg]),
+  );
+  const afterPopLabel = this.newLabel("after_pop");
+  this.instructions.push(new UnconditionalJumpInstruction(afterPopLabel));
+  this.instructions.push(new LabelInstruction(skipPopLabel));
+
   // Restore each local from stack[SP]
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
@@ -760,6 +792,8 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
     ),
   );
   this.instructions.push(new CopyInstruction(spVar, spTemp));
+
+  this.instructions.push(new LabelInstruction(afterPopLabel));
 }
 
 /**
