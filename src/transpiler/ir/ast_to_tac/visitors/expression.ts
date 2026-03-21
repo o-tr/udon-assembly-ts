@@ -76,32 +76,29 @@ function widenNumericOperands(
   converter: ASTToTACConverter,
   left: TACOperand,
   right: TACOperand,
-): { left: TACOperand; right: TACOperand; widened: boolean } {
+): { left: TACOperand; right: TACOperand } {
   const leftSym = converter.getOperandType(left);
   const rightSym = converter.getOperandType(right);
   if (leftSym.udonType === rightSym.udonType) {
-    return { left, right, widened: false };
+    return { left, right };
   }
   const promoted = getPromotedType(leftSym, rightSym);
   if (!promoted) {
-    return { left, right, widened: false };
+    return { left, right };
   }
   let newLeft = left;
   let newRight = right;
-  let widened = false;
   if (leftSym.udonType !== promoted.udonType) {
     const w = converter.newTemp(promoted);
     converter.instructions.push(new CastInstruction(w, left));
     newLeft = w;
-    widened = true;
   }
   if (rightSym.udonType !== promoted.udonType) {
     const w = converter.newTemp(promoted);
     converter.instructions.push(new CastInstruction(w, right));
     newRight = w;
-    widened = true;
   }
-  return { left: newLeft, right: newRight, widened };
+  return { left: newLeft, right: newRight };
 }
 
 function resolvePropertyTypeFromType(
