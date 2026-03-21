@@ -20,10 +20,10 @@ import {
   type CallExpressionNode,
   type FunctionExpressionNode,
   type IdentifierNode,
+  isNumericUdonType,
   type LiteralNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
-  isNumericUdonType,
   UdonType,
 } from "../../../frontend/types.js";
 import {
