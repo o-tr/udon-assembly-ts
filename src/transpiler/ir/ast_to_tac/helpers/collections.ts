@@ -71,6 +71,8 @@ export const emitMapEntriesList = (
 ): TACOperand => {
   const keysList = emitMapKeysList(converter, mapOperand, keyType);
 
+  // The entries list always holds DataToken-wrapped pair lists, regardless of
+  // keyType. The keyType parameter only affects the GetKeys call above.
   const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
   const entriesResult = converter.newTemp(entriesType);
   const listCtorSig = converter.requireExternSignature(

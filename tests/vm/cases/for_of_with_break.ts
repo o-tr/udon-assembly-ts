@@ -29,7 +29,7 @@ export class ForOfWithBreak extends UdonSharpBehaviour {
     // Continue to skip value == 2
     for (const item of list) {
       const val: number = item.Float;
-      if (val === 2) {
+      if (val === 2.0) {
         continue;
       }
       if (val > 4) {
