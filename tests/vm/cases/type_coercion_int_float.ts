@@ -5,7 +5,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class TypeCoercionIntFloat extends UdonSharpBehaviour {
   Start(): void {
-    const pi: number = 3.14;
+    const pi: number = 3.25;
     Debug.Log(pi);
     const doubled: number = pi * 2;
     Debug.Log(doubled);

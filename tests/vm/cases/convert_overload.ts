@@ -11,7 +11,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class ConvertOverload extends UdonSharpBehaviour {
   Start(): void {
     // Convert.ToInt32 with UdonFloat argument
-    const floatVal: UdonFloat = 3.7 as UdonFloat;
+    const floatVal: UdonFloat = 3.75 as UdonFloat;
     const intFromFloat: UdonInt = Convert.ToInt32(floatVal);
     Debug.Log(intFromFloat); // 4 (Convert rounds, not truncates)
 

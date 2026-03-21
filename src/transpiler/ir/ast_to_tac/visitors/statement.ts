@@ -52,6 +52,7 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
+  emitMapEntriesList,
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
@@ -297,94 +298,6 @@ export function visitForStatement(
   this.instructions.push(new LabelInstruction(endLabel));
 }
 
-const emitMapEntriesList = (
-  converter: ASTToTACConverter,
-  mapOperand: TACOperand,
-): TACOperand => {
-  const entriesType = new DataListTypeSymbol(ExternTypes.dataToken);
-  const entriesResult = converter.newTemp(entriesType);
-  const listCtorSig = converter.requireExternSignature(
-    "DataList",
-    "ctor",
-    "method",
-    [],
-    "DataList",
-  );
-  converter.instructions.push(
-    new CallInstruction(entriesResult, listCtorSig, []),
-  );
-
-  const keysList = converter.newTemp(
-    new DataListTypeSymbol(ExternTypes.dataToken),
-  );
-  converter.instructions.push(
-    new MethodCallInstruction(keysList, mapOperand, "GetKeys", []),
-  );
-
-  const indexVar = converter.newTemp(PrimitiveTypes.int32);
-  const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new AssignmentInstruction(
-      indexVar,
-      createConstant(0, PrimitiveTypes.int32),
-    ),
-  );
-  converter.instructions.push(
-    new PropertyGetInstruction(lengthVar, keysList, "Count"),
-  );
-
-  const loopStart = converter.newLabel("map_forof_entries_start");
-  const loopContinue = converter.newLabel("map_forof_entries_continue");
-  const loopEnd = converter.newLabel("map_forof_entries_end");
-
-  converter.instructions.push(new LabelInstruction(loopStart));
-  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
-  converter.instructions.push(
-    new ConditionalJumpInstruction(condTemp, loopEnd),
-  );
-
-  const keyToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
-    new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
-  );
-  const valueToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
-    new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
-  );
-
-  const pairList = converter.newTemp(
-    new DataListTypeSymbol(ExternTypes.dataToken),
-  );
-  converter.instructions.push(new CallInstruction(pairList, listCtorSig, []));
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
-  );
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
-  );
-  const pairToken = converter.wrapDataToken(pairList);
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
-  );
-
-  converter.instructions.push(new LabelInstruction(loopContinue));
-  converter.instructions.push(
-    new BinaryOpInstruction(
-      indexVar,
-      indexVar,
-      "+",
-      createConstant(1, PrimitiveTypes.int32),
-    ),
-  );
-  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  converter.instructions.push(new LabelInstruction(loopEnd));
-
-  return entriesResult;
-};
-
 export function visitForOfStatement(
   this: ASTToTACConverter,
   node: ForOfStatementNode,
@@ -404,6 +317,8 @@ export function visitForOfStatement(
       : null;
 
   if (inferredMapType) {
+    // keyType omitted — defaults to ExternTypes.dataToken, which is correct
+    // because DataDictionary.GetKeys() always returns DataToken-wrapped keys.
     const entriesList = emitMapEntriesList(this, iterableOperand);
     iterableOperand = entriesList;
   } else if (inferredSetType) {
@@ -518,13 +433,19 @@ export function visitForOfStatement(
   }
   if (isDestructured) {
     const names = node.variable as string[];
+    // Elements from DataList.get_Item are DataTokens, not generic Objects.
+    // Using DataToken type ensures property accesses (e.g., .String, .Float)
+    // resolve to the correct extern signatures.
+    const destructuredType = isDataList ? ExternTypes.dataToken : ObjectType;
     for (let i = 0; i < names.length; i += 1) {
       const name = names[i];
       if (!this.symbolTable.hasInCurrentScope(name)) {
-        this.symbolTable.addSymbol(name, ObjectType, false, false);
+        this.symbolTable.addSymbol(name, destructuredType, false, false);
       }
-      const targetVar = createVariable(name, ObjectType, { isLocal: true });
-      const elementValue = this.newTemp(ObjectType);
+      const targetVar = createVariable(name, destructuredType, {
+        isLocal: true,
+      });
+      const elementValue = this.newTemp(destructuredType);
       this.instructions.push(
         new MethodCallInstruction(elementValue, elementVar, "get_Item", [
           createConstant(i, PrimitiveTypes.int32),
