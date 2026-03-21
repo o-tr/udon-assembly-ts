@@ -10,9 +10,9 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class ForOfDataList extends UdonSharpBehaviour {
   Start(): void {
     const list: DataList = new DataList();
-    list.Add(new DataToken(10));
-    list.Add(new DataToken(20));
-    list.Add(new DataToken(30));
+    list.Add(new DataToken(10.0));
+    list.Add(new DataToken(20.0));
+    list.Add(new DataToken(30.0));
     let sum: number = 0;
     for (const item of list) {
       const val: number = item.Float;

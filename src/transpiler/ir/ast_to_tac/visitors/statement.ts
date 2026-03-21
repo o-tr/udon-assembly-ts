@@ -55,6 +55,11 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
+import {
+  countSelfCalls,
+  countTryCatchBlocks,
+  MAX_RECURSION_STACK_DEPTH,
+} from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
@@ -156,6 +161,19 @@ export function visitVariableDeclaration(
         if (resolvedType && !isObjectTypeSymbol(resolvedType)) {
           destType = resolvedType;
         }
+      }
+    }
+    // When declared type is ArrayTypeSymbol but initializer is new Array<T>()
+    // (CallExpression), use the DataList type for correct runtime operations.
+    // This does NOT apply to array literals [1, 2, 3] which also produce DataList
+    // but are handled differently in existing code paths.
+    if (
+      destType instanceof ArrayTypeSymbol &&
+      node.initializer?.kind === ASTNodeKind.CallExpression
+    ) {
+      const inferredType = this.getOperandType(src);
+      if (inferredType instanceof DataListTypeSymbol) {
+        destType = inferredType;
       }
     }
   }
@@ -651,7 +669,18 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
-  if (this.currentRecursiveContext) {
+  // Check inlineReturnStack FIRST: if we are inside an inlined method body,
+  // return must go to the inline return label, not the recursive dispatch.
+  // currentRecursiveContext remains set from the enclosing recursive method
+  // during inlining, so checking it first would incorrectly decrement depth
+  // and jump to the dispatch table.
+  const inlineContext =
+    this.inlineReturnStack[this.inlineReturnStack.length - 1];
+  if (
+    !inlineContext &&
+    this.currentRecursiveContext &&
+    this.currentMethodName
+  ) {
     const valueOperand = node.value
       ? this.visitExpression(node.value)
       : undefined;
@@ -661,14 +690,37 @@ export function visitReturnStatement(
     if (tempValue && valueOperand) {
       this.instructions.push(new CopyInstruction(tempValue, valueOperand));
     }
-    this.emitRecursiveEpilogue();
-    this.instructions.push(
-      new ReturnInstruction(tempValue, this.currentReturnVar),
-    );
+    // Copy return value to the return export variable before epilogue
+    if (tempValue && this.currentReturnVar) {
+      const returnVar = createVariable(
+        this.currentReturnVar,
+        this.getOperandType(tempValue),
+      );
+      this.instructions.push(new CopyInstruction(returnVar, tempValue));
+    }
+    // Decrement depth and jump to dispatch.
+    // dispatchLabel is always set when currentRecursiveContext is created,
+    // so this block is guaranteed to execute fully (decrement + jump).
+    {
+      const { dispatchLabel } = this.currentRecursiveContext;
+      const depthVar = createVariable(
+        this.currentRecursiveContext.depthVar,
+        PrimitiveTypes.int32,
+      );
+      const depthTemp = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          depthTemp,
+          depthVar,
+          "-",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+      this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
+    }
     return;
   }
-  const inlineContext =
-    this.inlineReturnStack[this.inlineReturnStack.length - 1];
   if (inlineContext) {
     if (node.value) {
       const value = this.visitExpression(node.value);
@@ -741,14 +793,19 @@ export function visitClassDeclaration(
   const isUdonBehaviourClass =
     classLayout !== null ||
     node.decorators.some((decorator) => decorator.name === "UdonBehaviour");
-  const startIndex = node.methods.findIndex((m) => m.name === "Start");
-  const orderedMethods =
-    startIndex >= 0
-      ? [
-          node.methods[startIndex],
-          ...node.methods.filter((_, i) => i !== startIndex),
-        ]
-      : [...node.methods];
+  // Process non-recursive methods before recursive ones so that all
+  // external caller return sites are registered in recursiveReturnSites
+  // BEFORE any recursive method's dispatch table is emitted.
+  // Within the non-recursive group, Start is placed first (it contains
+  // property initialization and top-level const setup).
+  const nonRecursive = node.methods.filter((m) => !m.isRecursive);
+  const recursive = node.methods.filter((m) => m.isRecursive);
+  const startIndex = nonRecursive.findIndex((m) => m.name === "Start");
+  if (startIndex > 0) {
+    const [start] = nonRecursive.splice(startIndex, 1);
+    nonRecursive.unshift(start);
+  }
+  const orderedMethods = [...nonRecursive, ...recursive];
   for (const method of orderedMethods) {
     this.currentMethodName = method.name;
     const eventDef = getVrcEventDefinition(method.name);
@@ -783,7 +840,12 @@ export function visitClassDeclaration(
       | {
           locals: Array<{ name: string; type: TypeSymbol }>;
           depthVar: string;
+          spVar: string;
           stackVars: Array<{ name: string; type: TypeSymbol }>;
+          returnSites: Array<{ index: number; labelName: string }>;
+          nextSelfCallResultIndex?: number;
+          dispatchLabel: TACOperand;
+          overflowLabel: TACOperand;
         }
       | undefined;
     if (eventDef) {
@@ -813,22 +875,279 @@ export function visitClassDeclaration(
       }
     }
 
+    let expectedSelfCallCount: number | undefined;
+    let expectedTryCatchCount: number | undefined;
+    let tryCounterBeforeMethod: number | undefined;
+    let hasReturnExport = false;
+    let earlyInitDone = false;
     if (method.isRecursive) {
+      const selfCallCount = countSelfCalls(method.name, method.body);
+      expectedSelfCallCount = selfCallCount;
+      console.info(
+        `transpiler: @RecursiveMethod ${node.name}.${method.name} — ` +
+          `max recursion depth is ${MAX_RECURSION_STACK_DEPTH}. ` +
+          "Exceeding this limit will silently abort the active event handler.",
+      );
+
+      // KNOWN LIMITATION: Only user-declared variables (parameters, let/const,
+      // for-of loop vars, catch vars) are saved/restored across self-call
+      // boundaries. Compiler-generated temporaries (__t_*) are NOT included
+      // in the push/pop set. This means sub-expressions evaluated BEFORE a
+      // self-call that are used AFTER it may be silently corrupted.
+      // Example: `(n + 1) * this.factorial(n - 1)` — the temp for `(n + 1)`
+      // will be overwritten by the callee. Workaround: assign sub-expressions
+      // to local variables before self-calls:
+      //   const left = n + 1;
+      //   return left * this.factorial(n - 1);
+      // A full fix would require liveness analysis to identify temps that are
+      // live across self-call boundaries and include them in the push/pop set.
       const locals = this.collectRecursiveLocals(method);
-      const depthVar = `__recursionDepth_${method.name}`;
+      // Remap parameter names to their export names (e.g., "n" → "__0_n__param")
+      // because the method body uses export names, not local names
+      for (const local of locals) {
+        const exportName = this.currentParamExportMap.get(local.name);
+        if (exportName) {
+          local.name = exportName;
+        }
+      }
+      // Add __returnSiteIdx to the recursion stack locals.
+      const returnSiteIdxVarName = `__returnSiteIdx_${node.name}_${method.name}`;
+      locals.push({
+        name: returnSiteIdxVarName,
+        type: PrimitiveTypes.int32,
+      });
+      // Add return export variable to the recursion stack locals
+      // so it gets saved/restored at each call site.
+      const layout = this.udonBehaviourLayouts
+        ?.get(node.name)
+        ?.get(method.name);
+      hasReturnExport = !!layout?.returnExportName;
+      if (layout?.returnExportName) {
+        locals.push({
+          name: layout.returnExportName,
+          type: layout.returnType,
+        });
+      }
+      // Add self-call result variables that survive across sibling calls.
+      // Each self-call site captures the return value into a named variable
+      // that is part of the push/pop set, ensuring results survive when
+      // a sibling call re-enters the method body.
+      for (let i = 0; i < selfCallCount; i++) {
+        if (layout?.returnExportName) {
+          locals.push({
+            name: `__selfCallResult_${node.name}_${method.name}_${i}`,
+            type: layout.returnType ?? PrimitiveTypes.single,
+          });
+        }
+      }
+      // Emit property/constructor initialization and top-level const injection
+      // BEFORE the recursion prologue, so that this.tryCounter reflects any
+      // try/catch blocks emitted by property initializers. This ensures the
+      // predicted __error_flag/value variable IDs match the actual IDs assigned
+      // during method body traversal.
+      if (
+        method.name === "Start" &&
+        this.pendingTopLevelInits.length > 0 &&
+        this.entryPointClasses.has(node.name)
+      ) {
+        for (const tlc of this.pendingTopLevelInits) {
+          this.visitVariableDeclaration(tlc);
+        }
+        this.pendingTopLevelInits = [];
+      }
+      if (method.name === "Start" && this.entryPointClasses.has(node.name)) {
+        this.emitEntryPointPropertyInit(node);
+      }
+      earlyInitDone = true;
+
+      // Now predict try/catch variable names using the updated tryCounter.
+      expectedTryCatchCount = countTryCatchBlocks(method.body);
+      tryCounterBeforeMethod = this.tryCounter;
+      for (let i = 0; i < expectedTryCatchCount; i++) {
+        const tryId = this.tryCounter + i;
+        locals.push({
+          name: `__error_flag_${tryId}`,
+          type: PrimitiveTypes.boolean,
+        });
+        locals.push({
+          name: `__error_value_${tryId}`,
+          type: ObjectType,
+        });
+      }
+
+      const depthVar = `__recursionDepth_${node.name}_${method.name}`;
+      const spVar = `__recursionSP_${node.name}_${method.name}`;
       const stackVars = locals.map((local) => ({
-        name: `__recursionStack_${method.name}_${local.name}`,
-        type: new ArrayTypeSymbol(local.type),
+        name: `__recursionStack_${node.name}_${method.name}_${local.name}`,
+        type: ExternTypes.dataList as TypeSymbol,
       }));
 
-      recursionContext = { locals, depthVar, stackVars };
+      recursionContext = {
+        locals,
+        depthVar,
+        spVar,
+        stackVars,
+        returnSites: [],
+        nextSelfCallResultIndex: 0,
+        dispatchLabel: this.newLabel("recursive_dispatch"),
+        overflowLabel: this.newLabel("recursion_overflow"),
+      };
       this.currentRecursiveContext = recursionContext;
-      this.emitRecursivePrologue();
+
+      // Allocate recursion stack DataLists once (first invocation only).
+      // Uses a boolean flag instead of depth==0 check to avoid re-allocating
+      // on every external call (which sets depth to 0 before jumping).
+      const stackInitFlagName = `__stackInitialized_${node.name}_${method.name}`;
+      const stackInitFlag = createVariable(
+        stackInitFlagName,
+        PrimitiveTypes.boolean,
+      );
+      // notInitialized = !stackInitFlag
+      // ConditionalJump is "ifFalse goto": jumps when notInitialized is FALSE
+      // (i.e., already initialized) → skips allocation. Falls through when TRUE
+      // (not initialized) → runs allocation.
+      const notInitialized = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          notInitialized,
+          stackInitFlag,
+          "==",
+          createConstant(false, PrimitiveTypes.boolean),
+        ),
+      );
+      const skipAllocLabel = this.newLabel("skip_stack_alloc");
+      this.instructions.push(
+        new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
+      );
+
+      {
+        // Mark as initialized
+        this.instructions.push(
+          new CopyInstruction(
+            stackInitFlag,
+            createConstant(true, PrimitiveTypes.boolean),
+          ),
+        );
+        const maxRecursionDepth = MAX_RECURSION_STACK_DEPTH;
+        // Default token is Single-typed regardless of each stack's actual local type.
+        // This is safe because emitCallSitePush always overwrites slots via set_Item
+        // before emitCallSitePop reads them; the defaults are never consumed at runtime.
+        const defaultToken = this.wrapDataToken(
+          createConstant(0, PrimitiveTypes.single),
+        );
+        for (const stackVarInfo of stackVars) {
+          const stackVar = createVariable(
+            stackVarInfo.name,
+            ExternTypes.dataList,
+          );
+          const externSig = this.requireExternSignature(
+            "DataList",
+            "ctor",
+            "method",
+            [],
+            "DataList",
+          );
+          this.instructions.push(new CallInstruction(stackVar, externSig, []));
+          // Pre-populate with default tokens for indexed set_Item access
+          for (let i = 0; i < maxRecursionDepth; i++) {
+            this.instructions.push(
+              new MethodCallInstruction(undefined, stackVar, "Add", [
+                defaultToken,
+              ]),
+            );
+          }
+        }
+        // Note: returnSiteIdx is NOT initialized here because the caller
+        // always sets it before JUMP. The dispatch table's fallback
+        // (JUMP 0xFFFFFFFC) handles any unmatched index defensively.
+      }
+      this.instructions.push(new LabelInstruction(skipAllocLabel));
+      // Always reset SP to -1 at top-level entry (both first and subsequent calls).
+      // Uses depth <= 0 to cover both the heap-initialized state (depth == 0)
+      // and the post-completion state (depth == -1) left after a compiled caller's
+      // invocation, which decrements depth before returning to the dispatch table.
+      // This ensures SendCustomEvent and other non-compiled callers reset SP correctly.
+      {
+        const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+        const depthAtTopLevel = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            depthAtTopLevel,
+            depthVarOp,
+            "<=",
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+        const skipSpResetLabel = this.newLabel("skip_sp_reset");
+        this.instructions.push(
+          new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
+        );
+        const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+        this.instructions.push(
+          new CopyInstruction(
+            spVarOp,
+            createConstant(-1, PrimitiveTypes.int32),
+          ),
+        );
+        // Also reset depth to 0 to normalize the post-completion -1 state.
+        // Without this, depth stays at -1, and the first self-call increments
+        // it to 0, causing the SP reset to fire again on re-entry.
+        this.instructions.push(
+          new CopyInstruction(
+            depthVarOp,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new LabelInstruction(skipSpResetLabel));
+      }
+      // Shared overflow handler: emitted once per method, jumped to from each
+      // call site's depth check in emitCallSitePush.
+      // Placed here (before body traversal) so the normal execution path jumps
+      // past it. Uses JUMP 0xFFFFFFFC (ReturnInstruction) which exits the
+      // entire active event handler.
+      {
+        const afterOverflowLabel = this.newLabel("after_overflow");
+        this.instructions.push(
+          new UnconditionalJumpInstruction(afterOverflowLabel),
+        );
+        this.instructions.push(
+          new LabelInstruction(recursionContext.overflowLabel),
+        );
+        const logErrorExtern = this.requireExternSignature(
+          "Debug",
+          "LogError",
+          "method",
+          ["object"],
+          "void",
+        );
+        const overflowMsg = createConstant(
+          `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${node.name}.${method.name}. Aborting event handler.`,
+          PrimitiveTypes.string,
+        );
+        this.instructions.push(
+          new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+        );
+        // Reset depth to 0 so a subsequent SendCustomEvent invocation
+        // triggers SP reset at method entry and can call this method again.
+        const overflowDepthVar = createVariable(depthVar, PrimitiveTypes.int32);
+        this.instructions.push(
+          new CopyInstruction(
+            overflowDepthVar,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(
+          new ReturnInstruction(undefined, this.currentReturnVar),
+        );
+        this.instructions.push(new LabelInstruction(afterOverflowLabel));
+      }
     }
 
     // Inject non-literal top-level const initialization at the start of _start/Start
-    // Only for entry-point classes whose Start becomes the actual _start label
+    // Only for entry-point classes whose Start becomes the actual _start label.
+    // Skip if already done in the recursive method prologue (earlyInitDone).
     if (
+      !earlyInitDone &&
       method.name === "Start" &&
       this.pendingTopLevelInits.length > 0 &&
       this.entryPointClasses.has(node.name)
@@ -839,18 +1158,122 @@ export function visitClassDeclaration(
       this.pendingTopLevelInits = [];
     }
 
-    // Entry-point class property initialization + constructor body in _start/Start
-    if (method.name === "Start" && this.entryPointClasses.has(node.name)) {
+    // Entry-point class property initialization + constructor body in _start/Start.
+    // Skip if already done in the recursive method prologue (earlyInitDone).
+    if (
+      !earlyInitDone &&
+      method.name === "Start" &&
+      this.entryPointClasses.has(node.name)
+    ) {
       this.emitEntryPointPropertyInit(node);
     }
 
-    this.visitBlockStatement(method.body);
-    if (this.currentRecursiveContext) {
-      this.emitRecursiveEpilogue();
+    // Capture tryCounter immediately before body traversal.
+    // For recursive methods, tryCounterBeforeMethod is already captured
+    // in the prologue (after earlyInit). For non-recursive methods, capture here.
+    if (tryCounterBeforeMethod === undefined) {
+      tryCounterBeforeMethod = this.tryCounter;
     }
-    this.instructions.push(
-      new ReturnInstruction(undefined, this.currentReturnVar),
-    );
+    this.visitBlockStatement(method.body);
+    // Assert that countSelfCalls and code-gen agree on the number of self-calls.
+    // Only meaningful for entry-point classes where JUMP-based dispatch is used
+    // AND the method has a return value (nextSelfCallResultIndex is only
+    // incremented when layout.returnExportName is truthy).
+    if (
+      expectedSelfCallCount !== undefined &&
+      this.currentRecursiveContext?.nextSelfCallResultIndex !== undefined &&
+      this.entryPointClasses.has(node.name) &&
+      hasReturnExport
+    ) {
+      const emitted = this.currentRecursiveContext.nextSelfCallResultIndex;
+      if (emitted > expectedSelfCallCount) {
+        // Hard error: the extra __selfCallResult_* variables (indices >=
+        // expectedSelfCallCount) are NOT in the push/pop set, so they would
+        // be silently overwritten by deeper recursive frames. This typically
+        // happens when a self-call appears inside an inlined forEach callback.
+        throw new Error(
+          `countSelfCalls returned ${expectedSelfCallCount} but ` +
+            `code-gen emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
+            "Self-calls inside forEach callbacks within @RecursiveMethod are not supported. " +
+            "Workaround: extract the forEach body into a separate non-recursive helper method.",
+        );
+      }
+      if (emitted < expectedSelfCallCount) {
+        // Warn-only (not error): over-counted variables are added to the
+        // push/pop set but never written or read by code-gen. They are
+        // push/pop-balanced by construction, so correctness is preserved —
+        // the only cost is slightly more stack save/restore overhead.
+        console.warn(
+          `[WARN] countSelfCalls over-counted: expected ${expectedSelfCallCount} ` +
+            `but emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
+            "Extra __selfCallResult_* variables waste stack space.",
+        );
+      }
+    }
+    // Verify that countTryCatchBlocks predicted the correct number of try/catch blocks.
+    if (
+      expectedTryCatchCount !== undefined &&
+      tryCounterBeforeMethod !== undefined
+    ) {
+      const actualTryCatchCount = this.tryCounter - tryCounterBeforeMethod;
+      if (actualTryCatchCount !== expectedTryCatchCount) {
+        // Hard throw is intentional: the predicted __error_flag/value variables
+        // would be missing from the recursion stack, causing silent state
+        // corruption across self-call boundaries.
+        throw new Error(
+          `countTryCatchBlocks returned ${expectedTryCatchCount} but ` +
+            `code-gen emitted ${actualTryCatchCount} try/catch blocks ` +
+            `for ${node.name}.${method.name}. ` +
+            "Using try/catch inside forEach callbacks within @RecursiveMethod is not supported. " +
+            "Workaround: extract the try/catch body into a separate non-recursive helper method.",
+        );
+      }
+    }
+    if (this.currentRecursiveContext) {
+      // Method-end fallthrough: decrement depth to match early-return behavior.
+      // Well-formed recursive methods always have explicit return statements,
+      // so this path is typically unreachable (all returns go through
+      // visitReturnStatement which decrements depth before dispatch).
+      // However, for defensive correctness we emit the decrement anyway.
+      {
+        const depthVarEnd = createVariable(
+          this.currentRecursiveContext.depthVar,
+          PrimitiveTypes.int32,
+        );
+        const depthTmpEnd = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            depthTmpEnd,
+            depthVarEnd,
+            "-",
+            createConstant(1, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new CopyInstruction(depthVarEnd, depthTmpEnd));
+      }
+      // Jump to dispatch (dispatch uses current siteIdx)
+      if (this.currentRecursiveContext.dispatchLabel) {
+        this.instructions.push(
+          new UnconditionalJumpInstruction(
+            this.currentRecursiveContext.dispatchLabel,
+          ),
+        );
+      }
+      // Shared dispatch label: all return paths jump here.
+      // The registry is fully populated at this point because all
+      // non-recursive methods are compiled first (see orderedMethods above),
+      // so all external caller return sites are already registered.
+      if (this.currentRecursiveContext.dispatchLabel) {
+        this.instructions.push(
+          new LabelInstruction(this.currentRecursiveContext.dispatchLabel),
+        );
+      }
+      this.emitReturnSiteDispatch();
+    } else {
+      this.instructions.push(
+        new ReturnInstruction(undefined, this.currentReturnVar),
+      );
+    }
     this.symbolTable.exitScope();
     this.currentReturnVar = undefined;
     this.currentRecursiveContext = undefined;
@@ -996,6 +1419,21 @@ export function visitThrowStatement(
         new UnconditionalJumpInstruction(inlineContext.returnLabel),
       );
     } else {
+      // If inside a recursive context, reset depth to 0 before aborting.
+      // Without this, a subsequent VRC direct call (SendCustomEvent) would
+      // see stale depth > 0, skip SP reset, and corrupt the recursion stack.
+      if (this.currentRecursiveContext) {
+        const depthVar = createVariable(
+          this.currentRecursiveContext.depthVar,
+          PrimitiveTypes.int32,
+        );
+        this.instructions.push(
+          new CopyInstruction(
+            depthVar,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+      }
       this.instructions.push(
         new ReturnInstruction(undefined, this.currentReturnVar),
       );

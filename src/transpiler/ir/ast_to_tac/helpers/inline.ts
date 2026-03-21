@@ -4,7 +4,16 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
+
+/**
+ * Maximum recursion depth for @RecursiveMethod. Shared between stack
+ * allocation (statement.ts) and the overflow guard (emitCallSitePush).
+ */
+export const MAX_RECURSION_STACK_DEPTH = 16;
+
 import {
+  type ArrayAccessExpressionNode,
+  type ArrayLiteralExpressionNode,
   type ASTNode,
   ASTNodeKind,
   type AsExpressionNode,
@@ -13,28 +22,39 @@ import {
   type BlockStatementNode,
   type CallExpressionNode,
   type ClassDeclarationNode,
+  type ConditionalExpressionNode,
+  type DeleteExpressionNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
+  type NullCoalescingExpressionNode,
+  type ObjectLiteralExpressionNode,
+  type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
+  type TemplateExpressionNode,
+  type ThrowStatementNode,
+  type TryCatchStatementNode,
   type UnaryExpressionNode,
+  type UpdateExpressionNode,
   type VariableDeclarationNode,
   type WhileStatementNode,
 } from "../../../frontend/types.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
+  MethodCallInstruction,
+  ReturnInstruction,
 } from "../../tac_instruction.js";
 import {
   createConstant,
+  createLabel,
   createVariable,
   type TACOperand,
   TACOperandKind,
@@ -498,6 +518,11 @@ export function collectRecursiveLocals(
             : ObjectType;
           locals.set(forOfNode.variable, mappedType);
         }
+        if (forOfNode.destructureProperties) {
+          for (const entry of forOfNode.destructureProperties) {
+            locals.set(entry.name, ObjectType);
+          }
+        }
         visitNode(forOfNode.iterable);
         visitNode(forOfNode.body);
         break;
@@ -515,6 +540,16 @@ export function collectRecursiveLocals(
           if (clause.expression) visitNode(clause.expression);
           for (const stmt of clause.statements) visitNode(stmt);
         }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        visitNode(tryNode.tryBody);
+        if (tryNode.catchVariable) {
+          locals.set(tryNode.catchVariable, ObjectType);
+        }
+        if (tryNode.catchBody) visitNode(tryNode.catchBody);
+        if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
         break;
       }
       case ASTNodeKind.CallExpression: {
@@ -540,6 +575,19 @@ export function collectRecursiveLocals(
         visitNode(unNode.operand);
         break;
       }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        visitNode(condNode.condition);
+        visitNode(condNode.whenTrue);
+        visitNode(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const nullCoalesce = node as NullCoalescingExpressionNode;
+        visitNode(nullCoalesce.left);
+        visitNode(nullCoalesce.right);
+        break;
+      }
       case ASTNodeKind.PropertyAccessExpression: {
         const propNode = node as PropertyAccessExpressionNode;
         visitNode(propNode.object);
@@ -550,9 +598,57 @@ export function collectRecursiveLocals(
         if (retNode.value) visitNode(retNode.value);
         break;
       }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        visitNode(throwNode.expression);
+        break;
+      }
       case ASTNodeKind.AsExpression: {
         const asNode = node as AsExpressionNode;
         visitNode(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.FunctionExpression: {
+        // Do NOT recurse into closure bodies: variables declared inside a
+        // closure are not part of the enclosing method's recursion locals.
+        break;
+      }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const elem of arrNode.elements) visitNode(elem.value);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accNode = node as ArrayAccessExpressionNode;
+        visitNode(accNode.array);
+        visitNode(accNode.index);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const tmplNode = node as TemplateExpressionNode;
+        for (const part of tmplNode.parts) {
+          if (part.kind === "expression") visitNode(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) visitNode(prop.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        visitNode(delNode.target);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        visitNode(optNode.object);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        visitNode(updNode.operand);
         break;
       }
       default:
@@ -564,65 +660,390 @@ export function collectRecursiveLocals(
   return Array.from(locals.entries()).map(([name, type]) => ({ name, type }));
 }
 
-export function emitRecursivePrologue(this: ASTToTACConverter): void {
+/**
+ * Push all locals onto per-local DataList stacks at the current SP.
+ * Used at each self-call site BEFORE the JUMP to the recursive method.
+ * Increments SP first, then saves all locals at the new SP index.
+ */
+export function emitCallSitePush(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
   if (!context) return;
 
+  const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
+
+  // Guard: abort if depth has reached MAX_RECURSION_STACK_DEPTH.
+  // Without this, set_Item would write beyond the pre-populated DataList bounds.
+  // ConditionalJumpInstruction is "ifFalse goto", so we check (depth < MAX)
+  // and jump to the shared overflow handler (emitted once in the method
+  // prologue) when false (i.e., depth >= MAX).
   const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
-  const depthTemp = this.newTemp(PrimitiveTypes.int32);
+  const depthOk = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
     new BinaryOpInstruction(
-      depthTemp,
+      depthOk,
       depthVar,
+      "<",
+      createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
+    ),
+  );
+  this.instructions.push(
+    new ConditionalJumpInstruction(depthOk, context.overflowLabel),
+  );
+
+  // SP++
+  const spTemp = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spTemp,
+      spVar,
       "+",
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+  this.instructions.push(new CopyInstruction(spVar, spTemp));
 
+  // Save each local at stack[SP]
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
-    const stackVar = createVariable(stackVarInfo.name, stackVarInfo.type);
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
+    const token = this.wrapDataToken(localVar);
     this.instructions.push(
-      new ArrayAssignmentInstruction(stackVar, depthVar, localVar),
+      new MethodCallInstruction(undefined, stackVar, "set_Item", [
+        spVar,
+        token,
+      ]),
     );
   }
 }
 
-export function emitRecursiveEpilogue(this: ASTToTACConverter): void {
+/**
+ * Pop all locals from per-local DataList stacks at the current SP.
+ * Used at each self-call site AFTER the return label (after reading the return value).
+ * Restores all locals from the current SP index, then decrements SP.
+ */
+export function emitCallSitePop(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
   if (!context) return;
 
-  const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
+  const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
 
+  // Restore each local from stack[SP]
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
-    const stackVar = createVariable(stackVarInfo.name, stackVarInfo.type);
-    const temp = this.newTemp(local.type);
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+    const token = this.newTemp(ExternTypes.dataToken);
     this.instructions.push(
-      new ArrayAccessInstruction(temp, stackVar, depthVar),
+      new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
     );
+    const unwrapped = this.unwrapDataToken(token, local.type);
     this.instructions.push(
       new CopyInstruction(
         createVariable(local.name, local.type, { isLocal: true }),
-        temp,
+        unwrapped,
       ),
     );
   }
 
-  const depthTemp = this.newTemp(PrimitiveTypes.int32);
+  // SP--
+  const spTemp = this.newTemp(PrimitiveTypes.int32);
   this.instructions.push(
     new BinaryOpInstruction(
-      depthTemp,
-      depthVar,
+      spTemp,
+      spVar,
       "-",
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+  this.instructions.push(new CopyInstruction(spVar, spTemp));
+}
+
+/**
+ * Count the number of TryCatchStatement nodes in a method body.
+ * Used to predict compiler-synthesized __error_flag_* / __error_value_*
+ * variable names for inclusion in the recursion push/pop set.
+ */
+export function countTryCatchBlocks(body: BlockStatementNode): number {
+  let count = 0;
+  const visitNode = (node: ASTNode): void => {
+    // Do not recurse into closures — they have separate try/catch scope
+    if (node.kind === ASTNodeKind.FunctionExpression) return;
+    if (node.kind === ASTNodeKind.TryCatchStatement) {
+      count++;
+      const tryNode = node as TryCatchStatementNode;
+      visitNode(tryNode.tryBody);
+      if (tryNode.catchBody) visitNode(tryNode.catchBody);
+      if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
+    } else if (node.kind === ASTNodeKind.BlockStatement) {
+      for (const stmt of (node as BlockStatementNode).statements) {
+        visitNode(stmt);
+      }
+    } else if (node.kind === ASTNodeKind.IfStatement) {
+      const ifNode = node as IfStatementNode;
+      visitNode(ifNode.thenBranch);
+      if (ifNode.elseBranch) visitNode(ifNode.elseBranch);
+    } else if (node.kind === ASTNodeKind.WhileStatement) {
+      visitNode((node as WhileStatementNode).body);
+    } else if (node.kind === ASTNodeKind.DoWhileStatement) {
+      visitNode((node as DoWhileStatementNode).body);
+    } else if (node.kind === ASTNodeKind.ForStatement) {
+      visitNode((node as ForStatementNode).body);
+    } else if (node.kind === ASTNodeKind.ForOfStatement) {
+      visitNode((node as ForOfStatementNode).body);
+    } else if (node.kind === ASTNodeKind.SwitchStatement) {
+      for (const c of (node as SwitchStatementNode).cases) {
+        for (const stmt of c.statements) visitNode(stmt);
+      }
+    }
+  };
+  visitNode(body);
+  return count;
+}
+
+/**
+ * Count the number of self-recursive calls (this.methodName(...)) in a method body.
+ * Used to pre-allocate selfCallResult variables that survive across sibling calls.
+ */
+export function countSelfCalls(
+  methodName: string,
+  body: BlockStatementNode,
+): number {
+  let count = 0;
+  const visitNode = (node: ASTNode): void => {
+    switch (node.kind) {
+      case ASTNodeKind.CallExpression: {
+        const callNode = node as CallExpressionNode;
+        if (callNode.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propAccess = callNode.callee as PropertyAccessExpressionNode;
+          if (
+            propAccess.object.kind === ASTNodeKind.ThisExpression &&
+            propAccess.property === methodName
+          ) {
+            count++;
+          }
+        }
+        visitNode(callNode.callee);
+        for (const arg of callNode.arguments) visitNode(arg);
+        break;
+      }
+      case ASTNodeKind.BlockStatement: {
+        const block = node as BlockStatementNode;
+        for (const stmt of block.statements) visitNode(stmt);
+        break;
+      }
+      case ASTNodeKind.IfStatement: {
+        const ifNode = node as IfStatementNode;
+        visitNode(ifNode.condition);
+        visitNode(ifNode.thenBranch);
+        if (ifNode.elseBranch) visitNode(ifNode.elseBranch);
+        break;
+      }
+      case ASTNodeKind.WhileStatement: {
+        const whileNode = node as WhileStatementNode;
+        visitNode(whileNode.condition);
+        visitNode(whileNode.body);
+        break;
+      }
+      case ASTNodeKind.ForStatement: {
+        const forNode = node as ForStatementNode;
+        if (forNode.initializer) visitNode(forNode.initializer);
+        if (forNode.condition) visitNode(forNode.condition);
+        if (forNode.incrementor) visitNode(forNode.incrementor);
+        visitNode(forNode.body);
+        break;
+      }
+      case ASTNodeKind.ForOfStatement: {
+        const forOfNode = node as ForOfStatementNode;
+        visitNode(forOfNode.iterable);
+        visitNode(forOfNode.body);
+        break;
+      }
+      case ASTNodeKind.DoWhileStatement: {
+        const doNode = node as DoWhileStatementNode;
+        visitNode(doNode.body);
+        visitNode(doNode.condition);
+        break;
+      }
+      case ASTNodeKind.SwitchStatement: {
+        const switchNode = node as SwitchStatementNode;
+        visitNode(switchNode.expression);
+        for (const clause of switchNode.cases) {
+          if (clause.expression) visitNode(clause.expression);
+          for (const stmt of clause.statements) visitNode(stmt);
+        }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        visitNode(tryNode.tryBody);
+        if (tryNode.catchBody) visitNode(tryNode.catchBody);
+        if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
+        break;
+      }
+      case ASTNodeKind.ReturnStatement: {
+        const retNode = node as ReturnStatementNode;
+        if (retNode.value) visitNode(retNode.value);
+        break;
+      }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        visitNode(throwNode.expression);
+        break;
+      }
+      case ASTNodeKind.BinaryExpression: {
+        const binNode = node as BinaryExpressionNode;
+        visitNode(binNode.left);
+        visitNode(binNode.right);
+        break;
+      }
+      case ASTNodeKind.UnaryExpression: {
+        const unNode = node as UnaryExpressionNode;
+        visitNode(unNode.operand);
+        break;
+      }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        visitNode(condNode.condition);
+        visitNode(condNode.whenTrue);
+        visitNode(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const nullCoalesce = node as NullCoalescingExpressionNode;
+        visitNode(nullCoalesce.left);
+        visitNode(nullCoalesce.right);
+        break;
+      }
+      case ASTNodeKind.AssignmentExpression: {
+        const assignNode = node as AssignmentExpressionNode;
+        visitNode(assignNode.target);
+        visitNode(assignNode.value);
+        break;
+      }
+      case ASTNodeKind.VariableDeclaration: {
+        const varNode = node as VariableDeclarationNode;
+        if (varNode.initializer) visitNode(varNode.initializer);
+        break;
+      }
+      case ASTNodeKind.PropertyAccessExpression: {
+        const propNode = node as PropertyAccessExpressionNode;
+        visitNode(propNode.object);
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        const asNode = node as AsExpressionNode;
+        visitNode(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.FunctionExpression: {
+        // Do NOT recurse into closure bodies: self-calls inside a closure
+        // go through a different runtime path and should not count toward
+        // the __selfCallResult_* pre-allocation for the enclosing method.
+        break;
+      }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const elem of arrNode.elements) visitNode(elem.value);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accNode = node as ArrayAccessExpressionNode;
+        visitNode(accNode.array);
+        visitNode(accNode.index);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const tmplNode = node as TemplateExpressionNode;
+        for (const part of tmplNode.parts) {
+          if (part.kind === "expression") visitNode(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) visitNode(prop.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        visitNode(delNode.target);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        visitNode(optNode.object);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        visitNode(updNode.operand);
+        break;
+      }
+      default:
+        break;
+    }
+  };
+  visitNode(body);
+  return count;
+}
+
+/**
+ * Emit a dispatch table that replaces JUMP_INDIRECT for recursive returns.
+ * After the epilogue restores __returnSiteIdx, this checks the index against
+ * each known return site and jumps to the corresponding label.
+ * If no return site matches (depth == 0, initial call), emit a normal return.
+ */
+export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
+  const context = this.currentRecursiveContext;
+  if (!context) return;
+
+  const methodName = this.currentMethodName;
+  if (!methodName) return;
+
+  if (!this.currentClassName) {
+    throw new Error(
+      `emitReturnSiteDispatch: missing currentClassName for method ${methodName}`,
+    );
+  }
+
+  const returnSiteIdxVar = createVariable(
+    `__returnSiteIdx_${this.currentClassName}_${methodName}`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  const registryKey = `${this.currentClassName}.${methodName}`;
+  const registry = this.recursiveReturnSites.get(registryKey);
+  // The registry is always populated because non-recursive methods are
+  // compiled before recursive ones (see orderedMethods in statement.ts).
+  // Fall back to context.returnSites only for self-call-only methods
+  // (no external callers registered a return site).
+  const allSites = registry?.sites ?? context.returnSites;
+
+  for (const site of allSites) {
+    const cmpResult = this.newTemp(PrimitiveTypes.boolean);
+    this.instructions.push(
+      new BinaryOpInstruction(
+        cmpResult,
+        returnSiteIdxVar,
+        "!=",
+        createConstant(site.index, PrimitiveTypes.int32),
+      ),
+    );
+    const siteLabel = createLabel(site.labelName);
+    this.instructions.push(
+      new ConditionalJumpInstruction(cmpResult, siteLabel),
+    );
+  }
+
+  // Defensive fallback: should be unreachable in correct code because every
+  // return-site index that can be live at method exit is registered in allSites.
+  // Reached only if the method is never called (allSites is empty) or if
+  // returnSiteIdx holds an unregistered value.
+  this.instructions.push(
+    new ReturnInstruction(undefined, this.currentReturnVar),
+  );
 }

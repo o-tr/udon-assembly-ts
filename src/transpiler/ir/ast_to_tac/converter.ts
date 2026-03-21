@@ -52,9 +52,10 @@ import {
 import { requireExternSignature } from "./helpers/extern.js";
 import {
   collectRecursiveLocals,
+  emitCallSitePop,
+  emitCallSitePush,
   emitEntryPointPropertyInit,
-  emitRecursiveEpilogue,
-  emitRecursivePrologue,
+  emitReturnSiteDispatch,
   mapInlineProperty,
   maybeTrackInlineInstanceAssignment,
   tryResolveUnitySelfReference,
@@ -157,9 +158,22 @@ export class ASTToTACConverter {
     | {
         locals: Array<{ name: string; type: TypeSymbol }>;
         depthVar: string;
+        spVar: string;
         stackVars: Array<{ name: string; type: TypeSymbol }>;
+        returnSites: Array<{ index: number; labelName: string }>;
+        nextSelfCallResultIndex?: number;
+        dispatchLabel: TACOperand;
+        overflowLabel: TACOperand;
       }
     | undefined;
+  /**
+   * Shared return site registries keyed by "className.methodName".
+   * Both callers (from Start) and the recursive method itself register here.
+   */
+  recursiveReturnSites: Map<
+    string,
+    { sites: Array<{ index: number; labelName: string }>; nextIndex: number }
+  > = new Map();
   loopContextStack: Array<{
     breakLabel: TACOperand;
     continueLabel: TACOperand;
@@ -247,6 +261,7 @@ export class ASTToTACConverter {
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.pendingTopLevelInits = [];
+    this.recursiveReturnSites = new Map();
 
     // Separate top-level const declarations from other statements
     const topLevelConsts: VariableDeclarationNode[] = [];
@@ -489,8 +504,9 @@ export class ASTToTACConverter {
   mapInlineProperty = mapInlineProperty;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;
   collectRecursiveLocals = collectRecursiveLocals;
-  emitRecursivePrologue = emitRecursivePrologue;
-  emitRecursiveEpilogue = emitRecursiveEpilogue;
+  emitCallSitePush = emitCallSitePush;
+  emitCallSitePop = emitCallSitePop;
+  emitReturnSiteDispatch = emitReturnSiteDispatch;
 
   emitTryInstructionsWithChecks = emitTryInstructionsWithChecks;
   getCheckOperand = getCheckOperand;

@@ -41,7 +41,9 @@ import {
 import {
   type ConstantOperand,
   createConstant,
+  createLabel,
   createVariable,
+  type LabelOperand,
   type TACOperand,
   TACOperandKind,
   type VariableOperand,
@@ -618,7 +620,10 @@ export function visitCallExpression(
           argType.udonType === UdonType.Byte ||
           argType.udonType === UdonType.SByte;
 
-        const isConstantIntegerLength =
+        // Float-typed constant whose value is a whole number (e.g., 5.0).
+        // Handled separately from isNumericLength (integer types) because
+        // TypeScript number literals default to Single/Double in Udon.
+        const isWholeFloatConstant =
           argOperand.kind === TACOperandKind.Constant &&
           (argType.udonType === UdonType.Single ||
             argType.udonType === UdonType.Double) &&
@@ -674,11 +679,51 @@ export function visitCallExpression(
           return listResult;
         }
 
-        if (!isNumericLength && !isConstantIntegerLength) {
+        if (!isNumericLength && !isWholeFloatConstant) {
           const token = this.wrapDataToken(argOperand);
           this.instructions.push(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
+        } else if (node.typeArguments?.[0]) {
+          // Pre-populate DataList with N default elements for typed Array<T>(N).
+          // NOTE: Only constant-length arrays are pre-populated. Runtime-length
+          // arrays (e.g., new Array<number>(someVar)) result in an empty DataList
+          // and subsequent indexed access will fail at runtime.
+          let count = 0;
+          if (isWholeFloatConstant) {
+            count = (argOperand as ConstantOperand).value as number;
+          } else if (
+            isNumericLength &&
+            argOperand.kind === TACOperandKind.Constant
+          ) {
+            count = (argOperand as ConstantOperand).value as number;
+          } else if (isNumericLength) {
+            // Runtime-length Array<T>(n) cannot be pre-populated at compile time.
+            // The resulting empty DataList would silently produce wrong values at runtime,
+            // so we abort compilation with a clear error message.
+            throw new Error(
+              "[udon-assembly-ts] new Array<T>(n) with a runtime-length variable " +
+                "cannot be pre-populated. Use a constant length or build the array with a loop.",
+            );
+          }
+          const MAX_ARRAY_PREPOPULATE = 1024;
+          if (count > MAX_ARRAY_PREPOPULATE) {
+            throw new Error(
+              `[udon-assembly-ts] new Array<T>(${count}) exceeds the pre-population limit of ${MAX_ARRAY_PREPOPULATE}. ` +
+                "Use a smaller constant or build the array with a loop.",
+            );
+          }
+          if (count > 0) {
+            const defaultValue = createConstant(0, arrayType);
+            const defaultToken = this.wrapDataToken(defaultValue);
+            for (let i = 0; i < count; i++) {
+              this.instructions.push(
+                new MethodCallInstruction(undefined, listResult, "Add", [
+                  defaultToken,
+                ]),
+              );
+            }
+          }
         }
         return listResult;
       }
@@ -1284,6 +1329,223 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult != null) return inlineResult;
+      }
+    }
+    // Recursive self-method call: use JUMP-based mechanism
+    if (
+      propAccess.object.kind === ASTNodeKind.ThisExpression &&
+      this.currentClassName &&
+      this.entryPointClasses.has(this.currentClassName)
+    ) {
+      const classNode = this.classMap.get(this.currentClassName);
+      const methodDef = classNode?.methods.find(
+        (m) => m.name === propAccess.property,
+      );
+      if (methodDef?.isRecursive) {
+        const layout = this.udonBehaviourLayouts
+          ?.get(this.currentClassName)
+          ?.get(propAccess.property);
+        if (layout) {
+          // Register return site in the shared registry (scoped by class + method)
+          const returnLabel = this.newLabel("recursive_return") as LabelOperand;
+          const registryKey = `${this.currentClassName}.${propAccess.property}`;
+          let registry = this.recursiveReturnSites.get(registryKey);
+          if (!registry) {
+            // Start at index 1 to reserve 0 as a sentinel "no external caller".
+            // Udon heap-initializes Int32 to 0, so if the method is invoked
+            // directly by the VRC runtime (no compiled caller sets returnSiteIdx),
+            // index 0 won't match any dispatch entry and the fallback RETURN fires.
+            registry = { sites: [], nextIndex: 1 };
+            this.recursiveReturnSites.set(registryKey, registry);
+          }
+          const returnSiteIdx = registry.nextIndex++;
+          registry.sites.push({
+            index: returnSiteIdx,
+            labelName: returnLabel.name,
+          });
+          if (this.currentRecursiveContext) {
+            this.currentRecursiveContext.returnSites.push({
+              index: returnSiteIdx,
+              labelName: returnLabel.name,
+            });
+          }
+
+          if (
+            this.currentRecursiveContext &&
+            propAccess.property === this.currentMethodName
+          ) {
+            // === SELF-CALL WITHIN RECURSIVE METHOD ===
+            // Order: push FIRST (save caller's state), then set params/returnSiteIdx/depth
+
+            // 1. Push all locals to stack (save caller's current state)
+            this.emitCallSitePush();
+
+            // 2. Increment depth so re-entry skips stack allocation
+            const depthVarOp = createVariable(
+              this.currentRecursiveContext.depthVar,
+              PrimitiveTypes.int32,
+            );
+            const depthInc = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                depthInc,
+                depthVarOp,
+                "+",
+                createConstant(1, PrimitiveTypes.int32),
+              ),
+            );
+            this.instructions.push(new CopyInstruction(depthVarOp, depthInc));
+
+            // 3. Set parameters for the callee
+            for (let i = 0; i < evaluatedArgs.length; i++) {
+              const paramExportName = layout.parameterExportNames[i];
+              if (paramExportName) {
+                const paramVar = createVariable(
+                  paramExportName,
+                  layout.parameterTypes[i] ?? PrimitiveTypes.single,
+                );
+                this.instructions.push(
+                  new CopyInstruction(paramVar, evaluatedArgs[i]),
+                );
+              }
+            }
+
+            // 4. Set return site index for dispatch table.
+            // This must come AFTER emitCallSitePush (step 1) because push
+            // saves the caller's returnSiteIdx. If we set it first, the
+            // callee's index would be pushed instead of the caller's.
+            const returnSiteIdxVar = createVariable(
+              `__returnSiteIdx_${this.currentClassName}_${propAccess.property}`,
+              PrimitiveTypes.int32,
+              { isLocal: true },
+            );
+            this.instructions.push(
+              new AssignmentInstruction(
+                returnSiteIdxVar,
+                createConstant(returnSiteIdx, PrimitiveTypes.int32),
+              ),
+            );
+
+            // 5. JUMP to method entry
+            const methodLabel = createLabel(layout.exportMethodName);
+            this.instructions.push(
+              new UnconditionalJumpInstruction(methodLabel),
+            );
+
+            // 6. Return label (dispatch brings us back here)
+            this.instructions.push(new LabelInstruction(returnLabel));
+
+            // 7. Read return value into temp BEFORE pop
+            let result: TACOperand = VOID_RETURN;
+            let capturedTemp: TACOperand | undefined;
+            if (layout.returnExportName) {
+              const retVar = createVariable(
+                layout.returnExportName,
+                layout.returnType,
+              );
+              capturedTemp = this.newTemp(layout.returnType);
+              this.instructions.push(new CopyInstruction(capturedTemp, retVar));
+            }
+
+            // 8. Pop all locals from stack (restore caller's state)
+            this.emitCallSitePop();
+
+            // 9. Copy captured result into a named selfCallResult variable
+            //    that is part of the push/pop set (survives sibling calls)
+            if (capturedTemp && layout.returnExportName) {
+              const selfCallIdx =
+                this.currentRecursiveContext.nextSelfCallResultIndex ?? 0;
+              this.currentRecursiveContext.nextSelfCallResultIndex =
+                selfCallIdx + 1;
+              const selfCallResultVar = createVariable(
+                `__selfCallResult_${this.currentClassName}_${propAccess.property}_${selfCallIdx}`,
+                layout.returnType,
+                { isLocal: true },
+              );
+              this.instructions.push(
+                new CopyInstruction(selfCallResultVar, capturedTemp),
+              );
+              result = selfCallResultVar;
+            }
+
+            return result;
+          }
+
+          // === EXTERNAL CALL (non-recursive caller, or cross-method call) ===
+          // This path handles non-recursive methods (Start, OnInteract) calling
+          // a recursive method. No push/pop needed: the caller's locals are not
+          // affected by the callee's recursion stacks.
+          // NOTE: Cross-recursive calls (recursive method A calling recursive
+          // method B, or mutual recursion A↔B) are NOT supported. The dispatch
+          // table is emitted when B is compiled, so A's return site would not
+          // be registered if A is compiled after B. Non-recursive callers are
+          // always compiled first (method ordering guarantees this).
+
+          // Set parameters
+          for (let i = 0; i < evaluatedArgs.length; i++) {
+            const paramExportName = layout.parameterExportNames[i];
+            if (paramExportName) {
+              const paramVar = createVariable(
+                paramExportName,
+                layout.parameterTypes[i] ?? PrimitiveTypes.single,
+              );
+              this.instructions.push(
+                new CopyInstruction(paramVar, evaluatedArgs[i]),
+              );
+            }
+          }
+          // Set return site index.
+          // NOTE: currentClassName is used here as the callee's class name.
+          // This is correct because recursive dispatch only supports same-class
+          // calls (this.method() form). Cross-class recursive calls are not supported.
+          const returnSiteIdxVar = createVariable(
+            `__returnSiteIdx_${this.currentClassName}_${propAccess.property}`,
+            PrimitiveTypes.int32,
+            { isLocal: true },
+          );
+          this.instructions.push(
+            new AssignmentInstruction(
+              returnSiteIdxVar,
+              createConstant(returnSiteIdx, PrimitiveTypes.int32),
+            ),
+          );
+          // Initialize recursion depth to 0
+          const depthVar = createVariable(
+            `__recursionDepth_${this.currentClassName}_${propAccess.property}`,
+            PrimitiveTypes.int32,
+          );
+          this.instructions.push(
+            new CopyInstruction(
+              depthVar,
+              createConstant(0, PrimitiveTypes.int32),
+            ),
+          );
+          // JUMP to method entry
+          const methodLabel = createLabel(layout.exportMethodName);
+          this.instructions.push(new UnconditionalJumpInstruction(methodLabel));
+          // Return label (dispatch brings us back here)
+          this.instructions.push(new LabelInstruction(returnLabel));
+          // Reset returnSiteIdx to 0 (sentinel) after dispatch returns here.
+          // Without this, a subsequent VRC direct call (SendCustomEvent) would
+          // see the stale index and dispatch back to this caller's return label.
+          this.instructions.push(
+            new AssignmentInstruction(
+              returnSiteIdxVar,
+              createConstant(0, PrimitiveTypes.int32),
+            ),
+          );
+          // Read return value
+          let result: TACOperand = VOID_RETURN;
+          if (layout.returnExportName) {
+            const retVar = createVariable(
+              layout.returnExportName,
+              layout.returnType,
+            );
+            result = this.newTemp(layout.returnType);
+            this.instructions.push(new CopyInstruction(result, retVar));
+          }
+          return result;
+        }
       }
     }
     // Entry point class self-method: inline the body

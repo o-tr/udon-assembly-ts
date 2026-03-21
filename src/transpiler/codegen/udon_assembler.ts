@@ -567,6 +567,12 @@ export class UdonAssembler {
 
     const lines: string[] = [];
 
+    // Compute label addresses early for resolving JUMP/JUMP_IF_FALSE targets
+    const { labelAddresses, canonicalLabels } = this.computeLabelAddressInfo(
+      effectiveInstructions,
+      exportLabels,
+    );
+
     // Data section
     lines.push(".data_start");
     lines.push("");
@@ -650,14 +656,6 @@ export class UdonAssembler {
     // Code section
     lines.push(".code_start");
     lines.push("");
-
-    // Removed emission of the behaviour sync mode directive
-    // behaviourSyncMode directive intentionally omitted
-    // Resolve labels to byte addresses and canonical labels
-    const { labelAddresses, canonicalLabels } = this.computeLabelAddressInfo(
-      effectiveInstructions,
-      exportLabels,
-    );
 
     // Convert instructions to text, replacing label references with addresses
     for (const inst of effectiveInstructions) {

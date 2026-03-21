@@ -13,7 +13,7 @@ export class ObjectLiteralBasic extends UdonSharpBehaviour {
     // Use explicit DataDictionary construction for type safety.
     const obj: DataDictionary = new DataDictionary();
     obj.SetValue(new DataToken("name"), new DataToken("Alice"));
-    obj.SetValue(new DataToken("age"), new DataToken(30));
+    obj.SetValue(new DataToken("age"), new DataToken(30.0));
     const nameVal: DataToken = obj.GetValue(new DataToken("name"));
     Debug.Log(nameVal.String);
     const ageVal: DataToken = obj.GetValue(new DataToken("age"));

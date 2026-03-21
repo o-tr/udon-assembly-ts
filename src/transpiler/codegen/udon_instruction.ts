@@ -12,7 +12,6 @@ export enum UdonInstructionKind {
   Extern = "EXTERN",
   Jump = "JUMP",
   JumpIfFalse = "JUMP_IF_FALSE",
-  JumpIndirect = "JUMP_INDIRECT",
   Label = "LABEL",
 }
 
@@ -106,20 +105,6 @@ export class JumpIfFalseInstruction implements UdonInstruction {
 
   toString(): string {
     return `    JUMP_IF_FALSE, ${this.address}`;
-  }
-}
-
-/**
- * JUMP_INDIRECT instruction - jump to address stored in variable
- */
-export class JumpIndirectInstruction implements UdonInstruction {
-  kind = UdonInstructionKind.JumpIndirect as const;
-  size = 8; // JUMP_INDIRECT instruction is 8 bytes
-
-  constructor(public address: number | string) {}
-
-  toString(): string {
-    return `    JUMP_INDIRECT, ${this.address}`;
   }
 }
 

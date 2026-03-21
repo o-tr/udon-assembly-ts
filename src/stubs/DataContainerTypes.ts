@@ -41,7 +41,7 @@ export class DataList {
 export class DataToken {
   String!: string;
   Boolean!: boolean;
-  Int!: number;
+  Int!: UdonInt;
   Long!: number;
   Float!: number;
   Double!: number;
@@ -53,6 +53,7 @@ export class DataToken {
 
   constructor();
   constructor(_value: number);
+  constructor(_value: UdonInt);
   constructor(_value: string);
   constructor(_value: boolean);
   constructor(_value: DataList);

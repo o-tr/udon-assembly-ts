@@ -13,6 +13,7 @@ import {
   ASTNodeKind,
   type AssignmentExpressionNode,
   type IdentifierNode,
+  needsInt32IndexCoercion,
   type PropertyAccessExpressionNode,
   UdonType,
   type UpdateExpressionNode,
@@ -21,6 +22,7 @@ import {
   ArrayAssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   CopyInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -57,9 +59,20 @@ export function assignToTarget(
       arrayType instanceof DataListTypeSymbol ||
       arrayType.name === ExternTypes.dataList.name
     ) {
+      // Coerce index to Int32 for DataList.set_Item (expects SystemInt32)
+      let coercedIndex = index;
+      const indexType = this.getOperandType(index);
+      if (needsInt32IndexCoercion(indexType.udonType)) {
+        const intIndex = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(intIndex, index));
+        coercedIndex = intIndex;
+      }
       const token = this.wrapDataToken(value);
       this.instructions.push(
-        new MethodCallInstruction(undefined, array, "set_Item", [index, token]),
+        new MethodCallInstruction(undefined, array, "set_Item", [
+          coercedIndex,
+          token,
+        ]),
       );
       return value;
     }

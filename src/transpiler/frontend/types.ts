@@ -42,6 +42,27 @@ export enum UdonType {
   DataToken = "DataToken",
 }
 
+/**
+ * Returns true when the given UdonType is numeric but not Int32,
+ * meaning it needs an explicit cast before being used as a DataList index.
+ */
+export function needsInt32IndexCoercion(udonType: UdonType): boolean {
+  switch (udonType) {
+    case UdonType.Single:
+    case UdonType.Double:
+    case UdonType.Int64:
+    case UdonType.UInt64:
+    case UdonType.UInt32:
+    case UdonType.Int16:
+    case UdonType.UInt16:
+    case UdonType.Byte:
+    case UdonType.SByte:
+      return true;
+    default:
+      return false;
+  }
+}
+
 export interface SymbolInfo {
   name: string;
   type: TypeSymbol;
