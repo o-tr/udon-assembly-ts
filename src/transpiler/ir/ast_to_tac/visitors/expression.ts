@@ -70,6 +70,48 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 
+/**
+ * Widen operands to a common promoted numeric type when they differ.
+ * Returns the (possibly widened) operands.
+ */
+function widenNumericOperands(
+  converter: ASTToTACConverter,
+  left: TACOperand,
+  right: TACOperand,
+): { left: TACOperand; right: TACOperand; widened: boolean } {
+  const leftType = converter.getOperandType(left).udonType;
+  const rightType = converter.getOperandType(right).udonType;
+  if (
+    leftType === rightType ||
+    !isNumericUdonType(leftType) ||
+    !isNumericUdonType(rightType)
+  ) {
+    return { left, right, widened: false };
+  }
+  const promoted = getPromotedUdonType(leftType, rightType);
+  const promotedSymbol =
+    promoted != null ? numericUdonTypeToSymbol[promoted] : undefined;
+  if (!promotedSymbol) {
+    return { left, right, widened: false };
+  }
+  let newLeft = left;
+  let newRight = right;
+  let widened = false;
+  if (leftType !== promoted) {
+    const w = converter.newTemp(promotedSymbol);
+    converter.instructions.push(new CastInstruction(w, left));
+    newLeft = w;
+    widened = true;
+  }
+  if (rightType !== promoted) {
+    const w = converter.newTemp(promotedSymbol);
+    converter.instructions.push(new CastInstruction(w, right));
+    newRight = w;
+    widened = true;
+  }
+  return { left: newLeft, right: newRight, widened };
+}
+
 function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
@@ -310,42 +352,23 @@ export function visitBinaryExpression(
     "^=": "^",
   };
   if (compoundOps[node.operator]) {
-    let left = this.visitExpression(node.left);
-    let right = this.visitExpression(node.right);
+    const leftOriginal = this.visitExpression(node.left);
+    const rightOriginal = this.visitExpression(node.right);
     const baseOp = compoundOps[node.operator];
-    const isShiftOp = baseOp === "<<" || baseOp === ">>";
-    // Widen narrower operand for compound assignment (skip shifts).
-    if (!isShiftOp) {
-      const leftType = this.getOperandType(left).udonType;
-      const rightType = this.getOperandType(right).udonType;
-      if (
-        leftType !== rightType &&
-        isNumericUdonType(leftType) &&
-        isNumericUdonType(rightType)
-      ) {
-        const promoted = getPromotedUdonType(leftType, rightType);
-        const promotedSymbol =
-          promoted != null ? numericUdonTypeToSymbol[promoted] : undefined;
-        if (promotedSymbol) {
-          if (leftType !== promoted) {
-            const widened = this.newTemp(promotedSymbol);
-            this.instructions.push(new CastInstruction(widened, left));
-            left = widened;
-          }
-          if (rightType !== promoted) {
-            const widened = this.newTemp(promotedSymbol);
-            this.instructions.push(new CastInstruction(widened, right));
-            right = widened;
-          }
-        }
-      }
-    }
-    const resultType = this.getOperandType(left);
-    const newValue = this.newTemp(resultType);
+    // compoundOps does not contain <<= or >>=, so no shift guard needed.
+    // C# compound assignment: x op= y ≡ x = (T)(x op y), where T = typeof(x).
+    const w = widenNumericOperands(this, leftOriginal, rightOriginal);
+    const opResult = this.newTemp(this.getOperandType(w.left));
     this.instructions.push(
-      new BinaryOpInstruction(newValue, left, baseOp, right),
+      new BinaryOpInstruction(opResult, w.left, baseOp, w.right),
     );
-    return this.assignToTarget(node.left, newValue);
+    // Narrow back to the original left operand's type if promotion widened it.
+    if (w.widened && w.left !== leftOriginal) {
+      const narrowed = this.newTemp(this.getOperandType(leftOriginal));
+      this.instructions.push(new CastInstruction(narrowed, opResult));
+      return this.assignToTarget(node.left, narrowed);
+    }
+    return this.assignToTarget(node.left, opResult);
   }
   if (node.operator === "**") {
     const left = this.visitExpression(node.left);
@@ -454,8 +477,8 @@ export function visitBinaryExpression(
       return resultOperand;
     }
   }
-  let left = this.visitExpression(node.left);
-  let right = this.visitExpression(node.right);
+  const leftRaw = this.visitExpression(node.left);
+  const rightRaw = this.visitExpression(node.right);
 
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
@@ -464,31 +487,9 @@ export function visitBinaryExpression(
   const isShift = node.operator === "<<" || node.operator === ">>";
 
   // Widen narrower operand when both are numeric and types differ (skip shifts).
-  if (!isShift) {
-    const leftType = this.getOperandType(left).udonType;
-    const rightType = this.getOperandType(right).udonType;
-    if (
-      leftType !== rightType &&
-      isNumericUdonType(leftType) &&
-      isNumericUdonType(rightType)
-    ) {
-      const promoted = getPromotedUdonType(leftType, rightType);
-      const promotedSymbol =
-        promoted != null ? numericUdonTypeToSymbol[promoted] : undefined;
-      if (promotedSymbol) {
-        if (leftType !== promoted) {
-          const widened = this.newTemp(promotedSymbol);
-          this.instructions.push(new CastInstruction(widened, left));
-          left = widened;
-        }
-        if (rightType !== promoted) {
-          const widened = this.newTemp(promotedSymbol);
-          this.instructions.push(new CastInstruction(widened, right));
-          right = widened;
-        }
-      }
-    }
-  }
+  const { left, right } = isShift
+    ? { left: leftRaw, right: rightRaw }
+    : widenNumericOperands(this, leftRaw, rightRaw);
 
   const resultType = isComparison
     ? PrimitiveTypes.boolean

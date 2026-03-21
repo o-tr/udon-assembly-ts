@@ -85,7 +85,12 @@ export function getPromotedUdonType(
   if (a === b) return a;
   if (rankA === rankB) {
     // Same width, different signedness
-    if (rankA === 4) return UdonType.Double; // Int64 + UInt64
+    // Int64 + UInt64: C# treats this as a compile error (CS0034) because
+    // no lossless integer type covers both. We intentionally promote to
+    // Double (matching the codegen in codegen/tac_to_udon/types.ts) to
+    // keep the transpiler permissive; note precision loss is possible for
+    // values beyond ~2^53.
+    if (rankA === 4) return UdonType.Double;
     return MIXED_SIGN_PROMOTION[rankA] ?? a;
   }
   return rankA >= rankB ? a : b;
