@@ -478,46 +478,48 @@ export function visitBinaryExpression(
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
   );
-  const leftType = this.getOperandType(left);
-  const rightType = this.getOperandType(right);
-
   // String concatenation with mixed types: call ToString on non-string operand.
   // Entry conditions:
   //   (a) useStringBuilder is false → chain detection skipped entirely; all
   //       string + non-string binary exprs are handled here.
   //   (b) useStringBuilder is true AND flattenStringConcatChain returned null
   //       (e.g., left sub-expr like `(intA + intB)` has no string-typed leaf).
-  if (
-    node.operator === "+" &&
-    (leftType.udonType === UdonType.String ||
-      rightType.udonType === UdonType.String)
-  ) {
-    if (leftType.udonType !== UdonType.String) {
-      const strLeft = this.newTemp(PrimitiveTypes.string);
-      this.instructions.push(
-        new MethodCallInstruction(strLeft, left, "ToString", []),
+  // Note: leftType/rightType are only used inside this block (which returns early).
+  {
+    const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
+    if (
+      node.operator === "+" &&
+      (leftType.udonType === UdonType.String ||
+        rightType.udonType === UdonType.String)
+    ) {
+      if (leftType.udonType !== UdonType.String) {
+        const strLeft = this.newTemp(PrimitiveTypes.string);
+        this.instructions.push(
+          new MethodCallInstruction(strLeft, left, "ToString", []),
+        );
+        left = strLeft;
+      }
+      if (rightType.udonType !== UdonType.String) {
+        const strRight = this.newTemp(PrimitiveTypes.string);
+        this.instructions.push(
+          new MethodCallInstruction(strRight, right, "ToString", []),
+        );
+        right = strRight;
+      }
+      const concatExtern = this.requireExternSignature(
+        "System.String",
+        "Concat",
+        "method",
+        ["string", "string"],
+        "System.String",
       );
-      left = strLeft;
-    }
-    if (rightType.udonType !== UdonType.String) {
-      const strRight = this.newTemp(PrimitiveTypes.string);
+      const result = this.newTemp(PrimitiveTypes.string);
       this.instructions.push(
-        new MethodCallInstruction(strRight, right, "ToString", []),
+        new CallInstruction(result, concatExtern, [left, right]),
       );
-      right = strRight;
+      return result;
     }
-    const concatExtern = this.requireExternSignature(
-      "System.String",
-      "Concat",
-      "method",
-      ["string", "string"],
-      "System.String",
-    );
-    const result = this.newTemp(PrimitiveTypes.string);
-    this.instructions.push(
-      new CallInstruction(result, concatExtern, [left, right]),
-    );
-    return result;
   }
 
   const isShift = node.operator === "<<" || node.operator === ">>";

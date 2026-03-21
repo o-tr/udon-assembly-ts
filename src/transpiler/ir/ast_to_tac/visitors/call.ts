@@ -622,8 +622,13 @@ export function visitCallExpression(
           }
           if (count > 0) {
             // Choose a type-appropriate zero/default value.
-            let defaultVal: number | string | boolean;
-            if (isNumericUdonType(arrayType.udonType)) {
+            let defaultVal: number | string | boolean | bigint;
+            if (
+              arrayType.udonType === UdonType.Int64 ||
+              arrayType.udonType === UdonType.UInt64
+            ) {
+              defaultVal = 0n;
+            } else if (isNumericUdonType(arrayType.udonType)) {
               defaultVal = 0;
             } else if (arrayType.udonType === UdonType.String) {
               defaultVal = "";
@@ -631,7 +636,8 @@ export function visitCallExpression(
               defaultVal = false;
             } else {
               throw new Error(
-                `[udon-assembly-ts] new Array<T>(N) pre-population is only supported for numeric, string, and boolean element types. Got: ${arrayType.name}`,
+                `[udon-assembly-ts] new Array<T>(N) pre-population is only supported for numeric, string, and boolean element types. Got: ${arrayType.name}. ` +
+                  "Use a loop to initialise arrays of reference or struct types.",
               );
             }
             const defaultValue = createConstant(defaultVal, arrayType);

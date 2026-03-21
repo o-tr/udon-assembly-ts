@@ -1,3 +1,4 @@
+import { NUMERIC_RANK } from "./numeric_rank.js";
 import { UdonType } from "./types.js";
 
 export abstract class TypeSymbol {
@@ -201,24 +202,6 @@ export class ObjectTypeSymbol extends TypeSymbol {
     return true;
   }
 }
-
-/**
- * Numeric promotion rank (C#/.NET rules). Higher = wider type.
- * NOTE: Keep this in sync with the identical table in types.ts.
- * A circular dependency prevents sharing a single definition.
- */
-const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
-  [UdonType.Byte]: 1,
-  [UdonType.SByte]: 1,
-  [UdonType.Int16]: 2,
-  [UdonType.UInt16]: 2,
-  [UdonType.Int32]: 3,
-  [UdonType.UInt32]: 3,
-  [UdonType.Int64]: 4,
-  [UdonType.UInt64]: 4,
-  [UdonType.Single]: 5,
-  [UdonType.Double]: 6,
-};
 
 const SIGNED_TYPES = new Set<UdonType>([
   UdonType.SByte,

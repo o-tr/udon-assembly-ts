@@ -2,6 +2,7 @@
  * Type definitions for TypeScript to Udon transpiler frontend
  */
 
+import { NUMERIC_RANK } from "./numeric_rank.js";
 import type { TypeSymbol } from "./type_symbols.js";
 
 /**
@@ -42,22 +43,6 @@ export enum UdonType {
   DataToken = "DataToken",
 }
 
-// C#/.NET numeric promotion rank (higher = wider).
-// NOTE: Keep this in sync with the identical table in type_symbols.ts.
-// A circular dependency prevents sharing a single definition.
-const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
-  [UdonType.Byte]: 1,
-  [UdonType.SByte]: 1,
-  [UdonType.Int16]: 2,
-  [UdonType.UInt16]: 2,
-  [UdonType.Int32]: 3,
-  [UdonType.UInt32]: 3,
-  [UdonType.Int64]: 4,
-  [UdonType.UInt64]: 4,
-  [UdonType.Single]: 5,
-  [UdonType.Double]: 6,
-};
-
 /**
  * Returns true when the given UdonType is a numeric type.
  */
@@ -70,20 +55,7 @@ export function isNumericUdonType(t: UdonType): boolean {
  * meaning it needs an explicit cast before being used as a DataList index.
  */
 export function needsInt32IndexCoercion(udonType: UdonType): boolean {
-  switch (udonType) {
-    case UdonType.Single:
-    case UdonType.Double:
-    case UdonType.Int64:
-    case UdonType.UInt64:
-    case UdonType.UInt32:
-    case UdonType.Int16:
-    case UdonType.UInt16:
-    case UdonType.Byte:
-    case UdonType.SByte:
-      return true;
-    default:
-      return false;
-  }
+  return isNumericUdonType(udonType) && udonType !== UdonType.Int32;
 }
 
 export interface SymbolInfo {
