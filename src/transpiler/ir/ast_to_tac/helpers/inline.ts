@@ -1004,18 +1004,17 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
   const methodName = this.currentMethodName;
   if (!methodName) return;
 
-  const returnSiteIdxVar = createVariable(
-    `__returnSiteIdx_${this.currentClassName}_${methodName}`,
-    PrimitiveTypes.int32,
-    { isLocal: true },
-  );
-
-  // Use shared registry which includes both Start and self-call return sites
   if (!this.currentClassName) {
     throw new Error(
       `emitReturnSiteDispatch: missing currentClassName for method ${methodName}`,
     );
   }
+
+  const returnSiteIdxVar = createVariable(
+    `__returnSiteIdx_${this.currentClassName}_${methodName}`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
   const registryKey = `${this.currentClassName}.${methodName}`;
   const registry = this.recursiveReturnSites.get(registryKey);
   // The registry is always populated because non-recursive methods are
