@@ -299,6 +299,8 @@ export function visitForOfStatement(
       : null;
 
   if (inferredMapType) {
+    // keyType omitted — defaults to ExternTypes.dataToken, which is correct
+    // because DataDictionary.GetKeys() always returns DataToken-wrapped keys.
     const entriesList = emitMapEntriesList(this, iterableOperand);
     iterableOperand = entriesList;
   } else if (inferredSetType) {
