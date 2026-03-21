@@ -17,6 +17,7 @@ export class CompoundAssignmentLhsEval extends UdonSharpBehaviour {
   }
 
   Start(): void {
+    // biome-ignore lint/suspicious/noAssignInExpressions: testing compound assignment as expression
     const afterAdd: number = (this.GetBox().value += 5);
     Debug.Log(afterAdd);
     Debug.Log(this.accessCount);
@@ -24,6 +25,7 @@ export class CompoundAssignmentLhsEval extends UdonSharpBehaviour {
 
     this.accessCount = 0;
     this.box.value = 1;
+    // biome-ignore lint/suspicious/noAssignInExpressions: testing compound assignment as expression
     const afterMul: number = (this.GetBox().value *= 3);
     Debug.Log(afterMul);
     Debug.Log(this.accessCount);

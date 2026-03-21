@@ -644,4 +644,30 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "for_of_dict_keys_lookup.ts",
     expectedLogs: ["30", "2"],
   },
+  // --- Bug fix regression tests ---
+  {
+    name: "long_field_init",
+    sourceFile: "long_field_init.ts",
+    expectedLogs: ["100", "-50", "0", "50"],
+  },
+  {
+    name: "nameof_expression",
+    sourceFile: "nameof_expression.ts",
+    expectedLogs: ["myValue", "anotherVar"],
+  },
+  {
+    name: "typeof_expression",
+    sourceFile: "typeof_expression.ts",
+    expectedLogs: ["True"],
+  },
+  {
+    name: "enum_auto_increment",
+    sourceFile: "enum_auto_increment.ts",
+    expectedLogs: ["0", "1", "10", "11", "above medium"],
+  },
+  {
+    name: "element_access_computed",
+    sourceFile: "element_access_computed.ts",
+    expectedLogs: ["30", "60"],
+  },
 ];

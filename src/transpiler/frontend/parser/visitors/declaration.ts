@@ -510,6 +510,7 @@ export function visitEnumDeclaration(
         "Mixed string and numeric enum members are not supported",
         "Use either all string or all numeric enum members.",
       );
+      continue;
     }
 
     if (!enumKind) {

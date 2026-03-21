@@ -363,10 +363,7 @@ export function visitBinaryExpression(
     if (leftOriginal.kind === TACOperandKind.Variable) {
       const target = leftOriginal as VariableOperand;
       this.instructions.push(new CopyInstruction(target, assignValue));
-      this.maybeTrackInlineInstanceAssignment(
-        target,
-        assignValue,
-      );
+      this.maybeTrackInlineInstanceAssignment(target, assignValue);
       return assignValue;
     }
 

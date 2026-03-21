@@ -116,7 +116,7 @@ export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
       break;
     case ASTNodeKind.ExpressionStatement:
       this.visitExpression((node as ExpressionStatementNode).expression);
-  break;
+      break;
     case ASTNodeKind.AssignmentExpression:
     case ASTNodeKind.CallExpression:
     case ASTNodeKind.BinaryExpression:
