@@ -202,6 +202,78 @@ export class ObjectTypeSymbol extends TypeSymbol {
   }
 }
 
+/**
+ * Numeric promotion rank (C#/.NET rules). Higher = wider type.
+ */
+const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
+  [UdonType.Byte]: 1,
+  [UdonType.SByte]: 1,
+  [UdonType.Int16]: 2,
+  [UdonType.UInt16]: 2,
+  [UdonType.Int32]: 3,
+  [UdonType.UInt32]: 3,
+  [UdonType.Int64]: 4,
+  [UdonType.UInt64]: 4,
+  [UdonType.Single]: 5,
+  [UdonType.Double]: 6,
+};
+
+const SIGNED_TYPES = new Set<UdonType>([
+  UdonType.SByte,
+  UdonType.Int16,
+  UdonType.Int32,
+  UdonType.Int64,
+]);
+
+/**
+ * C#/.NET same-rank signed/unsigned promotion: when a signed and unsigned
+ * type share the same rank, the result promotes per C# implicit conversion:
+ *   sbyte + byte   → int   (Int32)  — C# promotes all narrow types to int
+ *   short + ushort → int   (Int32)
+ *   int   + uint   → long  (Int64)
+ *   long  + ulong  → compile error in C#; we fall back to Int64.
+ *
+ * Lazily initialised because it references PrimitiveTypes (defined below).
+ */
+let _sameRankPromotion: Partial<Record<number, PrimitiveTypeSymbol>> | null =
+  null;
+function getSameRankPromotion(): Partial<Record<number, PrimitiveTypeSymbol>> {
+  if (!_sameRankPromotion) {
+    _sameRankPromotion = {
+      1: PrimitiveTypes.int32, // sbyte + byte → int (C# promotes narrow types to int)
+      2: PrimitiveTypes.int32, // short + ushort → int
+      3: PrimitiveTypes.int64, // int + uint → long
+      4: PrimitiveTypes.int64, // long + ulong → long (C# error; best-effort)
+    };
+  }
+  return _sameRankPromotion;
+}
+
+/**
+ * Returns the promoted numeric type for a binary operation between two
+ * TypeSymbols, following C#/.NET implicit numeric promotion rules.
+ * Returns null if either type is not numeric.
+ */
+export function getPromotedType(
+  a: TypeSymbol,
+  b: TypeSymbol,
+): TypeSymbol | null {
+  const rankA = NUMERIC_RANK[a.udonType];
+  const rankB = NUMERIC_RANK[b.udonType];
+  if (rankA === undefined || rankB === undefined) return null;
+  if (rankA > rankB) return a;
+  if (rankB > rankA) return b;
+  // Same rank: if one is signed and one unsigned, promote to next wider signed type
+  const aIsSigned = SIGNED_TYPES.has(a.udonType);
+  const bIsSigned = SIGNED_TYPES.has(b.udonType);
+  if (aIsSigned !== bIsSigned) {
+    const promoted = getSameRankPromotion()[rankA];
+    if (promoted) return promoted;
+  }
+  // Same rank, same signedness: no promotion needed.
+  return a;
+}
+
 export const PrimitiveTypes = {
   int32: new PrimitiveTypeSymbol("int", UdonType.Int32),
   single: new PrimitiveTypeSymbol("float", UdonType.Single),

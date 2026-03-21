@@ -5,7 +5,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class TypeConversion extends UdonSharpBehaviour {
   Start(): void {
-    const a: number = 3.14;
+    const a: number = 3.25;
     Debug.Log(a);
     const b: number = 100;
     Debug.Log(b);

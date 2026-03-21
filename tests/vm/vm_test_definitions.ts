@@ -13,7 +13,8 @@ export interface VmTestCase {
 
 // Note: numeric Debug.Log output format depends on Udon's boxing behavior.
 // TypeScript `number` maps to SystemSingle (float).
-// C# float.ToString() omits decimal for whole numbers: 15f -> "15", 3.14f -> "3.14".
+// C# float.ToString() omits decimal for whole numbers: 15f -> "15", 3.25f -> "3.25".
+// Tests use single-precision-exact values (e.g., 3.25 instead of 3.14) to avoid platform-dependent formatting.
 // If the VM output format differs, adjust expectedLogs accordingly.
 
 export const VM_TEST_CASES: VmTestCase[] = [
@@ -157,7 +158,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "type_conversion",
     sourceFile: "type_conversion.ts",
-    expectedLogs: ["3.14", "100", "-42", "True", "False"],
+    expectedLogs: ["3.25", "100", "-42", "True", "False"],
   },
   // --- Variable mutation & accumulation ---
   {
@@ -326,7 +327,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "type_coercion_int_float",
     sourceFile: "type_coercion_int_float.ts",
-    expectedLogs: ["3.14", "6.28", "3", "7"],
+    expectedLogs: ["3.25", "6.5", "3", "7"],
   },
   {
     name: "type_coercion_string_number",
@@ -462,5 +463,165 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "convert_overload",
     sourceFile: "convert_overload.ts",
     expectedLogs: ["4", "42", "42"],
+  },
+  // --- Mixed numeric type operations ---
+  {
+    name: "mixed_numeric_arithmetic",
+    sourceFile: "mixed_numeric_arithmetic.ts",
+    expectedLogs: ["11.5", "20", "0.75", "23"],
+  },
+  {
+    name: "mixed_numeric_comparison",
+    sourceFile: "mixed_numeric_comparison.ts",
+    expectedLogs: ["True", "True", "False", "True"],
+  },
+  {
+    name: "numeric_cast_chain",
+    sourceFile: "numeric_cast_chain.ts",
+    expectedLogs: ["3", "3", "7", "7.5"],
+  },
+  // --- Multi-part string concat ---
+  {
+    name: "string_concat_many_parts",
+    sourceFile: "string_concat_many_parts.ts",
+    expectedLogs: ["abcde", "abcde", "xyzw"],
+  },
+  {
+    name: "string_concat_mixed_types",
+    sourceFile: "string_concat_mixed_types.ts",
+    expectedLogs: ["val=42", "flag=True", "f=3.25", "n=42 b=True"],
+  },
+  // --- String concat binary fallback (ToString coercion in binary +) ---
+  {
+    name: "string_concat_binary_fallback",
+    sourceFile: "string_concat_binary_fallback.ts",
+    expectedLogs: ["8 items", "total: 8"],
+  },
+  // --- Array index write/read ---
+  {
+    name: "array_index_write_read",
+    sourceFile: "array_index_write_read.ts",
+    expectedLogs: ["10", "20", "99", "10", "30"],
+  },
+  // --- For-of destructuring & break/continue ---
+  {
+    name: "for_of_dict_destructure",
+    sourceFile: "for_of_dict_destructure.ts",
+    expectedLogs: ["2", "30"],
+  },
+  {
+    name: "for_of_with_break",
+    sourceFile: "for_of_with_break.ts",
+    expectedLogs: ["1", "2", "3", "1", "3", "4"],
+  },
+  // --- Template literal multi-part ---
+  {
+    name: "template_literal_many_parts",
+    sourceFile: "template_literal_many_parts.ts",
+    expectedLogs: ["1-2-3", "sum=30", "test:42"],
+  },
+  // --- DataList set_Item ---
+  {
+    name: "data_list_set_item",
+    sourceFile: "data_list_set_item.ts",
+    expectedLogs: ["10", "20", "99", "30"],
+  },
+  // --- Switch expression discriminant ---
+  {
+    name: "switch_expression_discriminant",
+    sourceFile: "switch_expression_discriminant.ts",
+    expectedLogs: ["matched 5", "computed match", "1"],
+  },
+  {
+    name: "switch_enum_advanced",
+    sourceFile: "switch_enum_advanced.ts",
+    expectedLogs: ["green", "not red"],
+  },
+  // --- Short-circuit side effects ---
+  {
+    name: "short_circuit_side_effects",
+    sourceFile: "short_circuit_side_effects.ts",
+    expectedLogs: ["check-a", "False", "check-b", "True"],
+  },
+  // --- Multi inline class interaction ---
+  {
+    name: "inline_multi_class_interaction",
+    sourceFile: "inline_multi_class_interaction.ts",
+    expectedLogs: ["5", "12", "5"],
+  },
+  {
+    name: "inline_return_value_chain",
+    sourceFile: "inline_return_value_chain.ts",
+    expectedLogs: ["20", "26"],
+  },
+  // --- Field initialization ---
+  {
+    name: "field_init_order",
+    sourceFile: "field_init_order.ts",
+    expectedLogs: ["10", "default", "True", "3.25"],
+  },
+  // --- Null coalescing chain ---
+  {
+    name: "null_coalescing_chain",
+    sourceFile: "null_coalescing_chain.ts",
+    expectedLogs: ["first", "second", "fallback"],
+  },
+  // --- Null coalescing with method returns ---
+  {
+    name: "null_coalescing_method_returns",
+    sourceFile: "null_coalescing_method_returns.ts",
+    expectedLogs: ["hello", "was-null", "deep", "hello"],
+  },
+  // --- Try-catch advanced ---
+  {
+    name: "try_catch_nested",
+    sourceFile: "try_catch_nested.ts",
+    expectedLogs: [
+      "outer-start",
+      "inner-start",
+      "inner-caught",
+      "outer-continues",
+      "done",
+    ],
+  },
+  {
+    name: "try_catch_finally",
+    sourceFile: "try_catch_finally.ts",
+    expectedLogs: ["try-ok", "finally-1", "caught-2", "finally-2", "done"],
+  },
+  // --- Loop break/continue ---
+  {
+    name: "for_loop_break_continue",
+    sourceFile: "for_loop_break_continue.ts",
+    expectedLogs: ["1", "3", "5", "0", "1", "0", "1"],
+  },
+  {
+    name: "loop_variable_scoping",
+    sourceFile: "loop_variable_scoping.ts",
+    expectedLogs: ["0", "1", "2", "10", "11", "12"],
+  },
+  // --- Inline field defaults ---
+  {
+    name: "inline_field_defaults",
+    sourceFile: "inline_field_defaults.ts",
+    expectedLogs: ["5", "15", "20"],
+  },
+  // --- Nested ternary ---
+  {
+    name: "nested_ternary",
+    sourceFile: "nested_ternary.ts",
+    expectedLogs: ["big", "medium", "small"],
+  },
+  // --- Expression in call args ---
+  {
+    name: "expression_in_call_args",
+    sourceFile: "expression_in_call_args.ts",
+    expectedLogs: ["15", "10", "15"],
+  },
+  // --- For-of dict keys lookup ---
+  {
+    name: "for_of_dict_keys_lookup",
+    sourceFile: "for_of_dict_keys_lookup.ts",
+    expectedLogs: ["30", "2"],
   },
 ];
