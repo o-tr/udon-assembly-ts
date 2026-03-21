@@ -68,6 +68,39 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 
+/**
+ * Widen operands to a common promoted numeric type when they differ.
+ * Returns the (possibly widened) operands.
+ */
+function widenNumericOperands(
+  converter: ASTToTACConverter,
+  left: TACOperand,
+  right: TACOperand,
+): { left: TACOperand; right: TACOperand } {
+  const leftSym = converter.getOperandType(left);
+  const rightSym = converter.getOperandType(right);
+  if (leftSym.udonType === rightSym.udonType) {
+    return { left, right };
+  }
+  const promoted = getPromotedType(leftSym, rightSym);
+  if (!promoted) {
+    return { left, right };
+  }
+  let newLeft = left;
+  let newRight = right;
+  if (leftSym.udonType !== promoted.udonType) {
+    const w = converter.newTemp(promoted);
+    converter.instructions.push(new CastInstruction(w, left));
+    newLeft = w;
+  }
+  if (rightSym.udonType !== promoted.udonType) {
+    const w = converter.newTemp(promoted);
+    converter.instructions.push(new CastInstruction(w, right));
+    newRight = w;
+  }
+  return { left: newLeft, right: newRight };
+}
+
 function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
@@ -308,19 +341,23 @@ export function visitBinaryExpression(
     "^=": "^",
   };
   if (compoundOps[node.operator]) {
-    const left = this.visitExpression(node.left);
-    const right = this.visitExpression(node.right);
-    const resultType = this.getOperandType(left);
-    const newValue = this.newTemp(resultType);
+    const leftOriginal = this.visitExpression(node.left);
+    const rightOriginal = this.visitExpression(node.right);
+    const baseOp = compoundOps[node.operator];
+    // compoundOps does not contain <<= or >>=, so no shift guard needed.
+    // C# compound assignment: x op= y ≡ x = (T)(x op y), where T = typeof(x).
+    const w = widenNumericOperands(this, leftOriginal, rightOriginal);
+    const opResult = this.newTemp(this.getOperandType(w.left));
     this.instructions.push(
-      new BinaryOpInstruction(
-        newValue,
-        left,
-        compoundOps[node.operator],
-        right,
-      ),
+      new BinaryOpInstruction(opResult, w.left, baseOp, w.right),
     );
-    return this.assignToTarget(node.left, newValue);
+    // Narrow back to the original left operand's type if promotion widened it.
+    if (w.left !== leftOriginal) {
+      const narrowed = this.newTemp(this.getOperandType(leftOriginal));
+      this.instructions.push(new CastInstruction(narrowed, opResult));
+      return this.assignToTarget(node.left, narrowed);
+    }
+    return this.assignToTarget(node.left, opResult);
   }
   if (node.operator === "**") {
     const left = this.visitExpression(node.left);
@@ -441,51 +478,62 @@ export function visitBinaryExpression(
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
   );
-  const leftType = this.getOperandType(left);
-  const rightType = this.getOperandType(right);
-
   // String concatenation with mixed types: call ToString on non-string operand.
   // Entry conditions:
   //   (a) useStringBuilder is false → chain detection skipped entirely; all
   //       string + non-string binary exprs are handled here.
   //   (b) useStringBuilder is true AND flattenStringConcatChain returned null
   //       (e.g., left sub-expr like `(intA + intB)` has no string-typed leaf).
-  if (
-    node.operator === "+" &&
-    (leftType.udonType === UdonType.String ||
-      rightType.udonType === UdonType.String)
-  ) {
-    if (leftType.udonType !== UdonType.String) {
-      const strLeft = this.newTemp(PrimitiveTypes.string);
-      this.instructions.push(
-        new MethodCallInstruction(strLeft, left, "ToString", []),
+  // Note: leftType/rightType are only used inside this block (which returns early).
+  {
+    const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
+    if (
+      node.operator === "+" &&
+      (leftType.udonType === UdonType.String ||
+        rightType.udonType === UdonType.String)
+    ) {
+      if (leftType.udonType !== UdonType.String) {
+        const strLeft = this.newTemp(PrimitiveTypes.string);
+        this.instructions.push(
+          new MethodCallInstruction(strLeft, left, "ToString", []),
+        );
+        left = strLeft;
+      }
+      if (rightType.udonType !== UdonType.String) {
+        const strRight = this.newTemp(PrimitiveTypes.string);
+        this.instructions.push(
+          new MethodCallInstruction(strRight, right, "ToString", []),
+        );
+        right = strRight;
+      }
+      const concatExtern = this.requireExternSignature(
+        "System.String",
+        "Concat",
+        "method",
+        ["string", "string"],
+        "System.String",
       );
-      left = strLeft;
-    }
-    if (rightType.udonType !== UdonType.String) {
-      const strRight = this.newTemp(PrimitiveTypes.string);
+      const result = this.newTemp(PrimitiveTypes.string);
       this.instructions.push(
-        new MethodCallInstruction(strRight, right, "ToString", []),
+        new CallInstruction(result, concatExtern, [left, right]),
       );
-      right = strRight;
+      return result;
     }
-    const concatExtern = this.requireExternSignature(
-      "System.String",
-      "Concat",
-      "method",
-      ["string", "string"],
-      "System.String",
-    );
-    const result = this.newTemp(PrimitiveTypes.string);
-    this.instructions.push(
-      new CallInstruction(result, concatExtern, [left, right]),
-    );
-    return result;
+  }
+
+  const isShift = node.operator === "<<" || node.operator === ">>";
+
+  // Widen narrower operand when both are numeric and types differ (skip shifts).
+  if (!isShift) {
+    const w = widenNumericOperands(this, left, right);
+    left = w.left;
+    right = w.right;
   }
 
   const resultType = isComparison
     ? PrimitiveTypes.boolean
-    : (getPromotedType(leftType, rightType) ?? leftType);
+    : this.getOperandType(left);
   const result = this.newTemp(resultType);
 
   this.instructions.push(
