@@ -1129,6 +1129,15 @@ export function visitClassDeclaration(
         this.instructions.push(
           new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
         );
+        // Reset depth to 0 so a subsequent SendCustomEvent invocation
+        // triggers SP reset at method entry and can call this method again.
+        const overflowDepthVar = createVariable(depthVar, PrimitiveTypes.int32);
+        this.instructions.push(
+          new CopyInstruction(
+            overflowDepthVar,
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
         this.instructions.push(
           new ReturnInstruction(undefined, this.currentReturnVar),
         );
