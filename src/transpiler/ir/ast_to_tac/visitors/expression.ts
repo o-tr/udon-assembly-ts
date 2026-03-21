@@ -355,7 +355,7 @@ export function visitBinaryExpression(
       new BinaryOpInstruction(opResult, w.left, baseOp, w.right),
     );
     // Narrow back to the original left operand's type if promotion widened it.
-    if (w.widened && w.left !== leftOriginal) {
+    if (w.left !== leftOriginal) {
       const narrowed = this.newTemp(this.getOperandType(leftOriginal));
       this.instructions.push(new CastInstruction(narrowed, opResult));
       return this.assignToTarget(node.left, narrowed);

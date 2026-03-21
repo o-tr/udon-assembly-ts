@@ -43,6 +43,8 @@ export enum UdonType {
 }
 
 // C#/.NET numeric promotion rank (higher = wider).
+// NOTE: Keep this in sync with the identical table in type_symbols.ts.
+// A circular dependency prevents sharing a single definition.
 const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
   [UdonType.Byte]: 1,
   [UdonType.SByte]: 1,

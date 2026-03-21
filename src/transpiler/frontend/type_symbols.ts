@@ -204,6 +204,8 @@ export class ObjectTypeSymbol extends TypeSymbol {
 
 /**
  * Numeric promotion rank (C#/.NET rules). Higher = wider type.
+ * NOTE: Keep this in sync with the identical table in types.ts.
+ * A circular dependency prevents sharing a single definition.
  */
 const NUMERIC_RANK: Partial<Record<UdonType, number>> = {
   [UdonType.Byte]: 1,
