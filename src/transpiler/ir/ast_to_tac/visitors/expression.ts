@@ -5,6 +5,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getPromotedType,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
   ObjectType,
@@ -366,9 +367,11 @@ export function visitBinaryExpression(
     return this.visitShortCircuitOr(node);
   }
   // Attempt to detect chained string concatenation (a + b + c ...)
-  if (node.operator === "+") {
+  // Only run the chain flattener when useStringBuilder is true;
+  // otherwise the pairwise string-concat fallback below handles it.
+  if (node.operator === "+" && this.useStringBuilder) {
     const chain = flattenStringConcatChain(this, node);
-    if (chain && this.useStringBuilder) {
+    if (chain) {
       const partsOperands: TACOperand[] = [];
       for (const partNode of chain) {
         let partOperand: TACOperand;
@@ -428,16 +431,61 @@ export function visitBinaryExpression(
       return resultOperand;
     }
   }
-  const left = this.visitExpression(node.left);
-  const right = this.visitExpression(node.right);
+  // flattenStringConcatChain uses resolveTypeFromNode (read-only type
+  // inspection) and never calls visitExpression, so visiting left/right
+  // here does not double-evaluate any sub-expression.
+  let left = this.visitExpression(node.left);
+  let right = this.visitExpression(node.right);
 
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
   );
+  const leftType = this.getOperandType(left);
+  const rightType = this.getOperandType(right);
+
+  // String concatenation with mixed types: call ToString on non-string operand.
+  // Entry conditions:
+  //   (a) useStringBuilder is false → chain detection skipped entirely; all
+  //       string + non-string binary exprs are handled here.
+  //   (b) useStringBuilder is true AND flattenStringConcatChain returned null
+  //       (e.g., left sub-expr like `(intA + intB)` has no string-typed leaf).
+  if (
+    node.operator === "+" &&
+    (leftType.udonType === UdonType.String ||
+      rightType.udonType === UdonType.String)
+  ) {
+    if (leftType.udonType !== UdonType.String) {
+      const strLeft = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(strLeft, left, "ToString", []),
+      );
+      left = strLeft;
+    }
+    if (rightType.udonType !== UdonType.String) {
+      const strRight = this.newTemp(PrimitiveTypes.string);
+      this.instructions.push(
+        new MethodCallInstruction(strRight, right, "ToString", []),
+      );
+      right = strRight;
+    }
+    const concatExtern = this.requireExternSignature(
+      "System.String",
+      "Concat",
+      "method",
+      ["string", "string"],
+      "System.String",
+    );
+    const result = this.newTemp(PrimitiveTypes.string);
+    this.instructions.push(
+      new CallInstruction(result, concatExtern, [left, right]),
+    );
+    return result;
+  }
+
   const resultType = isComparison
     ? PrimitiveTypes.boolean
-    : this.getOperandType(left);
+    : (getPromotedType(leftType, rightType) ?? leftType);
   const result = this.newTemp(resultType);
 
   this.instructions.push(
