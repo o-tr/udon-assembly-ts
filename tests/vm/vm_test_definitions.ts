@@ -701,4 +701,24 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "static_getter_vector3.ts",
     expectedLogs: ["(0.00, 0.00, 0.00)"],
   },
+  // --- TS/Udon string compat methods ---
+  {
+    name: "string_ts_compat_methods",
+    sourceFile: "string_ts_compat_methods.ts",
+    expectedLogs: [
+      "6", // indexOf("World")
+      "-1", // indexOf("xyz")
+      "True", // includes("Hello")
+      "False", // includes("xyz")
+      "True", // startsWith("Hello")
+      "False", // startsWith("World")
+      "True", // endsWith("World")
+      "False", // endsWith("Hello")
+      "hello world", // toLowerCase()
+      "HELLO WORLD", // toUpperCase()
+      "hi", // trim()
+      "World", // slice(6)
+      "Hello", // slice(0, 5)
+    ],
+  },
 ];
