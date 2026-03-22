@@ -1197,6 +1197,8 @@ export function visitCallExpression(
           ]),
         );
       } else {
+        // slice() with 0 args is a TS type-error; 3+ args can't happen via the stub.
+        // Emit a best-effort call and let the assembler surface the error.
         this.instructions.push(
           new MethodCallInstruction(
             result,

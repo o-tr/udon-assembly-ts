@@ -75,8 +75,8 @@ namespace VRC.Udon.Editor.ProgramSources
         private static IUdonProgram AssembleWithHeapSize(
             string assembly, uint heapSize, IUAssemblyTypeResolver typeResolver)
         {
-            const int maxRetries = 4;
-            const uint maxHeapSize = 1048576;
+            const int maxRetries = 4; // tolerate transient assembly failures (e.g. type-resolver race)
+            const uint maxHeapSize = 1048576; // 1 MB cap to prevent runaway allocations
             Exception lastException = null;
             for (int i = 0; i < maxRetries; i++)
             {
@@ -124,6 +124,7 @@ namespace VRC.Udon.Editor.ProgramSources
                 if (colonIdx <= 0) continue;
                 dataVarCount++;
             }
+            // +128 covers instruction/metadata/stack overhead; 512 is the minimum viable heap (in address slots)
             return Math.Max(dataVarCount + 128, 512);
         }
     }
