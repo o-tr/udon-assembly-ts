@@ -67,7 +67,7 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
-import { resolveExternReturnType } from "./call.js";
+import { resolveExternReturnType } from "../helpers/extern.js";
 
 /**
  * Widen operands to a common promoted numeric type when they differ.
