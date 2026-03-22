@@ -49,6 +49,7 @@ import {
   TACOperandKind,
   type VariableOperand,
 } from "../../tac_operand.js";
+import type { UdonBehaviourMethodLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
   emitMapEntriesList,
@@ -60,6 +61,66 @@ import { resolveExternReturnType } from "../helpers/extern.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
+
+/**
+ * Build a fallback IPC method layout from interface metadata when the
+ * layout wasn't pre-built (e.g. implementing class is in another file).
+ * Naming convention matches buildUdonBehaviourLayouts in udon_behaviour_layout.ts.
+ * Results are cached per converter instance to avoid redundant computation.
+ */
+const fallbackLayoutCache = new WeakMap<
+  ASTToTACConverter,
+  Map<string, UdonBehaviourMethodLayout | undefined>
+>();
+
+function buildFallbackMethodLayout(
+  converter: ASTToTACConverter,
+  interfaceName: string,
+  methodName: string,
+): UdonBehaviourMethodLayout | undefined {
+  let cache = fallbackLayoutCache.get(converter);
+  if (!cache) {
+    cache = new Map();
+    fallbackLayoutCache.set(converter, cache);
+  }
+  const cacheKey = `${interfaceName}:${methodName}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const iface = converter.classRegistry?.getInterface(interfaceName);
+  if (!iface) {
+    cache.set(cacheKey, undefined);
+    return undefined;
+  }
+  const method = iface.methods.find((m) => m.name === methodName);
+  if (!method) {
+    cache.set(cacheKey, undefined);
+    return undefined;
+  }
+
+  const exportMethodName = `${interfaceName}_${methodName}`;
+  const parameterExportNames = method.parameters.map(
+    (_, i) => `${interfaceName}_${methodName}__param_${i}`,
+  );
+  const parameterTypes = method.parameters.map((p) =>
+    converter.typeMapper.mapTypeScriptType(p.type),
+  );
+  const returnType = converter.typeMapper.mapTypeScriptType(method.returnType);
+  const returnExportName =
+    returnType !== PrimitiveTypes.void
+      ? `${interfaceName}_${methodName}__ret`
+      : null;
+
+  const layout: UdonBehaviourMethodLayout = {
+    exportMethodName,
+    returnExportName,
+    parameterExportNames,
+    parameterTypes,
+    returnType,
+    isPublic: true,
+  };
+  cache.set(cacheKey, layout);
+  return layout;
+}
 
 const resolveSetElementType = (
   setType: TypeSymbol | null,
@@ -1036,9 +1097,11 @@ export function visitCallExpression(
       this.isUdonBehaviourType(objectType) &&
       propAccess.object.kind !== ASTNodeKind.ThisExpression
     ) {
-      const layout = this.getUdonBehaviourLayout(objectType.name)?.get(
-        propAccess.property,
-      );
+      const layout =
+        this.getUdonBehaviourLayout(objectType.name)?.get(
+          propAccess.property,
+        ) ??
+        buildFallbackMethodLayout(this, objectType.name, propAccess.property);
       const methodName = createConstant(
         layout?.exportMethodName ?? propAccess.property,
         PrimitiveTypes.string,
