@@ -156,17 +156,11 @@ export class TypeScriptToUdonTranspiler {
     });
     const externSignatures = udonConverter.getExternSignatures();
     let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
-    if (options.reflect === true) {
-      const classNodes = program.statements.filter(
-        (node): node is ClassDeclarationNode =>
-          node.kind === ASTNodeKind.ClassDeclaration,
+    if (options.reflect === true && entryClassName) {
+      dataSectionWithTypes = appendReflectionData(
+        dataSectionWithTypes,
+        entryClassName,
       );
-      if (classNodes.length > 0) {
-        dataSectionWithTypes = appendReflectionData(
-          dataSectionWithTypes,
-          classNodes[0].name,
-        );
-      }
     }
 
     // Phase 5: Generate .uasm file
@@ -196,7 +190,10 @@ export class TypeScriptToUdonTranspiler {
     return {
       uasm,
       tac: tacText,
-      warnings: assembler.getWarnings(),
+      warnings:
+        assembler.getWarnings().length > 0
+          ? assembler.getWarnings()
+          : undefined,
     };
   }
 

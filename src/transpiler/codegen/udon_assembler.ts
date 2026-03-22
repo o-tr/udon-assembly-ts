@@ -78,7 +78,7 @@ export class UdonAssembler {
   private warnings: string[] = [];
 
   getWarnings(): string[] {
-    return this.warnings;
+    return this.warnings.slice();
   }
 
   private expandExponentialLiteral(text: string): string {
@@ -416,8 +416,10 @@ export class UdonAssembler {
           int64Value < (isUnsigned ? 0n : -2147483648n) ||
           int64Value > 2147483647n
         ) {
+          const displayValue =
+            typeof value === "bigint" ? `${value}n` : JSON.stringify(value);
           this.warnings.push(
-            `[TRACK_INT64_INIT_LIMITATION] ${udonType} value ${JSON.stringify(value)} on '${name}' is outside the representable Int32 range for runtime init; leaving as null`,
+            `[TRACK_INT64_INIT_LIMITATION] ${udonType} value ${displayValue} on '${name}' is outside the representable Int32 range for runtime init; leaving as null`,
           );
           continue;
         }

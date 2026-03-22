@@ -482,6 +482,7 @@ export function visitNameofExpression(
       "nameof() requires exactly one argument",
       "Provide an identifier as argument.",
     );
+    return { kind: ASTNodeKind.NameofExpression, name: "" };
   }
   const arg = node.arguments[0];
   let name: string;
@@ -528,6 +529,11 @@ export function visitElementAccessExpression(
       "Element access expression requires an index argument",
       "Provide an index inside the brackets.",
     );
+    return {
+      kind: ASTNodeKind.ArrayAccessExpression,
+      array: arrayExpr,
+      index: this.createUnsupportedExpressionPlaceholder(),
+    };
   }
   const indexExpr = this.visitExpression(node.argumentExpression);
   return {
