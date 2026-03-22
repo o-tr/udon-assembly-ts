@@ -881,8 +881,10 @@ export const deconstructSSA = (
           terminatorIndex >= 0 ? predInsts[terminatorIndex] : null;
         if (terminator?.kind === TACInstructionKind.ConditionalJump) {
           const jump = terminator as ConditionalJumpInstruction;
-          const jumpLabel = jump.label as LabelOperand;
-          if (jumpLabel?.name === targetLabel.name) {
+          if (
+            jump.label.kind === TACOperandKind.Label &&
+            (jump.label as LabelOperand).name === targetLabel.name
+          ) {
             const edgeLabel = insertEdgeBlock(targetLabel, lowered);
             jump.label = edgeLabel;
             continue;
