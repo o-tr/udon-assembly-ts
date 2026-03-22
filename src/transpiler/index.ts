@@ -187,13 +187,11 @@ export class TypeScriptToUdonTranspiler {
       registry,
     );
 
+    const warnings = assembler.getWarnings();
     return {
       uasm,
       tac: tacText,
-      warnings:
-        assembler.getWarnings().length > 0
-          ? assembler.getWarnings()
-          : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
 
