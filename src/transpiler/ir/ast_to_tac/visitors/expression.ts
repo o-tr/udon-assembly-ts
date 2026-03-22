@@ -1431,6 +1431,41 @@ export function visitObjectLiteralExpression(
   this: ASTToTACConverter,
   node: ObjectLiteralExpressionNode,
 ): TACOperand {
+  const expected = this.currentExpectedType;
+  if (
+    expected instanceof InterfaceTypeSymbol &&
+    expected.properties.size > 0 &&
+    !node.properties.some((p) => p.kind === "spread")
+  ) {
+    this.currentExpectedType = undefined;
+    const className = expected.name;
+    // Register the InterfaceTypeSymbol so mapInlineProperty can resolve properties
+    if (!this.typeMapper.getAlias(className)) {
+      this.typeMapper.registerTypeAlias(className, expected);
+    }
+    const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+    const instanceHandle = createVariable(
+      `${instancePrefix}__handle`,
+      ObjectType,
+    );
+    this.inlineInstanceMap.set(instanceHandle.name, {
+      prefix: instancePrefix,
+      className,
+    });
+    for (const prop of node.properties) {
+      if (prop.kind !== "property") continue;
+      const propType = expected.properties.get(prop.key);
+      const propVar = createVariable(
+        `${instancePrefix}_${prop.key}`,
+        propType ?? ObjectType,
+      );
+      const value = this.visitExpression(prop.value);
+      this.instructions.push(new AssignmentInstruction(propVar, value));
+      this.maybeTrackInlineInstanceAssignment(propVar, value);
+    }
+    return instanceHandle;
+  }
+  this.currentExpectedType = undefined;
   return this.emitDictionaryFromProperties(node.properties);
 }
 
