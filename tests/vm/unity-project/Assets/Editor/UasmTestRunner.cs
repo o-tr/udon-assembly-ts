@@ -186,14 +186,7 @@ public static class UasmTestRunner
             try
             {
                 uint heapSize = TASMProgramAsset.CalculateHeapSize(uasmText);
-                if (heapSize <= 512)
-                {
-                    program = UdonEditorManager.Instance.Assemble(uasmText);
-                }
-                else
-                {
-                    program = TASMProgramAsset.AssembleWithHeapSize(uasmText, heapSize);
-                }
+                program = TASMProgramAsset.AssembleWithHeapSize(uasmText, heapSize);
             }
             catch (Exception e)
             {

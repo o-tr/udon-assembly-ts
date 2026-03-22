@@ -66,7 +66,11 @@ export class SystemString {
     return "";
   }
 
-  // JS slice → Substring mapping (negative indices handled by transpiler)
+  // JS slice → Substring mapping (only constant negative indices are adjusted
+  // at compile time; runtime negative values are passed through as-is).
+  // Note: the transpiler special-cases slice() calls in call.ts and converts
+  // them to Substring with parameter adjustment, so this @UdonExtern is never
+  // used for dispatch — it exists only as documentation of the underlying extern.
   slice(_start: UdonInt): string;
   slice(_start: UdonInt, _end: UdonInt): string;
   @UdonExtern({

@@ -453,10 +453,7 @@ export function visitBinaryExpression(
       if (partsOperands.length === 0) {
         return createConstant("", PrimitiveTypes.string);
       }
-      if (
-        this.useStringBuilder &&
-        partsOperands.length >= this.stringBuilderThreshold
-      ) {
+      if (partsOperands.length >= this.stringBuilderThreshold) {
         return generateStringBuilderConcat(this, partsOperands);
       }
       // Below threshold: build a String.Concat chain directly to avoid re-visiting
