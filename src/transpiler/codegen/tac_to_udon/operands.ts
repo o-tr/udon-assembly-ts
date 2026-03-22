@@ -1,3 +1,4 @@
+import { ArrayTypeSymbol } from "../../frontend/type_symbols.js";
 import {
   type ConstantOperand,
   type LabelOperand,
@@ -8,6 +9,7 @@ import {
 } from "../../ir/tac_operand.js";
 import { PushInstruction } from "../udon_instruction.js";
 import {
+  isKnownExternElementType,
   toUdonTypeNameWithArray,
   udonTypeToCSharp,
 } from "../udon_type_resolver.js";
@@ -79,6 +81,13 @@ export function getOperandTypeName(
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
+      const typeSymbol = (operand as { type?: unknown }).type;
+      if (
+        typeSymbol instanceof ArrayTypeSymbol &&
+        !isKnownExternElementType(typeSymbol.elementType.name)
+      ) {
+        return "SystemObjectArray";
+      }
       const type =
         (operand as { type?: { udonType?: string } }).type?.udonType ??
         "Object";

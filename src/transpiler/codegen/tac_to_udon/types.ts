@@ -1,4 +1,6 @@
+import { ArrayTypeSymbol } from "../../frontend/type_symbols.js";
 import { type TACOperand, TACOperandKind } from "../../ir/tac_operand.js";
+import { isKnownExternElementType } from "../udon_type_resolver.js";
 import { TACToUdonConverter } from "./converter.js";
 
 export function isFloatType(
@@ -121,6 +123,13 @@ export function getOperandTsTypeName(
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
+      const typeSymbol = (operand as { type?: unknown }).type;
+      if (
+        typeSymbol instanceof ArrayTypeSymbol &&
+        !isKnownExternElementType(typeSymbol.elementType.name)
+      ) {
+        return "object[]";
+      }
       const typeName =
         (operand as { type?: { name?: string } }).type?.name ?? "object";
       return typeName;
