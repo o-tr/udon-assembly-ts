@@ -1393,7 +1393,7 @@ export function visitPropertyAccessExpression(
           resultType;
       }
     }
-    const result = this.newTemp(resultType ?? PrimitiveTypes.single);
+    const result = this.newTemp(resultType ?? ObjectType);
     this.instructions.push(
       new PropertyGetInstruction(result, object, node.property),
     );

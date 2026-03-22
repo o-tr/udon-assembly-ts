@@ -682,6 +682,12 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "element_access_computed.ts",
     expectedLogs: ["30", "60"],
   },
+  // --- Property access type fallback ---
+  {
+    name: "property_access_type_fallback",
+    sourceFile: "property_access_type_fallback.ts",
+    expectedLogs: ["hello", "True", "42", "hello"],
+  },
   // --- CFG type safety: optimizer with complex control flow ---
   {
     name: "optimized_complex_control_flow",
