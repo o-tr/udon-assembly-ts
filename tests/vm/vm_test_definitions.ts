@@ -558,6 +558,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["green", "not red"],
   },
   {
+    name: "switch_call_analyzer",
+    sourceFile: "switch_call_analyzer.ts",
+    expectedLogs: ["20"],
+  },
+  {
     name: "switch_continue_in_loop",
     sourceFile: "switch_continue_in_loop.ts",
     expectedLogs: ["0", "1", "skip", "3", "4"],
