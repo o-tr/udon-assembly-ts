@@ -1182,6 +1182,8 @@ export function visitCallExpression(
           new MethodCallInstruction(result, object, "Substring", [startInt]),
         );
       } else if (evaluatedArgs.length === 2) {
+        // NOTE: JS-style clamping (end > length → clamp, end < start → return "")
+        // is NOT emitted. Callers must ensure 0 ≤ start ≤ end ≤ string.length.
         const startInt = resolveIndex(evaluatedArgs[0]);
         const endInt = resolveIndex(evaluatedArgs[1]);
         const lengthArg = this.newTemp(PrimitiveTypes.int32);
