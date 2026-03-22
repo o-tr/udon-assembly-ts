@@ -768,6 +768,9 @@ export const buildSSA = (
   return { instructions: ordered, changed: true };
 };
 
+/** Module-level counter to ensure SSA edge/block labels are unique across calls. */
+let ssaEdgeLabelCounter = 0;
+
 export const deconstructSSA = (
   instructions: TACInstruction[],
   options?: CFGPassOptions,
@@ -778,7 +781,7 @@ export const deconstructSSA = (
   const blocks: BlockInsts = new Map();
   const orderedBlockIds = cfg.blocks.map((block) => block.id);
   let nextBlockId = cfg.blocks.length;
-  let nextEdgeLabelId = 0;
+  let nextEdgeLabelId = ssaEdgeLabelCounter;
   let nextTempId = collectTemps(instructions);
   const createTemp = (source: TACOperand): TACOperand => {
     const type = operandType(source);
@@ -911,6 +914,7 @@ export const deconstructSSA = (
     if (insts) ordered.push(...insts);
   }
 
+  ssaEdgeLabelCounter = nextEdgeLabelId;
   return { instructions: stripSsaVersions(ordered), changed: true };
 };
 

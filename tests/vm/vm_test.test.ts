@@ -62,7 +62,9 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       try {
         const sourceFile = path.join(casesDir, testCase.sourceFile);
         const source = readFileSync(sourceFile, "utf-8");
-        result = transpiler.transpile(source);
+        result = transpiler.transpile(source, {
+          optimize: testCase.optimize,
+        });
       } catch (err) {
         throw new Error(
           `Transpilation failed for "${testCase.name}" (${testCase.sourceFile}): ${err}`,
