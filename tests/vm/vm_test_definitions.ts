@@ -9,6 +9,8 @@ export interface VmTestCase {
   expectedLogs: string[];
   /** If true, the test expects a VM/assembly error */
   expectError?: boolean;
+  /** If true, enable TAC optimizer before code generation */
+  optimize?: boolean;
 }
 
 // Note: numeric Debug.Log output format depends on Udon's boxing behavior.
@@ -679,6 +681,13 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "element_access_computed",
     sourceFile: "element_access_computed.ts",
     expectedLogs: ["30", "60"],
+  },
+  // --- CFG type safety: optimizer with complex control flow ---
+  {
+    name: "optimized_complex_control_flow",
+    sourceFile: "optimized_complex_control_flow.ts",
+    optimize: true,
+    expectedLogs: ["343", "280", "30"],
   },
   // --- Static getter returning non-Single type (Vector3) ---
   {

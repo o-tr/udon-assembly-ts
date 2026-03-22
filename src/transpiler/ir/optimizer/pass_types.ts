@@ -12,7 +12,16 @@ export type PassResult = {
 /** The CFG structure as returned by buildCFG. */
 export type CFG = { blocks: BasicBlock[] };
 
+/**
+ * Mutable counter that callers can thread through multiple SSA
+ * deconstruction calls to guarantee label-name uniqueness across iterations.
+ */
+export type EdgeLabelSeed = { value: number };
+
 /** Options for passes that can accept a cached CFG. */
 export type CFGPassOptions = {
   cachedCFG?: CFG;
+  /** When provided, SSA edge-block labels are numbered starting from this
+   *  seed and the seed is updated in-place so successive calls stay unique. */
+  edgeLabelSeed?: EdgeLabelSeed;
 };

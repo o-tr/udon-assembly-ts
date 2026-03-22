@@ -78,20 +78,20 @@ export const buildCFG = (
   for (const block of blocks) {
     const lastInst = instructions[block.end];
     if (lastInst.kind === TACInstructionKind.UnconditionalJump) {
-      const label = (lastInst as UnconditionalJumpInstruction).label as {
-        name?: string;
-      };
-      const target = label?.name ? labelToBlock.get(label.name) : undefined;
-      if (target !== undefined) {
-        block.succs.push(target);
+      const jumpInst = lastInst as UnconditionalJumpInstruction;
+      if (jumpInst.label.kind === TACOperandKind.Label) {
+        const target = labelToBlock.get((jumpInst.label as LabelOperand).name);
+        if (target !== undefined) {
+          block.succs.push(target);
+        }
       }
     } else if (lastInst.kind === TACInstructionKind.ConditionalJump) {
-      const label = (lastInst as ConditionalJumpInstruction).label as {
-        name?: string;
-      };
-      const target = label?.name ? labelToBlock.get(label.name) : undefined;
-      if (target !== undefined) {
-        block.succs.push(target);
+      const jumpInst = lastInst as ConditionalJumpInstruction;
+      if (jumpInst.label.kind === TACOperandKind.Label) {
+        const target = labelToBlock.get((jumpInst.label as LabelOperand).name);
+        if (target !== undefined) {
+          block.succs.push(target);
+        }
       }
       const fallthrough = block.id + 1;
       if (fallthrough < blocks.length) {
