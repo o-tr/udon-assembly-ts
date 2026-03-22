@@ -557,6 +557,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "switch_enum_advanced.ts",
     expectedLogs: ["green", "not red"],
   },
+  {
+    name: "switch_continue_in_loop",
+    sourceFile: "switch_continue_in_loop.ts",
+    expectedLogs: ["0", "1", "skip", "3", "4"],
+  },
   // --- Short-circuit side effects ---
   {
     name: "short_circuit_side_effects",
