@@ -86,15 +86,15 @@ export class SystemString {
   Trim(): string {
     return "";
   }
-  @UdonExtern({ signature: "SystemString.__ToLower____SystemString" })
+  @UdonExtern({ signature: "SystemString.__ToLower__SystemString" })
   toLowerCase(): string {
     return "";
   }
-  @UdonExtern({ signature: "SystemString.__ToUpper____SystemString" })
+  @UdonExtern({ signature: "SystemString.__ToUpper__SystemString" })
   toUpperCase(): string {
     return "";
   }
-  @UdonExtern({ signature: "SystemString.__Trim____SystemString" })
+  @UdonExtern({ signature: "SystemString.__Trim__SystemString" })
   trim(): string {
     return "";
   }
