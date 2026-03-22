@@ -75,7 +75,7 @@ namespace VRC.Udon.Editor.ProgramSources
         private static IUdonProgram AssembleWithHeapSize(
             string assembly, uint heapSize, IUAssemblyTypeResolver typeResolver)
         {
-            const int maxRetries = 4; // tolerate transient assembly failures (e.g. type-resolver race)
+            const int maxRetries = 4; // retry on IndexOutOfRangeException by doubling heap size
             const uint maxHeapSize = 1048576; // 1 MB cap to prevent runaway allocations
             Exception lastException = null;
             for (int i = 0; i < maxRetries; i++)

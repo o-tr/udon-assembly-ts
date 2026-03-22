@@ -454,9 +454,10 @@ function findBuiltinStubDirs(): string[] {
     path.resolve(here, "../../../src/stubs"),
     path.resolve(here, "../../../../src/stubs"),
   ];
+  const uniqueCandidates = [...new Set(candidates)];
   // Prefer directories containing .ts source files with decorator metadata
   // over dist .d.ts files (which lack @UdonExtern decorators).
-  const existing = candidates.filter((dir) => fs.existsSync(dir));
+  const existing = uniqueCandidates.filter((dir) => fs.existsSync(dir));
   const withTsSources = existing.filter((dir) => {
     try {
       return fs
