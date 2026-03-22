@@ -75,6 +75,12 @@ const BOOLEAN_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
  * Udon assembler - generates .uasm output
  */
 export class UdonAssembler {
+  private warnings: string[] = [];
+
+  getWarnings(): string[] {
+    return this.warnings.slice();
+  }
+
   private expandExponentialLiteral(text: string): string {
     const match = /^([+-]?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(text);
     if (!match) {
@@ -122,7 +128,7 @@ export class UdonAssembler {
     // Single.Parse / Double.Parse.  This branch should not be reached
     // in practice, but guards against callers that bypass lowering.
     if (this.integerPartOverflowsInt32(expanded)) {
-      console.warn(
+      this.warnings.push(
         `[formatFloatLiteral] Overflowing float value ${value} was not lowered by lowerRestrictedTypes; emitting null. Ensure lowerRestrictedTypes is called before assembly.`,
       );
       return "null";
@@ -410,8 +416,10 @@ export class UdonAssembler {
           int64Value < (isUnsigned ? 0n : -2147483648n) ||
           int64Value > 2147483647n
         ) {
-          console.warn(
-            `[TRACK_INT64_INIT_LIMITATION] ${udonType} value ${JSON.stringify(value)} on '${name}' is outside the representable Int32 range for runtime init; leaving as null`,
+          const displayValue =
+            typeof value === "bigint" ? `${value}n` : JSON.stringify(value);
+          this.warnings.push(
+            `[TRACK_INT64_INIT_LIMITATION] ${udonType} value ${displayValue} on '${name}' is outside the representable Int32 range for runtime init; leaving as null`,
           );
           continue;
         }
@@ -516,7 +524,7 @@ export class UdonAssembler {
         initInstructions.push(new PushInstruction(name));
         initInstructions.push(new ExternInstruction(parseExternName, true));
       } else {
-        console.warn(
+        this.warnings.push(
           `No runtime init path for restricted type value ${JSON.stringify(value)} on '${name}' (${udonType}); leaving as null`,
         );
       }
@@ -536,7 +544,7 @@ export class UdonAssembler {
     if (startIdx !== -1) {
       mutInstructions.splice(startIdx + 1, 0, ...initInstructions);
     } else {
-      console.warn(
+      this.warnings.push(
         "_start label not found; restricted-type init code prepended to instruction stream and may be dead code. Ensure the program has an explicit _start or event entry point.",
       );
       mutInstructions.unshift(...initInstructions);
@@ -686,7 +694,7 @@ export class UdonAssembler {
           if (byteAddr !== undefined) {
             lines.push(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
           } else {
-            console.warn(
+            this.warnings.push(
               `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
             );
             lines.push("    JUMP, 0xFFFFFFFC");
@@ -706,7 +714,7 @@ export class UdonAssembler {
           if (byteAddr !== undefined) {
             lines.push(`    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`);
           } else {
-            console.warn(
+            this.warnings.push(
               `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
             );
             lines.push("    JUMP_IF_FALSE, 0xFFFFFFFC");
