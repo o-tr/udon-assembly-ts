@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
+import { appendReflectionData } from "../codegen/reflection.js";
 import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "../codegen/udon_assembler.js";
 import { ErrorCollector } from "../errors/error_collector.js";
@@ -71,6 +72,7 @@ export interface BatchTranspilerOptions {
 export interface BatchFileResult {
   className: string;
   outputPath: string;
+  warnings?: string[];
 }
 
 export interface BatchResult {
@@ -420,7 +422,7 @@ export class BatchTranspiler {
       const externSignatures = udonConverter.getExternSignatures();
       let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
       if (options.reflect === true) {
-        dataSectionWithTypes = this.appendReflectionData(
+        dataSectionWithTypes = appendReflectionData(
           dataSectionWithTypes,
           entryPoint.name,
         );
@@ -485,7 +487,12 @@ export class BatchTranspiler {
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
-      outputs.push({ className: entryPoint.name, outputPath: outPath });
+      const assemblerWarnings = assembler.getWarnings();
+      outputs.push({
+        className: entryPoint.name,
+        outputPath: outPath,
+        warnings: assemblerWarnings.length > 0 ? assemblerWarnings : undefined,
+      });
     }
 
     if (errorCollector.hasErrors()) {
@@ -702,7 +709,7 @@ export class BatchTranspiler {
     });
     let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
     if (reflect === true) {
-      dataSectionWithTypes = this.appendReflectionData(
+      dataSectionWithTypes = appendReflectionData(
         dataSectionWithTypes,
         entryPointName,
       );
@@ -914,30 +921,6 @@ export class BatchTranspiler {
     }
 
     return nodes;
-  }
-
-  private appendReflectionData(
-    dataSection: Array<[string, number, string, unknown]>,
-    className: string,
-  ): Array<[string, number, string, unknown]> {
-    let maxAddress = dataSection.reduce(
-      (max, entry) => Math.max(max, entry[1]),
-      -1,
-    );
-    const nextAddress = () => {
-      maxAddress += 1;
-      return maxAddress;
-    };
-
-    // typeId is null — UdonSharp's runtime resolves types internally
-    // and our computed hash would not match.
-    const entries: Array<[string, number, string, unknown]> = [
-      ["__refl_typeid", nextAddress(), "Int64", null],
-      ["__refl_typename", nextAddress(), "String", className],
-      ["__refl_typeids", nextAddress(), "Int64Array", null],
-    ];
-
-    return [...dataSection, ...entries];
   }
 
   private buildClassNode(

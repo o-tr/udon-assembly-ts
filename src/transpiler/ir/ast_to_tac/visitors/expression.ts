@@ -352,13 +352,23 @@ export function visitBinaryExpression(
     this.instructions.push(
       new BinaryOpInstruction(opResult, w.left, baseOp, w.right),
     );
+
+    let assignValue: TACOperand = opResult;
     // Narrow back to the original left operand's type if promotion widened it.
     if (w.left !== leftOriginal) {
       const narrowed = this.newTemp(this.getOperandType(leftOriginal));
       this.instructions.push(new CastInstruction(narrowed, opResult));
-      return this.assignToTarget(node.left, narrowed);
+      assignValue = narrowed;
     }
-    return this.assignToTarget(node.left, opResult);
+
+    if (leftOriginal.kind === TACOperandKind.Variable) {
+      const target = leftOriginal as VariableOperand;
+      this.instructions.push(new CopyInstruction(target, assignValue));
+      this.maybeTrackInlineInstanceAssignment(target, assignValue);
+      return assignValue;
+    }
+
+    return this.assignToTarget(node.left, assignValue);
   }
   if (node.operator === "**") {
     const left = this.visitExpression(node.left);
@@ -1605,11 +1615,28 @@ export function visitNameofExpression(
   return createConstant(node.name, PrimitiveTypes.string);
 }
 
+const SHORT_TO_DOTNET_TYPE: Record<string, string> = {
+  float: "System.Single",
+  int: "System.Int32",
+  bool: "System.Boolean",
+  string: "System.String",
+  double: "System.Double",
+  object: "System.Object",
+  byte: "System.Byte",
+  sbyte: "System.SByte",
+  short: "System.Int16",
+  ushort: "System.UInt16",
+  uint: "System.UInt32",
+  long: "System.Int64",
+  ulong: "System.UInt64",
+};
+
 export function visitTypeofExpression(
   this: ASTToTACConverter,
   node: TypeofExpressionNode,
 ): TACOperand {
-  const typeNameConst = createConstant(node.typeName, PrimitiveTypes.string);
+  const qualifiedName = SHORT_TO_DOTNET_TYPE[node.typeName] ?? node.typeName;
+  const typeNameConst = createConstant(qualifiedName, PrimitiveTypes.string);
   const result = this.newTemp(ExternTypes.systemType);
   const externSig = this.requireExternSignature(
     "Type",

@@ -32,6 +32,10 @@ export class SymbolTable {
     if (this.currentScope > 0) {
       this.scopes.pop();
       this.currentScope--;
+    } else {
+      throw new Error(
+        "Internal error: exitScope() called at global scope (scope underflow)",
+      );
     }
   }
 

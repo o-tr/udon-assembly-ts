@@ -232,15 +232,21 @@ export function visitUpdateExpression(
   this: ASTToTACConverter,
   node: UpdateExpressionNode,
 ): TACOperand {
-  const oldValue = this.visitExpression(node.operand);
-  const resultType = this.getOperandType(oldValue);
+  const currentValue = this.visitExpression(node.operand);
+  const resultType = this.getOperandType(currentValue);
   const delta = createConstant(1, resultType);
+
+  const postfixSnapshot = node.isPostfix ? this.newTemp(resultType) : null;
+  if (postfixSnapshot) {
+    this.instructions.push(new CopyInstruction(postfixSnapshot, currentValue));
+  }
+
   const newValue = this.newTemp(resultType);
   this.instructions.push(
-    new BinaryOpInstruction(newValue, oldValue, node.operator, delta),
+    new BinaryOpInstruction(newValue, currentValue, node.operator, delta),
   );
   const assignedValue = this.assignToTarget(node.operand, newValue);
-  return node.isPostfix ? oldValue : assignedValue;
+  return postfixSnapshot ?? assignedValue;
 }
 
 export function coerceConstantToType(
