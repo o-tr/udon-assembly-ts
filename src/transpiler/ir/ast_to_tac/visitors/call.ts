@@ -2540,7 +2540,9 @@ function visitMapMethodCall(
   }
 }
 
-const resolveExternReturnType = (externSig: string): TypeSymbol | null => {
+export const resolveExternReturnType = (
+  externSig: string,
+): TypeSymbol | null => {
   const parts = externSig.split("__");
   if (parts.length < 2) return null;
   const returnToken = parts[parts.length - 1];

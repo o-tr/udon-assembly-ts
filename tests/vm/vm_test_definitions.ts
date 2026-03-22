@@ -624,4 +624,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "for_of_dict_keys_lookup.ts",
     expectedLogs: ["30", "2"],
   },
+  // --- Property access type fallback ---
+  {
+    name: "property_access_type_fallback",
+    sourceFile: "property_access_type_fallback.ts",
+    expectedLogs: ["hello", "True", "42", "hello"],
+  },
 ];
