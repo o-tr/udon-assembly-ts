@@ -94,7 +94,9 @@ namespace VRC.Udon.Editor.ProgramSources
                     {
                         break;
                     }
-                    uint nextHeapSize = Math.Min(heapSize * 2, maxHeapSize);
+                    uint nextHeapSize = heapSize >= maxHeapSize / 2
+                        ? maxHeapSize
+                        : Math.Min(heapSize * 2, maxHeapSize);
                     if (nextHeapSize <= heapSize)
                     {
                         break;
