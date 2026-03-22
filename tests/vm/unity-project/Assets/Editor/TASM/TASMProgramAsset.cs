@@ -32,6 +32,18 @@ namespace VRC.Udon.Editor.ProgramSources
             _initialized = true;
         }
 
+        internal static IUAssemblyTypeResolver GetTypeResolver()
+        {
+            EnsureInitialized();
+            var typeResolver = _typeResolverGroupField?.GetValue(_editorInterface)
+                as IUAssemblyTypeResolver;
+            if (typeResolver == null)
+                throw new InvalidOperationException(
+                    "[TASM] Failed to get type resolver via reflection. "
+                    + "VRC SDK may have changed.");
+            return typeResolver;
+        }
+
         protected override void RefreshProgramImpl()
         {
             if (string.IsNullOrEmpty(udonAssembly))
@@ -43,16 +55,8 @@ namespace VRC.Udon.Editor.ProgramSources
 
             try
             {
-                EnsureInitialized();
-                var typeResolver = _typeResolverGroupField?.GetValue(_editorInterface)
-                    as IUAssemblyTypeResolver;
-                if (typeResolver == null)
-                    throw new InvalidOperationException(
-                        "[TASM] Failed to get type resolver via reflection. "
-                        + "VRC SDK may have changed.");
-
                 uint heapSize = CalculateHeapSize(udonAssembly);
-                program = AssembleWithHeapSize(udonAssembly, heapSize, typeResolver);
+                program = AssembleWithHeapSize(udonAssembly, heapSize);
                 assemblyError = null;
             }
             catch (Exception e)
@@ -61,6 +65,11 @@ namespace VRC.Udon.Editor.ProgramSources
                 assemblyError = e.Message;
                 Debug.LogException(e);
             }
+        }
+
+        internal static IUdonProgram AssembleWithHeapSize(string assembly, uint heapSize)
+        {
+            return AssembleWithHeapSize(assembly, heapSize, GetTypeResolver());
         }
 
         private static IUdonProgram AssembleWithHeapSize(

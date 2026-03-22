@@ -1160,53 +1160,33 @@ export function visitCallExpression(
         this.instructions.push(new CastInstruction(cast, op));
         return cast;
       };
+      // Adjust a negative constant index: length + index
+      const adjustNegIndex = (arg: TACOperand): TACOperand => {
+        const lenTemp = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new PropertyGetInstruction(lenTemp, object, "length"),
+        );
+        const adjusted = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new BinaryOpInstruction(adjusted, lenTemp, "+", toInt32(arg)),
+        );
+        return adjusted;
+      };
+      // Convert an index arg to Int32, adjusting negative constants
+      const resolveIndex = (arg: TACOperand): TACOperand =>
+        isNegConst(arg) ? adjustNegIndex(arg) : toInt32(arg);
+
       if (evaluatedArgs.length === 1) {
-        const startArg = evaluatedArgs[0];
-        if (isNegConst(startArg)) {
-          const lenTemp = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new PropertyGetInstruction(lenTemp, object, "length"),
-          );
-          const adjustedStart = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new BinaryOpInstruction(
-              adjustedStart,
-              lenTemp,
-              "+",
-              toInt32(startArg),
-            ),
-          );
-          this.instructions.push(
-            new MethodCallInstruction(result, object, "Substring", [
-              adjustedStart,
-            ]),
-          );
-        } else {
-          this.instructions.push(
-            new MethodCallInstruction(result, object, "Substring", [
-              toInt32(startArg),
-            ]),
-          );
-        }
+        const startInt = resolveIndex(evaluatedArgs[0]);
+        this.instructions.push(
+          new MethodCallInstruction(result, object, "Substring", [startInt]),
+        );
       } else if (evaluatedArgs.length === 2) {
-        const startInt = toInt32(evaluatedArgs[0]);
-        let endArg: TACOperand = evaluatedArgs[1];
-        if (isNegConst(endArg)) {
-          const lenTemp = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new PropertyGetInstruction(lenTemp, object, "length"),
-          );
-          const adjustedEnd = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new BinaryOpInstruction(adjustedEnd, lenTemp, "+", toInt32(endArg)),
-          );
-          endArg = adjustedEnd;
-        } else {
-          endArg = toInt32(endArg);
-        }
+        const startInt = resolveIndex(evaluatedArgs[0]);
+        const endInt = resolveIndex(evaluatedArgs[1]);
         const lengthArg = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(
-          new BinaryOpInstruction(lengthArg, endArg, "-", startInt),
+          new BinaryOpInstruction(lengthArg, endInt, "-", startInt),
         );
         this.instructions.push(
           new MethodCallInstruction(result, object, "Substring", [
