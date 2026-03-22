@@ -610,7 +610,7 @@ export function visitForOfStatement(
     const initializer = node.initializer as ts.Expression;
     if (!ts.isIdentifier(initializer)) {
       this.symbolTable.exitScope();
-      this.reportUnsupportedNode(
+      return this.reportUnsupportedNode(
         initializer,
         "Unsupported for-of initializer",
         "Use a single identifier or a variable declaration.",
