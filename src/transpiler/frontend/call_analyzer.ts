@@ -19,6 +19,7 @@ import {
   type ConditionalExpressionNode,
   type DeleteExpressionNode,
   type DoWhileStatementNode,
+  type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IdentifierNode,
@@ -365,6 +366,15 @@ export class CallAnalyzer {
         if (retNode.value) {
           this.visitNode(retNode.value, inlineClasses, calledUdonBehaviours);
         }
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmtNode = node as ExpressionStatementNode;
+        this.visitNode(
+          exprStmtNode.expression,
+          inlineClasses,
+          calledUdonBehaviours,
+        );
         break;
       }
       default:

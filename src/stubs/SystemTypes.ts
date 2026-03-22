@@ -34,9 +34,46 @@ export class SystemString {
     return 0 as UdonInt;
   }
 
+  // JS-style aliases that map to C# methods via @UdonExtern
+  @UdonExtern({
+    signature: "SystemString.__IndexOf__SystemString__SystemInt32",
+  })
+  indexOf(_value: string): UdonInt {
+    return 0 as UdonInt;
+  }
+  @UdonExtern({
+    signature: "SystemString.__Contains__SystemString__SystemBoolean",
+  })
+  includes(_value: string): boolean {
+    return false;
+  }
+  @UdonExtern({
+    signature: "SystemString.__StartsWith__SystemString__SystemBoolean",
+  })
+  startsWith(_value: string): boolean {
+    return false;
+  }
+  @UdonExtern({
+    signature: "SystemString.__EndsWith__SystemString__SystemBoolean",
+  })
+  endsWith(_value: string): boolean {
+    return false;
+  }
+
   Substring(_startIndex: UdonInt): string;
   Substring(_startIndex: UdonInt, _length: UdonInt): string;
   Substring(_startIndex: UdonInt, _length?: UdonInt): string {
+    return "";
+  }
+
+  // JS slice → Substring mapping (negative indices handled by transpiler)
+  slice(_start: UdonInt): string;
+  slice(_start: UdonInt, _end: UdonInt): string;
+  @UdonExtern({
+    signature:
+      "SystemString.__Substring__SystemInt32_SystemInt32__SystemString",
+  })
+  slice(_start: UdonInt, _end?: UdonInt): string {
     return "";
   }
 
@@ -47,6 +84,18 @@ export class SystemString {
     return "";
   }
   Trim(): string {
+    return "";
+  }
+  @UdonExtern({ signature: "SystemString.__ToLower____SystemString" })
+  toLowerCase(): string {
+    return "";
+  }
+  @UdonExtern({ signature: "SystemString.__ToUpper____SystemString" })
+  toUpperCase(): string {
+    return "";
+  }
+  @UdonExtern({ signature: "SystemString.__Trim____SystemString" })
+  trim(): string {
     return "";
   }
 }

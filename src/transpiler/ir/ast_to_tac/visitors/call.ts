@@ -1145,6 +1145,87 @@ export function visitCallExpression(
         return dictResult;
       }
     }
+    // String.prototype.slice → Substring with parameter adjustment
+    if (
+      objectType === PrimitiveTypes.string &&
+      propAccess.property === "slice"
+    ) {
+      const result = this.newTemp(PrimitiveTypes.string);
+      const isNegConst = (op: TACOperand): boolean =>
+        op.kind === TACOperandKind.Constant &&
+        Number((op as ConstantOperand).value) < 0;
+      // Ensure argument is Int32 (Substring expects SystemInt32)
+      const toInt32 = (op: TACOperand): TACOperand => {
+        const cast = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(cast, op));
+        return cast;
+      };
+      if (evaluatedArgs.length === 1) {
+        const startArg = evaluatedArgs[0];
+        if (isNegConst(startArg)) {
+          const lenTemp = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new PropertyGetInstruction(lenTemp, object, "length"),
+          );
+          const adjustedStart = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new BinaryOpInstruction(
+              adjustedStart,
+              lenTemp,
+              "+",
+              toInt32(startArg),
+            ),
+          );
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "Substring", [
+              adjustedStart,
+            ]),
+          );
+        } else {
+          this.instructions.push(
+            new MethodCallInstruction(result, object, "Substring", [
+              toInt32(startArg),
+            ]),
+          );
+        }
+      } else if (evaluatedArgs.length === 2) {
+        const startInt = toInt32(evaluatedArgs[0]);
+        let endArg: TACOperand = evaluatedArgs[1];
+        if (isNegConst(endArg)) {
+          const lenTemp = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new PropertyGetInstruction(lenTemp, object, "length"),
+          );
+          const adjustedEnd = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new BinaryOpInstruction(adjustedEnd, lenTemp, "+", toInt32(endArg)),
+          );
+          endArg = adjustedEnd;
+        } else {
+          endArg = toInt32(endArg);
+        }
+        const lengthArg = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new BinaryOpInstruction(lengthArg, endArg, "-", startInt),
+        );
+        this.instructions.push(
+          new MethodCallInstruction(result, object, "Substring", [
+            startInt,
+            lengthArg,
+          ]),
+        );
+      } else {
+        this.instructions.push(
+          new MethodCallInstruction(
+            result,
+            object,
+            "Substring",
+            evaluatedArgs.map((a) => toInt32(a)),
+          ),
+        );
+      }
+      return result;
+    }
     if (objectType.udonType === UdonType.Array) {
       const arrayReturn =
         objectType instanceof ArrayTypeSymbol

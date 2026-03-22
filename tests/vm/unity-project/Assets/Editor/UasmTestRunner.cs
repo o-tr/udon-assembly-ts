@@ -2,10 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
+using VRC.Udon.Common;
 using VRC.Udon.Common.Interfaces;
 using VRC.Udon.Editor;
+using VRC.Udon.EditorBindings;
+using VRC.Udon.UAssembly.Assembler;
+using VRC.Udon.UAssembly.Interfaces;
 
 public static class UasmTestRunner
 {
@@ -180,11 +185,19 @@ public static class UasmTestRunner
 
             var uasmText = File.ReadAllText(uasmPath);
 
-            // Assemble
+            // Assemble (with dynamic heap sizing for large programs)
             IUdonProgram program;
             try
             {
-                program = UdonEditorManager.Instance.Assemble(uasmText);
+                uint heapSize = VRC.Udon.Editor.ProgramSources.TASMProgramAsset.CalculateHeapSize(uasmText);
+                if (heapSize <= 512)
+                {
+                    program = UdonEditorManager.Instance.Assemble(uasmText);
+                }
+                else
+                {
+                    program = AssembleWithHeapSize(uasmText, heapSize);
+                }
             }
             catch (Exception e)
             {
@@ -312,4 +325,61 @@ public static class UasmTestRunner
             ? "\nVM diagnostics:\n" + string.Join("\n", capturedErrors)
             : "";
     }
+
+    #region Dynamic Heap Assembly
+
+    private static UdonEditorInterface _editorInterface;
+    private static readonly FieldInfo _typeResolverGroupField =
+        typeof(UdonEditorInterface).GetField("_typeResolverGroup",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+    private static bool _assemblerInitialized;
+
+    private static void EnsureAssemblerInitialized()
+    {
+        if (_assemblerInitialized) return;
+        UdonEditorManager.Instance.GetNodeRegistries();
+        var iface = new UdonEditorInterface();
+        iface.AddTypeResolver(new UdonBehaviourTypeResolver());
+        _editorInterface = iface;
+        _assemblerInitialized = true;
+    }
+
+    private static IUdonProgram AssembleWithHeapSize(string uasmText, uint heapSize)
+    {
+        EnsureAssemblerInitialized();
+        var typeResolver = _typeResolverGroupField?.GetValue(_editorInterface)
+            as IUAssemblyTypeResolver;
+        if (typeResolver == null)
+            throw new InvalidOperationException(
+                "[UasmTestRunner] Failed to get type resolver via reflection.");
+
+        const int maxRetries = 4;
+        const uint maxHeapSize = 1048576;
+        Exception lastException = null;
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                var factory = new jp.ootr.TASM.Editor.HeapFactory
+                    { FactoryHeapSize = heapSize };
+                var assembler = new UAssemblyAssembler(factory, typeResolver);
+                return assembler.Assemble(uasmText);
+            }
+            catch (IndexOutOfRangeException ex)
+            {
+                lastException = ex;
+                if (i >= maxRetries - 1) break;
+                uint nextHeapSize = Math.Min(heapSize * 2, maxHeapSize);
+                if (nextHeapSize <= heapSize) break;
+                heapSize = nextHeapSize;
+                Debug.LogWarning(
+                    $"[UasmTestRunner] Heap size insufficient, retrying with {heapSize}");
+            }
+        }
+        throw new InvalidOperationException(
+            "[UasmTestRunner] Failed to assemble after retrying with larger heap.",
+            lastException);
+    }
+
+    #endregion
 }
