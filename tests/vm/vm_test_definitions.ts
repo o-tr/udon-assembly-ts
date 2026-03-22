@@ -557,6 +557,16 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "switch_enum_advanced.ts",
     expectedLogs: ["green", "not red"],
   },
+  {
+    name: "switch_call_analyzer",
+    sourceFile: "switch_call_analyzer.ts",
+    expectedLogs: ["20"],
+  },
+  {
+    name: "switch_continue_in_loop",
+    sourceFile: "switch_continue_in_loop.ts",
+    expectedLogs: ["0", "1", "skip", "3", "4"],
+  },
   // --- Short-circuit side effects ---
   {
     name: "short_circuit_side_effects",
@@ -675,5 +685,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "property_access_type_fallback",
     sourceFile: "property_access_type_fallback.ts",
     expectedLogs: ["hello", "True", "42", "hello"],
+  },
+  // --- Static getter returning non-Single type (Vector3) ---
+  {
+    name: "static_getter_vector3",
+    sourceFile: "static_getter_vector3.ts",
+    expectedLogs: ["(0.00, 0.00, 0.00)"],
   },
 ];
