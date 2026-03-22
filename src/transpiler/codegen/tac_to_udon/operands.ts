@@ -1,4 +1,7 @@
-import { ArrayTypeSymbol } from "../../frontend/type_symbols.js";
+import {
+  ArrayTypeSymbol,
+  type TypeSymbol,
+} from "../../frontend/type_symbols.js";
 import {
   type ConstantOperand,
   type LabelOperand,
@@ -81,17 +84,14 @@ export function getOperandTypeName(
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
-      const typeSymbol = (operand as { type?: unknown }).type;
+      const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
       if (
         typeSymbol instanceof ArrayTypeSymbol &&
         !isKnownExternElementType(typeSymbol.elementType.name)
       ) {
         return "SystemObjectArray";
       }
-      const type =
-        (operand as { type?: { udonType?: string } }).type?.udonType ??
-        "Object";
-      return toUdonTypeNameWithArray(udonTypeToCSharp(type));
+      return toUdonTypeNameWithArray(udonTypeToCSharp(typeSymbol.udonType));
     }
     default:
       return "SystemObject";

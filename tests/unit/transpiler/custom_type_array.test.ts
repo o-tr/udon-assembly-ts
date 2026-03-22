@@ -71,6 +71,8 @@ describe("custom type array operations", () => {
 
     // Should NOT have any MeldArray externs
     expect(externs.some((sig) => sig.includes("MeldArray"))).toBe(false);
+    // Should use SystemObjectArray for the push-equivalent operation
+    expect(externs.some((sig) => sig.includes("SystemObjectArray"))).toBe(true);
   });
 
   it("preserves correct externs for known type arrays (number[], string[])", () => {
@@ -151,5 +153,47 @@ describe("custom type array operations", () => {
     expect(
       externs.some((sig) => sig.includes("SystemObjectArray.__get_length__")),
     ).toBe(false);
+  });
+
+  it("handles type alias arrays correctly", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Meld {
+        value: number = 0;
+      }
+      type MeldAlias = Meld;
+      type NumAlias = number;
+      class Demo {
+        Start(): void {
+          const melds: MeldAlias[] = [];
+          let mlen: number = melds.length;
+          const nums: NumAlias[] = [];
+          let nlen: number = nums.length;
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const udonConverter = new TACToUdonConverter();
+    udonConverter.convert(tac);
+    const externs = udonConverter.getExternSignatures();
+
+    // Custom class alias array should fallback to SystemObjectArray
+    expect(
+      externs.some((sig) => sig.includes("SystemObjectArray.__get_length__")),
+    ).toBe(true);
+    expect(externs.some((sig) => sig.includes("MeldArray"))).toBe(false);
+    expect(externs.some((sig) => sig.includes("MeldAliasArray"))).toBe(false);
+    // Known type alias array should keep its concrete type
+    expect(
+      externs.some((sig) =>
+        sig.includes("SystemSingleArray.__get_length__SystemInt32"),
+      ),
+    ).toBe(true);
   });
 });
