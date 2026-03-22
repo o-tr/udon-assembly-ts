@@ -560,6 +560,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["green", "not red"],
   },
   {
+    name: "switch_call_analyzer",
+    sourceFile: "switch_call_analyzer.ts",
+    expectedLogs: ["20"],
+  },
+  {
     name: "switch_continue_in_loop",
     sourceFile: "switch_continue_in_loop.ts",
     expectedLogs: ["0", "1", "skip", "3", "4"],
@@ -683,5 +688,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "optimized_complex_control_flow.ts",
     optimize: true,
     expectedLogs: ["343", "280", "30"],
+  },
+  // --- Static getter returning non-Single type (Vector3) ---
+  {
+    name: "static_getter_vector3",
+    sourceFile: "static_getter_vector3.ts",
+    expectedLogs: ["(0.00, 0.00, 0.00)"],
   },
 ];
