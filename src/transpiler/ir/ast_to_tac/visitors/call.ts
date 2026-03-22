@@ -97,21 +97,19 @@ function buildFallbackMethodLayout(
     return undefined;
   }
 
-  const exportMethodName = `${interfaceName}_${methodName}`;
+  const baseName = `${interfaceName}_${methodName}`;
   const parameterExportNames = method.parameters.map(
-    (_, i) => `${interfaceName}_${methodName}__param_${i}`,
+    (_, i) => `${baseName}__param_${i}`,
   );
   const parameterTypes = method.parameters.map((p) =>
     converter.typeMapper.mapTypeScriptType(p.type),
   );
   const returnType = converter.typeMapper.mapTypeScriptType(method.returnType);
   const returnExportName =
-    returnType !== PrimitiveTypes.void
-      ? `${interfaceName}_${methodName}__ret`
-      : null;
+    returnType !== PrimitiveTypes.void ? `${baseName}__ret` : null;
 
   const layout: UdonBehaviourMethodLayout = {
-    exportMethodName,
+    exportMethodName: baseName,
     returnExportName,
     parameterExportNames,
     parameterTypes,

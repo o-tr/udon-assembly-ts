@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { typeMetadataRegistry } from "../../../src/transpiler/codegen/type_metadata_registry";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 /**
@@ -100,21 +101,40 @@ describe("interface fallback IPC dispatch (no implementing class)", () => {
   });
 
   it("does not treat extern/stub interfaces as UdonBehaviour", () => {
-    // IEnumerable is registered in typeMetadataRegistry as an extern type.
-    // It should NOT be treated as a UdonBehaviour interface.
-    const source = `
-      @UdonBehaviour()
-      class Foo extends UdonSharpBehaviour {
-        Start(): void {
-          const x: number = 1;
-        }
-      }
-    `;
+    // Register a fake extern type whose name matches the interface in the source.
+    // This exercises the `!typeMetadataRegistry.hasType()` guard in isUdonBehaviourType.
+    typeMetadataRegistry.registerType({
+      tsName: "IExternThing",
+      csharpFullName: "Fake.IExternThing",
+      members: new Map(),
+    });
 
-    const transpiler = new TypeScriptToUdonTranspiler();
-    // Should transpile without errors — no false positive on extern interfaces
-    const result = transpiler.transpile(source);
-    expect(result.uasm).toBeDefined();
+    try {
+      const source = `
+        interface IExternThing {
+          doWork(): void;
+        }
+
+        @UdonBehaviour()
+        class Foo extends UdonSharpBehaviour {
+          thing: IExternThing;
+
+          Start(): void {
+            this.thing.doWork();
+          }
+        }
+      `;
+
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const result = transpiler.transpile(source);
+
+      // Should NOT produce IPC dispatch for an extern-registered interface
+      expect(result.tac).not.toContain("SendCustomEvent");
+    } finally {
+      // Clean up the fake registration to avoid polluting other tests.
+      // biome-ignore lint/suspicious/noExplicitAny: test-only access to private field
+      (typeMetadataRegistry as any).types.delete("IExternThing");
+    }
   });
 
   it("fallback naming matches buildUdonBehaviourLayouts convention", () => {
