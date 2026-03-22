@@ -29,7 +29,7 @@ import {
   type VariableOperand,
 } from "../tac_operand.js";
 import { buildCFG } from "./analysis/cfg.js";
-import type { CFG, PassResult } from "./pass_types.js";
+import type { CFG, EdgeLabelSeed, PassResult } from "./pass_types.js";
 import { algebraicSimplification } from "./passes/algebraic_simplification.js";
 import { optimizeBlockLayout } from "./passes/block_layout.js";
 import { booleanSimplification } from "./passes/boolean_simplification.js";
@@ -355,6 +355,8 @@ export class TACOptimizer {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
+    const edgeLabelSeed: EdgeLabelSeed = { value: 0 };
+
     const runAnalysisPasses = (
       current: TACInstruction[],
       runExpensivePasses: boolean,
@@ -428,7 +430,9 @@ export class TACOptimizer {
           const ssaGvn = globalValueNumbering(ssaPre.instructions, {
             useSSA: true,
           });
-          const ssaDecon = deconstructSSA(ssaGvn.instructions);
+          const ssaDecon = deconstructSSA(ssaGvn.instructions, {
+            edgeLabelSeed,
+          });
           // SSA construction/deconstruction always restructures instructions
           // (phi-node insertion + variable renaming), so mark as changed and
           // invalidate the CFG regardless of individual pass reports.

@@ -768,20 +768,20 @@ export const buildSSA = (
   return { instructions: ordered, changed: true };
 };
 
-/** Module-level counter to ensure SSA edge/block labels are unique across calls. */
-let ssaEdgeLabelCounter = 0;
-
 export const deconstructSSA = (
   instructions: TACInstruction[],
   options?: CFGPassOptions,
 ): PassResult => {
   const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  // No blocks → no edge labels created, so seed needs no update.
   if (cfg.blocks.length === 0) return { instructions, changed: false };
+
+  const seed = options?.edgeLabelSeed ?? { value: 0 };
 
   const blocks: BlockInsts = new Map();
   const orderedBlockIds = cfg.blocks.map((block) => block.id);
   let nextBlockId = cfg.blocks.length;
-  let nextEdgeLabelId = ssaEdgeLabelCounter;
+  let nextEdgeLabelId = seed.value;
   let nextTempId = collectTemps(instructions);
   const createTemp = (source: TACOperand): TACOperand => {
     const type = operandType(source);
@@ -916,7 +916,7 @@ export const deconstructSSA = (
     if (insts) ordered.push(...insts);
   }
 
-  ssaEdgeLabelCounter = nextEdgeLabelId;
+  seed.value = nextEdgeLabelId;
   return { instructions: stripSsaVersions(ordered), changed: true };
 };
 
@@ -934,5 +934,5 @@ export const applySSA = (
       changed: false,
     };
   }
-  return deconstructSSA(ssaResult.instructions);
+  return deconstructSSA(ssaResult.instructions, options);
 };
