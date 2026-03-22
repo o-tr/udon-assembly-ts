@@ -4,6 +4,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -224,6 +225,24 @@ export function visitAssignmentExpression(
   this: ASTToTACConverter,
   node: AssignmentExpressionNode,
 ): TACOperand {
+  // Propagate expected type for typed object literal re-assignments
+  if (
+    node.value.kind === ASTNodeKind.ObjectLiteralExpression &&
+    node.target.kind === ASTNodeKind.Identifier
+  ) {
+    const sym = this.symbolTable.lookup((node.target as IdentifierNode).name);
+    if (
+      sym &&
+      sym.type instanceof InterfaceTypeSymbol &&
+      sym.type.properties.size > 0
+    ) {
+      const prev = this.currentExpectedType;
+      this.currentExpectedType = sym.type;
+      const value = this.visitExpression(node.value);
+      this.currentExpectedType = prev;
+      return this.assignToTarget(node.target, value);
+    }
+  }
   const value = this.visitExpression(node.value);
   return this.assignToTarget(node.target, value);
 }

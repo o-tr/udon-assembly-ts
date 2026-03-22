@@ -159,4 +159,47 @@ describe("type alias inline heap variables", () => {
     // Empty interface (properties.size === 0) should not use inline path
     expect(result.tac).not.toMatch(/__inst_Empty_/);
   });
+
+  it("inlines re-assigned type alias object literal", () => {
+    const source = `
+      type Ctx = { count: number };
+      class Main {
+        Start(): void {
+          let ctx: Ctx = { count: 5 };
+          ctx = { count: 20 };
+          let v: number = ctx.count;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    // Re-assignment should also use inline path
+    // Two inline instances should be created (one per object literal)
+    const matches = result.tac.match(/__inst_Ctx_\d+_count/g) ?? [];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+
+    // Property access should resolve without EXTERN
+    expect(result.uasm).not.toContain("EXTERN");
+  });
+
+  it("inlines nested typed object literals", () => {
+    const source = `
+      type Inner = { x: number };
+      type Outer = { inner: Inner };
+      class Main {
+        Start(): void {
+          let o: Outer = { inner: { x: 5 } };
+          let v: number = o.inner.x;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    // Both Outer and Inner should be inlined
+    expect(result.tac).toMatch(/__inst_Outer_\d+_inner/);
+    expect(result.tac).toMatch(/__inst_Inner_\d+_x/);
+
+    // No EXTERN for property access
+    expect(result.uasm).not.toContain("EXTERN");
+  });
 });

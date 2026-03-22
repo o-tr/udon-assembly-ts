@@ -1437,7 +1437,6 @@ export function visitObjectLiteralExpression(
     expected.properties.size > 0 &&
     !node.properties.some((p) => p.kind === "spread")
   ) {
-    this.currentExpectedType = undefined;
     const className = expected.name;
     // Register the InterfaceTypeSymbol so mapInlineProperty can resolve properties
     if (!this.typeMapper.getAlias(className)) {
@@ -1459,13 +1458,23 @@ export function visitObjectLiteralExpression(
         `${instancePrefix}_${prop.key}`,
         propType ?? ObjectType,
       );
+      // Propagate expected type for nested typed object literals
+      const prev = this.currentExpectedType;
+      if (
+        propType instanceof InterfaceTypeSymbol &&
+        prop.value.kind === ASTNodeKind.ObjectLiteralExpression
+      ) {
+        this.currentExpectedType = propType;
+      } else {
+        this.currentExpectedType = undefined;
+      }
       const value = this.visitExpression(prop.value);
+      this.currentExpectedType = prev;
       this.instructions.push(new AssignmentInstruction(propVar, value));
       this.maybeTrackInlineInstanceAssignment(propVar, value);
     }
     return instanceHandle;
   }
-  this.currentExpectedType = undefined;
   return this.emitDictionaryFromProperties(node.properties);
 }
 
