@@ -26,9 +26,9 @@ export function extractClassDecoratorsFromSource(
       const expr = dec.expression as ts.Expression;
       if (ts.isCallExpression(expr)) {
         const e = expr.expression;
-        if (ts.isIdentifier(e)) decs.push(e.escapedText?.toString() ?? "");
+        if (ts.isIdentifier(e)) decs.push(e.text ?? "");
       } else if (ts.isIdentifier(expr)) {
-        decs.push(expr.escapedText?.toString() ?? "");
+        decs.push(expr.text ?? "");
       } else {
         decs.push(expr.getText());
       }

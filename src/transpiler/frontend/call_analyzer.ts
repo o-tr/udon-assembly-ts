@@ -14,16 +14,25 @@ import {
   type BinaryExpressionNode,
   type BlockStatementNode,
   type CallExpressionNode,
+  type CaseClauseNode,
   type ClassDeclarationNode,
+  type ConditionalExpressionNode,
   type DeleteExpressionNode,
+  type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IdentifierNode,
   type IfStatementNode,
   type MethodDeclarationNode,
+  type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
+  type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
+  type SwitchStatementNode,
+  type TemplateExpressionNode,
+  type ThrowStatementNode,
+  type TryCatchStatementNode,
   type UnaryExpressionNode,
   type UpdateExpressionNode,
   type VariableDeclarationNode,
@@ -140,10 +149,7 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.SwitchStatement: {
-        const switchNode = node as unknown as {
-          expression: ASTNode;
-          cases: ASTNode[];
-        };
+        const switchNode = node as SwitchStatementNode;
         this.visitNode(
           switchNode.expression,
           inlineClasses,
@@ -155,10 +161,7 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.CaseClause: {
-        const caseNode = node as unknown as {
-          expression: ASTNode | null;
-          statements: ASTNode[];
-        };
+        const caseNode = node as CaseClauseNode;
         if (caseNode.expression) {
           this.visitNode(
             caseNode.expression,
@@ -182,7 +185,7 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.DoWhileStatement: {
-        const doNode = node as unknown as { body: ASTNode; condition: ASTNode };
+        const doNode = node as DoWhileStatementNode;
         this.visitNode(doNode.body, inlineClasses, calledUdonBehaviours);
         this.visitNode(doNode.condition, inlineClasses, calledUdonBehaviours);
         break;
@@ -226,29 +229,20 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.ConditionalExpression: {
-        const condNode = node as unknown as {
-          condition: ASTNode;
-          whenTrue: ASTNode;
-          whenFalse: ASTNode;
-        };
+        const condNode = node as ConditionalExpressionNode;
         this.visitNode(condNode.condition, inlineClasses, calledUdonBehaviours);
         this.visitNode(condNode.whenTrue, inlineClasses, calledUdonBehaviours);
         this.visitNode(condNode.whenFalse, inlineClasses, calledUdonBehaviours);
         break;
       }
       case ASTNodeKind.NullCoalescingExpression: {
-        const coalesceNode = node as unknown as {
-          left: ASTNode;
-          right: ASTNode;
-        };
+        const coalesceNode = node as NullCoalescingExpressionNode;
         this.visitNode(coalesceNode.left, inlineClasses, calledUdonBehaviours);
         this.visitNode(coalesceNode.right, inlineClasses, calledUdonBehaviours);
         break;
       }
       case ASTNodeKind.TemplateExpression: {
-        const templateNode = node as unknown as {
-          parts: Array<{ kind: string; expression?: ASTNode }>;
-        };
+        const templateNode = node as TemplateExpressionNode;
         for (const part of templateNode.parts) {
           if (part.kind === "expression" && part.expression) {
             this.visitNode(
@@ -323,7 +317,7 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.OptionalChainingExpression: {
-        const optNode = node as unknown as { object: ASTNode };
+        const optNode = node as OptionalChainingExpressionNode;
         this.visitNode(optNode.object, inlineClasses, calledUdonBehaviours);
         break;
       }
@@ -339,11 +333,7 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.TryCatchStatement: {
-        const tryNode = node as unknown as {
-          tryBody: BlockStatementNode;
-          catchBody?: BlockStatementNode;
-          finallyBody?: BlockStatementNode;
-        };
+        const tryNode = node as TryCatchStatementNode;
         this.visitNode(tryNode.tryBody, inlineClasses, calledUdonBehaviours);
         if (tryNode.catchBody) {
           this.visitNode(
@@ -362,7 +352,7 @@ export class CallAnalyzer {
         break;
       }
       case ASTNodeKind.ThrowStatement: {
-        const throwNode = node as unknown as { expression: ASTNode };
+        const throwNode = node as ThrowStatementNode;
         this.visitNode(
           throwNode.expression,
           inlineClasses,

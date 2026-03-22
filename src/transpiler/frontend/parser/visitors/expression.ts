@@ -476,8 +476,24 @@ export function visitNameofExpression(
   this: TypeScriptParser,
   node: ts.CallExpression,
 ): NameofExpressionNode {
+  if (node.arguments.length === 0) {
+    this.reportTypeError(
+      node,
+      "nameof() requires exactly one argument",
+      "Provide an identifier as argument.",
+    );
+    return { kind: ASTNodeKind.NameofExpression, name: "" };
+  }
   const arg = node.arguments[0];
-  const name = ts.isIdentifier(arg) ? arg.text : arg.getText();
+  let name: string;
+  if (ts.isIdentifier(arg)) {
+    name = arg.text;
+  } else if (ts.isPropertyAccessExpression(arg)) {
+    // nameof(this.myField) → "myField" (last identifier only, matching C# semantics)
+    name = arg.name.text;
+  } else {
+    name = arg.getText();
+  }
   return {
     kind: ASTNodeKind.NameofExpression,
     name,
@@ -507,9 +523,19 @@ export function visitElementAccessExpression(
   node: ts.ElementAccessExpression,
 ) {
   const arrayExpr = this.visitExpression(node.expression);
-  const indexExpr = this.visitExpression(
-    node.argumentExpression as ts.Expression,
-  );
+  if (!node.argumentExpression) {
+    this.reportTypeError(
+      node,
+      "Element access expression requires an index argument",
+      "Provide an index inside the brackets.",
+    );
+    return {
+      kind: ASTNodeKind.ArrayAccessExpression,
+      array: arrayExpr,
+      index: this.createUnsupportedExpressionPlaceholder(),
+    };
+  }
+  const indexExpr = this.visitExpression(node.argumentExpression);
   return {
     kind: ASTNodeKind.ArrayAccessExpression,
     array: arrayExpr,

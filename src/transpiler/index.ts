@@ -3,6 +3,7 @@
  */
 
 import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
+import { appendReflectionData } from "./codegen/reflection.js";
 import { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
 import { computeExportLabels, computeExposedLabels } from "./exposed_labels.js";
@@ -11,11 +12,7 @@ import { ClassRegistry } from "./frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "./frontend/parser/index.js";
 import { TypeMapper } from "./frontend/type_mapper.js";
-import {
-  ASTNodeKind,
-  type ClassDeclarationNode,
-  type ProgramNode,
-} from "./frontend/types.js";
+import { ASTNodeKind, type ClassDeclarationNode } from "./frontend/types.js";
 import {
   buildHeapUsageBreakdown,
   buildHeapUsageTreeBreakdown,
@@ -42,6 +39,7 @@ export interface TranspilerOptions {
 export interface TranspilerResult {
   uasm: string;
   tac: string;
+  warnings?: string[];
 }
 
 /**
@@ -158,10 +156,10 @@ export class TypeScriptToUdonTranspiler {
     });
     const externSignatures = udonConverter.getExternSignatures();
     let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
-    if (options.reflect === true) {
-      dataSectionWithTypes = this.appendReflectionData(
+    if (options.reflect === true && entryClassName) {
+      dataSectionWithTypes = appendReflectionData(
         dataSectionWithTypes,
-        program,
+        entryClassName,
       );
     }
 
@@ -189,9 +187,11 @@ export class TypeScriptToUdonTranspiler {
       registry,
     );
 
+    const warnings = assembler.getWarnings();
     return {
       uasm,
       tac: tacText,
+      warnings: warnings.length > 0 ? warnings : undefined,
     };
   }
 
@@ -245,38 +245,6 @@ export class TypeScriptToUdonTranspiler {
     const inlineClassNames =
       callAnalyzer.analyzeClass(entryClassName).inlineClasses;
     return { inlineClassNames, callAnalyzer };
-  }
-
-  private appendReflectionData(
-    dataSection: Array<[string, number, string, unknown]>,
-    program: ProgramNode,
-  ): Array<[string, number, string, unknown]> {
-    const classNodes = program.statements.filter(
-      (node): node is ClassDeclarationNode =>
-        node.kind === ASTNodeKind.ClassDeclaration,
-    );
-    if (classNodes.length === 0) return dataSection;
-
-    let maxAddress = dataSection.reduce(
-      (max, entry) => Math.max(max, entry[1]),
-      -1,
-    );
-    const nextAddress = () => {
-      maxAddress += 1;
-      return maxAddress;
-    };
-
-    const entries: Array<[string, number, string, unknown]> = [];
-    for (const cls of classNodes) {
-      // typeId is null — UdonSharp's runtime resolves types internally
-      // and our computed hash would not match.
-      entries.push(["__refl_typeid", nextAddress(), "Int64", null]);
-      entries.push(["__refl_typename", nextAddress(), "String", cls.name]);
-      entries.push(["__refl_typeids", nextAddress(), "Int64Array", null]);
-      break;
-    }
-
-    return [...dataSection, ...entries];
   }
 }
 

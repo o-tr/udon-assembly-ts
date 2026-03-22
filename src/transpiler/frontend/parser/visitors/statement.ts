@@ -336,7 +336,11 @@ export function visitIfStatement(
 ): IfStatementNode {
   const thenBranch = this.visitNode(node.thenStatement);
   if (!thenBranch) {
-    throw new Error("If statement must have a then branch");
+    return this.reportUnsupportedNode(
+      node,
+      "If statement must have a then branch",
+      "Ensure the if statement has a body.",
+    );
   }
 
   return {
@@ -355,7 +359,11 @@ export function visitWhileStatement(
 ): WhileStatementNode {
   const body = this.visitNode(node.statement);
   if (!body) {
-    throw new Error("While statement must have a body");
+    return this.reportUnsupportedNode(
+      node,
+      "While statement must have a body",
+      "Ensure the while statement has a body.",
+    );
   }
 
   return {
@@ -402,7 +410,11 @@ export function visitDoWhileStatement(
 ): DoWhileStatementNode {
   const body = this.visitNode(node.statement);
   if (!body) {
-    throw new Error("Do-while statement must have a body");
+    return this.reportUnsupportedNode(
+      node,
+      "Do-while statement must have a body",
+      "Ensure the do-while statement has a body.",
+    );
   }
 
   return {
@@ -497,7 +509,11 @@ export function visitForStatement(
   const body = this.visitNode(node.statement);
   if (!body) {
     this.symbolTable.exitScope();
-    throw new Error("For statement must have a body");
+    return this.reportUnsupportedNode(
+      node,
+      "For statement must have a body",
+      "Ensure the for statement has a body.",
+    );
   }
 
   const result: ForStatementNode = {
@@ -530,7 +546,11 @@ export function visitForOfStatement(
     varDecl = decl.declarations[0] ?? null;
     if (!varDecl) {
       this.symbolTable.exitScope();
-      throw new Error("For-of statement must declare a variable");
+      return this.reportUnsupportedNode(
+        node,
+        "For-of statement must declare a variable",
+        "Add a variable declaration.",
+      );
     }
     variableTypeText = varDecl.type ? varDecl.type.getText() : undefined;
     varName = varDecl.name.getText();
@@ -589,13 +609,12 @@ export function visitForOfStatement(
   } else {
     const initializer = node.initializer as ts.Expression;
     if (!ts.isIdentifier(initializer)) {
-      this.reportUnsupportedNode(
+      this.symbolTable.exitScope();
+      return this.reportUnsupportedNode(
         initializer,
         "Unsupported for-of initializer",
         "Use a single identifier or a variable declaration.",
       );
-      this.symbolTable.exitScope();
-      throw new Error("Unsupported for-of initializer");
     }
     varName = initializer.getText();
     if (!this.symbolTable.hasInCurrentScope(varName)) {
@@ -611,7 +630,11 @@ export function visitForOfStatement(
   const body = this.visitNode(node.statement);
   if (!body) {
     this.symbolTable.exitScope();
-    throw new Error("For-of statement must have a body");
+    return this.reportUnsupportedNode(
+      node,
+      "For-of statement must have a body",
+      "Ensure the for-of statement has a body.",
+    );
   }
 
   const result: ForOfStatementNode = {
