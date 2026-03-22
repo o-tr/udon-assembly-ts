@@ -522,9 +522,10 @@ export function visitSwitchStatement(
     new UnconditionalJumpInstruction(defaultEntry?.label ?? endLabel),
   );
 
+  const outerContext = this.loopContextStack[this.loopContextStack.length - 1];
   this.loopContextStack.push({
     breakLabel: endLabel,
-    continueLabel: endLabel,
+    continueLabel: outerContext?.continueLabel ?? endLabel,
   });
 
   for (const entry of caseEntries) {
