@@ -675,4 +675,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "element_access_computed.ts",
     expectedLogs: ["30", "60"],
   },
+  // --- Static getter returning non-Single type (Vector3) ---
+  {
+    name: "static_getter_vector3",
+    sourceFile: "static_getter_vector3.ts",
+    expectedLogs: ["(0.00, 0.00, 0.00)"],
+  },
 ];
