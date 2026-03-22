@@ -56,6 +56,7 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
+import { resolveExternReturnType } from "../helpers/extern.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
@@ -2539,49 +2540,6 @@ function visitMapMethodCall(
       return null;
   }
 }
-
-const resolveExternReturnType = (externSig: string): TypeSymbol | null => {
-  const parts = externSig.split("__");
-  if (parts.length < 2) return null;
-  const returnToken = parts[parts.length - 1];
-  if (returnToken === "Void" || returnToken === "SystemVoid") {
-    return PrimitiveTypes.void;
-  }
-  if (returnToken.startsWith("System")) {
-    const typeName = returnToken.slice("System".length);
-    switch (typeName) {
-      case "Boolean":
-        return PrimitiveTypes.boolean;
-      case "Byte":
-        return PrimitiveTypes.byte;
-      case "SByte":
-        return PrimitiveTypes.sbyte;
-      case "Int16":
-        return PrimitiveTypes.int16;
-      case "UInt16":
-        return PrimitiveTypes.uint16;
-      case "Int32":
-        return PrimitiveTypes.int32;
-      case "UInt32":
-        return PrimitiveTypes.uint32;
-      case "Int64":
-        return PrimitiveTypes.int64;
-      case "UInt64":
-        return PrimitiveTypes.uint64;
-      case "Single":
-        return PrimitiveTypes.single;
-      case "Double":
-        return PrimitiveTypes.double;
-      case "String":
-        return PrimitiveTypes.string;
-      case "Object":
-        return ObjectType;
-      default:
-        return null;
-    }
-  }
-  return null;
-};
 
 export function getUdonTypeConverterTargetType(
   this: ASTToTACConverter,

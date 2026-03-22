@@ -67,6 +67,7 @@ import {
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
+import { resolveExternReturnType } from "../helpers/extern.js";
 
 /**
  * Widen operands to a common promoted numeric type when they differ.
@@ -1293,7 +1294,8 @@ export function visitPropertyAccessExpression(
         "getter",
       );
       if (externSig) {
-        const result = this.newTemp(PrimitiveTypes.single);
+        const returnType = resolveExternReturnType(externSig) ?? ObjectType;
+        const result = this.newTemp(returnType);
         this.instructions.push(new CallInstruction(result, externSig, []));
         return result;
       }

@@ -624,4 +624,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "for_of_dict_keys_lookup.ts",
     expectedLogs: ["30", "2"],
   },
+  // --- Static getter returning non-Single type (Vector3) ---
+  {
+    name: "static_getter_vector3",
+    sourceFile: "static_getter_vector3.ts",
+    expectedLogs: ["(0.00, 0.00, 0.00)"],
+  },
 ];
