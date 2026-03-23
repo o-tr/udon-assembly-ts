@@ -1,3 +1,5 @@
+import { typeMetadataRegistry } from "./type_metadata_registry.js";
+
 /**
  * Maps UdonType enum values to their full C# type names.
  * Used to generate correct Udon extern signatures from UdonType values.
@@ -183,4 +185,15 @@ export function generateExternSignature(
     return `${ownerUdon}.__${methodName}____${returnUdon}`;
   }
   return `${ownerUdon}.__${methodName}__${returnUdon}`;
+}
+
+/**
+ * Check if an element type has known Udon extern support.
+ * Used to distinguish built-in array types (number[], Vector3[]) from
+ * custom types (Tile[]) that must fallback to SystemObjectArray.
+ */
+export function isKnownExternElementType(tsName: string): boolean {
+  if (TS_TO_CSHARP.has(tsName)) return true;
+  if (EXTERN_TYPE_ALIASES.has(tsName)) return true;
+  return typeMetadataRegistry.hasType(tsName);
 }

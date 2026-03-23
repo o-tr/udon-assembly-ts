@@ -1,4 +1,8 @@
 import {
+  ArrayTypeSymbol,
+  type TypeSymbol,
+} from "../../frontend/type_symbols.js";
+import {
   type ConstantOperand,
   type LabelOperand,
   type TACOperand,
@@ -8,6 +12,8 @@ import {
 } from "../../ir/tac_operand.js";
 import { PushInstruction } from "../udon_instruction.js";
 import {
+  isKnownExternElementType,
+  mapTypeScriptToCSharp,
   toUdonTypeNameWithArray,
   udonTypeToCSharp,
 } from "../udon_type_resolver.js";
@@ -79,10 +85,17 @@ export function getOperandTypeName(
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
-      const type =
-        (operand as { type?: { udonType?: string } }).type?.udonType ??
-        "Object";
-      return toUdonTypeNameWithArray(udonTypeToCSharp(type));
+      const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
+      if (typeSymbol instanceof ArrayTypeSymbol) {
+        if (!isKnownExternElementType(typeSymbol.elementType.name)) {
+          return "SystemObjectArray";
+        }
+        const elementCSharp = mapTypeScriptToCSharp(
+          typeSymbol.elementType.name,
+        );
+        return toUdonTypeNameWithArray(`${elementCSharp}[]`);
+      }
+      return toUdonTypeNameWithArray(udonTypeToCSharp(typeSymbol.udonType));
     }
     default:
       return "SystemObject";
@@ -97,9 +110,8 @@ export function getOperandUdonType(
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary:
-      return (
-        (operand as { type?: { udonType?: string } }).type?.udonType ?? "Object"
-      );
+      // type is always present on Variable/Constant/Temporary operands (required in their interfaces)
+      return (operand as unknown as { type: TypeSymbol }).type.udonType;
     default:
       return "Object";
   }
