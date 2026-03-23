@@ -1,3 +1,4 @@
+import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
@@ -31,12 +32,10 @@ export function isUdonBehaviourType(
     );
   }
   if (this.udonBehaviourClasses.has(type.name)) return true;
-  // Check if this is a UdonBehaviour interface (present in layouts but not in classMap)
-  if (
-    this.udonBehaviourLayouts.has(type.name) &&
-    !this.classMap.has(type.name) &&
-    this.classRegistry?.getInterface(type.name)
-  ) {
+  // Check if this is a user-defined interface with methods (i.e. a UdonBehaviour interface).
+  // Exclude extern/stub interfaces (e.g. IEnumerable) via typeMetadataRegistry.
+  const iface = this.classRegistry?.getInterface(type.name);
+  if (iface?.methods?.length && !typeMetadataRegistry.hasType(type.name)) {
     return true;
   }
   return false;

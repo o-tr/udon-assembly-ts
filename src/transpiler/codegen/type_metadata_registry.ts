@@ -25,6 +25,10 @@ export class TypeMetadataRegistry {
     this.types.set(metadata.tsName, metadata);
   }
 
+  unregisterType(tsTypeName: string): void {
+    this.types.delete(tsTypeName);
+  }
+
   hasType(tsTypeName: string): boolean {
     return this.types.has(tsTypeName);
   }
