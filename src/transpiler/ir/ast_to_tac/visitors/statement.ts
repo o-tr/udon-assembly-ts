@@ -3,6 +3,7 @@ import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -171,7 +172,19 @@ export function visitVariableDeclaration(
   let src: TACOperand | null = null;
 
   if (node.initializer) {
-    src = this.visitExpression(node.initializer);
+    if (
+      node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
+      node.type instanceof InterfaceTypeSymbol &&
+      node.type.properties.size > 0
+    ) {
+      const prev = this.currentExpectedType;
+      this.currentExpectedType = node.type;
+      src = this.visitExpression(node.initializer);
+      this.currentExpectedType = prev;
+    } else {
+      src = this.visitExpression(node.initializer);
+    }
+
     if (
       isObjectTypeSymbol(destType) ||
       (destType.name === PrimitiveTypes.single.name &&

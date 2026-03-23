@@ -205,6 +205,7 @@ export class ASTToTACConverter {
   currentMethodLayout: UdonBehaviourMethodLayout | null = null;
   inSerializeFieldInitializer = false;
   pendingTopLevelInits: VariableDeclarationNode[] = [];
+  currentExpectedType: TypeSymbol | undefined = undefined;
 
   constructor(
     symbolTable: SymbolTable,
@@ -261,6 +262,7 @@ export class ASTToTACConverter {
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.pendingTopLevelInits = [];
+    this.currentExpectedType = undefined;
     this.recursiveReturnSites = new Map();
 
     // Separate top-level const declarations from other statements

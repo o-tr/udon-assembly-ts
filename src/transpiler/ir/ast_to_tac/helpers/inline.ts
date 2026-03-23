@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ExternTypes,
+  InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -443,8 +444,16 @@ export function mapInlineProperty(
 ): VariableOperand | undefined {
   const classNode = this.classMap.get(className);
   const prop = classNode?.properties.find((p) => p.name === property);
-  if (!prop) return undefined;
-  return createVariable(`${instancePrefix}_${property}`, prop.type);
+  if (prop) return createVariable(`${instancePrefix}_${property}`, prop.type);
+
+  // Fallback: InterfaceTypeSymbol from type alias
+  const alias = this.typeMapper.getAlias(className);
+  if (alias instanceof InterfaceTypeSymbol) {
+    const propType = alias.properties.get(property);
+    if (propType)
+      return createVariable(`${instancePrefix}_${property}`, propType);
+  }
+  return undefined;
 }
 
 export function tryResolveUnitySelfReference(
