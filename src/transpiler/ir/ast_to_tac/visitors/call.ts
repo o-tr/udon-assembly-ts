@@ -250,6 +250,8 @@ function evaluateArgsWithExpectedTypes(
   }
   if (!classNode) return null;
 
+  // NOTE: Picks the first non-static method with a matching name.
+  // Udon does not support method overloads, so at most one match exists.
   const method = classNode.methods.find(
     (m) => m.name === methodName && !m.isStatic,
   );
@@ -272,10 +274,12 @@ function evaluateArgsWithExpectedTypes(
       paramType.properties.size > 0
     ) {
       const prev = converter.currentExpectedType;
-      converter.currentExpectedType = paramType;
-      const result = converter.visitExpression(arg);
-      converter.currentExpectedType = prev;
-      return result;
+      try {
+        converter.currentExpectedType = paramType;
+        return converter.visitExpression(arg);
+      } finally {
+        converter.currentExpectedType = prev;
+      }
     }
     return converter.visitExpression(arg);
   });
