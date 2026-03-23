@@ -338,12 +338,12 @@ export class ASTToTACConverter {
     // Their methods are inlined at call sites via classMap (populated above).
     // When no entry points exist, all classes are processed as a fallback.
     for (const statement of otherStatements) {
-      if (
-        this.entryPointClasses.size > 0 &&
-        statement.kind === ASTNodeKind.ClassDeclaration
-      ) {
+      if (statement.kind === ASTNodeKind.ClassDeclaration) {
         const classNode = statement as ClassDeclarationNode;
-        if (!this.entryPointClasses.has(classNode.name)) {
+        if (
+          this.entryPointClasses.size > 0 &&
+          !this.entryPointClasses.has(classNode.name)
+        ) {
           continue;
         }
       }
