@@ -702,6 +702,12 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["(0.00, 0.00, 0.00)"],
   },
   // --- TS/Udon string compat methods ---
+  // --- Interface typed variable with inline-only implementors ---
+  {
+    name: "interface_inline_dispatch",
+    sourceFile: "interface_inline_dispatch.ts",
+    expectedLogs: ["7", "14", "simple", "double"],
+  },
   {
     name: "string_ts_compat_methods",
     sourceFile: "string_ts_compat_methods.ts",

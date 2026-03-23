@@ -36,7 +36,16 @@ export function isUdonBehaviourType(
   // Exclude extern/stub interfaces (e.g. IEnumerable) via typeMetadataRegistry.
   const iface = this.classRegistry?.getInterface(type.name);
   if (iface?.methods?.length && !typeMetadataRegistry.hasType(type.name)) {
-    return true;
+    // Check implementors: if all are inline (non-UdonBehaviour) classes, skip IPC.
+    // If no implementors found (cross-file), assume UdonBehaviour (fallback IPC).
+    const implementors =
+      this.classRegistry?.getImplementorsOfInterface(type.name) ?? [];
+    if (implementors.length === 0) {
+      return true; // No implementors in this compilation unit — assume cross-file UdonBehaviour
+    }
+    return implementors.some((cls) =>
+      cls.decorators.some((d) => d.name === "UdonBehaviour"),
+    );
   }
   return false;
 }

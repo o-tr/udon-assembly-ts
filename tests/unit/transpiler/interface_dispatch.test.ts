@@ -360,6 +360,75 @@ describe("interface-based polymorphic dispatch", () => {
     expect(doActionLayout?.exportMethodName).toBe("IWeapon_doAction");
   });
 
+  it("does not generate IPC for interface implemented only by inline classes", () => {
+    const source = `
+      interface ICheck {
+        check(value: number): boolean;
+      }
+
+      @UdonBehaviour()
+      class Entry extends UdonSharpBehaviour {
+        Start(): void {
+          const checker: ICheck = new SimpleChecker();
+          const result: boolean = checker.check(42);
+        }
+      }
+
+      class SimpleChecker implements ICheck {
+        check(value: number): boolean {
+          return value > 0;
+        }
+      }
+    `;
+
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const result = transpiler.transpile(source);
+
+    // Should NOT generate IPC calls since SimpleChecker is an inline class
+    expect(result.tac).not.toContain("SetProgramVariable");
+    expect(result.tac).not.toContain("SendCustomEvent");
+    expect(result.tac).not.toContain("GetProgramVariable");
+    // Should not contain EXTERN for ICheck methods
+    expect(result.uasm).not.toContain("ICheck");
+  });
+
+  it("generates IPC when interface has mixed implementors (UdonBehaviour + inline)", () => {
+    const source = `
+      interface IMixed {
+        doSomething(): void;
+      }
+
+      @UdonBehaviour()
+      class Entry extends UdonSharpBehaviour {
+        target: IMixed;
+
+        Start(): void {
+          this.target.doSomething();
+        }
+      }
+
+      @UdonBehaviour()
+      class UdonImpl extends UdonSharpBehaviour implements IMixed {
+        doSomething(): void {
+          const x: number = 1;
+        }
+      }
+
+      class InlineImpl implements IMixed {
+        doSomething(): void {
+          const x: number = 2;
+        }
+      }
+    `;
+
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const result = transpiler.transpile(source);
+
+    // Should generate IPC because at least one implementor is UdonBehaviour
+    expect(result.tac).toContain("SendCustomEvent");
+    expect(result.tac).toContain("IMixed_doSomething");
+  });
+
   it("preserves isPublic from interface layout (always true)", () => {
     const source = `
       interface IWeapon {
