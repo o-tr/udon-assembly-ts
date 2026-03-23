@@ -115,17 +115,21 @@ namespace VRC.Udon.Editor.ProgramSources
         {
             uint dataVarCount = 0;
             bool inDataSection = false;
+            bool dataEndSeen = false;
             foreach (string rawLine in uasmText.Split('\n'))
             {
                 string line = rawLine.Trim();
                 if (line == ".data_start") { inDataSection = true; continue; }
-                if (line == ".data_end") break;
+                if (line == ".data_end") { dataEndSeen = true; break; }
                 if (!inDataSection) continue;
                 if (line.Length == 0 || line.StartsWith(".")) continue;
                 int colonIdx = line.IndexOf(':');
                 if (colonIdx <= 0) continue;
                 dataVarCount++;
             }
+            if (inDataSection && !dataEndSeen)
+                Debug.LogWarning(
+                    "[TASM] .data_end not found; heap size estimate may be inaccurate.");
             // +128 covers instruction/metadata/stack overhead; 512 is the minimum viable heap (in address slots)
             return Math.Max(dataVarCount + 128, 512);
         }
