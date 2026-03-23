@@ -132,8 +132,8 @@ describe("interface fallback IPC dispatch (no implementing class)", () => {
       expect(result.tac).not.toContain("SendCustomEvent");
     } finally {
       // Clean up the fake registration to avoid polluting other tests.
-      // biome-ignore lint/suspicious/noExplicitAny: test-only access to private field
-      (typeMetadataRegistry as any).types.delete("IExternThing");
+      // clear() would remove legitimate entries from buildExternRegistryFromFiles.
+      typeMetadataRegistry.unregisterType("IExternThing");
     }
   });
 
