@@ -6,6 +6,7 @@ using UnityEditor;
 using UnityEngine;
 using VRC.Udon.Common.Interfaces;
 using VRC.Udon.Editor;
+using VRC.Udon.Editor.ProgramSources;
 
 public static class UasmTestRunner
 {
@@ -180,11 +181,12 @@ public static class UasmTestRunner
 
             var uasmText = File.ReadAllText(uasmPath);
 
-            // Assemble
+            // Assemble (with dynamic heap sizing for large programs)
             IUdonProgram program;
             try
             {
-                program = UdonEditorManager.Instance.Assemble(uasmText);
+                uint heapSize = TASMProgramAsset.CalculateHeapSize(uasmText);
+                program = TASMProgramAsset.AssembleWithHeapSize(uasmText, heapSize);
             }
             catch (Exception e)
             {
@@ -312,4 +314,5 @@ public static class UasmTestRunner
             ? "\nVM diagnostics:\n" + string.Join("\n", capturedErrors)
             : "";
     }
+
 }

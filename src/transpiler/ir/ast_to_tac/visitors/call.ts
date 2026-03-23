@@ -1206,6 +1206,71 @@ export function visitCallExpression(
         return dictResult;
       }
     }
+    // String.prototype.slice → Substring with parameter adjustment
+    if (
+      objectType === PrimitiveTypes.string &&
+      propAccess.property === "slice"
+    ) {
+      const result = this.newTemp(PrimitiveTypes.string);
+      const isNegConst = (op: TACOperand): boolean =>
+        op.kind === TACOperandKind.Constant &&
+        Number((op as ConstantOperand).value) < 0;
+      // Ensure argument is Int32 (Substring expects SystemInt32)
+      const toInt32 = (op: TACOperand): TACOperand => {
+        const cast = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(cast, op));
+        return cast;
+      };
+      // Adjust a negative constant index: length + index
+      const adjustNegIndex = (arg: TACOperand): TACOperand => {
+        const lenTemp = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new PropertyGetInstruction(lenTemp, object, "length"),
+        );
+        const adjusted = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new BinaryOpInstruction(adjusted, lenTemp, "+", toInt32(arg)),
+        );
+        return adjusted;
+      };
+      // Convert an index arg to Int32, adjusting negative constants
+      const resolveIndex = (arg: TACOperand): TACOperand =>
+        isNegConst(arg) ? adjustNegIndex(arg) : toInt32(arg);
+
+      if (evaluatedArgs.length === 1) {
+        const startInt = resolveIndex(evaluatedArgs[0]);
+        this.instructions.push(
+          new MethodCallInstruction(result, object, "Substring", [startInt]),
+        );
+      } else if (evaluatedArgs.length === 2) {
+        // NOTE: JS-style clamping (end > length → clamp, end < start → return "")
+        // is NOT emitted. Callers must ensure 0 ≤ start ≤ end ≤ string.length.
+        const startInt = resolveIndex(evaluatedArgs[0]);
+        const endInt = resolveIndex(evaluatedArgs[1]);
+        const lengthArg = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new BinaryOpInstruction(lengthArg, endInt, "-", startInt),
+        );
+        this.instructions.push(
+          new MethodCallInstruction(result, object, "Substring", [
+            startInt,
+            lengthArg,
+          ]),
+        );
+      } else {
+        // slice() with 0 args is a TS type-error; 3+ args can't happen via the stub.
+        // Emit a best-effort call and let the assembler surface the error.
+        this.instructions.push(
+          new MethodCallInstruction(
+            result,
+            object,
+            "Substring",
+            evaluatedArgs.map((a) => toInt32(a)),
+          ),
+        );
+      }
+      return result;
+    }
     if (objectType.udonType === UdonType.Array) {
       const arrayReturn =
         objectType instanceof ArrayTypeSymbol

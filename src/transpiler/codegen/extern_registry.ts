@@ -447,10 +447,27 @@ function collectScanFiles(filePaths: string[]): string[] {
 function findBuiltinStubDirs(): string[] {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    // Source stubs (when running from src/ via tsx/vitest)
     path.resolve(here, "../../stubs"),
     path.resolve(here, "../../../stubs"),
+    // Source stubs (when running from dist/ – resolve up to package root)
+    path.resolve(here, "../../../src/stubs"),
+    path.resolve(here, "../../../../src/stubs"),
   ];
-  return candidates.filter((dir) => fs.existsSync(dir));
+  const uniqueCandidates = [...new Set(candidates)];
+  // Prefer directories containing .ts source files with decorator metadata
+  // over dist .d.ts files (which lack @UdonExtern decorators).
+  const existing = uniqueCandidates.filter((dir) => fs.existsSync(dir));
+  const withTsSources = existing.filter((dir) => {
+    try {
+      return fs
+        .readdirSync(dir)
+        .some((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"));
+    } catch {
+      return false;
+    }
+  });
+  return withTsSources.length > 0 ? withTsSources : existing;
 }
 
 function walkTypescriptFiles(dir: string): string[] {
