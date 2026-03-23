@@ -110,9 +110,8 @@ export function getOperandUdonType(
     case TACOperandKind.Variable:
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary:
-      return (
-        (operand as { type?: { udonType?: string } }).type?.udonType ?? "Object"
-      );
+      // type is always present on Variable/Constant/Temporary operands (required in their interfaces)
+      return (operand as unknown as { type: TypeSymbol }).type.udonType;
     default:
       return "Object";
   }
