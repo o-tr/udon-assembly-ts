@@ -8,6 +8,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
   ObjectType,
   PrimitiveTypes,
@@ -190,6 +191,95 @@ const emitMapValuesList = (
   );
   return listResult;
 };
+
+/**
+ * Resolve the inline class name for a property-access method call.
+ * Returns the class name if the call target is an inline instance (or an
+ * entry-point self-method), otherwise undefined.
+ */
+function resolveInlineClassName(
+  converter: ASTToTACConverter,
+  propAccess: PropertyAccessExpressionNode,
+  object: TACOperand,
+): string | undefined {
+  if (propAccess.object.kind === ASTNodeKind.ThisExpression) {
+    // Inline context self-method: this.method() inside an inline class body
+    if (converter.currentInlineContext && !converter.currentThisOverride) {
+      return converter.currentInlineContext.className;
+    }
+    // Entry-point class self-method: this.method() in the entry-point class
+    if (
+      converter.currentClassName &&
+      converter.entryPointClasses.has(converter.currentClassName) &&
+      !converter.currentInlineContext &&
+      !converter.currentThisOverride
+    ) {
+      return converter.currentClassName;
+    }
+  }
+  if (object.kind === TACOperandKind.Variable) {
+    const instanceInfo = converter.inlineInstanceMap.get(
+      (object as VariableOperand).name,
+    );
+    if (instanceInfo) {
+      return instanceInfo.className;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Evaluate call arguments, setting currentExpectedType for object literal
+ * arguments whose corresponding parameter is an InterfaceTypeSymbol.
+ * Returns the evaluated args array if any argument was an object literal
+ * with an interface-typed parameter, otherwise null (letting getArgs()
+ * evaluate normally).
+ */
+function evaluateArgsWithExpectedTypes(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  rawArgs: ASTNode[],
+): TACOperand[] | null {
+  let classNode = converter.classMap.get(className);
+  if (!classNode && converter.classRegistry) {
+    const meta = converter.classRegistry.getClass(className);
+    if (meta && !converter.classRegistry.isStub(className)) {
+      classNode = meta.node;
+    }
+  }
+  if (!classNode) return null;
+
+  const method = classNode.methods.find(
+    (m) => m.name === methodName && !m.isStatic,
+  );
+  if (!method) return null;
+
+  const hasTypedObjectArg = rawArgs.some(
+    (arg, i) =>
+      arg.kind === ASTNodeKind.ObjectLiteralExpression &&
+      i < method.parameters.length &&
+      method.parameters[i].type instanceof InterfaceTypeSymbol,
+  );
+  if (!hasTypedObjectArg) return null;
+
+  return rawArgs.map((arg, i) => {
+    const paramType =
+      i < method.parameters.length ? method.parameters[i].type : undefined;
+    if (
+      arg.kind === ASTNodeKind.ObjectLiteralExpression &&
+      paramType instanceof InterfaceTypeSymbol &&
+      paramType.properties.size > 0
+    ) {
+      const prev = converter.currentExpectedType;
+      converter.currentExpectedType = paramType;
+      const result = converter.visitExpression(arg);
+      converter.currentExpectedType = prev;
+      return result;
+    }
+    return converter.visitExpression(arg);
+  });
+}
 
 export function visitCallExpression(
   this: ASTToTACConverter,
@@ -833,6 +923,22 @@ export function visitCallExpression(
       );
       if (mapResult) {
         return mapResult;
+      }
+    }
+
+    // WS-2: Set currentExpectedType for object literal arguments to inline methods.
+    // Detect inline method calls before getArgs() so that ObjectLiteralExpression
+    // arguments are evaluated with the parameter's InterfaceTypeSymbol, producing
+    // inline heap variables instead of a DataDictionary.
+    if (!args) {
+      const inlineClassName = resolveInlineClassName(this, propAccess, object);
+      if (inlineClassName) {
+        args = evaluateArgsWithExpectedTypes(
+          this,
+          inlineClassName,
+          propAccess.property,
+          rawArgs,
+        );
       }
     }
 

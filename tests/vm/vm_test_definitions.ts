@@ -318,6 +318,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "inline_as_parameter.ts",
     expectedLogs: ["42"],
   },
+  {
+    name: "inline_type_alias_arg",
+    sourceFile: "inline_type_alias_arg.ts",
+    expectedLogs: ["99", "world"],
+  },
   // --- Recursive functions ---
   {
     name: "recursive_factorial",
