@@ -202,4 +202,79 @@ describe("type alias inline heap variables", () => {
     // No EXTERN for property access
     expect(result.uasm).not.toContain("EXTERN");
   });
+
+  it("inlines object literal argument passed to inline class method", () => {
+    const source = `
+      type Config = { value: number; label: string };
+      class Analyzer {
+        process(cfg: Config): number { return cfg.value; }
+      }
+      class Entry {
+        private analyzer: Analyzer = new Analyzer();
+        Start(): void {
+          this.analyzer.process({ value: 42, label: "test" });
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // The object literal should be inlined as heap variables
+    expect(startSection).toMatch(/__inst_Config_\d+_value/);
+    expect(startSection).toMatch(/__inst_Config_\d+_label/);
+
+    // In the _start section (inline expansion), property access should resolve
+    // to inline variables, not PropertyGet/EXTERN
+    expect(startSection).not.toMatch(/PropertyGet.*Config/);
+    expect(startSection).not.toMatch(/EXTERN.*Config/);
+  });
+
+  it("inlines multiple object literal arguments in a single call", () => {
+    const source = `
+      type Pos = { x: number; y: number };
+      type Size = { w: number; h: number };
+      class Renderer {
+        draw(pos: Pos, size: Size): number { return pos.x + size.w; }
+      }
+      class Entry {
+        private r: Renderer = new Renderer();
+        Start(): void {
+          this.r.draw({ x: 1, y: 2 }, { w: 10, h: 20 });
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // Both object literals should be inlined
+    expect(startSection).toMatch(/__inst_Pos_\d+_x/);
+    expect(startSection).toMatch(/__inst_Pos_\d+_y/);
+    expect(startSection).toMatch(/__inst_Size_\d+_w/);
+    expect(startSection).toMatch(/__inst_Size_\d+_h/);
+
+    expect(startSection).not.toMatch(/PropertyGet.*Pos/);
+    expect(startSection).not.toMatch(/PropertyGet.*Size/);
+  });
+
+  it("inlines object literal argument in entry-point self-method call", () => {
+    const source = `
+      type Config = { value: number };
+      class Entry {
+        process(cfg: Config): number { return cfg.value; }
+        Start(): void {
+          this.process({ value: 42 });
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // The object literal should be inlined as heap variables
+    expect(startSection).toMatch(/__inst_Config_\d+_value/);
+
+    // Property access inside the inlined method body should resolve
+    // to the inline variable, not PropertyGet/EXTERN
+    expect(startSection).not.toMatch(/PropertyGet.*Config/);
+    expect(startSection).not.toMatch(/EXTERN.*Config/);
+  });
 });
