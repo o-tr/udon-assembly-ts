@@ -81,6 +81,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "inline_with_params.ts",
     expectedLogs: ["42", "60"],
   },
+  {
+    name: "inline_internal_calls",
+    sourceFile: "inline_internal_calls.ts",
+    expectedLogs: ["11", "20"],
+  },
   // --- Operator tests ---
   {
     name: "operators_arithmetic",

@@ -491,6 +491,28 @@ describe("inline instance method calls", () => {
     );
   });
 
+  it("does not generate standalone code blocks for inline classes with internal calls", () => {
+    const source = `
+      class Helper {
+        methodA(): number { return this.shared(); }
+        methodB(): number { return this.shared(); }
+        private shared(): number { return 42; }
+      }
+      class Main {
+        private helper: Helper = new Helper();
+        Start(): void {
+          let a: number = this.helper.methodA();
+          let b: number = this.helper.methodB();
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // インラインクラスの EXTERN が生成されないこと
+    expect(result.tac).not.toContain("EXTERN");
+    // インライン展開で値が含まれること
+    expect(result.tac).toContain("42");
+  });
+
   it("@SerializeField param without access modifier is treated as public property", () => {
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
