@@ -13,6 +13,7 @@ import {
 import { PushInstruction } from "../udon_instruction.js";
 import {
   isKnownExternElementType,
+  mapTypeScriptToCSharp,
   toUdonTypeNameWithArray,
   udonTypeToCSharp,
 } from "../udon_type_resolver.js";
@@ -85,11 +86,14 @@ export function getOperandTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
-      if (
-        typeSymbol instanceof ArrayTypeSymbol &&
-        !isKnownExternElementType(typeSymbol.elementType.name)
-      ) {
-        return "SystemObjectArray";
+      if (typeSymbol instanceof ArrayTypeSymbol) {
+        if (!isKnownExternElementType(typeSymbol.elementType.name)) {
+          return "SystemObjectArray";
+        }
+        const elementCSharp = mapTypeScriptToCSharp(
+          typeSymbol.elementType.name,
+        );
+        return toUdonTypeNameWithArray(`${elementCSharp}[]`);
       }
       return toUdonTypeNameWithArray(udonTypeToCSharp(typeSymbol.udonType));
     }
