@@ -229,6 +229,33 @@ describe("type alias inline heap variables", () => {
     expect(startSection).not.toMatch(/EXTERN.*Config/);
   });
 
+  it("inlines multiple object literal arguments in a single call", () => {
+    const source = `
+      type Pos = { x: number; y: number };
+      type Size = { w: number; h: number };
+      class Renderer {
+        draw(pos: Pos, size: Size): number { return pos.x + size.w; }
+      }
+      class Entry {
+        private r: Renderer = new Renderer();
+        Start(): void {
+          this.r.draw({ x: 1, y: 2 }, { w: 10, h: 20 });
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // Both object literals should be inlined
+    expect(startSection).toMatch(/__inst_Pos_\d+_x/);
+    expect(startSection).toMatch(/__inst_Pos_\d+_y/);
+    expect(startSection).toMatch(/__inst_Size_\d+_w/);
+    expect(startSection).toMatch(/__inst_Size_\d+_h/);
+
+    expect(startSection).not.toMatch(/PropertyGet.*Pos/);
+    expect(startSection).not.toMatch(/PropertyGet.*Size/);
+  });
+
   it("inlines object literal argument in entry-point self-method call", () => {
     const source = `
       type Config = { value: number };

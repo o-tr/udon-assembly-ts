@@ -261,7 +261,8 @@ function evaluateArgsWithExpectedTypes(
     (arg, i) =>
       arg.kind === ASTNodeKind.ObjectLiteralExpression &&
       i < method.parameters.length &&
-      method.parameters[i].type instanceof InterfaceTypeSymbol,
+      method.parameters[i].type instanceof InterfaceTypeSymbol &&
+      (method.parameters[i].type as InterfaceTypeSymbol).properties.size > 0,
   );
   if (!hasTypedObjectArg) return null;
 
