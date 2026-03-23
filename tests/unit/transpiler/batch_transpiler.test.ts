@@ -132,9 +132,12 @@ class Entry extends UdonSharpBehaviour {
       result.outputs[0]?.outputPath as string,
       "utf8",
     );
-    // Const value 42 is inlined; codegen renames to internal names
-    expect(output).toContain("42");
-    expect(output).toContain("__getValue_Helper");
+    // Const value 42 is inlined as a data-section constant declaration
+    expect(output).toMatch(
+      /__const_\d+_SystemSingle:\s*%SystemSingle,\s*42\.0/,
+    );
+    // Inline class methods produce no standalone code block or EXTERN
+    expect(output).not.toContain("EXTERN");
   });
 
   it("should merge top-level consts from multiple inline class files", () => {
@@ -203,9 +206,11 @@ class Entry extends UdonSharpBehaviour {
       result.outputs[0]?.outputPath as string,
       "utf8",
     );
-    // All three const values are inlined from different files
-    expect(output).toContain("__getAlpha_Alpha");
-    expect(output).toContain("__getBeta_Beta");
+    // All const values are inlined as data-section constant declarations
+    expect(output).toMatch(/__const_\d+_SystemSingle:\s*%SystemSingle,\s*1\.0/);
+    expect(output).toMatch(/__const_\d+_SystemSingle:\s*%SystemSingle,\s*2\.0/);
+    // No standalone code blocks or EXTERN for inline classes
+    expect(output).not.toContain("EXTERN");
   });
 
   it("should throw AggregateTranspileError for duplicate top-level consts across files", () => {

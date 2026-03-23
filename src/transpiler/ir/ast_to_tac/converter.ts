@@ -334,7 +334,19 @@ export class ASTToTACConverter {
     // Generate entry point _start if a Start method exists
     this.generateEntryPoint(program);
 
+    // Skip standalone code block generation for inline (non-entry-point) classes.
+    // Their methods are inlined at call sites via classMap (populated above).
+    // When no entry points exist, all classes are processed as a fallback.
     for (const statement of otherStatements) {
+      if (statement.kind === ASTNodeKind.ClassDeclaration) {
+        const classNode = statement as ClassDeclarationNode;
+        if (
+          this.entryPointClasses.size > 0 &&
+          !this.entryPointClasses.has(classNode.name)
+        ) {
+          continue;
+        }
+      }
       this.visitStatement(statement);
     }
 
