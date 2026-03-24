@@ -154,14 +154,38 @@ export function visitInlineConstructor(
   }
 
   const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+  const instanceId = this.nextInstanceId++;
   const instanceHandle = createVariable(
     `${instancePrefix}__handle`,
-    ObjectType,
+    PrimitiveTypes.int32,
+  );
+  this.instructions.push(
+    new AssignmentInstruction(
+      instanceHandle,
+      createConstant(instanceId, PrimitiveTypes.int32),
+    ),
   );
   this.inlineInstanceMap.set(instanceHandle.name, {
     prefix: instancePrefix,
     className,
   });
+  this.allInlineInstances.set(instanceId, {
+    prefix: instancePrefix,
+    className,
+  });
+
+  // Register classId for interfaces this class implements
+  if (classNode.implements) {
+    for (const ifaceName of classNode.implements) {
+      if (!this.interfaceClassIdMap.has(ifaceName)) {
+        this.interfaceClassIdMap.set(ifaceName, new Map());
+      }
+      const classIds = this.interfaceClassIdMap.get(ifaceName);
+      if (classIds && !classIds.has(className)) {
+        classIds.set(className, classIds.size);
+      }
+    }
+  }
 
   for (const prop of classNode.properties) {
     if (!prop.initializer) continue;
@@ -452,6 +476,20 @@ export function mapInlineProperty(
     const propType = alias.properties.get(property);
     if (propType)
       return createVariable(`${instancePrefix}_${property}`, propType);
+  }
+
+  // Fallback: interface from classRegistry
+  if (this.classRegistry) {
+    const iface = this.classRegistry.getInterface(className);
+    if (iface) {
+      const ifaceProp = iface.properties.find((p) => p.name === property);
+      if (ifaceProp) {
+        return createVariable(
+          `${instancePrefix}_${property}`,
+          this.typeMapper.mapTypeScriptType(ifaceProp.type),
+        );
+      }
+    }
   }
   return undefined;
 }

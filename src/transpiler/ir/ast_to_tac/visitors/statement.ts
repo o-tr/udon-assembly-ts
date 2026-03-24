@@ -505,7 +505,114 @@ export function visitForOfStatement(
       this.instructions.push(new CopyInstruction(targetVar, propValue));
     }
   }
+  // Interface dispatch: when element type is an interface with all-inline implementors,
+  // generate instanceId-based property copy + classId assignment before the loop body.
+  let vifaceCleanupVar: string | undefined;
+  let savedVifaceEntry: { prefix: string; className: string } | undefined;
+
+  if (
+    !isDestructured &&
+    !isObjectDestructured &&
+    typeof node.variable === "string"
+  ) {
+    const variableName = node.variable;
+    const ifaceName = elementType.name;
+    if (isAllInlineInterface(this, ifaceName)) {
+      // Collect all inline instances that implement this interface
+      const implementors =
+        this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
+      const ifaceMeta = this.classRegistry?.getInterface(ifaceName);
+      const classIds = this.interfaceClassIdMap.get(ifaceName);
+      const relevantInstances: Array<
+        [number, { prefix: string; className: string }]
+      > = [];
+      if (ifaceMeta && classIds) {
+        for (const [id, info] of this.allInlineInstances) {
+          if (implementors.some((impl) => impl.name === info.className)) {
+            relevantInstances.push([id, info]);
+          }
+        }
+      }
+
+      // Only emit dispatch when there are known instances to dispatch to
+      if (relevantInstances.length > 0 && ifaceMeta && classIds) {
+        const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
+        const classIdVar = createVariable(
+          `${virtualPrefix}__classId`,
+          PrimitiveTypes.int32,
+        );
+        const dispatchEndLabel = this.newLabel("viface_end");
+
+        // elementVar is Object (from array access); copy to Int32 for comparison
+        const handleVar = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CopyInstruction(handleVar, elementVar));
+
+        // Generate instanceId-based if-else dispatch
+        for (const [instanceId, info] of relevantInstances) {
+          const nextLabel = this.newLabel("viface_next");
+          const cond = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(
+              cond,
+              handleVar,
+              "==",
+              createConstant(instanceId, PrimitiveTypes.int32),
+            ),
+          );
+          this.instructions.push(
+            new ConditionalJumpInstruction(cond, nextLabel),
+          );
+
+          // Copy properties to virtual variables
+          for (const prop of ifaceMeta.properties) {
+            const propType = this.typeMapper.mapTypeScriptType(prop.type);
+            const src = createVariable(`${info.prefix}_${prop.name}`, propType);
+            const dst = createVariable(
+              `${virtualPrefix}_${prop.name}`,
+              propType,
+            );
+            this.instructions.push(new CopyInstruction(dst, src));
+          }
+
+          // Set classId
+          const classId = classIds.get(info.className);
+          if (classId !== undefined) {
+            this.instructions.push(
+              new AssignmentInstruction(
+                classIdVar,
+                createConstant(classId, PrimitiveTypes.int32),
+              ),
+            );
+          }
+
+          this.instructions.push(
+            new UnconditionalJumpInstruction(dispatchEndLabel),
+          );
+          this.instructions.push(new LabelInstruction(nextLabel));
+        }
+        this.instructions.push(new LabelInstruction(dispatchEndLabel));
+
+        // Register virtual prefix in inlineInstanceMap for the loop variable
+        savedVifaceEntry = this.inlineInstanceMap.get(variableName);
+        vifaceCleanupVar = variableName;
+        this.inlineInstanceMap.set(variableName, {
+          prefix: virtualPrefix,
+          className: ifaceName,
+        });
+      }
+    }
+  }
+
   this.visitStatement(node.body);
+
+  // Cleanup virtual interface dispatch registration
+  if (vifaceCleanupVar) {
+    if (savedVifaceEntry) {
+      this.inlineInstanceMap.set(vifaceCleanupVar, savedVifaceEntry);
+    } else {
+      this.inlineInstanceMap.delete(vifaceCleanupVar);
+    }
+  }
 
   this.instructions.push(new LabelInstruction(loopContinue));
   this.instructions.push(
@@ -520,6 +627,29 @@ export function visitForOfStatement(
   this.instructions.push(new LabelInstruction(loopEnd));
 
   this.loopContextStack.pop();
+}
+
+/**
+ * Check if the given type name is an interface where all implementors are
+ * inline (non-UdonBehaviour) classes.
+ */
+function isAllInlineInterface(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
+  const iface = converter.classRegistry?.getInterface(typeName);
+  if (!iface) return false;
+  if (!iface.methods?.length && !iface.properties?.length) return false;
+  const implementors =
+    converter.classRegistry?.getImplementorsOfInterface(typeName) ?? [];
+  return (
+    implementors.length > 0 &&
+    implementors.every(
+      (cls) =>
+        !cls.decorators.some((d) => d.name === "UdonBehaviour") &&
+        !converter.udonBehaviourClasses.has(cls.name),
+    )
+  );
 }
 
 export function visitSwitchStatement(

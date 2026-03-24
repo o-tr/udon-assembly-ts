@@ -1,0 +1,260 @@
+/**
+ * Tests for interface-typed variable dispatch with all-inline implementors.
+ * When all classes implementing an interface are inline (non-UdonBehaviour),
+ * property access and method calls through interface-typed variables should
+ * be resolved via virtual variables and classId dispatch without EXTERNs.
+ */
+
+import { beforeAll, describe, expect, it } from "vitest";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
+
+/** Extract lines in the _start section (from _start label to its return). */
+function getStartSection(tac: string): string {
+  const lines = tac.split("\n");
+  const startIdx = lines.findIndex((line) => line.includes("_start:"));
+  if (startIdx < 0) return "";
+  const endIdx = lines.findIndex(
+    (line, i) => i > startIdx && line.trim().startsWith("return"),
+  );
+  return lines
+    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined)
+    .join("\n");
+}
+
+describe("interface dispatch with all-inline implementors", () => {
+  beforeAll(() => {
+    buildExternRegistryFromFiles([]);
+  });
+
+  it("dispatches method calls in for-of loop via classId without EXTERN", () => {
+    const source = `
+      interface IYaku {
+        score(): number;
+      }
+      class Yaku1 implements IYaku {
+        private value: number = 10;
+        score(): number {
+          return this.value;
+        }
+      }
+      class Yaku2 implements IYaku {
+        private value: number = 20;
+        score(): number {
+          return this.value;
+        }
+      }
+      class Main {
+        private yakus: IYaku[] = [new Yaku1(), new Yaku2()];
+        Start(): void {
+          let total: number = 0;
+          for (const yaku of this.yakus) {
+            total = total + yaku.score();
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // Should NOT have EXTERN calls for interface methods
+    expect(startSection).not.toContain("EXTERN");
+
+    // Virtual interface variables should be generated
+    expect(startSection).toContain("__viface_IYaku");
+
+    // Both class values should appear (inlined from Yaku1 and Yaku2)
+    expect(startSection).toContain("10");
+    expect(startSection).toContain("20");
+  });
+
+  it("resolves property access in for-of loop via virtual variables without EXTERN", () => {
+    const source = `
+      interface IItem {
+        points: number;
+      }
+      class ItemA implements IItem {
+        points: number = 5;
+      }
+      class ItemB implements IItem {
+        points: number = 10;
+      }
+      class Main {
+        private items: IItem[] = [new ItemA(), new ItemB()];
+        Start(): void {
+          let total: number = 0;
+          for (const item of this.items) {
+            total = total + item.points;
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // Should NOT have EXTERN calls
+    expect(startSection).not.toContain("EXTERN");
+
+    // Virtual interface variables for property access
+    expect(startSection).toContain("__viface_IItem");
+  });
+
+  it("inlines direct interface-typed variable via tracking propagation", () => {
+    const source = `
+      interface IGreeter {
+        greet(): number;
+      }
+      class Hello implements IGreeter {
+        greet(): number {
+          return 1;
+        }
+      }
+      class Main {
+        private g: IGreeter = new Hello();
+        Start(): void {
+          let v: number = this.g.greet();
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    // Should inline without EXTERN
+    expect(startSection).not.toContain("EXTERN");
+
+    // Inlined constant from greet()
+    expect(startSection).toContain("1");
+  });
+
+  it("dispatches method with parameters in for-of loop", () => {
+    const source = `
+      interface ICalc {
+        compute(x: number): number;
+      }
+      class Doubler implements ICalc {
+        compute(x: number): number { return x + x; }
+      }
+      class Tripler implements ICalc {
+        compute(x: number): number { return x + x + x; }
+      }
+      class Main {
+        private calcs: ICalc[] = [new Doubler(), new Tripler()];
+        Start(): void {
+          let total: number = 0;
+          for (const c of this.calcs) {
+            total = total + c.compute(5);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).not.toContain("EXTERN");
+    // The argument 5 should appear in the inlined bodies
+    expect(startSection).toContain("5");
+  });
+
+  it("dispatches void-returning interface method", () => {
+    const source = `
+      interface IAction {
+        execute(): void;
+      }
+      class ActionA implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class ActionB implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class Main {
+        private actions: IAction[] = [new ActionA(), new ActionB()];
+        Start(): void {
+          for (const a of this.actions) {
+            a.execute();
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).not.toContain("EXTERN");
+    expect(startSection).toContain("__viface_IAction");
+  });
+
+  it("handles both property access and method calls on the same interface variable", () => {
+    const source = `
+      interface IScored {
+        base: number;
+        bonus(): number;
+      }
+      class ScoredA implements IScored {
+        base: number = 100;
+        bonus(): number { return 10; }
+      }
+      class ScoredB implements IScored {
+        base: number = 200;
+        bonus(): number { return 20; }
+      }
+      class Main {
+        private items: IScored[] = [new ScoredA(), new ScoredB()];
+        Start(): void {
+          let total: number = 0;
+          for (const s of this.items) {
+            total = total + s.base + s.bonus();
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).not.toContain("EXTERN");
+    expect(startSection).toContain("__viface_IScored");
+    // Property initial values from both classes
+    expect(startSection).toContain("100");
+    expect(startSection).toContain("200");
+  });
+
+  it("dispatches correctly with three implementing classes", () => {
+    const source = `
+      interface IShape {
+        area(): number;
+      }
+      class Circle implements IShape {
+        private r: number = 3;
+        area(): number { return this.r; }
+      }
+      class Square implements IShape {
+        private s: number = 4;
+        area(): number { return this.s; }
+      }
+      class Triangle implements IShape {
+        private h: number = 5;
+        area(): number { return this.h; }
+      }
+      class Main {
+        private shapes: IShape[] = [new Circle(), new Square(), new Triangle()];
+        Start(): void {
+          let total: number = 0;
+          for (const shape of this.shapes) {
+            total = total + shape.area();
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).not.toContain("EXTERN");
+    expect(startSection).toContain("__viface_IShape");
+    // Inlined constants from all three classes
+    expect(startSection).toContain("3");
+    expect(startSection).toContain("4");
+    expect(startSection).toContain("5");
+    // Should have three classId dispatch branches
+    expect(startSection).toContain("iface_dispatch_next");
+  });
+});

@@ -1493,6 +1493,61 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult != null) return inlineResult;
+
+        // Interface classId-based dispatch: when className is an interface
+        // with all-inline implementors, dispatch by classId
+        const classIds = this.interfaceClassIdMap.get(instanceInfo.className);
+        if (classIds && classIds.size > 0) {
+          const ifaceMeta = this.classRegistry?.getInterface(
+            instanceInfo.className,
+          );
+          const methodMeta = ifaceMeta?.methods.find(
+            (m) => m.name === propAccess.property,
+          );
+          const returnType = methodMeta
+            ? this.typeMapper.mapTypeScriptType(methodMeta.returnType)
+            : ObjectType;
+          const isVoid =
+            returnType.name === "SystemVoid" ||
+            methodMeta?.returnType === "void";
+          const result = isVoid ? undefined : this.newTemp(returnType);
+          const endLabel = this.newLabel("iface_dispatch_end");
+          const classIdVar = createVariable(
+            `${instanceInfo.prefix}__classId`,
+            PrimitiveTypes.int32,
+          );
+
+          for (const [className, classId] of classIds) {
+            const nextLabel = this.newLabel("iface_dispatch_next");
+            const cond = this.newTemp(PrimitiveTypes.boolean);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                cond,
+                classIdVar,
+                "==",
+                createConstant(classId, PrimitiveTypes.int32),
+              ),
+            );
+            this.instructions.push(
+              new ConditionalJumpInstruction(cond, nextLabel),
+            );
+
+            const inlineRes = this.visitInlineInstanceMethodCallWithContext(
+              className,
+              instanceInfo.prefix,
+              propAccess.property,
+              evaluatedArgs,
+            );
+            if (inlineRes && result) {
+              this.instructions.push(new CopyInstruction(result, inlineRes));
+            }
+            this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+            this.instructions.push(new LabelInstruction(nextLabel));
+          }
+
+          this.instructions.push(new LabelInstruction(endLabel));
+          return result ?? VOID_RETURN;
+        }
       }
     }
     // Recursive self-method call: use JUMP-based mechanism

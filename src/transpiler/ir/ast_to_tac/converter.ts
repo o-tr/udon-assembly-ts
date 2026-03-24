@@ -198,6 +198,12 @@ export class ASTToTACConverter {
   inlineInstanceMap: Map<string, { prefix: string; className: string }> =
     new Map();
   inlineMethodStack: Set<string> = new Set();
+  /** Maps interface name → (class name → classId) for inline dispatch */
+  interfaceClassIdMap: Map<string, Map<string, number>> = new Map();
+  /** Maps instanceId → {prefix, className} for all inline instances */
+  allInlineInstances: Map<number, { prefix: string; className: string }> =
+    new Map();
+  nextInstanceId = 0;
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
@@ -261,6 +267,9 @@ export class ASTToTACConverter {
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
+    this.interfaceClassIdMap = new Map();
+    this.allInlineInstances = new Map();
+    this.nextInstanceId = 0;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
     this.recursiveReturnSites = new Map();
