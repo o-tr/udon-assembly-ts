@@ -450,8 +450,6 @@ export function visitForOfStatement(
 
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
-  const loopFinalizeContinue = this.newLabel("forof_finalize_continue");
-  const loopFinalizeBreak = this.newLabel("forof_finalize_break");
   const loopEnd = this.newLabel("forof_end");
 
   this.instructions.push(new LabelInstruction(loopStart));
@@ -597,12 +595,6 @@ export function visitForOfStatement(
     }
   };
 
-  this.loopContextStack.push({
-    breakLabel: loopFinalizeBreak,
-    continueLabel: loopFinalizeContinue,
-    emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
-  });
-
   if (
     !isDestructured &&
     !isObjectDestructured &&
@@ -611,7 +603,12 @@ export function visitForOfStatement(
     const variableName = node.variable;
     const ifaceName = elementType.name;
     if (isAllInlineInterface(this, ifaceName)) {
-      // Collect all inline instances that implement this interface
+      // Collect all inline instances that implement this interface.
+      // NOTE: allInlineInstances is compilation-unit-wide, so instances that
+      // are never stored in *this* array (e.g. a scalar IYaku field in another
+      // class) will still generate dispatch branches. This is an intentional
+      // over-approximation that avoids costly data-flow analysis. The extra
+      // branches are dead at runtime and will be pruned by the optimizer.
       const implementors =
         this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
       const implementorNames = new Set(implementors.map((impl) => impl.name));
@@ -715,16 +712,37 @@ export function visitForOfStatement(
     }
   }
 
-  this.visitStatement(node.body);
-  this.instructions.push(
-    new UnconditionalJumpInstruction(loopFinalizeContinue),
-  );
+  // Only introduce finalize labels when viface dispatch is active.
+  // Otherwise use the original direct break/continue targets to avoid
+  // extra trampoline jumps on every non-interface for-of loop.
+  const needsVifaceEpilogue = !!vifacePrefix;
+  if (needsVifaceEpilogue) {
+    const loopFinalizeContinue = this.newLabel("forof_finalize_continue");
+    const loopFinalizeBreak = this.newLabel("forof_finalize_break");
+    this.loopContextStack.push({
+      breakLabel: loopFinalizeBreak,
+      continueLabel: loopFinalizeContinue,
+      emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
+    });
 
-  this.instructions.push(new LabelInstruction(loopFinalizeContinue));
-  emitVirtualInterfaceIterationEpilogue(loopContinue);
+    this.visitStatement(node.body);
 
-  this.instructions.push(new LabelInstruction(loopFinalizeBreak));
-  emitVirtualInterfaceIterationEpilogue(loopEnd);
+    this.instructions.push(
+      new UnconditionalJumpInstruction(loopFinalizeContinue),
+    );
+    this.instructions.push(new LabelInstruction(loopFinalizeContinue));
+    emitVirtualInterfaceIterationEpilogue(loopContinue);
+
+    this.instructions.push(new LabelInstruction(loopFinalizeBreak));
+    emitVirtualInterfaceIterationEpilogue(loopEnd);
+  } else {
+    this.loopContextStack.push({
+      breakLabel: loopEnd,
+      continueLabel: loopContinue,
+    });
+
+    this.visitStatement(node.body);
+  }
 
   this.instructions.push(new LabelInstruction(loopContinue));
   this.instructions.push(
