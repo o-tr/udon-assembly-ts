@@ -174,16 +174,29 @@ export function visitInlineConstructor(
     className,
   });
 
-  // Register classId for interfaces this class implements
-  if (classNode.implements) {
-    for (const ifaceName of classNode.implements) {
-      if (!this.interfaceClassIdMap.has(ifaceName)) {
-        this.interfaceClassIdMap.set(ifaceName, new Map());
+  // Register classId for interfaces this class implements (including inherited)
+  const allInterfaces = new Set<string>(classNode.implements ?? []);
+  if (this.classRegistry) {
+    let baseClassName = classNode.baseClass ?? null;
+    const visited = new Set<string>();
+    while (baseClassName && !visited.has(baseClassName)) {
+      visited.add(baseClassName);
+      const baseMeta = this.classRegistry.getClass(baseClassName);
+      if (baseMeta?.node.implements) {
+        for (const ifaceName of baseMeta.node.implements) {
+          allInterfaces.add(ifaceName);
+        }
       }
-      const classIds = this.interfaceClassIdMap.get(ifaceName);
-      if (classIds && !classIds.has(className)) {
-        classIds.set(className, classIds.size);
-      }
+      baseClassName = baseMeta?.baseClass ?? null;
+    }
+  }
+  for (const ifaceName of allInterfaces) {
+    if (!this.interfaceClassIdMap.has(ifaceName)) {
+      this.interfaceClassIdMap.set(ifaceName, new Map());
+    }
+    const classIds = this.interfaceClassIdMap.get(ifaceName);
+    if (classIds && !classIds.has(className)) {
+      classIds.set(className, classIds.size);
     }
   }
 

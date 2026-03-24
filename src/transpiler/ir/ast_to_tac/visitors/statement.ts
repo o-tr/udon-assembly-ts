@@ -890,10 +890,6 @@ export function visitReturnStatement(
   node: ReturnStatementNode,
 ): void {
   const value = node.value ? this.visitExpression(node.value) : undefined;
-  const valueMapping =
-    value?.kind === TACOperandKind.Variable
-      ? this.inlineInstanceMap.get((value as VariableOperand).name)
-      : undefined;
 
   // Check inlineReturnStack FIRST: if we are inside an inlined method body,
   // return must go to the inline return label, not the recursive dispatch.
@@ -948,6 +944,12 @@ export function visitReturnStatement(
   }
   if (inlineContext) {
     emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
+    // Capture valueMapping AFTER the epilogue so inlineInstanceMap reflects
+    // the post-loop state (viface entries are restored/removed by the epilogue).
+    const valueMapping =
+      value?.kind === TACOperandKind.Variable
+        ? this.inlineInstanceMap.get((value as VariableOperand).name)
+        : undefined;
     if (value) {
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, value),

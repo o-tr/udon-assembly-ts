@@ -1530,6 +1530,7 @@ export function visitCallExpression(
           const savedInstructionCount = this.instructions.length;
           const savedTempCounter = this.tempCounter;
           const savedLabelCounter = this.labelCounter;
+          const savedInlineInstanceMap = new Map(this.inlineInstanceMap);
           let dispatchFailed = false;
 
           for (const [className, classId] of classIds) {
@@ -1560,6 +1561,7 @@ export function visitCallExpression(
               this.instructions.length = savedInstructionCount;
               this.tempCounter = savedTempCounter;
               this.labelCounter = savedLabelCounter;
+              this.inlineInstanceMap = savedInlineInstanceMap;
               dispatchFailed = true;
               break;
             }
