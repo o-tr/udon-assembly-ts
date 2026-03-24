@@ -509,6 +509,12 @@ export function visitForOfStatement(
   // generate instanceId-based property copy + classId assignment before the loop body.
   let vifaceCleanupVar: string | undefined;
   let savedVifaceEntry: { prefix: string; className: string } | undefined;
+  let vifacePrefix: string | undefined;
+  let vifaceHandleVar: TACOperand | undefined;
+  let vifaceInterfaceName: string | undefined;
+  let vifaceRelevantInstances: Array<
+    [number, { prefix: string; className: string }]
+  > = [];
 
   if (
     !isDestructured &&
@@ -521,6 +527,7 @@ export function visitForOfStatement(
       // Collect all inline instances that implement this interface
       const implementors =
         this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
+      const implementorNames = new Set(implementors.map((impl) => impl.name));
       const ifaceMeta = this.classRegistry?.getInterface(ifaceName);
       const classIds = this.interfaceClassIdMap.get(ifaceName);
       const relevantInstances: Array<
@@ -528,7 +535,7 @@ export function visitForOfStatement(
       > = [];
       if (ifaceMeta && classIds) {
         for (const [id, info] of this.allInlineInstances) {
-          if (implementors.some((impl) => impl.name === info.className)) {
+          if (implementorNames.has(info.className)) {
             relevantInstances.push([id, info]);
           }
         }
@@ -563,15 +570,29 @@ export function visitForOfStatement(
             new ConditionalJumpInstruction(cond, nextLabel),
           );
 
-          // Copy properties to virtual variables
-          for (const prop of ifaceMeta.properties) {
-            const propType = this.typeMapper.mapTypeScriptType(prop.type);
-            const src = createVariable(`${info.prefix}_${prop.name}`, propType);
+          // Copy all concrete class properties to virtual variables so that
+          // inlined method bodies can safely access private/internal fields.
+          const concreteClass = this.classMap.get(info.className);
+          const propsToCopy: Array<{ name: string; type: TypeSymbol }> =
+            concreteClass?.properties.map((prop) => ({
+              name: prop.name,
+              type: prop.type,
+            })) ??
+            ifaceMeta.properties.map((prop) => ({
+              name: prop.name,
+              type: this.typeMapper.mapTypeScriptType(prop.type),
+            }));
+          for (const prop of propsToCopy) {
+            const src = createVariable(
+              `${info.prefix}_${prop.name}`,
+              prop.type,
+            );
             const dst = createVariable(
               `${virtualPrefix}_${prop.name}`,
-              propType,
+              prop.type,
             );
             this.instructions.push(new CopyInstruction(dst, src));
+            this.maybeTrackInlineInstanceAssignment(dst, src);
           }
 
           // Set classId
@@ -599,11 +620,64 @@ export function visitForOfStatement(
           prefix: virtualPrefix,
           className: ifaceName,
         });
+
+        vifacePrefix = virtualPrefix;
+        vifaceHandleVar = handleVar;
+        vifaceInterfaceName = ifaceName;
+        vifaceRelevantInstances = relevantInstances;
       }
     }
   }
 
   this.visitStatement(node.body);
+
+  // Write back virtual interface properties to concrete instance storage.
+  if (
+    vifacePrefix &&
+    vifaceHandleVar &&
+    vifaceInterfaceName &&
+    vifaceRelevantInstances.length > 0
+  ) {
+    const ifaceMeta = this.classRegistry?.getInterface(vifaceInterfaceName);
+    const writebackEndLabel = this.newLabel("viface_wb_end");
+    for (const [instanceId, info] of vifaceRelevantInstances) {
+      const nextLabel = this.newLabel("viface_wb_next");
+      const cond = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          cond,
+          vifaceHandleVar,
+          "==",
+          createConstant(instanceId, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
+
+      const concreteClass = this.classMap.get(info.className);
+      const propsToWriteBack: Array<{ name: string; type: TypeSymbol }> =
+        concreteClass?.properties.map((prop) => ({
+          name: prop.name,
+          type: prop.type,
+        })) ??
+        ifaceMeta?.properties.map((prop) => ({
+          name: prop.name,
+          type: this.typeMapper.mapTypeScriptType(prop.type),
+        })) ??
+        [];
+      for (const prop of propsToWriteBack) {
+        const src = createVariable(`${vifacePrefix}_${prop.name}`, prop.type);
+        const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
+        this.instructions.push(new CopyInstruction(dst, src));
+        this.maybeTrackInlineInstanceAssignment(dst, src);
+      }
+
+      this.instructions.push(
+        new UnconditionalJumpInstruction(writebackEndLabel),
+      );
+      this.instructions.push(new LabelInstruction(nextLabel));
+    }
+    this.instructions.push(new LabelInstruction(writebackEndLabel));
+  }
 
   // Cleanup virtual interface dispatch registration
   if (vifaceCleanupVar) {
@@ -646,6 +720,10 @@ function isAllInlineInterface(
     implementors.length > 0 &&
     implementors.every(
       (cls) =>
+        !converter.entryPointClasses.has(cls.name) &&
+        !converter.isUdonBehaviourType(
+          converter.typeMapper.mapTypeScriptType(cls.name),
+        ) &&
         !cls.decorators.some((d) => d.name === "UdonBehaviour") &&
         !converter.udonBehaviourClasses.has(cls.name),
     )

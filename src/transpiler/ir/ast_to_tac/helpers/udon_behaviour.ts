@@ -1,4 +1,5 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
+import type { ClassMetadata } from "../../../frontend/class_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
@@ -20,18 +21,55 @@ import { createLabel, createVariable } from "../../tac_operand.js";
 import type { UdonBehaviourClassLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
 
+const UDON_SHARP_BEHAVIOUR = "UdonSharpBehaviour";
+
+function isUdonBehaviourClassName(
+  converter: ASTToTACConverter,
+  className: string,
+): boolean {
+  const visited = new Set<string>();
+  let current: string | null = className;
+
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    if (converter.udonBehaviourClasses.has(current)) return true;
+    if (converter.entryPointClasses.has(current)) return true;
+
+    const classMeta: ClassMetadata | undefined =
+      converter.classRegistry?.getClass(current);
+    if (
+      classMeta?.decorators.some(
+        (decorator: { name: string }) => decorator.name === "UdonBehaviour",
+      )
+    ) {
+      return true;
+    }
+
+    const classNode = converter.classMap.get(current);
+    if (
+      classNode?.decorators.some(
+        (decorator: { name: string }) => decorator.name === "UdonBehaviour",
+      )
+    ) {
+      return true;
+    }
+
+    const baseClass: string | null =
+      classMeta?.baseClass ?? classNode?.baseClass ?? null;
+    if (!baseClass) return false;
+    if (baseClass === UDON_SHARP_BEHAVIOUR) return true;
+    current = baseClass;
+  }
+
+  return false;
+}
+
 export function isUdonBehaviourType(
   this: ASTToTACConverter,
   type: TypeSymbol | undefined,
 ): boolean {
   if (!type) return false;
-  const classNode = this.classMap.get(type.name);
-  if (classNode) {
-    return classNode.decorators.some(
-      (decorator) => decorator.name === "UdonBehaviour",
-    );
-  }
-  if (this.udonBehaviourClasses.has(type.name)) return true;
+  if (isUdonBehaviourClassName(this, type.name)) return true;
   // Check if this is a user-defined interface with methods (i.e. a UdonBehaviour interface).
   // Exclude extern/stub interfaces (e.g. IEnumerable) via typeMetadataRegistry.
   const iface = this.classRegistry?.getInterface(type.name);
@@ -43,9 +81,7 @@ export function isUdonBehaviourType(
     if (implementors.length === 0) {
       return true; // No implementors in this compilation unit — assume cross-file UdonBehaviour
     }
-    return implementors.some((cls) =>
-      cls.decorators.some((d) => d.name === "UdonBehaviour"),
-    );
+    return implementors.some((cls) => isUdonBehaviourClassName(this, cls.name));
   }
   return false;
 }

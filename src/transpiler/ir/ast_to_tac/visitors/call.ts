@@ -1510,12 +1510,20 @@ export function visitCallExpression(
           const isVoid =
             returnType.name === "SystemVoid" ||
             methodMeta?.returnType === "void";
-          const result = isVoid ? undefined : this.newTemp(returnType);
+          const result = isVoid
+            ? undefined
+            : createVariable(`__iface_ret_${this.tempCounter++}`, returnType, {
+                isLocal: true,
+              });
           const endLabel = this.newLabel("iface_dispatch_end");
           const classIdVar = createVariable(
             `${instanceInfo.prefix}__classId`,
             PrimitiveTypes.int32,
           );
+          let resultInlineMapping:
+            | { prefix: string; className: string }
+            | null
+            | undefined;
 
           for (const [className, classId] of classIds) {
             const nextLabel = this.newLabel("iface_dispatch_next");
@@ -1540,12 +1548,38 @@ export function visitCallExpression(
             );
             if (inlineRes && result) {
               this.instructions.push(new CopyInstruction(result, inlineRes));
+              const inlineMapping =
+                inlineRes.kind === TACOperandKind.Variable
+                  ? this.inlineInstanceMap.get(
+                      (inlineRes as VariableOperand).name,
+                    )
+                  : undefined;
+              if (inlineMapping) {
+                if (resultInlineMapping === undefined) {
+                  resultInlineMapping = inlineMapping;
+                } else if (
+                  resultInlineMapping &&
+                  (resultInlineMapping.prefix !== inlineMapping.prefix ||
+                    resultInlineMapping.className !== inlineMapping.className)
+                ) {
+                  resultInlineMapping = null;
+                }
+              } else {
+                resultInlineMapping = null;
+              }
             }
             this.instructions.push(new UnconditionalJumpInstruction(endLabel));
             this.instructions.push(new LabelInstruction(nextLabel));
           }
 
           this.instructions.push(new LabelInstruction(endLabel));
+          if (result) {
+            if (resultInlineMapping) {
+              this.inlineInstanceMap.set(result.name, resultInlineMapping);
+            } else {
+              this.inlineInstanceMap.delete(result.name);
+            }
+          }
           return result ?? VOID_RETURN;
         }
       }

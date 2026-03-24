@@ -63,9 +63,23 @@ describe("interface dispatch with all-inline implementors", () => {
     // Virtual interface variables should be generated
     expect(startSection).toContain("__viface_IYaku");
 
-    // Both class values should appear (inlined from Yaku1 and Yaku2)
-    expect(startSection).toContain("10");
-    expect(startSection).toContain("20");
+    // Method body must read from virtual interface-prefixed storage.
+    expect(startSection).toContain("__viface_IYaku_2_value");
+    expect(startSection).toMatch(
+      /__viface_IYaku_\d+_value = __inst_Yaku1_\d+_value/,
+    );
+    expect(startSection).toMatch(
+      /__viface_IYaku_\d+_value = __inst_Yaku2_\d+_value/,
+    );
+    expect(startSection).toMatch(/__inline_ret_\d+ = __viface_IYaku_\d+_value/);
+    expect(startSection).toMatch(/__iface_ret_\d+ = __inline_ret_\d+/);
+    expect(startSection).toMatch(/t\d+ = total \+ __iface_ret_\d+/);
+    expect(startSection).toMatch(
+      /__inst_Yaku1_\d+_value = __viface_IYaku_\d+_value/,
+    );
+    expect(startSection).toMatch(
+      /__inst_Yaku2_\d+_value = __viface_IYaku_\d+_value/,
+    );
   });
 
   it("resolves property access in for-of loop via virtual variables without EXTERN", () => {
@@ -182,6 +196,20 @@ describe("interface dispatch with all-inline implementors", () => {
 
     expect(startSection).not.toContain("EXTERN");
     expect(startSection).toContain("__viface_IAction");
+    expect(startSection).toMatch(
+      /__viface_IAction_\d+_done = __inst_ActionA_\d+_done/,
+    );
+    expect(startSection).toMatch(
+      /__viface_IAction_\d+_done = __inst_ActionB_\d+_done/,
+    );
+    expect(startSection).toMatch(/__viface_IAction_\d+_done = true/);
+    // Write-back should copy virtual field values to concrete instance fields.
+    expect(startSection).toMatch(
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/,
+    );
+    expect(startSection).toMatch(
+      /__inst_ActionB_\d+_done = __viface_IAction_\d+_done/,
+    );
   });
 
   it("handles both property access and method calls on the same interface variable", () => {
@@ -250,10 +278,12 @@ describe("interface dispatch with all-inline implementors", () => {
 
     expect(startSection).not.toContain("EXTERN");
     expect(startSection).toContain("__viface_IShape");
-    // Inlined constants from all three classes
-    expect(startSection).toContain("3");
-    expect(startSection).toContain("4");
-    expect(startSection).toContain("5");
+    // Method reads should be virtual-prefixed for private fields.
+    expect(startSection).toContain("__viface_IShape_");
+    expect(startSection).toMatch(/__viface_IShape_\d+_r/);
+    expect(startSection).toMatch(/__viface_IShape_\d+_s/);
+    expect(startSection).toMatch(/__viface_IShape_\d+_h/);
+    expect(startSection).toMatch(/t\d+ = total \+ __iface_ret_\d+/);
     // Should have three classId dispatch branches
     expect(startSection).toContain("iface_dispatch_next");
   });

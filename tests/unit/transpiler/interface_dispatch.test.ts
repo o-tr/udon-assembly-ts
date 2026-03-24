@@ -429,6 +429,41 @@ describe("interface-based polymorphic dispatch", () => {
     expect(result.tac).toContain("IMixed_doSomething");
   });
 
+  it("treats subclasses of @UdonBehaviour classes as non-inline implementors", () => {
+    const source = `
+      interface IActor {
+        act(): void;
+      }
+
+      @UdonBehaviour()
+      class BaseActor extends UdonSharpBehaviour {}
+
+      class DerivedActor extends BaseActor implements IActor {
+        act(): void {
+          const v: number = 1;
+        }
+      }
+
+      @UdonBehaviour()
+      class Entry extends UdonSharpBehaviour {
+        actor: IActor;
+
+        Start(): void {
+          this.actor.act();
+        }
+      }
+    `;
+
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const result = transpiler.transpile(source);
+
+    // DerivedActor inherits UdonBehaviour semantics via BaseActor, so dispatch
+    // must stay on IPC path and must not be lowered to inline viface dispatch.
+    expect(result.tac).toContain("SendCustomEvent");
+    expect(result.tac).toContain("IActor_act");
+    expect(result.tac).not.toContain("__viface_IActor");
+  });
+
   it("preserves isPublic from interface layout (always true)", () => {
     const source = `
       interface IWeapon {
