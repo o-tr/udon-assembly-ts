@@ -363,18 +363,26 @@ describe("inline inheritance", () => {
     const startSection = getStartSection(result.tac);
     const lines = startSection.split("\n").map((line) => line.trim());
 
+    const aInitIdx = lines.indexOf("a = 1");
+    const aWriteIdx = lines.findIndex(
+      (line) => line.includes("a =") && !line.endsWith("= 1"),
+    );
     const bInitIdx = lines.indexOf("b = 3");
     const bWriteIdx = lines.indexOf("b = 4");
     const cInitIdx = lines.indexOf("c = 5");
     const cWriteIdx = lines.indexOf("c = 6");
 
+    expect(aInitIdx).toBeGreaterThan(-1);
+    expect(aWriteIdx).toBeGreaterThan(-1);
     expect(bInitIdx).toBeGreaterThan(-1);
     expect(bWriteIdx).toBeGreaterThan(-1);
     expect(cInitIdx).toBeGreaterThan(-1);
     expect(cWriteIdx).toBeGreaterThan(-1);
+    expect(aInitIdx).toBeLessThan(aWriteIdx);
+    expect(aWriteIdx).toBeLessThan(bInitIdx);
     expect(bInitIdx).toBeLessThan(bWriteIdx);
-    expect(cInitIdx).toBeLessThan(cWriteIdx);
     expect(bWriteIdx).toBeLessThan(cInitIdx);
+    expect(cInitIdx).toBeLessThan(cWriteIdx);
   });
 
   it("accesses inherited property on derived instance after construction", () => {
