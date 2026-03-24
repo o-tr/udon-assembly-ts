@@ -155,6 +155,11 @@ export function visitInlineConstructor(
 
   const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
   const instanceId = this.nextInstanceId++;
+  // Handle is Int32 (instanceId) for runtime dispatch via classId switch.
+  // When stored in an interface-typed array (Object[] in Udon), the Int32
+  // is CLR-boxed at the Object[] array boundary. The for-of dispatch
+  // copies it back to an Int32-typed variable via CopyInstruction, which
+  // the CLR runtime unboxes transparently at the typed heap slot.
   const instanceHandle = createVariable(
     `${instancePrefix}__handle`,
     PrimitiveTypes.int32,

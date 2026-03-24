@@ -614,6 +614,16 @@ export function visitForOfStatement(
       const implementorNames = new Set(implementors.map((impl) => impl.name));
       const ifaceMeta = this.classRegistry?.getInterface(ifaceName);
       const classIds = this.interfaceClassIdMap.get(ifaceName);
+      if (!classIds) {
+        // classIds is populated lazily by visitInlineConstructor. If the
+        // for-of loop appears before any constructor call for this
+        // interface's implementors (e.g. method body compiled before
+        // property initializers), the dispatch cannot be generated.
+        console.warn(
+          `[viface] Interface "${ifaceName}" has all-inline implementors but no classId map yet. ` +
+            `Ensure constructors are visited before the for-of loop.`,
+        );
+      }
       const relevantInstances: Array<
         [number, { prefix: string; className: string }]
       > = [];
