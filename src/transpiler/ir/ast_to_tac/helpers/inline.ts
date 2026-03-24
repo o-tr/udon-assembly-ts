@@ -74,20 +74,11 @@ function saveAndBindInlineParams(
   params: Array<{ name: string; type: TypeSymbol }>,
   args: TACOperand[],
 ): InlineParamSave {
-  const argInlineInfos = args.map((arg) => {
-    if (!arg || arg.kind !== TACOperandKind.Variable) return undefined;
-    const name = (arg as VariableOperand).name;
-    let info = converter.inlineInstanceMap.get(name);
-    if (!info) {
-      for (const [rawName, exportName] of converter.currentParamExportMap) {
-        if (exportName === name) {
-          info = converter.inlineInstanceMap.get(rawName);
-          break;
-        }
-      }
-    }
-    return info;
-  });
+  const argInlineInfos = args.map((arg) =>
+    arg && arg.kind === TACOperandKind.Variable
+      ? converter.resolveInlineInstance((arg as VariableOperand).name)
+      : undefined,
+  );
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
@@ -247,10 +238,12 @@ export function visitInlineStaticMethodCall(
   );
 
   const savedParamExportMap = this.currentParamExportMap;
+  const savedParamExportReverseMap = this.currentParamExportReverseMap;
   const savedMethodLayout = this.currentMethodLayout;
   const savedInlineContext = this.currentInlineContext;
   const savedThisOverride = this.currentThisOverride;
   this.currentParamExportMap = new Map();
+  this.currentParamExportReverseMap = new Map();
   this.currentMethodLayout = null;
   this.currentInlineContext = undefined;
   this.currentThisOverride = null;
@@ -267,6 +260,7 @@ export function visitInlineStaticMethodCall(
     this.inlineReturnStack.pop();
     this.inlineMethodStack.delete(inlineKey);
     this.currentParamExportMap = savedParamExportMap;
+    this.currentParamExportReverseMap = savedParamExportReverseMap;
     this.currentMethodLayout = savedMethodLayout;
     this.currentInlineContext = savedInlineContext;
     this.currentThisOverride = savedThisOverride;
@@ -324,10 +318,12 @@ function inlineInstanceMethodCallCore(
   );
 
   const savedParamExportMap = converter.currentParamExportMap;
+  const savedParamExportReverseMap = converter.currentParamExportReverseMap;
   const savedMethodLayout = converter.currentMethodLayout;
   const savedInlineContext = converter.currentInlineContext;
   const savedThisOverride = converter.currentThisOverride;
   converter.currentParamExportMap = new Map();
+  converter.currentParamExportReverseMap = new Map();
   converter.currentMethodLayout = null;
   converter.currentThisOverride = null;
   converter.currentInlineContext = instancePrefix
@@ -346,6 +342,7 @@ function inlineInstanceMethodCallCore(
     converter.inlineReturnStack.pop();
     converter.inlineMethodStack.delete(inlineKey);
     converter.currentParamExportMap = savedParamExportMap;
+    converter.currentParamExportReverseMap = savedParamExportReverseMap;
     converter.currentMethodLayout = savedMethodLayout;
     converter.currentInlineContext = savedInlineContext;
     converter.currentThisOverride = savedThisOverride;
@@ -445,6 +442,34 @@ export function maybeTrackInlineInstanceAssignment(
   }
 }
 
+/**
+ * Look up inline instance info by variable name, bridging raw ↔ export names.
+ *
+ * Tries three lookups in order:
+ * 1. Direct: `inlineInstanceMap.get(name)`
+ * 2. Forward: name is a raw param → look up its export name
+ * 3. Reverse: name is an export name → find the corresponding raw param name
+ *
+ * Reverse lookup uses currentParamExportReverseMap for O(1) export → raw lookup.
+ */
+export function resolveInlineInstance(
+  this: ASTToTACConverter,
+  name: string,
+): { prefix: string; className: string } | undefined {
+  const direct = this.inlineInstanceMap.get(name);
+  if (direct) return direct;
+  const exportName = this.currentParamExportMap.get(name);
+  if (exportName) {
+    const byExport = this.inlineInstanceMap.get(exportName);
+    if (byExport) return byExport;
+  }
+  const rawName = this.currentParamExportReverseMap.get(name);
+  if (rawName) {
+    return this.inlineInstanceMap.get(rawName);
+  }
+  return undefined;
+}
+
 export function mapInlineProperty(
   this: ASTToTACConverter,
   className: string,
@@ -467,11 +492,11 @@ export function mapInlineProperty(
   if (this.classRegistry) {
     const iface = this.classRegistry.getInterface(className);
     if (iface) {
-      const prop = iface.properties.find((p) => p.name === property);
-      if (prop)
+      const ifaceProp = iface.properties.find((p) => p.name === property);
+      if (ifaceProp)
         return createVariable(
           `${instancePrefix}_${property}`,
-          this.typeMapper.mapTypeScriptType(prop.type),
+          this.typeMapper.mapTypeScriptType(ifaceProp.type),
         );
     }
   }

@@ -143,7 +143,7 @@ export function assignToTarget(
       }
     }
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
-      const instanceInfo = this.inlineInstanceMap.get(
+      const instanceInfo = this.resolveInlineInstance(
         (propAccess.object as IdentifierNode).name,
       );
       if (instanceInfo) {
@@ -180,7 +180,7 @@ export function assignToTarget(
     const object = this.visitExpression(propAccess.object);
     // Post-evaluation inline instance resolution for WRITE
     if (object.kind === TACOperandKind.Variable) {
-      const instanceInfo = this.inlineInstanceMap.get(
+      const instanceInfo = this.resolveInlineInstance(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {

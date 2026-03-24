@@ -11,21 +11,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-/** Extract lines in the _start section (from _start label to its return). */
-function getStartSection(tac: string): string {
-  const lines = tac.split("\n");
-  const startIdx = lines.findIndex((line) => line.includes("_start:"));
-  if (startIdx < 0) return "";
-  const endIdx = lines.findIndex(
-    (line, i) => i > startIdx && line.trim().startsWith("return"),
-  );
-  return lines
-    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined)
-    .join("\n");
-}
-
 /** Extract a TAC section by label pattern. */
-function _getTacSection(tac: string, labelPattern: RegExp): string {
+function getTacSection(tac: string, labelPattern: RegExp): string {
   const lines = tac.split("\n");
   const startIdx = lines.findIndex((line) => labelPattern.test(line));
   if (startIdx < 0) return "";
@@ -56,7 +43,7 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const startSection = getStartSection(result.tac);
+    const startSection = getTacSection(result.tac, /_start:/);
 
     // Inline instance variables should be created
     expect(startSection).toMatch(/__inst_Config_\d+_value/);
@@ -86,7 +73,7 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const startSection = getStartSection(result.tac);
+    const startSection = getTacSection(result.tac, /_start:/);
 
     // Instance variables should exist
     expect(startSection).toMatch(/__inst_Vec2_\d+_x/);
@@ -113,13 +100,79 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const startSection = getStartSection(result.tac);
+    const startSection = getTacSection(result.tac, /_start:/);
 
     // Instance variable should exist
     expect(startSection).toMatch(/__inst_Data_\d+_value/);
 
     // No EXTERN for Data property access through nested calls
     expect(startSection).not.toMatch(/EXTERN.*Data/);
+  });
+
+  it("resolves property access on export-name-remapped parameter after inline reassignment", () => {
+    // When an entry class implements an interface, its method parameters
+    // get export names (e.g. "IWorker_run__param_0"). If such a parameter
+    // is reassigned to an inline object, inlineInstanceMap stores the entry
+    // under the export name. The pre-eval lookup (B2) must bridge the raw
+    // AST name to the export name via currentParamExportMap.
+    const source = `
+      type Config = { value: number };
+      interface IWorker {
+        run(cfg: Config): number;
+      }
+      class Entry implements IWorker {
+        run(cfg: Config): number {
+          cfg = { value: 42 };
+          return cfg.value;
+        }
+        Start(): void {
+          let r: number = this.run({ value: 0 });
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // The interface method body gets its own TAC section
+    const runSection = getTacSection(result.tac, /__run_Entry:/);
+
+    // Inline instance variable should be created for the reassignment
+    expect(runSection).toMatch(/__inst_Config_\d+_value/);
+
+    // Property access on the remapped parameter should resolve to the
+    // inline variable without EXTERN
+    expect(runSection).not.toMatch(/EXTERN.*Config/);
+  });
+
+  it("forwards inline instance through export-name-remapped parameter to inlined method", () => {
+    // When an entry class implements an interface, its method parameters
+    // get export names. If such a parameter is reassigned to an inline
+    // object and then passed to an inlined static method, the tracking
+    // must propagate through saveAndBindInlineParams and the callee must
+    // resolve the property without EXTERN.
+    const source = `
+      type Config = { value: number };
+      interface IWorker {
+        run(cfg: Config): number;
+      }
+      class Helper {
+        static getVal(c: Config): number { return c.value; }
+      }
+      class Entry implements IWorker {
+        run(cfg: Config): number {
+          cfg = { value: 42 };
+          return Helper.getVal(cfg);
+        }
+        Start(): void {
+          let r: number = this.run({ value: 0 });
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const runSection = getTacSection(result.tac, /__run_Entry:/);
+
+    // The inline instance should be created and its property resolved
+    // inside the nested inlined Helper.getVal call
+    expect(runSection).toMatch(/__inst_Config_\d+_value/);
+    expect(runSection).not.toMatch(/EXTERN.*Config/);
   });
 
   it("resolves properties on interface-typed object literal (classRegistry fallback)", () => {
@@ -137,7 +190,7 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const startSection = getStartSection(result.tac);
+    const startSection = getTacSection(result.tac, /_start:/);
 
     // Inline instance variables should be created for interface properties
     expect(startSection).toMatch(/__inst_IConfig_\d+_value/);

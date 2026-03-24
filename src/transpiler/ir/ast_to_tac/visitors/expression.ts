@@ -1283,12 +1283,9 @@ export function visitPropertyAccessExpression(
     }
 
     if (node.object.kind === ASTNodeKind.Identifier) {
-      const rawName = (node.object as IdentifierNode).name;
-      let instanceInfo = this.inlineInstanceMap.get(rawName);
-      if (!instanceInfo) {
-        const exportName = this.currentParamExportMap.get(rawName);
-        if (exportName) instanceInfo = this.inlineInstanceMap.get(exportName);
-      }
+      const instanceInfo = this.resolveInlineInstance(
+        (node.object as IdentifierNode).name,
+      );
       if (instanceInfo) {
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
@@ -1328,18 +1325,14 @@ export function visitPropertyAccessExpression(
 
     const object = this.visitExpression(node.object);
 
-    // Post-evaluation inline instance resolution for chained access
+    // Post-evaluation inline instance resolution for chained access.
+    // Inside inlined methods this is typically a direct hit since
+    // currentParamExportMap is empty; in caller context the helper
+    // bridges raw ↔ export names via currentParamExportMap.
     if (object.kind === TACOperandKind.Variable) {
-      const objName = (object as VariableOperand).name;
-      let instanceInfo = this.inlineInstanceMap.get(objName);
-      if (!instanceInfo) {
-        for (const [rawName, exportName] of this.currentParamExportMap) {
-          if (exportName === objName) {
-            instanceInfo = this.inlineInstanceMap.get(rawName);
-            break;
-          }
-        }
-      }
+      const instanceInfo = this.resolveInlineInstance(
+        (object as VariableOperand).name,
+      );
       if (instanceInfo) {
         const mapped = this.mapInlineProperty(
           instanceInfo.className,

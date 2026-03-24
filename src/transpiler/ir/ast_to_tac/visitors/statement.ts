@@ -794,6 +794,7 @@ export function visitClassDeclaration(
     }
     this.symbolTable.enterScope();
     this.currentParamExportMap = new Map();
+    this.currentParamExportReverseMap = new Map();
     let recursionContext:
       | {
           locals: Array<{ name: string; type: TypeSymbol }>;
@@ -829,6 +830,7 @@ export function visitClassDeclaration(
         const exportName = this.currentMethodLayout.parameterExportNames[i];
         if (paramName && exportName) {
           this.currentParamExportMap.set(paramName, exportName);
+          this.currentParamExportReverseMap.set(exportName, paramName);
         }
       }
     }
@@ -1237,6 +1239,7 @@ export function visitClassDeclaration(
     this.currentRecursiveContext = undefined;
     this.currentMethodName = undefined;
     this.currentParamExportMap = new Map();
+    this.currentParamExportReverseMap = new Map();
     this.currentMethodLayout = null;
   }
 
