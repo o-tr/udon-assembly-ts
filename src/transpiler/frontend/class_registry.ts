@@ -316,7 +316,7 @@ export class ClassRegistry {
         (d) => d.name === "UdonBehaviour",
       );
       if (!isUdonBehaviour) continue;
-      for (const ifaceName of cls.node.implements ?? []) {
+      for (const ifaceName of this.getAllImplementedInterfaces(cls.name)) {
         const iface = this.interfaces.get(ifaceName);
         if (iface && !result.has(ifaceName)) {
           result.set(ifaceName, iface);
@@ -333,32 +333,45 @@ export class ClassRegistry {
   }
 
   /**
+   * Return all interfaces a class implements, including those inherited
+   * through the base class chain. Results are deduplicated.
+   */
+  getAllImplementedInterfaces(className: string): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    const visited = new Set<string>();
+    let current: string | null = className;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const cls = this.classes.get(current);
+      if (!cls) break;
+      for (const iface of cls.node.implements ?? []) {
+        if (!seen.has(iface)) {
+          seen.add(iface);
+          result.push(iface);
+        }
+      }
+      current = cls.baseClass ?? null;
+    }
+    return result;
+  }
+
+  /**
    * Check if a class implements an interface, including through inheritance.
-   * Walks the base class chain to detect indirect implementations.
    */
   private classImplementsInterface(
     className: string,
     interfaceName: string,
   ): boolean {
-    const visited = new Set<string>();
-    let current = className;
-    while (!visited.has(current)) {
-      visited.add(current);
-      const cls = this.classes.get(current);
-      if (!cls) break;
-      if ((cls.node.implements ?? []).includes(interfaceName)) return true;
-      if (!cls.baseClass) break;
-      current = cls.baseClass;
-    }
-    return false;
+    return this.getAllImplementedInterfaces(className).includes(interfaceName);
   }
 
   getClassImplementsMap(): Map<string, string[]> {
     const result = new Map<string, string[]>();
     for (const cls of this.classes.values()) {
-      const impls = cls.node.implements ?? [];
+      const impls = this.getAllImplementedInterfaces(cls.name);
       if (impls.length > 0) {
-        result.set(cls.name, [...impls]);
+        result.set(cls.name, impls);
       }
     }
     return result;

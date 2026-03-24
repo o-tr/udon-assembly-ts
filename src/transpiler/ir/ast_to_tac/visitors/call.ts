@@ -1592,6 +1592,10 @@ export function visitCallExpression(
           }
 
           if (!dispatchFailed) {
+            // If no branch matched at runtime (should not happen — every
+            // classId assigned in the for-of dispatch has a corresponding
+            // branch here), result retains its Udon heap zero-initialised
+            // value (0/null/false).
             this.instructions.push(new LabelInstruction(endLabel));
             if (result) {
               if (resultInlineMapping) {

@@ -185,6 +185,7 @@ export class ASTToTACConverter {
     errorFlag: VariableOperand;
     errorValue: VariableOperand;
     errorTarget: TACOperand;
+    loopDepth: number;
   }> = [];
   inlineReturnStack: Array<{
     returnVar: VariableOperand;

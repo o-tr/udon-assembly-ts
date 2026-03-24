@@ -1573,6 +1573,7 @@ export function visitTryCatchStatement(
     errorFlag: errorFlagVar,
     errorValue: errorValueVar,
     errorTarget,
+    loopDepth: this.loopContextStack.length,
   });
   this.visitBlockStatement(node.tryBody);
   this.tryContextStack.pop();
@@ -1669,6 +1670,9 @@ export function visitThrowStatement(
     return;
   }
   const value = this.visitExpression(node.expression);
+  // Emit loop exit epilogues for any loops entered since the try block started,
+  // so viface write-back runs before jumping to the catch handler.
+  emitLoopExitEpiloguesSinceDepth(this, context.loopDepth);
   this.instructions.push(
     new AssignmentInstruction(
       context.errorFlag,
