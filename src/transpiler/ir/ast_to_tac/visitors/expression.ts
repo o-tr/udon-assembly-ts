@@ -1283,9 +1283,12 @@ export function visitPropertyAccessExpression(
     }
 
     if (node.object.kind === ASTNodeKind.Identifier) {
-      const instanceInfo = this.inlineInstanceMap.get(
-        (node.object as IdentifierNode).name,
-      );
+      const rawName = (node.object as IdentifierNode).name;
+      let instanceInfo = this.inlineInstanceMap.get(rawName);
+      if (!instanceInfo) {
+        const exportName = this.currentParamExportMap.get(rawName);
+        if (exportName) instanceInfo = this.inlineInstanceMap.get(exportName);
+      }
       if (instanceInfo) {
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
@@ -1327,9 +1330,16 @@ export function visitPropertyAccessExpression(
 
     // Post-evaluation inline instance resolution for chained access
     if (object.kind === TACOperandKind.Variable) {
-      const instanceInfo = this.inlineInstanceMap.get(
-        (object as VariableOperand).name,
-      );
+      const objName = (object as VariableOperand).name;
+      let instanceInfo = this.inlineInstanceMap.get(objName);
+      if (!instanceInfo) {
+        for (const [rawName, exportName] of this.currentParamExportMap) {
+          if (exportName === objName) {
+            instanceInfo = this.inlineInstanceMap.get(rawName);
+            break;
+          }
+        }
+      }
       if (instanceInfo) {
         const mapped = this.mapInlineProperty(
           instanceInfo.className,

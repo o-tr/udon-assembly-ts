@@ -74,11 +74,20 @@ function saveAndBindInlineParams(
   params: Array<{ name: string; type: TypeSymbol }>,
   args: TACOperand[],
 ): InlineParamSave {
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? converter.inlineInstanceMap.get((arg as VariableOperand).name)
-      : undefined,
-  );
+  const argInlineInfos = args.map((arg) => {
+    if (!arg || arg.kind !== TACOperandKind.Variable) return undefined;
+    const name = (arg as VariableOperand).name;
+    let info = converter.inlineInstanceMap.get(name);
+    if (!info) {
+      for (const [rawName, exportName] of converter.currentParamExportMap) {
+        if (exportName === name) {
+          info = converter.inlineInstanceMap.get(rawName);
+          break;
+        }
+      }
+    }
+    return info;
+  });
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
@@ -452,6 +461,19 @@ export function mapInlineProperty(
     const propType = alias.properties.get(property);
     if (propType)
       return createVariable(`${instancePrefix}_${property}`, propType);
+  }
+
+  // Fallback: InterfaceMetadata from classRegistry
+  if (this.classRegistry) {
+    const iface = this.classRegistry.getInterface(className);
+    if (iface) {
+      const prop = iface.properties.find((p) => p.name === property);
+      if (prop)
+        return createVariable(
+          `${instancePrefix}_${property}`,
+          this.typeMapper.mapTypeScriptType(prop.type),
+        );
+    }
   }
   return undefined;
 }
