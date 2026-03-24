@@ -1525,9 +1525,11 @@ export function visitCallExpression(
             | null
             | undefined;
 
-          // Save instruction count so we can roll back if inlining fails
+          // Save state so we can roll back if inlining fails
           // (e.g. recursion guard blocks one of the implementors).
           const savedInstructionCount = this.instructions.length;
+          const savedTempCounter = this.tempCounter;
+          const savedLabelCounter = this.labelCounter;
           let dispatchFailed = false;
 
           for (const [className, classId] of classIds) {
@@ -1556,6 +1558,8 @@ export function visitCallExpression(
               // partially emitted dispatch and fall through to the generic
               // EXTERN / UdonBehaviour path.
               this.instructions.length = savedInstructionCount;
+              this.tempCounter = savedTempCounter;
+              this.labelCounter = savedLabelCounter;
               dispatchFailed = true;
               break;
             }
