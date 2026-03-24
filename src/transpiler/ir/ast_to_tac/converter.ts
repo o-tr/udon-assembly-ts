@@ -203,6 +203,7 @@ export class ASTToTACConverter {
   classRegistry: ClassRegistry | null;
   currentParamExportMap: Map<string, string> = new Map();
   currentMethodLayout: UdonBehaviourMethodLayout | null = null;
+  currentInlineBaseClass: string | undefined;
   inSerializeFieldInitializer = false;
   pendingTopLevelInits: VariableDeclarationNode[] = [];
   currentExpectedType: TypeSymbol | undefined = undefined;

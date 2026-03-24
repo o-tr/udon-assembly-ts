@@ -59,6 +59,11 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
+import {
+  resolveClassNode,
+  restoreInlineParams,
+  saveAndBindInlineParams,
+} from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
@@ -297,9 +302,36 @@ export function visitCallExpression(
   }
   const defaultResult = () => this.newTemp(ObjectType);
 
-  // super() constructor calls are handled by the class constructor visitor;
-  // if one reaches here, treat it as void (matching VOID_RETURN semantics).
+  // super() constructor calls: when inside an inline constructor with a known
+  // base class, inline the base class constructor body. Otherwise treat as void.
   if (callee.kind === ASTNodeKind.SuperExpression) {
+    if (this.currentInlineContext && this.currentInlineBaseClass) {
+      const baseClassName = this.currentInlineBaseClass;
+      const baseClassNode = resolveClassNode(this, baseClassName);
+      if (baseClassNode?.constructor) {
+        const superArgs = rawArgs.map((arg) => this.visitExpression(arg));
+        this.symbolTable.enterScope();
+        const typedParams = baseClassNode.constructor.parameters.map((p) => ({
+          name: p.name,
+          type: this.typeMapper.mapTypeScriptType(p.type),
+        }));
+        const savedParamEntries = saveAndBindInlineParams(
+          this,
+          typedParams,
+          superArgs,
+        );
+        const previousBaseClass = this.currentInlineBaseClass;
+        // Support multi-level inheritance: point to the next base class up.
+        this.currentInlineBaseClass = baseClassNode.baseClass ?? undefined;
+        try {
+          this.visitStatement(baseClassNode.constructor.body);
+        } finally {
+          this.currentInlineBaseClass = previousBaseClass;
+          restoreInlineParams(this, savedParamEntries);
+          this.symbolTable.exitScope();
+        }
+      }
+    }
     return VOID_RETURN;
   }
 

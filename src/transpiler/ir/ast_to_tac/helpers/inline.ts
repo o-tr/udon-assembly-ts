@@ -64,12 +64,34 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
-type InlineParamSave = Map<
+export type InlineParamSave = Map<
   string,
   { prefix: string; className: string } | undefined
 >;
 
-function saveAndBindInlineParams(
+/**
+ * Resolve a class node by name, checking classMap first then classRegistry.
+ */
+export function resolveClassNode(
+  converter: ASTToTACConverter,
+  className: string,
+): ClassDeclarationNode | undefined {
+  let classNode = converter.classMap.get(className);
+  if (!classNode && converter.classRegistry) {
+    const meta = converter.classRegistry.getClass(className);
+    if (
+      meta &&
+      !converter.udonBehaviourClasses.has(className) &&
+      !converter.classRegistry.isStub(className)
+    ) {
+      classNode = meta.node;
+      converter.classMap.set(className, classNode);
+    }
+  }
+  return classNode;
+}
+
+export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
   params: Array<{ name: string; type: TypeSymbol }>,
   args: TACOperand[],
@@ -103,7 +125,7 @@ function saveAndBindInlineParams(
   return saved;
 }
 
-function restoreInlineParams(
+export function restoreInlineParams(
   converter: ASTToTACConverter,
   saved: InlineParamSave,
 ): void {
@@ -163,15 +185,35 @@ export function visitInlineConstructor(
     className,
   });
 
-  for (const prop of classNode.properties) {
-    if (!prop.initializer) continue;
-    const previousSerializeFieldState = this.inSerializeFieldInitializer;
-    this.inSerializeFieldInitializer = !!prop.isSerializeField;
-    const propVar = createVariable(`${instancePrefix}_${prop.name}`, prop.type);
-    const value = this.visitExpression(prop.initializer);
-    this.inSerializeFieldInitializer = previousSerializeFieldState;
-    this.instructions.push(new AssignmentInstruction(propVar, value));
-    this.maybeTrackInlineInstanceAssignment(propVar, value);
+  // Build inheritance chain (base → derived order) for property initialization.
+  const inheritanceChain: ClassDeclarationNode[] = [];
+  {
+    let current: ClassDeclarationNode | undefined = classNode;
+    while (current) {
+      inheritanceChain.unshift(current);
+      if (current.baseClass) {
+        current = resolveClassNode(this, current.baseClass);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Initialize properties from base → derived order.
+  for (const chainClass of inheritanceChain) {
+    for (const prop of chainClass.properties) {
+      if (!prop.initializer) continue;
+      const previousSerializeFieldState = this.inSerializeFieldInitializer;
+      this.inSerializeFieldInitializer = !!prop.isSerializeField;
+      const propVar = createVariable(
+        `${instancePrefix}_${prop.name}`,
+        prop.type,
+      );
+      const value = this.visitExpression(prop.initializer);
+      this.inSerializeFieldInitializer = previousSerializeFieldState;
+      this.instructions.push(new AssignmentInstruction(propVar, value));
+      this.maybeTrackInlineInstanceAssignment(propVar, value);
+    }
   }
 
   if (classNode.constructor) {
@@ -183,13 +225,16 @@ export function visitInlineConstructor(
     const savedParamEntries = saveAndBindInlineParams(this, typedParams, args);
     const previousContext = this.currentInlineContext;
     const previousThisOverride = this.currentThisOverride;
+    const previousBaseClass = this.currentInlineBaseClass;
     this.currentInlineContext = { className, instancePrefix };
     this.currentThisOverride = null;
+    this.currentInlineBaseClass = classNode.baseClass ?? undefined;
     try {
       this.visitStatement(classNode.constructor.body);
     } finally {
       this.currentInlineContext = previousContext;
       this.currentThisOverride = previousThisOverride;
+      this.currentInlineBaseClass = previousBaseClass;
       restoreInlineParams(this, savedParamEntries);
       this.symbolTable.exitScope();
     }
