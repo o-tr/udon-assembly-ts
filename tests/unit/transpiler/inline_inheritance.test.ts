@@ -109,9 +109,11 @@ describe("inline inheritance", () => {
     const startSection = getStartSection(result.tac);
 
     const lines = startSection.split("\n").map((line) => line.trim());
-    const baseWriteIdx = lines.findIndex(
-      (line) => line.includes("_v =") && !line.endsWith("= 0"),
-    );
+    // Find the second _v = line (first is the initializer, second is the ctor write)
+    const vLines = lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => line.includes("_v ="));
+    const baseWriteIdx = vLines.length >= 2 ? vLines[1].i : -1;
     const derivedInitIdx = lines.findIndex((line) => line.endsWith("_own = 2"));
     const derivedWriteIdx = lines.findIndex((line) =>
       line.endsWith("_own = 9"),
@@ -282,9 +284,10 @@ describe("inline inheritance", () => {
     const argAIdx = lines.indexOf("a = 3");
     const argBIdx = lines.indexOf("b = 4");
     const baseCalcIdx = lines.findIndex((line) => /= a \+ b$/.test(line));
-    const baseWriteIdx = lines.findIndex(
-      (line) => line.includes("_p =") && !line.endsWith("= 0"),
-    );
+    const pLines = lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => line.includes("_p ="));
+    const baseWriteIdx = pLines.length >= 2 ? pLines[1].i : -1;
     const derivedInitIdx = lines.findIndex((line) => line.endsWith("_q = 5"));
 
     expect(argAIdx).toBeGreaterThan(-1);
@@ -363,10 +366,11 @@ describe("inline inheritance", () => {
     const startSection = getStartSection(result.tac);
     const lines = startSection.split("\n").map((line) => line.trim());
 
-    const aInitIdx = lines.indexOf("a = 1");
-    const aWriteIdx = lines.findIndex(
-      (line) => line.includes("a =") && !line.endsWith("= 1"),
-    );
+    const aLines = lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) => line.includes("a ="));
+    const aInitIdx = aLines.length >= 1 ? aLines[0].i : -1;
+    const aWriteIdx = aLines.length >= 2 ? aLines[1].i : -1;
     const bInitIdx = lines.indexOf("b = 3");
     const bWriteIdx = lines.indexOf("b = 4");
     const cInitIdx = lines.indexOf("c = 5");

@@ -269,6 +269,9 @@ export function inlineSuperConstructorFromArgs(
   const previousBaseClass = converter.currentInlineBaseClass;
   converter.currentInlineBaseClass = baseClassNode.baseClass ?? undefined;
   converter.currentInlineConstructorClassName = baseClassNode.name;
+  // Only update currentInlineContext for inline-instance constructors.
+  // Entry-point constructors (currentInlineContext === undefined) use the
+  // entry-point property path instead, keyed off currentClassName.
   if (previousInlineContext) {
     converter.currentInlineContext = {
       className: baseClassNode.name,
