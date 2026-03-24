@@ -39,6 +39,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { resolveClassProperty } from "./inline.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
@@ -107,14 +108,15 @@ export function assignToTarget(
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
-      const classNode = this.classMap.get(this.currentClassName);
-      const prop = classNode?.properties.find(
-        (p) => p.name === propAccess.property,
+      const resolved = resolveClassProperty(
+        this,
+        this.currentClassName,
+        propAccess.property,
       );
-      if (prop) {
+      if (resolved) {
         const targetVar = createVariable(
           this.entryPointPropName(propAccess.property),
-          prop.type,
+          resolved.prop.type,
         );
         this.instructions.push(new CopyInstruction(targetVar, value));
         this.maybeTrackInlineInstanceAssignment(targetVar, value);

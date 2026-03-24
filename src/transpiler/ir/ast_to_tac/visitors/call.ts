@@ -59,6 +59,12 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
+import {
+  emitDeferredInlineInitializers,
+  getCurrentDeferredInitializerClassName,
+  inlineSuperConstructorFromArgs,
+  resolveClassNode,
+} from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
@@ -241,13 +247,10 @@ function evaluateArgsWithExpectedTypes(
   methodName: string,
   rawArgs: ASTNode[],
 ): TACOperand[] | null {
-  let classNode = converter.classMap.get(className);
-  if (!classNode && converter.classRegistry) {
-    const meta = converter.classRegistry.getClass(className);
-    if (meta && !converter.classRegistry.isStub(className)) {
-      classNode = meta.node;
-    }
-  }
+  // resolveClassNode intentionally excludes UdonBehaviour and stub classes.
+  // Their methods are dispatched via IPC, not inlined, so they never need
+  // typed-object-arg evaluation here.
+  const classNode = resolveClassNode(converter, className);
   if (!classNode) return null;
 
   // NOTE: Picks the first non-static method with a matching name.
@@ -297,9 +300,21 @@ export function visitCallExpression(
   }
   const defaultResult = () => this.newTemp(ObjectType);
 
-  // super() constructor calls are handled by the class constructor visitor;
-  // if one reaches here, treat it as void (matching VOID_RETURN semantics).
+  // super() constructor calls: when inside an inline constructor with a known
+  // base class, inline the base class constructor body. Otherwise treat as void.
   if (callee.kind === ASTNodeKind.SuperExpression) {
+    if (this.currentInlineBaseClass) {
+      const superArgs = rawArgs.map((arg) => this.visitExpression(arg));
+      inlineSuperConstructorFromArgs(
+        this,
+        this.currentInlineBaseClass,
+        superArgs,
+      );
+      const deferredClassName = getCurrentDeferredInitializerClassName(this);
+      if (deferredClassName) {
+        emitDeferredInlineInitializers(this, deferredClassName);
+      }
+    }
     return VOID_RETURN;
   }
 
