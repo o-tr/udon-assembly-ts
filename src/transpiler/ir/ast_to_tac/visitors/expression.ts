@@ -68,6 +68,7 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
+import { resolveClassProperty } from "../helpers/inline.js";
 
 /**
  * Widen operands to a common promoted numeric type when they differ.
@@ -1272,12 +1273,15 @@ export function visitPropertyAccessExpression(
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
-      const classNode = this.classMap.get(this.currentClassName);
-      const prop = classNode?.properties.find((p) => p.name === node.property);
-      if (prop) {
+      const resolved = resolveClassProperty(
+        this,
+        this.currentClassName,
+        node.property,
+      );
+      if (resolved) {
         return createVariable(
           this.entryPointPropName(node.property),
-          prop.type,
+          resolved.prop.type,
         );
       }
     }

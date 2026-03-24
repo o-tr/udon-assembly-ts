@@ -60,9 +60,10 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
+  emitDeferredInlineInitializers,
+  getCurrentDeferredInitializerClassName,
+  inlineSuperConstructorFromArgs,
   resolveClassNode,
-  restoreInlineParams,
-  saveAndBindInlineParams,
 } from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
@@ -246,13 +247,7 @@ function evaluateArgsWithExpectedTypes(
   methodName: string,
   rawArgs: ASTNode[],
 ): TACOperand[] | null {
-  let classNode = converter.classMap.get(className);
-  if (!classNode && converter.classRegistry) {
-    const meta = converter.classRegistry.getClass(className);
-    if (meta && !converter.classRegistry.isStub(className)) {
-      classNode = meta.node;
-    }
-  }
+  const classNode = resolveClassNode(converter, className);
   if (!classNode) return null;
 
   // NOTE: Picks the first non-static method with a matching name.
@@ -305,31 +300,16 @@ export function visitCallExpression(
   // super() constructor calls: when inside an inline constructor with a known
   // base class, inline the base class constructor body. Otherwise treat as void.
   if (callee.kind === ASTNodeKind.SuperExpression) {
-    if (this.currentInlineContext && this.currentInlineBaseClass) {
-      const baseClassName = this.currentInlineBaseClass;
-      const baseClassNode = resolveClassNode(this, baseClassName);
-      if (baseClassNode?.constructor) {
-        const superArgs = rawArgs.map((arg) => this.visitExpression(arg));
-        this.symbolTable.enterScope();
-        const typedParams = baseClassNode.constructor.parameters.map((p) => ({
-          name: p.name,
-          type: this.typeMapper.mapTypeScriptType(p.type),
-        }));
-        const savedParamEntries = saveAndBindInlineParams(
-          this,
-          typedParams,
-          superArgs,
-        );
-        const previousBaseClass = this.currentInlineBaseClass;
-        // Support multi-level inheritance: point to the next base class up.
-        this.currentInlineBaseClass = baseClassNode.baseClass ?? undefined;
-        try {
-          this.visitStatement(baseClassNode.constructor.body);
-        } finally {
-          this.currentInlineBaseClass = previousBaseClass;
-          restoreInlineParams(this, savedParamEntries);
-          this.symbolTable.exitScope();
-        }
+    if (this.currentInlineBaseClass) {
+      const superArgs = rawArgs.map((arg) => this.visitExpression(arg));
+      inlineSuperConstructorFromArgs(
+        this,
+        this.currentInlineBaseClass,
+        superArgs,
+      );
+      const deferredClassName = getCurrentDeferredInitializerClassName(this);
+      if (deferredClassName) {
+        emitDeferredInlineInitializers(this, deferredClassName);
       }
     }
     return VOID_RETURN;
