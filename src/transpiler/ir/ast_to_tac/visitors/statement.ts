@@ -451,6 +451,7 @@ export function visitForOfStatement(
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
   const loopEnd = this.newLabel("forof_end");
+  const loopStackDepthBeforePush = this.loopContextStack.length;
 
   this.instructions.push(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
@@ -648,6 +649,15 @@ export function visitForOfStatement(
         const handleVar = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(new CopyInstruction(handleVar, elementVar));
 
+        // Reset classId to sentinel so an unmatched instanceId doesn't
+        // silently reuse the previous iteration's stale value.
+        this.instructions.push(
+          new AssignmentInstruction(
+            classIdVar,
+            createConstant(-1, PrimitiveTypes.int32),
+          ),
+        );
+
         // Generate instanceId-based if-else dispatch
         for (const [instanceId, info] of relevantInstances) {
           const nextLabel = this.newLabel("viface_next");
@@ -765,6 +775,11 @@ export function visitForOfStatement(
   this.instructions.push(new UnconditionalJumpInstruction(loopStart));
   this.instructions.push(new LabelInstruction(loopEnd));
 
+  if (this.loopContextStack.length !== loopStackDepthBeforePush + 1) {
+    throw new Error(
+      "loopContextStack push/pop mismatch in visitForOfStatement",
+    );
+  }
   this.loopContextStack.pop();
 }
 
