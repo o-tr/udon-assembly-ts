@@ -37,6 +37,7 @@ function isUdonBehaviourClassName(
 
     const classMeta: ClassMetadata | undefined =
       converter.classRegistry?.getClass(current);
+    if (classMeta?.isEntryPoint) return true;
     if (
       classMeta?.decorators.some(
         (decorator: { name: string }) => decorator.name === "UdonBehaviour",

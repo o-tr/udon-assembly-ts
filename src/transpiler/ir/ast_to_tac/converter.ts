@@ -178,6 +178,7 @@ export class ASTToTACConverter {
   loopContextStack: Array<{
     breakLabel: TACOperand;
     continueLabel: TACOperand;
+    emitExitEpilogue?: () => void;
   }> = [];
   tryCounter = 0;
   tryContextStack: Array<{
@@ -189,6 +190,7 @@ export class ASTToTACConverter {
     returnVar: VariableOperand;
     returnLabel: TACOperand;
     returnTrackingInvalidated: boolean;
+    loopDepth: number;
   }> = [];
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;

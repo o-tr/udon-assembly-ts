@@ -64,6 +64,21 @@ import {
 } from "../helpers/inline.js";
 import { resolveTypeFromNode } from "./expression.js";
 
+function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
+  for (let i = converter.loopContextStack.length - 1; i >= 0; i -= 1) {
+    converter.loopContextStack[i].emitExitEpilogue?.();
+  }
+}
+
+function emitLoopExitEpiloguesSinceDepth(
+  converter: ASTToTACConverter,
+  depth: number,
+): void {
+  for (let i = converter.loopContextStack.length - 1; i >= depth; i -= 1) {
+    converter.loopContextStack[i].emitExitEpilogue?.();
+  }
+}
+
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
     case ASTNodeKind.VariableDeclaration:
@@ -435,12 +450,9 @@ export function visitForOfStatement(
 
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
+  const loopFinalizeContinue = this.newLabel("forof_finalize_continue");
+  const loopFinalizeBreak = this.newLabel("forof_finalize_break");
   const loopEnd = this.newLabel("forof_end");
-
-  this.loopContextStack.push({
-    breakLabel: loopEnd,
-    continueLabel: loopContinue,
-  });
 
   this.instructions.push(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
@@ -507,14 +519,89 @@ export function visitForOfStatement(
   }
   // Interface dispatch: when element type is an interface with all-inline implementors,
   // generate instanceId-based property copy + classId assignment before the loop body.
-  let vifaceCleanupVar: string | undefined;
-  let savedVifaceEntry: { prefix: string; className: string } | undefined;
+  let savedInlineMapBeforeViface:
+    | Map<string, { prefix: string; className: string }>
+    | undefined;
   let vifacePrefix: string | undefined;
   let vifaceHandleVar: TACOperand | undefined;
   let vifaceInterfaceName: string | undefined;
   let vifaceRelevantInstances: Array<
     [number, { prefix: string; className: string }]
   > = [];
+  const emitVirtualInterfaceIterationEpilogue = (
+    targetLabel?: TACOperand,
+  ): void => {
+    if (
+      vifacePrefix &&
+      vifaceHandleVar &&
+      vifaceInterfaceName &&
+      vifaceRelevantInstances.length > 0
+    ) {
+      const ifaceMeta = this.classRegistry?.getInterface(vifaceInterfaceName);
+      const writebackEndLabel = this.newLabel("viface_wb_end");
+      for (const [instanceId, info] of vifaceRelevantInstances) {
+        const nextLabel = this.newLabel("viface_wb_next");
+        const cond = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            cond,
+            vifaceHandleVar,
+            "==",
+            createConstant(instanceId, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
+
+        const concreteClass = this.classMap.get(info.className);
+        const propsToWriteBack: Array<{ name: string; type: TypeSymbol }> =
+          concreteClass?.properties.map((prop) => ({
+            name: prop.name,
+            type: prop.type,
+          })) ??
+          ifaceMeta?.properties.map((prop) => ({
+            name: prop.name,
+            type: this.typeMapper.mapTypeScriptType(prop.type),
+          })) ??
+          [];
+        for (const prop of propsToWriteBack) {
+          const src = createVariable(`${vifacePrefix}_${prop.name}`, prop.type);
+          const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
+          this.instructions.push(new CopyInstruction(dst, src));
+          this.maybeTrackInlineInstanceAssignment(dst, src);
+        }
+
+        this.instructions.push(
+          new UnconditionalJumpInstruction(writebackEndLabel),
+        );
+        this.instructions.push(new LabelInstruction(nextLabel));
+      }
+      this.instructions.push(new LabelInstruction(writebackEndLabel));
+    }
+
+    if (vifacePrefix && savedInlineMapBeforeViface) {
+      const mappedToViface = Array.from(this.inlineInstanceMap.entries())
+        .filter(([, entry]) => entry.prefix === vifacePrefix)
+        .map(([name]) => name);
+      for (const name of mappedToViface) {
+        const previous = savedInlineMapBeforeViface.get(name);
+        if (previous) {
+          this.inlineInstanceMap.set(name, previous);
+        } else {
+          this.inlineInstanceMap.delete(name);
+        }
+      }
+    }
+
+    if (targetLabel) {
+      this.instructions.push(new UnconditionalJumpInstruction(targetLabel));
+    }
+  };
+
+  this.loopContextStack.push({
+    breakLabel: loopFinalizeBreak,
+    continueLabel: loopFinalizeContinue,
+    emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
+  });
 
   if (
     !isDestructured &&
@@ -614,8 +701,7 @@ export function visitForOfStatement(
         this.instructions.push(new LabelInstruction(dispatchEndLabel));
 
         // Register virtual prefix in inlineInstanceMap for the loop variable
-        savedVifaceEntry = this.inlineInstanceMap.get(variableName);
-        vifaceCleanupVar = variableName;
+        savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
         this.inlineInstanceMap.set(variableName, {
           prefix: virtualPrefix,
           className: ifaceName,
@@ -630,63 +716,15 @@ export function visitForOfStatement(
   }
 
   this.visitStatement(node.body);
+  this.instructions.push(
+    new UnconditionalJumpInstruction(loopFinalizeContinue),
+  );
 
-  // Write back virtual interface properties to concrete instance storage.
-  if (
-    vifacePrefix &&
-    vifaceHandleVar &&
-    vifaceInterfaceName &&
-    vifaceRelevantInstances.length > 0
-  ) {
-    const ifaceMeta = this.classRegistry?.getInterface(vifaceInterfaceName);
-    const writebackEndLabel = this.newLabel("viface_wb_end");
-    for (const [instanceId, info] of vifaceRelevantInstances) {
-      const nextLabel = this.newLabel("viface_wb_next");
-      const cond = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new BinaryOpInstruction(
-          cond,
-          vifaceHandleVar,
-          "==",
-          createConstant(instanceId, PrimitiveTypes.int32),
-        ),
-      );
-      this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
+  this.instructions.push(new LabelInstruction(loopFinalizeContinue));
+  emitVirtualInterfaceIterationEpilogue(loopContinue);
 
-      const concreteClass = this.classMap.get(info.className);
-      const propsToWriteBack: Array<{ name: string; type: TypeSymbol }> =
-        concreteClass?.properties.map((prop) => ({
-          name: prop.name,
-          type: prop.type,
-        })) ??
-        ifaceMeta?.properties.map((prop) => ({
-          name: prop.name,
-          type: this.typeMapper.mapTypeScriptType(prop.type),
-        })) ??
-        [];
-      for (const prop of propsToWriteBack) {
-        const src = createVariable(`${vifacePrefix}_${prop.name}`, prop.type);
-        const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
-        this.instructions.push(new CopyInstruction(dst, src));
-        this.maybeTrackInlineInstanceAssignment(dst, src);
-      }
-
-      this.instructions.push(
-        new UnconditionalJumpInstruction(writebackEndLabel),
-      );
-      this.instructions.push(new LabelInstruction(nextLabel));
-    }
-    this.instructions.push(new LabelInstruction(writebackEndLabel));
-  }
-
-  // Cleanup virtual interface dispatch registration
-  if (vifaceCleanupVar) {
-    if (savedVifaceEntry) {
-      this.inlineInstanceMap.set(vifaceCleanupVar, savedVifaceEntry);
-    } else {
-      this.inlineInstanceMap.delete(vifaceCleanupVar);
-    }
-  }
+  this.instructions.push(new LabelInstruction(loopFinalizeBreak));
+  emitVirtualInterfaceIterationEpilogue(loopEnd);
 
   this.instructions.push(new LabelInstruction(loopContinue));
   this.instructions.push(
@@ -835,6 +873,12 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
+  const value = node.value ? this.visitExpression(node.value) : undefined;
+  const valueMapping =
+    value?.kind === TACOperandKind.Variable
+      ? this.inlineInstanceMap.get((value as VariableOperand).name)
+      : undefined;
+
   // Check inlineReturnStack FIRST: if we are inside an inlined method body,
   // return must go to the inline return label, not the recursive dispatch.
   // currentRecursiveContext remains set from the enclosing recursive method
@@ -842,19 +886,18 @@ export function visitReturnStatement(
   // and jump to the dispatch table.
   const inlineContext =
     this.inlineReturnStack[this.inlineReturnStack.length - 1];
+
   if (
     !inlineContext &&
     this.currentRecursiveContext &&
     this.currentMethodName
   ) {
-    const valueOperand = node.value
-      ? this.visitExpression(node.value)
+    emitLoopExitEpilogues(this);
+    const tempValue = value
+      ? this.newTemp(this.getOperandType(value))
       : undefined;
-    const tempValue = valueOperand
-      ? this.newTemp(this.getOperandType(valueOperand))
-      : undefined;
-    if (tempValue && valueOperand) {
-      this.instructions.push(new CopyInstruction(tempValue, valueOperand));
+    if (tempValue && value) {
+      this.instructions.push(new CopyInstruction(tempValue, value));
     }
     // Copy return value to the return export variable before epilogue
     if (tempValue && this.currentReturnVar) {
@@ -888,16 +931,12 @@ export function visitReturnStatement(
     return;
   }
   if (inlineContext) {
-    if (node.value) {
-      const value = this.visitExpression(node.value);
+    emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
+    if (value) {
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, value),
       );
       if (!inlineContext.returnTrackingInvalidated) {
-        const valueMapping =
-          value.kind === TACOperandKind.Variable
-            ? this.inlineInstanceMap.get((value as VariableOperand).name)
-            : undefined;
         if (valueMapping) {
           const existingMapping = this.inlineInstanceMap.get(
             inlineContext.returnVar.name,
@@ -925,7 +964,7 @@ export function visitReturnStatement(
     );
     return;
   }
-  const value = node.value ? this.visitExpression(node.value) : undefined;
+  emitLoopExitEpilogues(this);
   this.instructions.push(new ReturnInstruction(value, this.currentReturnVar));
 }
 
@@ -1584,10 +1623,12 @@ export function visitThrowStatement(
     const inlineContext =
       this.inlineReturnStack[this.inlineReturnStack.length - 1];
     if (inlineContext) {
+      emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
       this.instructions.push(
         new UnconditionalJumpInstruction(inlineContext.returnLabel),
       );
     } else {
+      emitLoopExitEpilogues(this);
       // If inside a recursive context, reset depth to 0 before aborting.
       // Without this, a subsequent VRC direct call (SendCustomEvent) would
       // see stale depth > 0, skip SP reset, and corrupt the recursion stack.

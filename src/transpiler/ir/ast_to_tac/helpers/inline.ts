@@ -277,6 +277,7 @@ export function visitInlineStaticMethodCall(
     returnVar: result,
     returnLabel,
     returnTrackingInvalidated: false,
+    loopDepth: this.loopContextStack.length,
   });
   try {
     this.visitBlockStatement(method.body);
@@ -359,6 +360,7 @@ function inlineInstanceMethodCallCore(
     returnVar: result,
     returnLabel,
     returnTrackingInvalidated: false,
+    loopDepth: converter.loopContextStack.length,
   });
   try {
     converter.visitBlockStatement(method.body);

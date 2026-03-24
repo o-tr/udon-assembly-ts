@@ -64,7 +64,7 @@ describe("interface dispatch with all-inline implementors", () => {
     expect(startSection).toContain("__viface_IYaku");
 
     // Method body must read from virtual interface-prefixed storage.
-    expect(startSection).toContain("__viface_IYaku_2_value");
+    expect(startSection).toMatch(/__viface_IYaku_\d+_value/);
     expect(startSection).toMatch(
       /__viface_IYaku_\d+_value = __inst_Yaku1_\d+_value/,
     );
@@ -210,6 +210,177 @@ describe("interface dispatch with all-inline implementors", () => {
     expect(startSection).toMatch(
       /__inst_ActionB_\d+_done = __viface_IAction_\d+_done/,
     );
+  });
+
+  it("applies write-back even when loop body continues", () => {
+    const source = `
+      interface IAction {
+        execute(): void;
+      }
+      class ActionA implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class Main {
+        private actions: IAction[] = [new ActionA()];
+        Start(): void {
+          for (const a of this.actions) {
+            a.execute();
+            continue;
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).toContain("__viface_IAction");
+    expect(startSection).toMatch(/__viface_IAction_\d+_done = true/);
+    expect(startSection).toMatch(
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/,
+    );
+  });
+
+  it("applies write-back even when loop body breaks", () => {
+    const source = `
+      interface IAction {
+        execute(): void;
+      }
+      class ActionA implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class Main {
+        private actions: IAction[] = [new ActionA()];
+        Start(): void {
+          for (const a of this.actions) {
+            a.execute();
+            break;
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).toContain("__viface_IAction");
+    expect(startSection).toMatch(/__viface_IAction_\d+_done = true/);
+    expect(startSection).toMatch(
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/,
+    );
+  });
+
+  it("applies write-back before early return from loop body", () => {
+    const source = `
+      interface IAction {
+        execute(): void;
+      }
+      class ActionA implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class Main {
+        private actions: IAction[] = [new ActionA()];
+        Start(): void {
+          for (const a of this.actions) {
+            a.execute();
+            return;
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    const lines = startSection.split("\n");
+    const firstReturnLineIndex = lines.findIndex((line) =>
+      line.trim().startsWith("return"),
+    );
+    const writebackLineIndex = lines.findIndex((line) =>
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/.test(line),
+    );
+
+    const writebackMatch = startSection.match(
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/,
+    );
+    expect(writebackMatch).not.toBeNull();
+    expect(firstReturnLineIndex).toBeGreaterThanOrEqual(0);
+    expect(writebackLineIndex).toBeGreaterThanOrEqual(0);
+    expect(writebackLineIndex).toBeLessThan(firstReturnLineIndex);
+  });
+
+  it("applies write-back before uncaught throw exits loop body", () => {
+    const source = `
+      interface IAction {
+        execute(): void;
+      }
+      class ActionA implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class Main {
+        private actions: IAction[] = [new ActionA()];
+        Start(): void {
+          for (const a of this.actions) {
+            a.execute();
+            throw new Error("x");
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
+    expect(startSection).toContain("UnityEngineDebug.__LogError");
+    const lines = startSection.split("\n");
+    const firstReturnLineIndex = lines.findIndex((line) =>
+      line.trim().startsWith("return"),
+    );
+    const writebackLineIndex = lines.findIndex((line) =>
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/.test(line),
+    );
+    const writebackMatch = startSection.match(
+      /__inst_ActionA_\d+_done = __viface_IAction_\d+_done/,
+    );
+    expect(writebackMatch).not.toBeNull();
+    expect(firstReturnLineIndex).toBeGreaterThanOrEqual(0);
+    expect(writebackLineIndex).toBeGreaterThanOrEqual(0);
+    expect(writebackLineIndex).toBeLessThan(firstReturnLineIndex);
+  });
+
+  it("restores aliases that temporarily point to virtual interface storage", () => {
+    const source = `
+      interface IAction {
+        execute(): void;
+      }
+      class ActionA implements IAction {
+        private done: boolean = false;
+        execute(): void { this.done = true; }
+      }
+      class Main {
+        private actions: IAction[] = [new ActionA()];
+        Start(): void {
+          let y: IAction = this.actions[0];
+          for (const a of this.actions) {
+            y = a;
+          }
+          y.execute();
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+    const lines = startSection.split("\n");
+    const forofEndIndex = lines.findIndex((line) =>
+      /^forof_end\d+:$/.test(line.trim()),
+    );
+    const postLoop =
+      forofEndIndex >= 0 ? lines.slice(forofEndIndex + 1) : lines;
+    const postLoopText = postLoop.join("\n");
+
+    expect(postLoopText).not.toContain("__viface_IAction");
+    expect(postLoopText).not.toContain("__classId");
+    expect(postLoopText).toContain("call y.execute()");
   });
 
   it("handles both property access and method calls on the same interface variable", () => {

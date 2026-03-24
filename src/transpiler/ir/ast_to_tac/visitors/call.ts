@@ -1546,7 +1546,12 @@ export function visitCallExpression(
               propAccess.property,
               evaluatedArgs,
             );
-            if (inlineRes && result) {
+            if (!inlineRes) {
+              throw new Error(
+                `Failed inline interface dispatch for ${instanceInfo.className}.${propAccess.property} (implementor: ${className})`,
+              );
+            }
+            if (result) {
               this.instructions.push(new CopyInstruction(result, inlineRes));
               const inlineMapping =
                 inlineRes.kind === TACOperandKind.Variable
