@@ -296,6 +296,10 @@ export function inlineSuperConstructorFromArgs(
           emitDeferredInlineInitializers(converter, baseClassNode.name);
         }
         converter.visitStatement(baseClassNode.constructor.body);
+        // Safety-net: if the constructor body contains a super() call, its
+        // handler already emitted the deferred initializers (guarded by
+        // emittedClassNames). This only does real work when super() was
+        // omitted (invalid TypeScript) to avoid silently dropping inits.
         if (baseClassNode.baseClass) {
           emitDeferredInlineInitializers(converter, baseClassNode.name);
         }

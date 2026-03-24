@@ -247,6 +247,9 @@ function evaluateArgsWithExpectedTypes(
   methodName: string,
   rawArgs: ASTNode[],
 ): TACOperand[] | null {
+  // resolveClassNode intentionally excludes UdonBehaviour and stub classes.
+  // Their methods are dispatched via IPC, not inlined, so they never need
+  // typed-object-arg evaluation here.
   const classNode = resolveClassNode(converter, className);
   if (!classNode) return null;
 
