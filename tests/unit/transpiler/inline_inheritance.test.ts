@@ -8,17 +8,18 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-/** Extract lines in the _start section (from _start label to its return). */
+/** Extract the full _start section (up to the next top-level label). */
 function getStartSection(tac: string): string {
   const lines = tac.split("\n");
   const startIdx = lines.findIndex((line) => line.includes("_start:"));
   if (startIdx < 0) return "";
   const endIdx = lines.findIndex(
-    (line, i) => i > startIdx && line.trim().startsWith("return"),
+    (line, i) =>
+      i > startIdx &&
+      /^\w[\w_]*:/.test(line.trim()) &&
+      !line.includes("_start:"),
   );
-  return lines
-    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined)
-    .join("\n");
+  return lines.slice(startIdx, endIdx !== -1 ? endIdx : undefined).join("\n");
 }
 
 describe("inline inheritance", () => {
