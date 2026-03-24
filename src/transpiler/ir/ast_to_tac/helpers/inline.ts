@@ -189,7 +189,7 @@ export function resolveClassProperty(
     if (visited.has(current.name)) break; // cycle guard
     visited.add(current.name);
     const prop = current.properties.find(
-      (candidate) => candidate.name === property,
+      (candidate) => candidate.name === property && !candidate.isStatic,
     );
     if (prop) {
       return { prop, declaringClassName: current.name };
