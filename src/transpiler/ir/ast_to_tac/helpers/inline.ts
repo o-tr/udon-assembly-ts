@@ -267,6 +267,10 @@ export function inlineSuperConstructorFromArgs(
   const previousInlineContext = converter.currentInlineContext;
   const previousInlineCtorClass = converter.currentInlineConstructorClassName;
   const previousBaseClass = converter.currentInlineBaseClass;
+  // NOTE: currentInlineInitializerState is intentionally NOT saved/restored here.
+  // It is shared with the outer visitInlineConstructor / emitEntryPointPropertyInit
+  // call so that emittedClassNames accumulates across the full super() chain and
+  // prevents double-emission of property initializers.
   converter.currentInlineBaseClass = baseClassNode.baseClass ?? undefined;
   converter.currentInlineConstructorClassName = baseClassNode.name;
   // Only update currentInlineContext for inline-instance constructors.
