@@ -761,9 +761,7 @@ function isAllInlineInterface(
         !converter.entryPointClasses.has(cls.name) &&
         !converter.isUdonBehaviourType(
           converter.typeMapper.mapTypeScriptType(cls.name),
-        ) &&
-        !cls.decorators.some((d) => d.name === "UdonBehaviour") &&
-        !converter.udonBehaviourClasses.has(cls.name),
+        ),
     )
   );
 }

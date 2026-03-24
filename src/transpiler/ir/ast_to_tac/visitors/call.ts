@@ -1525,6 +1525,11 @@ export function visitCallExpression(
             | null
             | undefined;
 
+          // Save instruction count so we can roll back if inlining fails
+          // (e.g. recursion guard blocks one of the implementors).
+          const savedInstructionCount = this.instructions.length;
+          let dispatchFailed = false;
+
           for (const [className, classId] of classIds) {
             const nextLabel = this.newLabel("iface_dispatch_next");
             const cond = this.newTemp(PrimitiveTypes.boolean);
@@ -1547,9 +1552,12 @@ export function visitCallExpression(
               evaluatedArgs,
             );
             if (!inlineRes) {
-              throw new Error(
-                `Failed inline interface dispatch for ${instanceInfo.className}.${propAccess.property} (implementor: ${className})`,
-              );
+              // Inlining blocked (e.g. recursion guard); roll back the
+              // partially emitted dispatch and fall through to the generic
+              // EXTERN / UdonBehaviour path.
+              this.instructions.length = savedInstructionCount;
+              dispatchFailed = true;
+              break;
             }
             if (result) {
               this.instructions.push(new CopyInstruction(result, inlineRes));
@@ -1577,15 +1585,18 @@ export function visitCallExpression(
             this.instructions.push(new LabelInstruction(nextLabel));
           }
 
-          this.instructions.push(new LabelInstruction(endLabel));
-          if (result) {
-            if (resultInlineMapping) {
-              this.inlineInstanceMap.set(result.name, resultInlineMapping);
-            } else {
-              this.inlineInstanceMap.delete(result.name);
+          if (!dispatchFailed) {
+            this.instructions.push(new LabelInstruction(endLabel));
+            if (result) {
+              if (resultInlineMapping) {
+                this.inlineInstanceMap.set(result.name, resultInlineMapping);
+              } else {
+                this.inlineInstanceMap.delete(result.name);
+              }
             }
+            return result ?? VOID_RETURN;
           }
-          return result ?? VOID_RETURN;
+          // dispatchFailed: fall through to generic method call path
         }
       }
     }
