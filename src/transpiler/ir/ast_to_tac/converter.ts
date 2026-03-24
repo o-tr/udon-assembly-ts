@@ -58,6 +58,7 @@ import {
   emitReturnSiteDispatch,
   mapInlineProperty,
   maybeTrackInlineInstanceAssignment,
+  resolveInlineInstance,
   tryResolveUnitySelfReference,
   visitInlineConstructor,
   visitInlineInstanceMethodCall,
@@ -208,6 +209,7 @@ export class ASTToTACConverter {
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
   currentParamExportMap: Map<string, string> = new Map();
+  currentParamExportReverseMap: Map<string, string> = new Map();
   currentMethodLayout: UdonBehaviourMethodLayout | null = null;
   inSerializeFieldInitializer = false;
   pendingTopLevelInits: VariableDeclarationNode[] = [];
@@ -273,6 +275,8 @@ export class ASTToTACConverter {
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
     this.recursiveReturnSites = new Map();
+    this.currentParamExportMap = new Map();
+    this.currentParamExportReverseMap = new Map();
 
     // Separate top-level const declarations from other statements
     const topLevelConsts: VariableDeclarationNode[] = [];
@@ -525,6 +529,7 @@ export class ASTToTACConverter {
   maybeTrackInlineInstanceAssignment = maybeTrackInlineInstanceAssignment;
   emitEntryPointPropertyInit = emitEntryPointPropertyInit;
   mapInlineProperty = mapInlineProperty;
+  resolveInlineInstance = resolveInlineInstance;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;
   collectRecursiveLocals = collectRecursiveLocals;
   emitCallSitePush = emitCallSitePush;
