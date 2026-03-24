@@ -358,12 +358,22 @@ export class ClassRegistry {
 
   /**
    * Check if a class implements an interface, including through inheritance.
+   * Uses an early-return walk instead of building the full interface list.
    */
   private classImplementsInterface(
     className: string,
     interfaceName: string,
   ): boolean {
-    return this.getAllImplementedInterfaces(className).includes(interfaceName);
+    const visited = new Set<string>();
+    let current: string | null = className;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const cls = this.classes.get(current);
+      if (!cls) break;
+      if ((cls.node.implements ?? []).includes(interfaceName)) return true;
+      current = cls.baseClass ?? null;
+    }
+    return false;
   }
 
   getClassImplementsMap(): Map<string, string[]> {

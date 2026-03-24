@@ -727,9 +727,8 @@ export function visitForOfStatement(
 
     this.visitStatement(node.body);
 
-    this.instructions.push(
-      new UnconditionalJumpInstruction(loopFinalizeContinue),
-    );
+    // Fall-through reaches loopFinalizeContinue directly; no jump needed.
+    // The label exists so `continue` statements can target it.
     this.instructions.push(new LabelInstruction(loopFinalizeContinue));
     emitVirtualInterfaceIterationEpilogue(loopContinue);
 
