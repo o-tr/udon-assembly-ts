@@ -527,6 +527,13 @@ export function visitForOfStatement(
   let vifaceRelevantInstances: Array<
     [number, { prefix: string; className: string }]
   > = [];
+  // Note: this closure may be called multiple times at compile time — once
+  // per early-exit path (return/throw via emitLoopExitEpilogues) and once
+  // per finalize trampoline (continue/break). Each call emits its own copy
+  // of the write-back instructions because they belong to different runtime
+  // control-flow paths. Copies on unreachable paths (e.g. finalize labels
+  // after a return) are harmless dead code at runtime, pruned when the
+  // optimizer is enabled (optimize: true).
   const emitVirtualInterfaceIterationEpilogue = (
     targetLabel?: TACOperand,
   ): void => {
@@ -577,6 +584,7 @@ export function visitForOfStatement(
       this.instructions.push(new LabelInstruction(writebackEndLabel));
     }
 
+    // inlineInstanceMap restoration is idempotent — run unconditionally
     if (vifacePrefix && savedInlineMapBeforeViface) {
       const mappedToViface = Array.from(this.inlineInstanceMap.entries())
         .filter(([, entry]) => entry.prefix === vifacePrefix)
@@ -928,6 +936,11 @@ export function visitReturnStatement(
     this.currentRecursiveContext &&
     this.currentMethodName
   ) {
+    // value is evaluated before the epilogue runs. If it references a viface
+    // variable, the TAC operand still holds the viface name — but the data is
+    // correct because write-back copies viface→concrete without clearing the
+    // viface heap slot. tempValue is a fresh temp with no inlineInstanceMap
+    // entry, so stale inline tracking is not a concern here.
     emitLoopExitEpilogues(this);
     const tempValue = value
       ? this.newTemp(this.getOperandType(value))

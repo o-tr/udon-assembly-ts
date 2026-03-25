@@ -9,16 +9,30 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-/** Extract lines in the _start section (from _start label to its return). */
+/**
+ * Extract lines in the _start section (from _start label to its LAST return).
+ * Scopes the search to the next top-level label so additional methods after
+ * _start don't contaminate the result. Uses the last return within that range
+ * to avoid cutting short when a conditional branch has an early return.
+ */
 function getStartSection(tac: string): string {
   const lines = tac.split("\n");
   const startIdx = lines.findIndex((line) => line.includes("_start:"));
   if (startIdx < 0) return "";
-  const endIdx = lines.findIndex(
-    (line, i) => i > startIdx && line.trim().startsWith("return"),
+  // Find the next top-level label after _start (e.g. _update:, __0_foo:)
+  const nextLabelIdx = lines.findIndex(
+    (line, i) => i > startIdx && /^_[A-Za-z_]\w*:$/.test(line.trim()),
   );
+  const searchEnd = nextLabelIdx !== -1 ? nextLabelIdx : lines.length;
+  let endIdx = -1;
+  for (let i = searchEnd - 1; i > startIdx; i--) {
+    if (lines[i].trim().startsWith("return")) {
+      endIdx = i;
+      break;
+    }
+  }
   return lines
-    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined)
+    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : searchEnd)
     .join("\n");
 }
 
