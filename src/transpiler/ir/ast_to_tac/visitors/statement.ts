@@ -749,14 +749,18 @@ export function visitForOfStatement(
         // classId should always be defined: every class in allInlineInstances
         // went through visitInlineConstructor, which populates interfaceClassIdMap.
         const classId = classIds.get(info.className);
-        if (classId !== undefined) {
-          this.instructions.push(
-            new AssignmentInstruction(
-              classIdVar,
-              createConstant(classId, PrimitiveTypes.int32),
-            ),
+        if (classId === undefined) {
+          throw new Error(
+            `[viface dispatch] classId missing for "${info.className}" in interface "${ifaceName}". ` +
+              `This indicates a mismatch between allInlineInstances and interfaceClassIdMap.`,
           );
         }
+        this.instructions.push(
+          new AssignmentInstruction(
+            classIdVar,
+            createConstant(classId, PrimitiveTypes.int32),
+          ),
+        );
 
         this.instructions.push(
           new UnconditionalJumpInstruction(dispatchEndLabel),
