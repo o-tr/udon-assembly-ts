@@ -20,8 +20,11 @@ function getStartSection(tac: string): string {
   const startIdx = lines.findIndex((line) => line.includes("_start:"));
   if (startIdx < 0) return "";
   // Find the next top-level label after _start (e.g. _update:, __0_foo:)
+  // Match top-level method labels (e.g. _update:, __0_foo:) but not internal
+  // control-flow labels (viface_end_0:, forof_start_1:) or viface variables.
   const nextLabelIdx = lines.findIndex(
-    (line, i) => i > startIdx && /^_{1,2}[A-Za-z0-9_]\w*:$/.test(line.trim()),
+    (line, i) =>
+      i > startIdx && /^_{1,2}[A-Za-z][A-Za-z0-9_]*:$/.test(line.trim()),
   );
   const searchEnd = nextLabelIdx !== -1 ? nextLabelIdx : lines.length;
   let endIdx = -1;

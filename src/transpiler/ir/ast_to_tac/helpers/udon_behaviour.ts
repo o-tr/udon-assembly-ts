@@ -58,9 +58,13 @@ function isUdonBehaviourClassName(
 
     const baseClass: string | null =
       classMeta?.baseClass ?? classNode?.baseClass ?? null;
+    // If neither classMeta nor classNode resolves, the class is either an
+    // extern type (DataList, VRCPlayerApi, etc.) or from an unloaded
+    // compilation unit. We cannot distinguish these cases here, so return
+    // false. Cross-file UdonBehaviour detection is handled separately by
+    // isUdonBehaviourType's interface-implementor check (which returns true
+    // when implementors.length === 0).
     if (!baseClass) return false;
-    // No need to check baseClass === UDON_SHARP_BEHAVIOUR here —
-    // the next iteration checks current === UDON_SHARP_BEHAVIOUR at line 34.
     current = baseClass;
   }
 
