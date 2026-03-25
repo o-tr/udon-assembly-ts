@@ -589,7 +589,12 @@ export function visitForOfStatement(
       this.instructions.push(new LabelInstruction(writebackEndLabel));
     }
 
-    // inlineInstanceMap restoration is idempotent — run unconditionally
+    // Restore inlineInstanceMap: remove entries pointing to the virtual prefix.
+    // Temporaries mapped to vifacePrefix during the loop body (e.g. method
+    // return values that resolved to `this` inside the inlined body) are also
+    // cleaned up here — they didn't exist before viface setup so they are
+    // deleted. After restoration, any reference through those temporaries
+    // will fall through to the generic EXTERN path, which is safe.
     if (vifacePrefix && savedInlineMapBeforeViface) {
       const mappedToViface = Array.from(this.inlineInstanceMap.entries())
         .filter(([, entry]) => entry.prefix === vifacePrefix)
@@ -833,8 +838,21 @@ export function isAllInlineInterface(
   converter: ASTToTACConverter,
   typeName: string,
 ): boolean {
+  const cached = converter.allInlineInterfaceCache.get(typeName);
+  if (cached !== undefined) return cached;
+
+  const result = isAllInlineInterfaceUncached(converter, typeName);
+  converter.allInlineInterfaceCache.set(typeName, result);
+  return result;
+}
+
+function isAllInlineInterfaceUncached(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
   const iface = converter.classRegistry?.getInterface(typeName);
   if (!iface) return false;
+  // Skip marker interfaces with no callable surface — nothing to dispatch.
   if (!iface.methods?.length && !iface.properties?.length) return false;
   const implementors =
     converter.classRegistry?.getImplementorsOfInterface(typeName) ?? [];

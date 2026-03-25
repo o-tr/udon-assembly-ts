@@ -208,6 +208,8 @@ export class ASTToTACConverter {
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
   nextInstanceId = 0;
+  /** Cache for isAllInlineInterface results to avoid O(N) rescans */
+  allInlineInterfaceCache: Map<string, boolean> = new Map();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
@@ -274,6 +276,7 @@ export class ASTToTACConverter {
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
+    this.allInlineInterfaceCache = new Map();
     this.nextInstanceId = 0;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
