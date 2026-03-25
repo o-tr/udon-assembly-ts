@@ -637,11 +637,11 @@ export function visitForOfStatement(
       if (!classIds) {
         // classIds is populated lazily by visitInlineConstructor. If the
         // for-of loop appears before any constructor call for this
-        // interface's implementors (e.g. method body compiled before
-        // property initializers), the dispatch cannot be generated.
-        console.warn(
-          `[udon-assembly-ts] Interface "${ifaceName}" has all-inline implementors but no classId map yet. ` +
-            `Ensure constructors are visited before the for-of loop.`,
+        // interface's implementors, the dispatch cannot be generated and
+        // method calls would silently become no-ops at runtime. Fail hard.
+        throw new Error(
+          `Interface "${ifaceName}" has all-inline implementors but no classId map was found. ` +
+            `Inline constructors must be visited before the for-of loop.`,
         );
       }
       const relevantInstances: Array<

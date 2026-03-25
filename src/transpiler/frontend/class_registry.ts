@@ -369,12 +369,15 @@ export class ClassRegistry {
 
   /**
    * Check if a class implements an interface, including through inheritance.
-   * Delegates to getAllImplementedInterfaces to share the cache.
+   * Reads the cache directly to avoid the defensive array copy that
+   * getAllImplementedInterfaces returns to external callers.
    */
   private classImplementsInterface(
     className: string,
     interfaceName: string,
   ): boolean {
+    const cached = this.implementedInterfacesCache.get(className);
+    if (cached !== undefined) return cached.includes(interfaceName);
     return this.getAllImplementedInterfaces(className).includes(interfaceName);
   }
 
