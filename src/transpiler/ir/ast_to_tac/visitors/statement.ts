@@ -527,6 +527,7 @@ export function visitForOfStatement(
   let vifaceRelevantInstances: Array<
     [number, { prefix: string; className: string }]
   > = [];
+  let vifaceFieldTypes: Map<string, TypeSymbol> | undefined;
   // Note: this closure may be called multiple times at compile time — once
   // per early-exit path (return/throw via emitLoopExitEpilogues) and once
   // per finalize trampoline (continue/break). Each call emits its own copy
@@ -570,7 +571,11 @@ export function visitForOfStatement(
           })) ??
           [];
         for (const prop of propsToWriteBack) {
-          const src = createVariable(`${vifacePrefix}_${prop.name}`, prop.type);
+          const vifaceType = vifaceFieldTypes?.get(prop.name) ?? prop.type;
+          const src = createVariable(
+            `${vifacePrefix}_${prop.name}`,
+            vifaceType,
+          );
           const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
           this.instructions.push(new CopyInstruction(dst, src));
           this.maybeTrackInlineInstanceAssignment(dst, src);
@@ -630,7 +635,7 @@ export function visitForOfStatement(
         // interface's implementors (e.g. method body compiled before
         // property initializers), the dispatch cannot be generated.
         console.warn(
-          `[viface] Interface "${ifaceName}" has all-inline implementors but no classId map yet. ` +
+          `[udon-assembly-ts] Interface "${ifaceName}" has all-inline implementors but no classId map yet. ` +
             `Ensure constructors are visited before the for-of loop.`,
         );
       }
@@ -653,6 +658,28 @@ export function visitForOfStatement(
           PrimitiveTypes.int32,
         );
         const dispatchEndLabel = this.newLabel("viface_end");
+
+        // Build a unified type map for virtual-prefix variables: when
+        // implementors declare the same private field name with different
+        // types, fall back to ObjectType so the TAC remains type-consistent.
+        vifaceFieldTypes = new Map<string, TypeSymbol>();
+        for (const [, info] of relevantInstances) {
+          const concreteClass = this.classMap.get(info.className);
+          const props =
+            concreteClass?.properties ??
+            ifaceMeta.properties.map((p) => ({
+              name: p.name,
+              type: this.typeMapper.mapTypeScriptType(p.type),
+            }));
+          for (const prop of props) {
+            const existing = vifaceFieldTypes.get(prop.name);
+            if (!existing) {
+              vifaceFieldTypes.set(prop.name, prop.type);
+            } else if (existing.name !== prop.type.name) {
+              vifaceFieldTypes.set(prop.name, ObjectType);
+            }
+          }
+        }
 
         // elementVar is Object (from array access); copy to Int32 for comparison
         const handleVar = this.newTemp(PrimitiveTypes.int32);
@@ -685,6 +712,7 @@ export function visitForOfStatement(
 
           // Copy all concrete class properties to virtual variables so that
           // inlined method bodies can safely access private/internal fields.
+          // Virtual variable types are unified via vifaceFieldTypes above.
           const concreteClass = this.classMap.get(info.className);
           const propsToCopy: Array<{ name: string; type: TypeSymbol }> =
             concreteClass?.properties.map((prop) => ({
@@ -696,13 +724,14 @@ export function visitForOfStatement(
               type: this.typeMapper.mapTypeScriptType(prop.type),
             }));
           for (const prop of propsToCopy) {
+            const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;
             const src = createVariable(
               `${info.prefix}_${prop.name}`,
               prop.type,
             );
             const dst = createVariable(
               `${virtualPrefix}_${prop.name}`,
-              prop.type,
+              vifaceType,
             );
             this.instructions.push(new CopyInstruction(dst, src));
             this.maybeTrackInlineInstanceAssignment(dst, src);
@@ -796,7 +825,7 @@ export function visitForOfStatement(
  * Check if the given type name is an interface where all implementors are
  * inline (non-UdonBehaviour) classes.
  */
-function isAllInlineInterface(
+export function isAllInlineInterface(
   converter: ASTToTACConverter,
   typeName: string,
 ): boolean {

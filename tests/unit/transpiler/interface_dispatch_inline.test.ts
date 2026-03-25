@@ -21,7 +21,7 @@ function getStartSection(tac: string): string {
   if (startIdx < 0) return "";
   // Find the next top-level label after _start (e.g. _update:, __0_foo:)
   const nextLabelIdx = lines.findIndex(
-    (line, i) => i > startIdx && /^_[A-Za-z_]\w*:$/.test(line.trim()),
+    (line, i) => i > startIdx && /^_{1,2}[A-Za-z0-9_]\w*:$/.test(line.trim()),
   );
   const searchEnd = nextLabelIdx !== -1 ? nextLabelIdx : lines.length;
   let endIdx = -1;

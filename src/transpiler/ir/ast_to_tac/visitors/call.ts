@@ -60,6 +60,7 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import { resolveTypeFromNode } from "./expression.js";
+import { isAllInlineInterface } from "./statement.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 
@@ -1495,9 +1496,16 @@ export function visitCallExpression(
         if (inlineResult != null) return inlineResult;
 
         // Interface classId-based dispatch: when className is an interface
-        // with all-inline implementors, dispatch by classId
+        // with all-inline implementors, dispatch by classId.
+        // The isAllInlineInterface guard prevents mixed-implementor interfaces
+        // (some inline, some UdonBehaviour) from entering this path — those
+        // must fall through to the EXTERN/IPC path below.
         const classIds = this.interfaceClassIdMap.get(instanceInfo.className);
-        if (classIds && classIds.size > 0) {
+        if (
+          classIds &&
+          classIds.size > 0 &&
+          isAllInlineInterface(this, instanceInfo.className)
+        ) {
           const ifaceMeta = this.classRegistry?.getInterface(
             instanceInfo.className,
           );
