@@ -746,6 +746,8 @@ export function visitForOfStatement(
         }
 
         // Set classId
+        // classId should always be defined: every class in allInlineInstances
+        // went through visitInlineConstructor, which populates interfaceClassIdMap.
         const classId = classIds.get(info.className);
         if (classId !== undefined) {
           this.instructions.push(
