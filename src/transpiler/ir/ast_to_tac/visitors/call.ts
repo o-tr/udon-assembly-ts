@@ -59,8 +59,8 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
+import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
-import { isAllInlineInterface } from "./statement.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 

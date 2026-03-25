@@ -348,7 +348,7 @@ export class ClassRegistry {
    */
   getAllImplementedInterfaces(className: string): string[] {
     const cached = this.implementedInterfacesCache.get(className);
-    if (cached) return [...cached];
+    if (cached !== undefined) return [...cached];
     const result: string[] = [];
     const seen = new Set<string>();
     const visited = new Set<string>();

@@ -96,6 +96,44 @@ export function isUdonBehaviourType(
   return false;
 }
 
+/**
+ * Check if the given type name is an interface where all implementors are
+ * inline (non-UdonBehaviour) classes.
+ */
+export function isAllInlineInterface(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
+  const cached = converter.allInlineInterfaceCache.get(typeName);
+  if (cached !== undefined) return cached;
+
+  const result = isAllInlineInterfaceUncached(converter, typeName);
+  converter.allInlineInterfaceCache.set(typeName, result);
+  return result;
+}
+
+function isAllInlineInterfaceUncached(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
+  const iface = converter.classRegistry?.getInterface(typeName);
+  if (!iface) return false;
+  // Skip marker interfaces with no callable surface — nothing to dispatch.
+  if (!iface.methods?.length && !iface.properties?.length) return false;
+  const implementors =
+    converter.classRegistry?.getImplementorsOfInterface(typeName) ?? [];
+  return (
+    implementors.length > 0 &&
+    implementors.every(
+      (cls) =>
+        !converter.entryPointClasses.has(cls.name) &&
+        !converter.isUdonBehaviourType(
+          converter.typeMapper.mapTypeScriptType(cls.name),
+        ),
+    )
+  );
+}
+
 export function getUdonBehaviourLayout(
   this: ASTToTACConverter,
   className: string,
