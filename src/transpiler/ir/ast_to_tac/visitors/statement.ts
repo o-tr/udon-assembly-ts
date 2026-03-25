@@ -644,19 +644,21 @@ export function visitForOfStatement(
             `Inline constructors must be visited before the for-of loop.`,
         );
       }
+      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
+      // outer ifaceMeta check at line 624 and the throw at line 640).
       const relevantInstances: Array<
         [number, { prefix: string; className: string }]
       > = [];
-      if (ifaceMeta && classIds) {
-        for (const [id, info] of this.allInlineInstances) {
-          if (implementorNames.has(info.className)) {
-            relevantInstances.push([id, info]);
-          }
+      for (const [id, info] of this.allInlineInstances) {
+        if (implementorNames.has(info.className)) {
+          relevantInstances.push([id, info]);
         }
       }
 
-      // Only emit dispatch when there are known instances to dispatch to
-      if (relevantInstances.length > 0 && ifaceMeta && classIds) {
+      // Only emit dispatch when there are known instances to dispatch to.
+      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
+      // throw above and the outer ifaceMeta check at line 624).
+      if (relevantInstances.length > 0) {
         // instanceCounter is shared with concrete instances (__inst_*) — the
         // __viface_ prefix prevents name collisions while keeping IDs unique.
         const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
@@ -804,8 +806,12 @@ export function visitForOfStatement(
       this.loopContextStack.pop();
     }
 
-    // Fall-through reaches loopFinalizeContinue directly; no jump needed.
-    // The label exists so `continue` statements can target it.
+    // Control-flow topology:
+    //   loopFinalizeContinue — reached by normal fall-through and `continue`.
+    //     Emits write-back, then jumps to loopContinue (index increment).
+    //   loopFinalizeBreak — reached ONLY via `break` (not from fall-through).
+    //     Emits write-back, then jumps to loopEnd.
+    // The two labels are sequential in TAC but represent disjoint runtime paths.
     this.instructions.push(new LabelInstruction(loopFinalizeContinue));
     emitVirtualInterfaceIterationEpilogue(loopContinue);
 

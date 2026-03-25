@@ -1610,7 +1610,9 @@ export function visitCallExpression(
             this.instructions.push(new UnconditionalJumpInstruction(endLabel));
             this.instructions.push(new LabelInstruction(nextLabel));
 
-            // Restore map so next branch starts from a clean state
+            // Restore map INSIDE the loop (not after) so each branch starts
+            // from the pre-dispatch state. After the loop, resultInlineMapping
+            // is re-inserted for result.name if all branches agreed.
             this.inlineInstanceMap = branchMapSnapshot;
           }
 

@@ -36,6 +36,9 @@ function isUdonBehaviourClassName(
     if (converter.udonBehaviourClasses.has(current)) return true;
     if (converter.entryPointClasses.has(current)) return true;
 
+    // Check both classMeta (from ClassRegistry, available after parsing) and
+    // classNode (from classMap, available during TAC conversion). A class may
+    // be in one source but not the other depending on compilation phase.
     const classMeta: ClassMetadata | undefined =
       converter.classRegistry?.getClass(current);
     if (classMeta?.isEntryPoint) return true;
