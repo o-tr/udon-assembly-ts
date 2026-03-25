@@ -86,6 +86,7 @@ export class ClassRegistry {
   private mergedMethodsCache = new Map<string, MethodInfo[]>();
   private mergedPropertiesCache = new Map<string, PropertyInfo[]>();
   private stubCache = new Map<string, boolean>();
+  private implementedInterfacesCache = new Map<string, string[]>();
   private entryPointsCache: ClassMetadata[] | null = null;
 
   register(classInfo: ClassMetadata): void {
@@ -98,6 +99,7 @@ export class ClassRegistry {
     this.mergedMethodsCache.clear();
     this.mergedPropertiesCache.clear();
     this.stubCache.clear();
+    this.implementedInterfacesCache.clear();
     this.entryPointsCache = null;
   }
 
@@ -337,6 +339,8 @@ export class ClassRegistry {
    * through the base class chain. Results are deduplicated.
    */
   getAllImplementedInterfaces(className: string): string[] {
+    const cached = this.implementedInterfacesCache.get(className);
+    if (cached) return [...cached];
     const result: string[] = [];
     const seen = new Set<string>();
     const visited = new Set<string>();
@@ -353,27 +357,19 @@ export class ClassRegistry {
       }
       current = cls.baseClass ?? null;
     }
-    return result;
+    this.implementedInterfacesCache.set(className, result);
+    return [...result];
   }
 
   /**
    * Check if a class implements an interface, including through inheritance.
-   * Uses an early-return walk instead of building the full interface list.
+   * Delegates to getAllImplementedInterfaces to share the cache.
    */
   private classImplementsInterface(
     className: string,
     interfaceName: string,
   ): boolean {
-    const visited = new Set<string>();
-    let current: string | null = className;
-    while (current && !visited.has(current)) {
-      visited.add(current);
-      const cls = this.classes.get(current);
-      if (!cls) break;
-      if ((cls.node.implements ?? []).includes(interfaceName)) return true;
-      current = cls.baseClass ?? null;
-    }
-    return false;
+    return this.getAllImplementedInterfaces(className).includes(interfaceName);
   }
 
   getClassImplementsMap(): Map<string, string[]> {
