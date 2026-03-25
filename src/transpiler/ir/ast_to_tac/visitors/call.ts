@@ -1542,6 +1542,11 @@ export function visitCallExpression(
             | undefined;
 
           for (const [className, classId] of classIds) {
+            // Snapshot inlineInstanceMap before each branch so side-effects
+            // from one implementor's inlined body (e.g. temporaries tracked
+            // as inline instances) don't leak into subsequent branches.
+            const branchMapSnapshot = new Map(this.inlineInstanceMap);
+
             const nextLabel = this.newLabel("iface_dispatch_next");
             const cond = this.newTemp(PrimitiveTypes.boolean);
             this.instructions.push(
@@ -1597,6 +1602,9 @@ export function visitCallExpression(
             }
             this.instructions.push(new UnconditionalJumpInstruction(endLabel));
             this.instructions.push(new LabelInstruction(nextLabel));
+
+            // Restore map so next branch starts from a clean state
+            this.inlineInstanceMap = branchMapSnapshot;
           }
 
           if (!dispatchFailed) {

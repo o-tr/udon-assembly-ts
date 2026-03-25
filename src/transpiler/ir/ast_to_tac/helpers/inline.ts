@@ -180,6 +180,10 @@ export function visitInlineConstructor(
   });
 
   // Register classId for interfaces this class implements (including inherited).
+  // ClassIds are assigned by visitation order (classIds.size at first encounter).
+  // This is non-deterministic across compilation orders but consistent within a
+  // single compilation — the for-of dispatch and call-site switch both read from
+  // the same interfaceClassIdMap. ClassIds are never serialized or persisted.
   // Invariant: the empty Map created below is always populated in the same
   // synchronous block (classIds.set on the next line), so interfaceClassIdMap
   // never contains an empty Map after this block completes.
