@@ -337,6 +337,12 @@ export class ClassRegistry {
   /**
    * Return all interfaces a class implements, including those inherited
    * through the base class chain. Results are deduplicated.
+   *
+   * Limitation: interface-extends-interface relationships are not traversed
+   * because InterfaceDeclarationNode does not currently have an `extends`
+   * field. A class implementing IYaku (which extends IScorer) will only
+   * return ["IYaku"], not ["IYaku", "IScorer"]. This requires parser
+   * support for interface heritage clauses.
    */
   getAllImplementedInterfaces(className: string): string[] {
     const cached = this.implementedInterfacesCache.get(className);
