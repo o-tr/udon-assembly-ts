@@ -611,7 +611,9 @@ export function visitForOfStatement(
   ) {
     const variableName = node.variable;
     const ifaceName = elementType.name;
-    if (isAllInlineInterface(this, ifaceName)) {
+    // Early guard: only attempt viface dispatch for registered interfaces
+    const ifaceMeta = this.classRegistry?.getInterface(ifaceName);
+    if (ifaceMeta && isAllInlineInterface(this, ifaceName)) {
       // Collect all inline instances that implement this interface.
       // NOTE: allInlineInstances is compilation-unit-wide, so instances that
       // are never stored in *this* array (e.g. a scalar IYaku field in another
@@ -621,7 +623,6 @@ export function visitForOfStatement(
       const implementors =
         this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
       const implementorNames = new Set(implementors.map((impl) => impl.name));
-      const ifaceMeta = this.classRegistry?.getInterface(ifaceName);
       const classIds = this.interfaceClassIdMap.get(ifaceName);
       if (!classIds) {
         // classIds is populated lazily by visitInlineConstructor. If the
@@ -853,6 +854,12 @@ export function visitSwitchStatement(
   );
 
   const outerContext = this.loopContextStack[this.loopContextStack.length - 1];
+  // Note: emitExitEpilogue is intentionally NOT forwarded from the outer loop.
+  // Switch `break` jumps to endLabel (below), which is still inside the loop
+  // body. Execution then falls through to the loop's finalize trampoline
+  // (loopFinalizeContinue/Break) where viface write-back runs normally.
+  // `continue` IS forwarded via outerContext.continueLabel so it correctly
+  // reaches the loop's finalize trampoline.
   this.loopContextStack.push({
     breakLabel: endLabel,
     continueLabel: outerContext?.continueLabel ?? endLabel,
