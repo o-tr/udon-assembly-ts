@@ -451,7 +451,6 @@ export function visitForOfStatement(
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
   const loopEnd = this.newLabel("forof_end");
-  const _loopStackDepthBeforePush = this.loopContextStack.length;
 
   this.instructions.push(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
