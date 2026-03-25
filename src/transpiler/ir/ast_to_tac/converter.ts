@@ -207,7 +207,10 @@ export class ASTToTACConverter {
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
-  nextInstanceId = 0;
+  // Start at 1: Udon zero-initialises heap slots, so an uninitialised
+  // array element holds 0. Reserving 0 as "no valid instance" prevents
+  // false dispatch matches on partially-populated interface arrays.
+  nextInstanceId = 1;
   /** Cache for isAllInlineInterface results to avoid O(N) rescans */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
   udonBehaviourClasses: Set<string>;
@@ -277,7 +280,7 @@ export class ASTToTACConverter {
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
     this.allInlineInterfaceCache = new Map();
-    this.nextInstanceId = 0;
+    this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
     this.recursiveReturnSites = new Map();
