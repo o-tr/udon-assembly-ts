@@ -543,7 +543,6 @@ export function visitForOfStatement(
       vifaceInterfaceName &&
       vifaceRelevantInstances.length > 0
     ) {
-      const ifaceMeta = this.classRegistry?.getInterface(vifaceInterfaceName);
       const writebackEndLabel = this.newLabel("viface_wb_end");
       for (const [instanceId, info] of vifaceRelevantInstances) {
         const nextLabel = this.newLabel("viface_wb_next");
@@ -558,17 +557,19 @@ export function visitForOfStatement(
         );
         this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
 
+        // concreteClass should always exist: allInlineInstances is only
+        // populated after visitInlineConstructor succeeds, which sets classMap.
         const concreteClass = this.classMap.get(info.className);
+        if (!concreteClass) {
+          throw new Error(
+            `[viface write-back] classMap missing entry for "${info.className}"`,
+          );
+        }
         const propsToWriteBack: Array<{ name: string; type: TypeSymbol }> =
-          concreteClass?.properties.map((prop) => ({
+          concreteClass.properties.map((prop) => ({
             name: prop.name,
             type: prop.type,
-          })) ??
-          ifaceMeta?.properties.map((prop) => ({
-            name: prop.name,
-            type: this.typeMapper.mapTypeScriptType(prop.type),
-          })) ??
-          [];
+          }));
         for (const prop of propsToWriteBack) {
           const vifaceType = vifaceFieldTypes?.get(prop.name) ?? prop.type;
           const src = createVariable(
@@ -671,12 +672,12 @@ export function visitForOfStatement(
         vifaceFieldTypes = new Map<string, TypeSymbol>();
         for (const [, info] of relevantInstances) {
           const concreteClass = this.classMap.get(info.className);
-          const props =
-            concreteClass?.properties ??
-            ifaceMeta.properties.map((p) => ({
-              name: p.name,
-              type: this.typeMapper.mapTypeScriptType(p.type),
-            }));
+          if (!concreteClass) {
+            throw new Error(
+              `[viface field-types] classMap missing entry for "${info.className}"`,
+            );
+          }
+          const props = concreteClass.properties;
           for (const prop of props) {
             const existing = vifaceFieldTypes.get(prop.name);
             if (!existing) {
@@ -720,14 +721,15 @@ export function visitForOfStatement(
           // inlined method bodies can safely access private/internal fields.
           // Virtual variable types are unified via vifaceFieldTypes above.
           const concreteClass = this.classMap.get(info.className);
+          if (!concreteClass) {
+            throw new Error(
+              `[viface forward-copy] classMap missing entry for "${info.className}"`,
+            );
+          }
           const propsToCopy: Array<{ name: string; type: TypeSymbol }> =
-            concreteClass?.properties.map((prop) => ({
+            concreteClass.properties.map((prop) => ({
               name: prop.name,
               type: prop.type,
-            })) ??
-            ifaceMeta.properties.map((prop) => ({
-              name: prop.name,
-              type: this.typeMapper.mapTypeScriptType(prop.type),
             }));
           for (const prop of propsToCopy) {
             const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;

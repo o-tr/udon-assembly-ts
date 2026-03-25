@@ -58,7 +58,8 @@ describe("interface dispatch with all-inline implementors", () => {
           return this.value;
         }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private yakus: IYaku[] = [new Yaku1(), new Yaku2()];
         Start(): void {
           let total: number = 0;
@@ -107,7 +108,8 @@ describe("interface dispatch with all-inline implementors", () => {
       class ItemB implements IItem {
         points: number = 10;
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private items: IItem[] = [new ItemA(), new ItemB()];
         Start(): void {
           let total: number = 0;
@@ -137,7 +139,8 @@ describe("interface dispatch with all-inline implementors", () => {
           return 1;
         }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private g: IGreeter = new Hello();
         Start(): void {
           let v: number = this.g.greet();
@@ -165,7 +168,8 @@ describe("interface dispatch with all-inline implementors", () => {
       class Tripler implements ICalc {
         compute(x: number): number { return x + x + x; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private calcs: ICalc[] = [new Doubler(), new Tripler()];
         Start(): void {
           let total: number = 0;
@@ -196,7 +200,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private done: boolean = false;
         execute(): void { this.done = true; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private actions: IAction[] = [new ActionA(), new ActionB()];
         Start(): void {
           for (const a of this.actions) {
@@ -235,7 +240,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private done: boolean = false;
         execute(): void { this.done = true; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private actions: IAction[] = [new ActionA()];
         Start(): void {
           for (const a of this.actions) {
@@ -264,7 +270,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private done: boolean = false;
         execute(): void { this.done = true; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private actions: IAction[] = [new ActionA()];
         Start(): void {
           for (const a of this.actions) {
@@ -293,7 +300,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private done: boolean = false;
         execute(): void { this.done = true; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private actions: IAction[] = [new ActionA()];
         Start(): void {
           for (const a of this.actions) {
@@ -332,7 +340,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private done: boolean = false;
         execute(): void { this.done = true; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private actions: IAction[] = [new ActionA()];
         Start(): void {
           for (const a of this.actions) {
@@ -371,7 +380,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private done: boolean = false;
         execute(): void { this.done = true; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private actions: IAction[] = [new ActionA()];
         Start(): void {
           let y: IAction = this.actions[0];
@@ -411,7 +421,8 @@ describe("interface dispatch with all-inline implementors", () => {
         base: number = 200;
         bonus(): number { return 20; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private items: IScored[] = [new ScoredA(), new ScoredB()];
         Start(): void {
           let total: number = 0;
@@ -448,7 +459,8 @@ describe("interface dispatch with all-inline implementors", () => {
         private h: number = 5;
         area(): number { return this.h; }
       }
-      class Main {
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
         private shapes: IShape[] = [new Circle(), new Square(), new Triangle()];
         Start(): void {
           let total: number = 0;
