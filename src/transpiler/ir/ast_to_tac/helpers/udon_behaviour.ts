@@ -59,7 +59,8 @@ function isUdonBehaviourClassName(
     const baseClass: string | null =
       classMeta?.baseClass ?? classNode?.baseClass ?? null;
     if (!baseClass) return false;
-    if (baseClass === UDON_SHARP_BEHAVIOUR) return true;
+    // No need to check baseClass === UDON_SHARP_BEHAVIOUR here —
+    // the next iteration checks current === UDON_SHARP_BEHAVIOUR at line 34.
     current = baseClass;
   }
 

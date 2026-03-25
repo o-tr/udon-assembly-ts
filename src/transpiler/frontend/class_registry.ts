@@ -337,6 +337,8 @@ export class ClassRegistry {
   /**
    * Return all interfaces a class implements, including those inherited
    * through the base class chain. Results are deduplicated.
+   * Cache is invalidated by register()/clearCaches(), so results are only
+   * reliable after all classes have been registered (post-parsing phase).
    *
    * Limitation: interface-extends-interface relationships are not traversed
    * because InterfaceDeclarationNode does not currently have an `extends`

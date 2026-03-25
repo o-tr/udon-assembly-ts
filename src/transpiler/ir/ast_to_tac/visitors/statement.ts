@@ -657,6 +657,8 @@ export function visitForOfStatement(
 
       // Only emit dispatch when there are known instances to dispatch to
       if (relevantInstances.length > 0 && ifaceMeta && classIds) {
+        // instanceCounter is shared with concrete instances (__inst_*) — the
+        // __viface_ prefix prevents name collisions while keeping IDs unique.
         const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
         const classIdVar = createVariable(
           `${virtualPrefix}__classId`,
