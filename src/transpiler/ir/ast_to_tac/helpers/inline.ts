@@ -179,7 +179,10 @@ export function visitInlineConstructor(
     className,
   });
 
-  // Register classId for interfaces this class implements (including inherited)
+  // Register classId for interfaces this class implements (including inherited).
+  // Invariant: the empty Map created below is always populated in the same
+  // synchronous block (classIds.set on the next line), so interfaceClassIdMap
+  // never contains an empty Map after this block completes.
   const allInterfaces = this.classRegistry
     ? this.classRegistry.getAllImplementedInterfaces(className)
     : (classNode.implements ?? []);

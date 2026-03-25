@@ -1510,6 +1510,14 @@ export function visitCallExpression(
           const isVoid =
             returnType.name === "SystemVoid" ||
             methodMeta?.returnType === "void";
+          // Save state BEFORE allocating any variables so rollback
+          // doesn't leave orphaned temps/labels in the TAC variable table.
+          const savedInstructionCount = this.instructions.length;
+          const savedTempCounter = this.tempCounter;
+          const savedLabelCounter = this.labelCounter;
+          const savedInlineInstanceMap = new Map(this.inlineInstanceMap);
+          let dispatchFailed = false;
+
           const result = isVoid
             ? undefined
             : createVariable(`__iface_ret_${this.tempCounter++}`, returnType, {
@@ -1524,14 +1532,6 @@ export function visitCallExpression(
             | { prefix: string; className: string }
             | null
             | undefined;
-
-          // Save state so we can roll back if inlining fails
-          // (e.g. recursion guard blocks one of the implementors).
-          const savedInstructionCount = this.instructions.length;
-          const savedTempCounter = this.tempCounter;
-          const savedLabelCounter = this.labelCounter;
-          const savedInlineInstanceMap = new Map(this.inlineInstanceMap);
-          let dispatchFailed = false;
 
           for (const [className, classId] of classIds) {
             const nextLabel = this.newLabel("iface_dispatch_next");
