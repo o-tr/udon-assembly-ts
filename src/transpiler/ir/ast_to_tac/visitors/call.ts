@@ -1594,6 +1594,13 @@ export function visitCallExpression(
                   (resultInlineMapping.prefix !== inlineMapping.prefix ||
                     resultInlineMapping.className !== inlineMapping.className)
                 ) {
+                  // Different branches return different concrete prefixes —
+                  // we can't merge them into a single tracking entry.
+                  // Known limitation: chained calls on the return value
+                  // (e.g. item.getChild().doWork()) will fall through to the
+                  // generic path if getChild() returns a freshly-constructed
+                  // inline instance. The for-of loop variable itself is
+                  // unaffected because it dispatches via classId.
                   resultInlineMapping = null;
                 }
               } else {
