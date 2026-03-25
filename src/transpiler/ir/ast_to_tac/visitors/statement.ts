@@ -527,6 +527,29 @@ export function visitForOfStatement(
     [number, { prefix: string; className: string }]
   > = [];
   let vifaceFieldTypes: Map<string, TypeSymbol> | undefined;
+  // Helper: get all properties (including inherited) for an implementor.
+  // Prefers getMergedProperties (full inheritance chain) over direct node
+  // properties, mapping string types to TypeSymbol where needed.
+  const getAllClassProps = (
+    className: string,
+  ): Array<{ name: string; type: TypeSymbol }> => {
+    if (this.classRegistry) {
+      const merged = this.classRegistry.getMergedProperties(className);
+      if (merged.length > 0) {
+        return merged.map((p) => ({
+          name: p.name,
+          type: this.typeMapper.mapTypeScriptType(p.type),
+        }));
+      }
+    }
+    const classNode = this.classMap.get(className);
+    return (
+      classNode?.properties.map((p) => ({
+        name: p.name,
+        type: p.type,
+      })) ?? []
+    );
+  };
   // Note: this closure may be called multiple times at compile time — once
   // per early-exit path (return/throw via emitLoopExitEpilogues) and once
   // per finalize trampoline (continue/break). Each call emits its own copy
@@ -557,19 +580,8 @@ export function visitForOfStatement(
         );
         this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
 
-        // concreteClass should always exist: allInlineInstances is only
-        // populated after visitInlineConstructor succeeds, which sets classMap.
-        const concreteClass = this.classMap.get(info.className);
-        if (!concreteClass) {
-          throw new Error(
-            `[viface write-back] classMap missing entry for "${info.className}"`,
-          );
-        }
-        const propsToWriteBack: Array<{ name: string; type: TypeSymbol }> =
-          concreteClass.properties.map((prop) => ({
-            name: prop.name,
-            type: prop.type,
-          }));
+        // Use getAllClassProps to include inherited properties in write-back.
+        const propsToWriteBack = getAllClassProps(info.className);
         for (const prop of propsToWriteBack) {
           const vifaceType = vifaceFieldTypes?.get(prop.name) ?? prop.type;
           const src = createVariable(
@@ -658,131 +670,119 @@ export function visitForOfStatement(
       // Only emit dispatch when there are known instances to dispatch to.
       // ifaceMeta and classIds are guaranteed non-null here (guarded by the
       // throw above and the outer ifaceMeta check at line 624).
-      if (relevantInstances.length > 0) {
-        // instanceCounter is shared with concrete instances (__inst_*) — the
-        // __viface_ prefix prevents name collisions while keeping IDs unique.
-        const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
-        const classIdVar = createVariable(
-          `${virtualPrefix}__classId`,
-          PrimitiveTypes.int32,
+      if (relevantInstances.length === 0) {
+        // classIds exists (constructors were visited) but no instances found
+        // in allInlineInstances — indicates a registration mismatch.
+        throw new Error(
+          `Interface "${ifaceName}" has classIds but no relevant inline instances. ` +
+            `Check that allInlineInstances is populated before the for-of loop.`,
         );
-        const dispatchEndLabel = this.newLabel("viface_end");
+      }
+      // instanceCounter is shared with concrete instances (__inst_*) — the
+      // __viface_ prefix prevents name collisions while keeping IDs unique.
+      const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
+      const classIdVar = createVariable(
+        `${virtualPrefix}__classId`,
+        PrimitiveTypes.int32,
+      );
+      const dispatchEndLabel = this.newLabel("viface_end");
 
-        // Build a unified type map for virtual-prefix variables: when
-        // implementors declare the same private field name with different
-        // types, fall back to ObjectType so the TAC remains type-consistent.
-        vifaceFieldTypes = new Map<string, TypeSymbol>();
-        for (const [, info] of relevantInstances) {
-          const concreteClass = this.classMap.get(info.className);
-          if (!concreteClass) {
-            throw new Error(
-              `[viface field-types] classMap missing entry for "${info.className}"`,
-            );
-          }
-          const props = concreteClass.properties;
-          for (const prop of props) {
-            const existing = vifaceFieldTypes.get(prop.name);
-            if (!existing) {
-              vifaceFieldTypes.set(prop.name, prop.type);
-            } else if (existing.name !== prop.type.name) {
-              vifaceFieldTypes.set(prop.name, ObjectType);
-            }
+      // Build a unified type map for virtual-prefix variables: when
+      // implementors declare the same private field name with different
+      // types, fall back to ObjectType so the TAC remains type-consistent.
+      vifaceFieldTypes = new Map<string, TypeSymbol>();
+      for (const [, info] of relevantInstances) {
+        const props = getAllClassProps(info.className);
+        for (const prop of props) {
+          const existing = vifaceFieldTypes.get(prop.name);
+          if (!existing) {
+            vifaceFieldTypes.set(prop.name, prop.type);
+          } else if (existing.name !== prop.type.name) {
+            vifaceFieldTypes.set(prop.name, ObjectType);
           }
         }
+      }
 
-        // elementVar is Object (from array access); copy to Int32 for comparison
-        const handleVar = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CopyInstruction(handleVar, elementVar));
+      // elementVar is Object (from array access); copy to Int32 for comparison
+      const handleVar = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CopyInstruction(handleVar, elementVar));
 
-        // Reset classId to sentinel so an unmatched instanceId doesn't
-        // silently reuse the previous iteration's stale value.
+      // Reset classId to sentinel so an unmatched instanceId doesn't
+      // silently reuse the previous iteration's stale value.
+      this.instructions.push(
+        new AssignmentInstruction(
+          classIdVar,
+          createConstant(-1, PrimitiveTypes.int32),
+        ),
+      );
+
+      // Generate instanceId-based if-else dispatch
+      for (const [instanceId, info] of relevantInstances) {
+        const nextLabel = this.newLabel("viface_next");
+        const cond = this.newTemp(PrimitiveTypes.boolean);
         this.instructions.push(
-          new AssignmentInstruction(
-            classIdVar,
-            createConstant(-1, PrimitiveTypes.int32),
+          new BinaryOpInstruction(
+            cond,
+            handleVar,
+            "==",
+            createConstant(instanceId, PrimitiveTypes.int32),
           ),
         );
+        this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
 
-        // Generate instanceId-based if-else dispatch
-        for (const [instanceId, info] of relevantInstances) {
-          const nextLabel = this.newLabel("viface_next");
-          const cond = this.newTemp(PrimitiveTypes.boolean);
+        // Copy all class properties (including inherited) to virtual variables
+        // so inlined method bodies can access private/internal/inherited fields.
+        // Virtual variable types are unified via vifaceFieldTypes above.
+        const propsToCopy = getAllClassProps(info.className);
+        for (const prop of propsToCopy) {
+          const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;
+          const src = createVariable(`${info.prefix}_${prop.name}`, prop.type);
+          const dst = createVariable(
+            `${virtualPrefix}_${prop.name}`,
+            vifaceType,
+          );
+          this.instructions.push(new CopyInstruction(dst, src));
+          this.maybeTrackInlineInstanceAssignment(dst, src);
+        }
+
+        // Set classId
+        const classId = classIds.get(info.className);
+        if (classId !== undefined) {
           this.instructions.push(
-            new BinaryOpInstruction(
-              cond,
-              handleVar,
-              "==",
-              createConstant(instanceId, PrimitiveTypes.int32),
+            new AssignmentInstruction(
+              classIdVar,
+              createConstant(classId, PrimitiveTypes.int32),
             ),
           );
-          this.instructions.push(
-            new ConditionalJumpInstruction(cond, nextLabel),
-          );
-
-          // Copy all concrete class properties to virtual variables so that
-          // inlined method bodies can safely access private/internal fields.
-          // Virtual variable types are unified via vifaceFieldTypes above.
-          const concreteClass = this.classMap.get(info.className);
-          if (!concreteClass) {
-            throw new Error(
-              `[viface forward-copy] classMap missing entry for "${info.className}"`,
-            );
-          }
-          const propsToCopy: Array<{ name: string; type: TypeSymbol }> =
-            concreteClass.properties.map((prop) => ({
-              name: prop.name,
-              type: prop.type,
-            }));
-          for (const prop of propsToCopy) {
-            const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;
-            const src = createVariable(
-              `${info.prefix}_${prop.name}`,
-              prop.type,
-            );
-            const dst = createVariable(
-              `${virtualPrefix}_${prop.name}`,
-              vifaceType,
-            );
-            this.instructions.push(new CopyInstruction(dst, src));
-            this.maybeTrackInlineInstanceAssignment(dst, src);
-          }
-
-          // Set classId
-          const classId = classIds.get(info.className);
-          if (classId !== undefined) {
-            this.instructions.push(
-              new AssignmentInstruction(
-                classIdVar,
-                createConstant(classId, PrimitiveTypes.int32),
-              ),
-            );
-          }
-
-          this.instructions.push(
-            new UnconditionalJumpInstruction(dispatchEndLabel),
-          );
-          this.instructions.push(new LabelInstruction(nextLabel));
         }
-        this.instructions.push(new LabelInstruction(dispatchEndLabel));
 
-        // Register virtual prefix in inlineInstanceMap for the loop variable
-        savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
-        this.inlineInstanceMap.set(variableName, {
-          prefix: virtualPrefix,
-          className: ifaceName,
-        });
-
-        vifacePrefix = virtualPrefix;
-        vifaceHandleVar = handleVar;
-        vifaceInterfaceName = ifaceName;
-        vifaceRelevantInstances = relevantInstances;
+        this.instructions.push(
+          new UnconditionalJumpInstruction(dispatchEndLabel),
+        );
+        this.instructions.push(new LabelInstruction(nextLabel));
       }
+      this.instructions.push(new LabelInstruction(dispatchEndLabel));
+
+      // Register virtual prefix in inlineInstanceMap for the loop variable
+      savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
+      this.inlineInstanceMap.set(variableName, {
+        prefix: virtualPrefix,
+        className: ifaceName,
+      });
+
+      vifacePrefix = virtualPrefix;
+      vifaceHandleVar = handleVar;
+      vifaceInterfaceName = ifaceName;
+      vifaceRelevantInstances = relevantInstances;
     }
   }
 
   // Only introduce finalize labels when viface dispatch is active.
   // Otherwise use the original direct break/continue targets to avoid
   // extra trampoline jumps on every non-interface for-of loop.
+  // Note: all throws above this point occur before loopContextStack.push(),
+  // so the stack is clean if they fire. The push below is the first
+  // mutation that requires a pop (handled by the try/finally).
   const needsVifaceEpilogue = !!vifacePrefix;
   if (needsVifaceEpilogue) {
     const loopFinalizeContinue = this.newLabel("forof_finalize_continue");
