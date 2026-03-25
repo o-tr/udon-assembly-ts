@@ -451,7 +451,7 @@ export function visitForOfStatement(
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
   const loopEnd = this.newLabel("forof_end");
-  const loopStackDepthBeforePush = this.loopContextStack.length;
+  const _loopStackDepthBeforePush = this.loopContextStack.length;
 
   this.instructions.push(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
@@ -794,7 +794,14 @@ export function visitForOfStatement(
       emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
     });
 
-    this.visitStatement(node.body);
+    try {
+      this.visitStatement(node.body);
+    } finally {
+      // Ensure the loop context is popped even if visitStatement throws
+      // (e.g. CompileError for unsupported syntax inside the loop body),
+      // preventing a stale entry from corrupting the stack.
+      this.loopContextStack.pop();
+    }
 
     // Fall-through reaches loopFinalizeContinue directly; no jump needed.
     // The label exists so `continue` statements can target it.
@@ -809,7 +816,11 @@ export function visitForOfStatement(
       continueLabel: loopContinue,
     });
 
-    this.visitStatement(node.body);
+    try {
+      this.visitStatement(node.body);
+    } finally {
+      this.loopContextStack.pop();
+    }
   }
 
   this.instructions.push(new LabelInstruction(loopContinue));
@@ -823,13 +834,6 @@ export function visitForOfStatement(
   );
   this.instructions.push(new UnconditionalJumpInstruction(loopStart));
   this.instructions.push(new LabelInstruction(loopEnd));
-
-  if (this.loopContextStack.length !== loopStackDepthBeforePush + 1) {
-    throw new Error(
-      "loopContextStack push/pop mismatch in visitForOfStatement",
-    );
-  }
-  this.loopContextStack.pop();
 }
 
 /**
