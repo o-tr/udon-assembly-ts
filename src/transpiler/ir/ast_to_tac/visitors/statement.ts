@@ -780,6 +780,10 @@ export function visitForOfStatement(
     this.loopContextStack.push({
       breakLabel: loopFinalizeBreak,
       continueLabel: loopFinalizeContinue,
+      // Contract: emitExitEpilogue emits write-back instructions but does
+      // NOT emit a jump. The caller (emitLoopExitEpilogues, called from
+      // visitReturnStatement / visitThrowStatement) is responsible for
+      // emitting the subsequent jump to the return/error target.
       emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
     });
 

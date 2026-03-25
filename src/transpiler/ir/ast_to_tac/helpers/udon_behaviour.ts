@@ -32,6 +32,7 @@ function isUdonBehaviourClassName(
 
   while (current && !visited.has(current)) {
     visited.add(current);
+    if (current === UDON_SHARP_BEHAVIOUR) return true;
     if (converter.udonBehaviourClasses.has(current)) return true;
     if (converter.entryPointClasses.has(current)) return true;
 
