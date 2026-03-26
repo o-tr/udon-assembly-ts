@@ -798,9 +798,13 @@ export function visitForOfStatement(
       breakLabel: loopFinalizeBreak,
       continueLabel: loopFinalizeContinue,
       // Contract: emitExitEpilogue emits write-back instructions but does
-      // NOT emit a jump. The caller (emitLoopExitEpilogues, called from
-      // visitReturnStatement / visitThrowStatement) is responsible for
-      // emitting the subsequent jump to the return/error target.
+      // NOT emit a trailing jump. Callers must emit their own control-flow
+      // instruction immediately after. Exhaustive call sites:
+      //   - visitReturnStatement → emitLoopExitEpilogues → then ReturnInstruction
+      //   - visitReturnStatement (inline) → emitLoopExitEpiloguesSinceDepth → then jump to returnLabel
+      //   - visitThrowStatement (no try) → emitLoopExitEpilogues → then ReturnInstruction
+      //   - visitThrowStatement (inline, no try) → emitLoopExitEpiloguesSinceDepth → then jump to returnLabel
+      //   - visitThrowStatement (try) → emitLoopExitEpiloguesSinceDepth → then jump to errorTarget
       emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
     });
 
