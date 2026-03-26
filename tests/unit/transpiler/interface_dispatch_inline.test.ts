@@ -488,7 +488,7 @@ describe("interface dispatch with all-inline implementors", () => {
     expect(startSection).toContain("iface_dispatch_next");
   });
 
-  it("dispatches interface property access via classId when mapInlineProperty falls through", () => {
+  it("resolves interface property access inline via virtual bridge without EXTERN", () => {
     const source = `
       interface IItem { readonly score: number; }
       class ItemA implements IItem { score: number = 10; }
@@ -507,5 +507,10 @@ describe("interface dispatch with all-inline implementors", () => {
     // No EXTERN for interface property access
     expect(result.uasm).not.toMatch(/IItem\.__get_/);
     expect(result.tac).not.toContain("EXTERN");
+    // Positive: virtual bridge dispatch labels were emitted
+    expect(result.tac).toContain("viface_wb_next");
+    expect(result.tac).toContain("viface_wb_end");
+    // Positive: concrete property copy is present
+    expect(result.tac).toMatch(/__viface_IItem_\d+_score/);
   });
 });

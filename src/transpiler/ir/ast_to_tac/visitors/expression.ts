@@ -1399,11 +1399,14 @@ export function visitPropertyAccessExpression(
                 instanceInfo.prefix,
                 node.property,
               );
-              if (concreteMapped) {
-                this.instructions.push(
-                  new CopyInstruction(result, concreteMapped),
+              if (!concreteMapped) {
+                throw new Error(
+                  `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
                 );
               }
+              this.instructions.push(
+                new CopyInstruction(result, concreteMapped),
+              );
 
               this.instructions.push(
                 new UnconditionalJumpInstruction(endLabel),
