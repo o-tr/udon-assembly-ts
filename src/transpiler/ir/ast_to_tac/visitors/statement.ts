@@ -965,8 +965,6 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
-  const value = node.value ? this.visitExpression(node.value) : undefined;
-
   // Check inlineReturnStack FIRST: if we are inside an inlined method body,
   // return must go to the inline return label, not the recursive dispatch.
   // currentRecursiveContext remains set from the enclosing recursive method
@@ -974,6 +972,24 @@ export function visitReturnStatement(
   // and jump to the dispatch table.
   const inlineContext =
     this.inlineReturnStack[this.inlineReturnStack.length - 1];
+
+  // Set currentExpectedType from inline return context so that object literal
+  // return values (e.g. `return { value: 42, ok: true }`) are recognised as
+  // type-alias inline instances by visitObjectLiteralExpression.
+  const prevExpectedType = this.currentExpectedType;
+  if (
+    inlineContext &&
+    node.value &&
+    inlineContext.returnVar.type instanceof InterfaceTypeSymbol
+  ) {
+    this.currentExpectedType = inlineContext.returnVar.type;
+  }
+  let value: TACOperand | undefined;
+  try {
+    value = node.value ? this.visitExpression(node.value) : undefined;
+  } finally {
+    this.currentExpectedType = prevExpectedType;
+  }
 
   if (
     !inlineContext &&
