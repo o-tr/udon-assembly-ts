@@ -141,6 +141,10 @@ export class DependencyResolver {
       ) {
         const isExport = token === ts.SyntaxKind.ExportKeyword;
         token = scanner.scan();
+        // For export type { X } from "Y", skip past `type` keyword
+        if (isExport && token === ts.SyntaxKind.TypeKeyword) {
+          token = scanner.scan();
+        }
         // For export, only handle re-export forms: export { X } from "Y" / export * from "Y"
         if (
           isExport &&
