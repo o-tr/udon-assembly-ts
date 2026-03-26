@@ -551,8 +551,10 @@ describe("inline instance method calls", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getStartSection(result.tac);
+
     // r.value / r.ok should be resolved as inline properties, not EXTERN calls
-    expect(result.uasm).not.toMatch(/Result\.__get_/);
-    expect(result.tac).toContain("42");
+    expect(startSection).not.toMatch(/Result\.__get_/);
+    expect(startSection).toContain("42");
   });
 });
