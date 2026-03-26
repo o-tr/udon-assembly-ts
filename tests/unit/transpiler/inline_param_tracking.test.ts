@@ -199,4 +199,53 @@ describe("inline instance tracking across method boundaries", () => {
     // Property access should resolve to inline variables, not EXTERN
     expect(startSection).not.toMatch(/EXTERN.*IConfig/);
   });
+
+  it("auto-tracks type alias parameter by type fallback", () => {
+    const source = `
+      type Config = { x: number; y: number };
+      class Helper {
+        static sum(cfg: Config): number { return cfg.x + cfg.y; }
+      }
+      class Entry {
+        Start(): void {
+          const cfg: Config = { x: 10, y: 20 };
+          Debug.Log(Helper.sum(cfg));
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getTacSection(result.tac, /_start:/);
+
+    // Inline instance variables should be created for Config
+    expect(startSection).toMatch(/__inst_Config_\d+_x/);
+    expect(startSection).toMatch(/__inst_Config_\d+_y/);
+
+    // No EXTERN for Config property access
+    expect(result.uasm).not.toMatch(/Config\.__get_/);
+  });
+
+  it("auto-tracks inline class parameter by type fallback", () => {
+    const source = `
+      class Vec { x: number = 0; y: number = 0; }
+      class Math2 {
+        static length(v: Vec): number { return v.x + v.y; }
+      }
+      class Entry {
+        Start(): void {
+          const v = new Vec();
+          v.x = 3; v.y = 4;
+          Debug.Log(Math2.length(v));
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getTacSection(result.tac, /_start:/);
+
+    // Inline instance variables should be created for Vec
+    expect(startSection).toMatch(/__inst_Vec_\d+_x/);
+    expect(startSection).toMatch(/__inst_Vec_\d+_y/);
+
+    // No EXTERN for Vec property access
+    expect(result.uasm).not.toMatch(/Vec\.__get_/);
+  });
 });
