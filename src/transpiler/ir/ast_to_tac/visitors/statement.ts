@@ -535,13 +535,13 @@ export function visitForOfStatement(
     className: string,
   ): Array<{ name: string; type: TypeSymbol }> => {
     if (this.classRegistry) {
-      const merged = this.classRegistry.getMergedProperties(className);
-      if (merged.length > 0) {
-        return merged.map((p) => ({
-          name: p.name,
-          type: this.typeMapper.mapTypeScriptType(p.type),
-        }));
-      }
+      // Always use getMergedProperties when available — it walks the full
+      // inheritance chain. An empty result means the class genuinely has no
+      // properties (not that registration is incomplete).
+      return this.classRegistry.getMergedProperties(className).map((p) => ({
+        name: p.name,
+        type: this.typeMapper.mapTypeScriptType(p.type),
+      }));
     }
     const classNode = this.classMap.get(className);
     return (

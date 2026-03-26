@@ -98,7 +98,9 @@ export function isUdonBehaviourType(
 
 /**
  * Check if the given type name is an interface where all implementors are
- * inline (non-UdonBehaviour) classes.
+ * inline (non-UdonBehaviour) classes. Results are cached per converter
+ * instance and reset in convert(). This cache assumes all classes are
+ * registered before TAC conversion begins (single-pass invariant).
  */
 export function isAllInlineInterface(
   converter: ASTToTACConverter,
