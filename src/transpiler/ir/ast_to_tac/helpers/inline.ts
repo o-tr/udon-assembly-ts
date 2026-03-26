@@ -123,6 +123,21 @@ export function saveAndBindInlineParams(
       const argInfo = argInlineInfos[i];
       if (argInfo) {
         converter.inlineInstanceMap.set(param.name, argInfo);
+      } else if (args[i].kind === TACOperandKind.Variable) {
+        const argVarName = (args[i] as VariableOperand).name;
+        const argType = converter.getOperandType(args[i]);
+        const isTypeAlias =
+          converter.typeMapper.getAlias(argType.name) instanceof
+          InterfaceTypeSymbol;
+        const isInlineClass =
+          converter.classMap.has(argType.name) &&
+          !converter.udonBehaviourClasses.has(argType.name);
+        if (isTypeAlias || isInlineClass) {
+          converter.inlineInstanceMap.set(param.name, {
+            prefix: argVarName,
+            className: argType.name,
+          });
+        }
       }
     }
   }
