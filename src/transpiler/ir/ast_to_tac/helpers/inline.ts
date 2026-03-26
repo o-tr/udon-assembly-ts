@@ -113,28 +113,29 @@ export function saveAndBindInlineParams(
     }
     saved.set(param.name, converter.inlineInstanceMap.get(param.name));
     converter.inlineInstanceMap.delete(param.name);
-    if (args[i]) {
+    const arg = args[i];
+    if (arg) {
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
-          args[i],
+          arg,
         ),
       );
       const argInfo = argInlineInfos[i];
       if (argInfo) {
         converter.inlineInstanceMap.set(param.name, argInfo);
-      } else if (args[i].kind === TACOperandKind.Variable) {
-        const argVarName = (args[i] as VariableOperand).name;
-        const argType = converter.getOperandType(args[i]);
+      } else if (arg.kind === TACOperandKind.Variable) {
+        const argVar = arg as VariableOperand;
+        const argType = converter.getOperandType(argVar);
         const isTypeAlias =
           converter.typeMapper.getAlias(argType.name) instanceof
           InterfaceTypeSymbol;
         const isInlineClass =
-          converter.classMap.has(argType.name) &&
+          resolveClassNode(converter, argType.name) !== undefined &&
           !converter.udonBehaviourClasses.has(argType.name);
         if (isTypeAlias || isInlineClass) {
           converter.inlineInstanceMap.set(param.name, {
-            prefix: argVarName,
+            prefix: argVar.name,
             className: argType.name,
           });
         }

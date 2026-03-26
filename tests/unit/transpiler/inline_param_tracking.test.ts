@@ -214,6 +214,11 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getTacSection(result.tac, /_start:/);
+
+    // Inline instance variables should be created for Config
+    expect(startSection).toMatch(/__inst_Config_\d+_x/);
+    expect(startSection).toMatch(/__inst_Config_\d+_y/);
 
     // No EXTERN for Config property access
     expect(result.uasm).not.toMatch(/Config\.__get_/);
@@ -234,6 +239,11 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const startSection = getTacSection(result.tac, /_start:/);
+
+    // Inline instance variables should be created for Vec
+    expect(startSection).toMatch(/__inst_Vec_\d+_x/);
+    expect(startSection).toMatch(/__inst_Vec_\d+_y/);
 
     // No EXTERN for Vec property access
     expect(result.uasm).not.toMatch(/Vec\.__get_/);
