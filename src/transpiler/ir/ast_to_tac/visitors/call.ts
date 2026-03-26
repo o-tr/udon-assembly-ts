@@ -65,6 +65,7 @@ import {
   inlineSuperConstructorFromArgs,
   resolveClassNode,
 } from "../helpers/inline.js";
+import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
@@ -1508,6 +1509,150 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult != null) return inlineResult;
+
+        // Interface classId-based dispatch: when className is an interface
+        // with all-inline implementors, dispatch by classId.
+        // The isAllInlineInterface guard prevents mixed-implementor interfaces
+        // (some inline, some UdonBehaviour) from entering this path — those
+        // must fall through to the EXTERN/IPC path below.
+        const classIds = this.interfaceClassIdMap.get(instanceInfo.className);
+        if (
+          classIds &&
+          classIds.size > 0 &&
+          isAllInlineInterface(this, instanceInfo.className)
+        ) {
+          const ifaceMeta = this.classRegistry?.getInterface(
+            instanceInfo.className,
+          );
+          const methodMeta = ifaceMeta?.methods.find(
+            (m) => m.name === propAccess.property,
+          );
+          const returnType = methodMeta
+            ? this.typeMapper.mapTypeScriptType(methodMeta.returnType)
+            : ObjectType;
+          const isVoid =
+            returnType.name === "SystemVoid" ||
+            methodMeta?.returnType === "void";
+          // Save state BEFORE allocating any variables so rollback
+          // doesn't leave orphaned temps/labels in the TAC variable table.
+          const savedInstructionCount = this.instructions.length;
+          const savedTempCounter = this.tempCounter;
+          const savedLabelCounter = this.labelCounter;
+          const savedInlineInstanceMap = new Map(this.inlineInstanceMap);
+          let dispatchFailed = false;
+
+          const result = isVoid
+            ? undefined
+            : createVariable(`__iface_ret_${this.tempCounter++}`, returnType, {
+                isLocal: true,
+              });
+          const endLabel = this.newLabel("iface_dispatch_end");
+          const classIdVar = createVariable(
+            `${instanceInfo.prefix}__classId`,
+            PrimitiveTypes.int32,
+          );
+          let resultInlineMapping:
+            | { prefix: string; className: string }
+            | null
+            | undefined;
+
+          for (const [className, classId] of classIds) {
+            // Snapshot inlineInstanceMap before each branch so side-effects
+            // from one implementor's inlined body (e.g. temporaries tracked
+            // as inline instances) don't leak into subsequent branches.
+            const branchMapSnapshot = new Map(this.inlineInstanceMap);
+
+            const nextLabel = this.newLabel("iface_dispatch_next");
+            const cond = this.newTemp(PrimitiveTypes.boolean);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                cond,
+                classIdVar,
+                "==",
+                createConstant(classId, PrimitiveTypes.int32),
+              ),
+            );
+            this.instructions.push(
+              new ConditionalJumpInstruction(cond, nextLabel),
+            );
+
+            const inlineRes = this.visitInlineInstanceMethodCallWithContext(
+              className,
+              instanceInfo.prefix,
+              propAccess.property,
+              evaluatedArgs,
+            );
+            if (!inlineRes) {
+              // Inlining blocked (e.g. recursion guard); roll back the
+              // partially emitted dispatch and fall through to the generic
+              // EXTERN / UdonBehaviour path.
+              this.instructions.length = savedInstructionCount;
+              this.tempCounter = savedTempCounter;
+              this.labelCounter = savedLabelCounter;
+              this.inlineInstanceMap = savedInlineInstanceMap;
+              dispatchFailed = true;
+              break;
+            }
+            if (result) {
+              this.instructions.push(new CopyInstruction(result, inlineRes));
+              const inlineMapping =
+                inlineRes.kind === TACOperandKind.Variable
+                  ? this.inlineInstanceMap.get(
+                      (inlineRes as VariableOperand).name,
+                    )
+                  : undefined;
+              if (inlineMapping) {
+                if (resultInlineMapping === undefined) {
+                  resultInlineMapping = inlineMapping;
+                } else if (
+                  resultInlineMapping &&
+                  (resultInlineMapping.prefix !== inlineMapping.prefix ||
+                    resultInlineMapping.className !== inlineMapping.className)
+                ) {
+                  // Different branches return different concrete prefixes —
+                  // we can't merge them into a single tracking entry.
+                  // Known limitation: chained calls on the return value
+                  // (e.g. item.getChild().doWork()) will fall through to the
+                  // generic path if getChild() returns a freshly-constructed
+                  // inline instance. The for-of loop variable itself is
+                  // unaffected because it dispatches via classId.
+                  resultInlineMapping = null;
+                }
+              } else {
+                resultInlineMapping = null;
+              }
+            }
+            this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+            this.instructions.push(new LabelInstruction(nextLabel));
+
+            // Restore map INSIDE the loop (not after) so each branch starts
+            // from the pre-dispatch state. After the loop, resultInlineMapping
+            // is re-inserted for result.name if all branches agreed.
+            this.inlineInstanceMap = branchMapSnapshot;
+          }
+
+          if (!dispatchFailed) {
+            // Post-loop: inlineInstanceMap is equivalent to the pre-dispatch
+            // state (savedInlineInstanceMap) because each iteration restores
+            // from its own branchMapSnapshot. Only resultInlineMapping (if
+            // all branches agreed) is re-inserted for result.name below.
+            //
+            // If classIdVar is the sentinel (-1) at runtime, no branch
+            // matched. This should not happen — every classId assigned in
+            // the for-of dispatch has a corresponding branch. If it does,
+            // result retains its Udon heap zero-initialised value.
+            this.instructions.push(new LabelInstruction(endLabel));
+            if (result) {
+              if (resultInlineMapping) {
+                this.inlineInstanceMap.set(result.name, resultInlineMapping);
+              } else {
+                this.inlineInstanceMap.delete(result.name);
+              }
+            }
+            return result ?? VOID_RETURN;
+          }
+          // dispatchFailed: fall through to generic method call path
+        }
       }
     }
     // Recursive self-method call: use JUMP-based mechanism

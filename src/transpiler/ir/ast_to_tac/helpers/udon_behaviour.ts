@@ -1,4 +1,5 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
+import type { ClassMetadata } from "../../../frontend/class_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
@@ -20,18 +21,65 @@ import { createLabel, createVariable } from "../../tac_operand.js";
 import type { UdonBehaviourClassLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
 
+const UDON_SHARP_BEHAVIOUR = "UdonSharpBehaviour";
+
+function isUdonBehaviourClassName(
+  converter: ASTToTACConverter,
+  className: string,
+): boolean {
+  const visited = new Set<string>();
+  let current: string | null = className;
+
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    if (current === UDON_SHARP_BEHAVIOUR) return true;
+    if (converter.udonBehaviourClasses.has(current)) return true;
+    if (converter.entryPointClasses.has(current)) return true;
+
+    // Check both classMeta (from ClassRegistry, available after parsing) and
+    // classNode (from classMap, available during TAC conversion). A class may
+    // be in one source but not the other depending on compilation phase.
+    const classMeta: ClassMetadata | undefined =
+      converter.classRegistry?.getClass(current);
+    if (classMeta?.isEntryPoint) return true;
+    if (
+      classMeta?.decorators.some(
+        (decorator: { name: string }) => decorator.name === "UdonBehaviour",
+      )
+    ) {
+      return true;
+    }
+
+    const classNode = converter.classMap.get(current);
+    if (
+      classNode?.decorators.some(
+        (decorator: { name: string }) => decorator.name === "UdonBehaviour",
+      )
+    ) {
+      return true;
+    }
+
+    const baseClass: string | null =
+      classMeta?.baseClass ?? classNode?.baseClass ?? null;
+    // If neither classMeta nor classNode resolves, the class is either an
+    // extern type (DataList, VRCPlayerApi, etc.) or from an unloaded
+    // compilation unit. We cannot distinguish these cases here, so return
+    // false. Cross-file UdonBehaviour detection is handled separately by
+    // isUdonBehaviourType's interface-implementor check (which returns true
+    // when implementors.length === 0).
+    if (!baseClass) return false;
+    current = baseClass;
+  }
+
+  return false;
+}
+
 export function isUdonBehaviourType(
   this: ASTToTACConverter,
   type: TypeSymbol | undefined,
 ): boolean {
   if (!type) return false;
-  const classNode = this.classMap.get(type.name);
-  if (classNode) {
-    return classNode.decorators.some(
-      (decorator) => decorator.name === "UdonBehaviour",
-    );
-  }
-  if (this.udonBehaviourClasses.has(type.name)) return true;
+  if (isUdonBehaviourClassName(this, type.name)) return true;
   // Check if this is a user-defined interface with methods (i.e. a UdonBehaviour interface).
   // Exclude extern/stub interfaces (e.g. IEnumerable) via typeMetadataRegistry.
   const iface = this.classRegistry?.getInterface(type.name);
@@ -43,11 +91,49 @@ export function isUdonBehaviourType(
     if (implementors.length === 0) {
       return true; // No implementors in this compilation unit — assume cross-file UdonBehaviour
     }
-    return implementors.some((cls) =>
-      cls.decorators.some((d) => d.name === "UdonBehaviour"),
-    );
+    return implementors.some((cls) => isUdonBehaviourClassName(this, cls.name));
   }
   return false;
+}
+
+/**
+ * Check if the given type name is an interface where all implementors are
+ * inline (non-UdonBehaviour) classes. Results are cached per converter
+ * instance and reset in convert(). This cache assumes all classes are
+ * registered before TAC conversion begins (single-pass invariant).
+ */
+export function isAllInlineInterface(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
+  const cached = converter.allInlineInterfaceCache.get(typeName);
+  if (cached !== undefined) return cached;
+
+  const result = isAllInlineInterfaceUncached(converter, typeName);
+  converter.allInlineInterfaceCache.set(typeName, result);
+  return result;
+}
+
+function isAllInlineInterfaceUncached(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
+  const iface = converter.classRegistry?.getInterface(typeName);
+  if (!iface) return false;
+  // Skip marker interfaces with no callable surface — nothing to dispatch.
+  if (!iface.methods?.length && !iface.properties?.length) return false;
+  const implementors =
+    converter.classRegistry?.getImplementorsOfInterface(typeName) ?? [];
+  return (
+    implementors.length > 0 &&
+    implementors.every(
+      (cls) =>
+        !converter.entryPointClasses.has(cls.name) &&
+        !converter.isUdonBehaviourType(
+          converter.typeMapper.mapTypeScriptType(cls.name),
+        ),
+    )
+  );
 }
 
 export function getUdonBehaviourLayout(

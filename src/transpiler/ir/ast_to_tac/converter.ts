@@ -178,17 +178,20 @@ export class ASTToTACConverter {
   loopContextStack: Array<{
     breakLabel: TACOperand;
     continueLabel: TACOperand;
+    emitExitEpilogue?: () => void;
   }> = [];
   tryCounter = 0;
   tryContextStack: Array<{
     errorFlag: VariableOperand;
     errorValue: VariableOperand;
     errorTarget: TACOperand;
+    loopDepth: number;
   }> = [];
   inlineReturnStack: Array<{
     returnVar: VariableOperand;
     returnLabel: TACOperand;
     returnTrackingInvalidated: boolean;
+    loopDepth: number;
   }> = [];
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;
@@ -199,6 +202,20 @@ export class ASTToTACConverter {
   inlineInstanceMap: Map<string, { prefix: string; className: string }> =
     new Map();
   inlineMethodStack: Set<string> = new Set();
+  /** Maps interface name → (class name → classId) for inline dispatch */
+  interfaceClassIdMap: Map<string, Map<string, number>> = new Map();
+  /** Maps instanceId → {prefix, className} for all inline instances */
+  allInlineInstances: Map<number, { prefix: string; className: string }> =
+    new Map();
+  // Start at 1: Udon zero-initialises heap slots, so an uninitialised
+  // array element holds 0. Reserving 0 as "no valid instance" prevents
+  // false dispatch matches on partially-populated interface arrays.
+  nextInstanceId = 1;
+  /** Cache for isAllInlineInterface results to avoid O(N) rescans.
+   *  Valid under the single-pass invariant: all classes are registered in
+   *  ClassRegistry before convert() runs. If multi-pass/incremental compilation
+   *  ever calls register() during conversion, this cache must be cleared. */
+  allInlineInterfaceCache: Map<string, boolean> = new Map();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
@@ -281,6 +298,10 @@ export class ASTToTACConverter {
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
+    this.interfaceClassIdMap = new Map();
+    this.allInlineInstances = new Map();
+    this.allInlineInterfaceCache = new Map();
+    this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
     this.currentInlineBaseClass = undefined;

@@ -86,6 +86,7 @@ export class ClassRegistry {
   private mergedMethodsCache = new Map<string, MethodInfo[]>();
   private mergedPropertiesCache = new Map<string, PropertyInfo[]>();
   private stubCache = new Map<string, boolean>();
+  private implementedInterfacesCache = new Map<string, string[]>();
   private entryPointsCache: ClassMetadata[] | null = null;
 
   register(classInfo: ClassMetadata): void {
@@ -98,6 +99,7 @@ export class ClassRegistry {
     this.mergedMethodsCache.clear();
     this.mergedPropertiesCache.clear();
     this.stubCache.clear();
+    this.implementedInterfacesCache.clear();
     this.entryPointsCache = null;
   }
 
@@ -316,7 +318,7 @@ export class ClassRegistry {
         (d) => d.name === "UdonBehaviour",
       );
       if (!isUdonBehaviour) continue;
-      for (const ifaceName of cls.node.implements ?? []) {
+      for (const ifaceName of this.getAllImplementedInterfaces(cls.name)) {
         const iface = this.interfaces.get(ifaceName);
         if (iface && !result.has(ifaceName)) {
           result.set(ifaceName, iface);
@@ -328,16 +330,67 @@ export class ClassRegistry {
 
   getImplementorsOfInterface(interfaceName: string): ClassMetadata[] {
     return Array.from(this.classes.values()).filter((cls) =>
-      (cls.node.implements ?? []).includes(interfaceName),
+      this.classImplementsInterface(cls.name, interfaceName),
     );
   }
 
+  /**
+   * Return all interfaces a class implements, including those inherited
+   * through the base class chain. Results are deduplicated.
+   * Cache is invalidated by register()/clearCaches(), so results are only
+   * reliable after all classes have been registered (post-parsing phase).
+   *
+   * Limitation: interface-extends-interface relationships are not traversed
+   * because InterfaceDeclarationNode does not currently have an `extends`
+   * field. A class implementing IYaku (which extends IScorer) will only
+   * return ["IYaku"], not ["IYaku", "IScorer"]. This requires parser
+   * support for interface heritage clauses.
+   */
+  getAllImplementedInterfaces(className: string): string[] {
+    const cached = this.implementedInterfacesCache.get(className);
+    if (cached !== undefined) return [...cached];
+    const result: string[] = [];
+    const seen = new Set<string>();
+    const visited = new Set<string>();
+    let current: string | null = className;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      const cls = this.classes.get(current);
+      if (!cls) break;
+      for (const iface of cls.node.implements ?? []) {
+        if (!seen.has(iface)) {
+          seen.add(iface);
+          result.push(iface);
+        }
+      }
+      current = cls.baseClass ?? null;
+    }
+    this.implementedInterfacesCache.set(className, result);
+    return [...result];
+  }
+
+  /**
+   * Check if a class implements an interface, including through inheritance.
+   * Reads the cache directly to avoid the defensive array copy that
+   * getAllImplementedInterfaces returns to external callers.
+   */
+  private classImplementsInterface(
+    className: string,
+    interfaceName: string,
+  ): boolean {
+    const cached = this.implementedInterfacesCache.get(className);
+    if (cached !== undefined) return cached.includes(interfaceName);
+    return this.getAllImplementedInterfaces(className).includes(interfaceName);
+  }
+
+  /** Returns ALL interfaces each class implements, including those
+   *  inherited through the base-class chain (via getAllImplementedInterfaces). */
   getClassImplementsMap(): Map<string, string[]> {
     const result = new Map<string, string[]>();
     for (const cls of this.classes.values()) {
-      const impls = cls.node.implements ?? [];
+      const impls = this.getAllImplementedInterfaces(cls.name);
       if (impls.length > 0) {
-        result.set(cls.name, [...impls]);
+        result.set(cls.name, impls);
       }
     }
     return result;

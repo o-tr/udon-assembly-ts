@@ -356,14 +356,51 @@ export function visitInlineConstructor(
   }
 
   const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+  const instanceId = this.nextInstanceId++;
+  // Handle is Int32 (instanceId) for runtime dispatch via classId switch.
+  // When stored in an interface-typed array (Object[] in Udon), the Int32
+  // is CLR-boxed at the Object[] array boundary. The for-of dispatch
+  // copies it back to an Int32-typed variable via CopyInstruction, which
+  // the CLR runtime unboxes transparently at the typed heap slot.
   const instanceHandle = createVariable(
     `${instancePrefix}__handle`,
-    ObjectType,
+    PrimitiveTypes.int32,
+  );
+  this.instructions.push(
+    new AssignmentInstruction(
+      instanceHandle,
+      createConstant(instanceId, PrimitiveTypes.int32),
+    ),
   );
   this.inlineInstanceMap.set(instanceHandle.name, {
     prefix: instancePrefix,
     className,
   });
+  this.allInlineInstances.set(instanceId, {
+    prefix: instancePrefix,
+    className,
+  });
+
+  // Register classId for interfaces this class implements (including inherited).
+  // ClassIds are assigned by visitation order (classIds.size at first encounter).
+  // This is non-deterministic across compilation orders but consistent within a
+  // single compilation — the for-of dispatch and call-site switch both read from
+  // the same interfaceClassIdMap. ClassIds are never serialized or persisted.
+  // Invariant: the empty Map created below is always populated in the same
+  // synchronous block (classIds.set on the next line), so interfaceClassIdMap
+  // never contains an empty Map after this block completes.
+  const allInterfaces = this.classRegistry
+    ? this.classRegistry.getAllImplementedInterfaces(className)
+    : (classNode.implements ?? []);
+  for (const ifaceName of allInterfaces) {
+    if (!this.interfaceClassIdMap.has(ifaceName)) {
+      this.interfaceClassIdMap.set(ifaceName, new Map());
+    }
+    const classIds = this.interfaceClassIdMap.get(ifaceName);
+    if (classIds && !classIds.has(className)) {
+      classIds.set(className, classIds.size);
+    }
+  }
 
   const inheritanceChain = buildInheritanceChain(this, classNode);
 
@@ -477,6 +514,7 @@ export function visitInlineStaticMethodCall(
     returnVar: result,
     returnLabel,
     returnTrackingInvalidated: false,
+    loopDepth: this.loopContextStack.length,
   });
   try {
     this.visitBlockStatement(method.body);
@@ -558,6 +596,7 @@ function inlineInstanceMethodCallCore(
     returnVar: result,
     returnLabel,
     returnTrackingInvalidated: false,
+    loopDepth: converter.loopContextStack.length,
   });
   try {
     converter.visitBlockStatement(method.body);

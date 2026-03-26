@@ -62,7 +62,23 @@ import {
   countTryCatchBlocks,
   MAX_RECURSION_STACK_DEPTH,
 } from "../helpers/inline.js";
+import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
+
+function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
+  for (let i = converter.loopContextStack.length - 1; i >= 0; i -= 1) {
+    converter.loopContextStack[i].emitExitEpilogue?.();
+  }
+}
+
+function emitLoopExitEpiloguesSinceDepth(
+  converter: ASTToTACConverter,
+  depth: number,
+): void {
+  for (let i = converter.loopContextStack.length - 1; i >= depth; i -= 1) {
+    converter.loopContextStack[i].emitExitEpilogue?.();
+  }
+}
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
   switch (node.kind) {
@@ -437,11 +453,6 @@ export function visitForOfStatement(
   const loopContinue = this.newLabel("forof_continue");
   const loopEnd = this.newLabel("forof_end");
 
-  this.loopContextStack.push({
-    breakLabel: loopEnd,
-    continueLabel: loopContinue,
-  });
-
   this.instructions.push(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
@@ -505,7 +516,330 @@ export function visitForOfStatement(
       this.instructions.push(new CopyInstruction(targetVar, propValue));
     }
   }
-  this.visitStatement(node.body);
+  // Interface dispatch: when element type is an interface with all-inline implementors,
+  // generate instanceId-based property copy + classId assignment before the loop body.
+  let savedInlineMapBeforeViface:
+    | Map<string, { prefix: string; className: string }>
+    | undefined;
+  let vifacePrefix: string | undefined;
+  let vifaceHandleVar: TACOperand | undefined;
+  let vifaceInterfaceName: string | undefined;
+  let vifaceRelevantInstances: Array<
+    [number, { prefix: string; className: string }]
+  > = [];
+  let vifaceFieldTypes: Map<string, TypeSymbol> | undefined;
+  // Helper: get all properties (including inherited) for an implementor.
+  // Prefers getMergedProperties (full inheritance chain) over direct node
+  // properties, mapping string types to TypeSymbol where needed.
+  const getAllClassProps = (
+    className: string,
+  ): Array<{ name: string; type: TypeSymbol }> => {
+    if (this.classRegistry) {
+      // Always use getMergedProperties when available — it walks the full
+      // inheritance chain. An empty result means the class genuinely has no
+      // properties (not that registration is incomplete).
+      return this.classRegistry.getMergedProperties(className).map((p) => ({
+        name: p.name,
+        type: this.typeMapper.mapTypeScriptType(p.type),
+      }));
+    }
+    const classNode = this.classMap.get(className);
+    return (
+      classNode?.properties.map((p) => ({
+        name: p.name,
+        type: p.type,
+      })) ?? []
+    );
+  };
+  // Note: this closure may be called multiple times at compile time — once
+  // per early-exit path (return/throw via emitLoopExitEpilogues) and once
+  // per finalize trampoline (continue/break). Each call emits its own copy
+  // of the write-back instructions because they belong to different runtime
+  // control-flow paths. Copies on unreachable paths (e.g. finalize labels
+  // after a return) are harmless dead code at runtime, pruned when the
+  // optimizer is enabled (optimize: true).
+  const emitVirtualInterfaceIterationEpilogue = (
+    targetLabel?: TACOperand,
+  ): void => {
+    if (
+      vifacePrefix &&
+      vifaceHandleVar &&
+      vifaceInterfaceName &&
+      vifaceRelevantInstances.length > 0
+    ) {
+      const writebackEndLabel = this.newLabel("viface_wb_end");
+      for (const [instanceId, info] of vifaceRelevantInstances) {
+        const nextLabel = this.newLabel("viface_wb_next");
+        const cond = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            cond,
+            vifaceHandleVar,
+            "==",
+            createConstant(instanceId, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
+
+        // Use getAllClassProps to include inherited properties in write-back.
+        const propsToWriteBack = getAllClassProps(info.className);
+        for (const prop of propsToWriteBack) {
+          const vifaceType = vifaceFieldTypes?.get(prop.name) ?? prop.type;
+          const src = createVariable(
+            `${vifacePrefix}_${prop.name}`,
+            vifaceType,
+          );
+          const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
+          this.instructions.push(new CopyInstruction(dst, src));
+          this.maybeTrackInlineInstanceAssignment(dst, src);
+        }
+
+        this.instructions.push(
+          new UnconditionalJumpInstruction(writebackEndLabel),
+        );
+        this.instructions.push(new LabelInstruction(nextLabel));
+      }
+      this.instructions.push(new LabelInstruction(writebackEndLabel));
+    }
+
+    // Restore inlineInstanceMap: remove entries pointing to the virtual prefix.
+    // Temporaries mapped to vifacePrefix during the loop body (e.g. method
+    // return values that resolved to `this` inside the inlined body) are also
+    // cleaned up here — they didn't exist before viface setup so they are
+    // deleted. After restoration, any reference through those temporaries
+    // will fall through to the generic EXTERN path, which is safe.
+    if (vifacePrefix && savedInlineMapBeforeViface) {
+      const mappedToViface = Array.from(this.inlineInstanceMap.entries())
+        .filter(([, entry]) => entry.prefix === vifacePrefix)
+        .map(([name]) => name);
+      for (const name of mappedToViface) {
+        const previous = savedInlineMapBeforeViface.get(name);
+        if (previous) {
+          this.inlineInstanceMap.set(name, previous);
+        } else {
+          this.inlineInstanceMap.delete(name);
+        }
+      }
+    }
+
+    if (targetLabel) {
+      this.instructions.push(new UnconditionalJumpInstruction(targetLabel));
+    }
+  };
+
+  if (
+    !isDestructured &&
+    !isObjectDestructured &&
+    typeof node.variable === "string"
+  ) {
+    const variableName = node.variable;
+    const ifaceName = elementType.name;
+    // Early guard: only attempt viface dispatch for registered interfaces
+    const ifaceMeta = this.classRegistry?.getInterface(ifaceName);
+    if (ifaceMeta && isAllInlineInterface(this, ifaceName)) {
+      // Collect all inline instances that implement this interface.
+      // NOTE: allInlineInstances is compilation-unit-wide, so instances that
+      // are never stored in *this* array (e.g. a scalar IYaku field in another
+      // class) will still generate dispatch branches. This is an intentional
+      // over-approximation that avoids costly data-flow analysis. The extra
+      // branches are dead at runtime and will be pruned by the optimizer.
+      const implementors =
+        this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
+      const implementorNames = new Set(implementors.map((impl) => impl.name));
+      const classIds = this.interfaceClassIdMap.get(ifaceName);
+      if (!classIds) {
+        // classIds is populated lazily by visitInlineConstructor. If the
+        // for-of loop appears before any constructor call for this
+        // interface's implementors, the dispatch cannot be generated and
+        // method calls would silently become no-ops at runtime. Fail hard.
+        throw new Error(
+          `Interface "${ifaceName}" has all-inline implementors but no classId map was found. ` +
+            `Inline constructors must be visited before the for-of loop.`,
+        );
+      }
+      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
+      // outer ifaceMeta check at line 624 and the throw at line 640).
+      const relevantInstances: Array<
+        [number, { prefix: string; className: string }]
+      > = [];
+      for (const [id, info] of this.allInlineInstances) {
+        if (implementorNames.has(info.className)) {
+          relevantInstances.push([id, info]);
+        }
+      }
+
+      // Only emit dispatch when there are known instances to dispatch to.
+      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
+      // throw above and the outer ifaceMeta check at line 624).
+      if (relevantInstances.length === 0) {
+        // classIds exists (constructors were visited) but no instances found
+        // in allInlineInstances — indicates a registration mismatch.
+        throw new Error(
+          `Interface "${ifaceName}" has classIds but no relevant inline instances. ` +
+            `Check that allInlineInstances is populated before the for-of loop.`,
+        );
+      }
+      // instanceCounter is shared with concrete instances (__inst_*) — the
+      // __viface_ prefix prevents name collisions while keeping IDs unique.
+      const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
+      const classIdVar = createVariable(
+        `${virtualPrefix}__classId`,
+        PrimitiveTypes.int32,
+      );
+      const dispatchEndLabel = this.newLabel("viface_end");
+
+      // Build a unified type map for virtual-prefix variables: when
+      // implementors declare the same private field name with different
+      // types, fall back to ObjectType so the TAC remains type-consistent.
+      vifaceFieldTypes = new Map<string, TypeSymbol>();
+      for (const [, info] of relevantInstances) {
+        const props = getAllClassProps(info.className);
+        for (const prop of props) {
+          const existing = vifaceFieldTypes.get(prop.name);
+          if (!existing) {
+            vifaceFieldTypes.set(prop.name, prop.type);
+          } else if (existing.name !== prop.type.name) {
+            vifaceFieldTypes.set(prop.name, ObjectType);
+          }
+        }
+      }
+
+      // elementVar is Object (from array access); copy to Int32 for comparison
+      const handleVar = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CopyInstruction(handleVar, elementVar));
+
+      // Reset classId to sentinel so an unmatched instanceId doesn't
+      // silently reuse the previous iteration's stale value.
+      this.instructions.push(
+        new AssignmentInstruction(
+          classIdVar,
+          createConstant(-1, PrimitiveTypes.int32),
+        ),
+      );
+
+      // Generate instanceId-based if-else dispatch
+      for (const [instanceId, info] of relevantInstances) {
+        const nextLabel = this.newLabel("viface_next");
+        const cond = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(
+            cond,
+            handleVar,
+            "==",
+            createConstant(instanceId, PrimitiveTypes.int32),
+          ),
+        );
+        this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
+
+        // Copy all class properties (including inherited) to virtual variables
+        // so inlined method bodies can access private/internal/inherited fields.
+        // Virtual variable types are unified via vifaceFieldTypes above.
+        const propsToCopy = getAllClassProps(info.className);
+        for (const prop of propsToCopy) {
+          const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;
+          const src = createVariable(`${info.prefix}_${prop.name}`, prop.type);
+          const dst = createVariable(
+            `${virtualPrefix}_${prop.name}`,
+            vifaceType,
+          );
+          this.instructions.push(new CopyInstruction(dst, src));
+          this.maybeTrackInlineInstanceAssignment(dst, src);
+        }
+
+        // Set classId
+        // classId should always be defined: every class in allInlineInstances
+        // went through visitInlineConstructor, which populates interfaceClassIdMap.
+        const classId = classIds.get(info.className);
+        if (classId === undefined) {
+          throw new Error(
+            `[viface dispatch] classId missing for "${info.className}" in interface "${ifaceName}". ` +
+              `This indicates a mismatch between allInlineInstances and interfaceClassIdMap.`,
+          );
+        }
+        this.instructions.push(
+          new AssignmentInstruction(
+            classIdVar,
+            createConstant(classId, PrimitiveTypes.int32),
+          ),
+        );
+
+        this.instructions.push(
+          new UnconditionalJumpInstruction(dispatchEndLabel),
+        );
+        this.instructions.push(new LabelInstruction(nextLabel));
+      }
+      this.instructions.push(new LabelInstruction(dispatchEndLabel));
+
+      // Register virtual prefix in inlineInstanceMap for the loop variable
+      savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
+      this.inlineInstanceMap.set(variableName, {
+        prefix: virtualPrefix,
+        className: ifaceName,
+      });
+
+      vifacePrefix = virtualPrefix;
+      vifaceHandleVar = handleVar;
+      vifaceInterfaceName = ifaceName;
+      vifaceRelevantInstances = relevantInstances;
+    }
+  }
+
+  // Only introduce finalize labels when viface dispatch is active.
+  // Otherwise use the original direct break/continue targets to avoid
+  // extra trampoline jumps on every non-interface for-of loop.
+  // Note: all throws above this point occur before loopContextStack.push(),
+  // so the stack is clean if they fire. The push below is the first
+  // mutation that requires a pop (handled by the try/finally).
+  const needsVifaceEpilogue = !!vifacePrefix;
+  if (needsVifaceEpilogue) {
+    const loopFinalizeContinue = this.newLabel("forof_finalize_continue");
+    const loopFinalizeBreak = this.newLabel("forof_finalize_break");
+    this.loopContextStack.push({
+      breakLabel: loopFinalizeBreak,
+      continueLabel: loopFinalizeContinue,
+      // Contract: emitExitEpilogue emits write-back instructions but does
+      // NOT emit a trailing jump. Callers must emit their own control-flow
+      // instruction immediately after. Exhaustive call sites:
+      //   - visitReturnStatement → emitLoopExitEpilogues → then ReturnInstruction
+      //   - visitReturnStatement (inline) → emitLoopExitEpiloguesSinceDepth → then jump to returnLabel
+      //   - visitThrowStatement (no try) → emitLoopExitEpilogues → then ReturnInstruction
+      //   - visitThrowStatement (inline, no try) → emitLoopExitEpiloguesSinceDepth → then jump to returnLabel
+      //   - visitThrowStatement (try) → emitLoopExitEpiloguesSinceDepth → then jump to errorTarget
+      emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
+    });
+
+    try {
+      this.visitStatement(node.body);
+    } finally {
+      // Ensure the loop context is popped even if visitStatement throws
+      // (e.g. CompileError for unsupported syntax inside the loop body),
+      // preventing a stale entry from corrupting the stack.
+      this.loopContextStack.pop();
+    }
+
+    // Control-flow topology:
+    //   loopFinalizeContinue — reached by normal fall-through and `continue`.
+    //     Emits write-back, then jumps to loopContinue (index increment).
+    //   loopFinalizeBreak — reached ONLY via `break` (not from fall-through).
+    //     Emits write-back, then jumps to loopEnd.
+    // The two labels are sequential in TAC but represent disjoint runtime paths.
+    this.instructions.push(new LabelInstruction(loopFinalizeContinue));
+    emitVirtualInterfaceIterationEpilogue(loopContinue);
+
+    this.instructions.push(new LabelInstruction(loopFinalizeBreak));
+    emitVirtualInterfaceIterationEpilogue(loopEnd);
+  } else {
+    this.loopContextStack.push({
+      breakLabel: loopEnd,
+      continueLabel: loopContinue,
+    });
+
+    try {
+      this.visitStatement(node.body);
+    } finally {
+      this.loopContextStack.pop();
+    }
+  }
 
   this.instructions.push(new LabelInstruction(loopContinue));
   this.instructions.push(
@@ -518,8 +852,6 @@ export function visitForOfStatement(
   );
   this.instructions.push(new UnconditionalJumpInstruction(loopStart));
   this.instructions.push(new LabelInstruction(loopEnd));
-
-  this.loopContextStack.pop();
 }
 
 export function visitSwitchStatement(
@@ -559,6 +891,12 @@ export function visitSwitchStatement(
   );
 
   const outerContext = this.loopContextStack[this.loopContextStack.length - 1];
+  // Note: emitExitEpilogue is intentionally NOT forwarded from the outer loop.
+  // Switch `break` jumps to endLabel (below), which is still inside the loop
+  // body. Execution then falls through to the loop's finalize trampoline
+  // (loopFinalizeContinue/Break) where viface write-back runs normally.
+  // `continue` IS forwarded via outerContext.continueLabel so it correctly
+  // reaches the loop's finalize trampoline.
   this.loopContextStack.push({
     breakLabel: endLabel,
     continueLabel: outerContext?.continueLabel ?? endLabel,
@@ -627,6 +965,8 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
+  const value = node.value ? this.visitExpression(node.value) : undefined;
+
   // Check inlineReturnStack FIRST: if we are inside an inlined method body,
   // return must go to the inline return label, not the recursive dispatch.
   // currentRecursiveContext remains set from the enclosing recursive method
@@ -634,19 +974,26 @@ export function visitReturnStatement(
   // and jump to the dispatch table.
   const inlineContext =
     this.inlineReturnStack[this.inlineReturnStack.length - 1];
+
   if (
     !inlineContext &&
     this.currentRecursiveContext &&
     this.currentMethodName
   ) {
-    const valueOperand = node.value
-      ? this.visitExpression(node.value)
+    // value is evaluated before the epilogue runs. If it references a viface
+    // variable, the TAC operand still holds the viface name — but the data is
+    // correct because write-back copies viface→concrete without clearing the
+    // viface heap slot. tempValue is a fresh temp with no inlineInstanceMap
+    // entry, so stale inline tracking is not a concern here.
+    // Note: emitLoopExitEpilogues (no depth guard) is correct here because
+    // recursive methods are compiled as a unit — loopContextStack only
+    // contains loops from this method body, not from outer call sites.
+    emitLoopExitEpilogues(this);
+    const tempValue = value
+      ? this.newTemp(this.getOperandType(value))
       : undefined;
-    const tempValue = valueOperand
-      ? this.newTemp(this.getOperandType(valueOperand))
-      : undefined;
-    if (tempValue && valueOperand) {
-      this.instructions.push(new CopyInstruction(tempValue, valueOperand));
+    if (tempValue && value) {
+      this.instructions.push(new CopyInstruction(tempValue, value));
     }
     // Copy return value to the return export variable before epilogue
     if (tempValue && this.currentReturnVar) {
@@ -680,16 +1027,18 @@ export function visitReturnStatement(
     return;
   }
   if (inlineContext) {
-    if (node.value) {
-      const value = this.visitExpression(node.value);
+    emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
+    // Capture valueMapping AFTER the epilogue so inlineInstanceMap reflects
+    // the post-loop state (viface entries are restored/removed by the epilogue).
+    const valueMapping =
+      value?.kind === TACOperandKind.Variable
+        ? this.inlineInstanceMap.get((value as VariableOperand).name)
+        : undefined;
+    if (value) {
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, value),
       );
       if (!inlineContext.returnTrackingInvalidated) {
-        const valueMapping =
-          value.kind === TACOperandKind.Variable
-            ? this.inlineInstanceMap.get((value as VariableOperand).name)
-            : undefined;
         if (valueMapping) {
           const existingMapping = this.inlineInstanceMap.get(
             inlineContext.returnVar.name,
@@ -717,7 +1066,7 @@ export function visitReturnStatement(
     );
     return;
   }
-  const value = node.value ? this.visitExpression(node.value) : undefined;
+  emitLoopExitEpilogues(this);
   this.instructions.push(new ReturnInstruction(value, this.currentReturnVar));
 }
 
@@ -1308,6 +1657,7 @@ export function visitTryCatchStatement(
     errorFlag: errorFlagVar,
     errorValue: errorValueVar,
     errorTarget,
+    loopDepth: this.loopContextStack.length,
   });
   this.visitBlockStatement(node.tryBody);
   this.tryContextStack.pop();
@@ -1376,10 +1726,12 @@ export function visitThrowStatement(
     const inlineContext =
       this.inlineReturnStack[this.inlineReturnStack.length - 1];
     if (inlineContext) {
+      emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
       this.instructions.push(
         new UnconditionalJumpInstruction(inlineContext.returnLabel),
       );
     } else {
+      emitLoopExitEpilogues(this);
       // If inside a recursive context, reset depth to 0 before aborting.
       // Without this, a subsequent VRC direct call (SendCustomEvent) would
       // see stale depth > 0, skip SP reset, and corrupt the recursion stack.
@@ -1402,6 +1754,9 @@ export function visitThrowStatement(
     return;
   }
   const value = this.visitExpression(node.expression);
+  // Emit loop exit epilogues for any loops entered since the try block started,
+  // so viface write-back runs before jumping to the catch handler.
+  emitLoopExitEpiloguesSinceDepth(this, context.loopDepth);
   this.instructions.push(
     new AssignmentInstruction(
       context.errorFlag,
