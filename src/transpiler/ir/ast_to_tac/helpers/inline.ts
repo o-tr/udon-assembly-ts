@@ -33,6 +33,7 @@ import {
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
+  type PropertyDeclarationNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
   type TemplateExpressionNode,
@@ -64,12 +65,37 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
-type InlineParamSave = Map<
+export type InlineParamSave = Map<
   string,
   { prefix: string; className: string } | undefined
 >;
+type InlineInitializerState = NonNullable<
+  ASTToTACConverter["currentInlineInitializerState"]
+>;
 
-function saveAndBindInlineParams(
+/**
+ * Resolve a class node by name, checking classMap first then classRegistry.
+ */
+export function resolveClassNode(
+  converter: ASTToTACConverter,
+  className: string,
+): ClassDeclarationNode | undefined {
+  let classNode = converter.classMap.get(className);
+  if (!classNode && converter.classRegistry) {
+    const meta = converter.classRegistry.getClass(className);
+    if (
+      meta &&
+      !converter.udonBehaviourClasses.has(className) &&
+      !converter.classRegistry.isStub(className)
+    ) {
+      classNode = meta.node;
+      converter.classMap.set(className, classNode);
+    }
+  }
+  return classNode;
+}
+
+export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
   params: Array<{ name: string; type: TypeSymbol }>,
   args: TACOperand[],
@@ -103,7 +129,7 @@ function saveAndBindInlineParams(
   return saved;
 }
 
-function restoreInlineParams(
+export function restoreInlineParams(
   converter: ASTToTACConverter,
   saved: InlineParamSave,
 ): void {
@@ -113,6 +139,193 @@ function restoreInlineParams(
     } else {
       converter.inlineInstanceMap.set(name, entry);
     }
+  }
+}
+
+function getEntryPointPropertyNameForClass(
+  converter: ASTToTACConverter,
+  entryClassName: string,
+  property: string,
+): string {
+  if (converter.entryPointClasses.size > 1) {
+    return `${entryClassName}__${property}`;
+  }
+  return property;
+}
+
+function buildInheritanceChain(
+  converter: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+): ClassDeclarationNode[] {
+  const inheritanceChain: ClassDeclarationNode[] = [];
+  const visited = new Set<string>();
+  let current: ClassDeclarationNode | undefined = classNode;
+  while (current) {
+    if (visited.has(current.name)) break; // cycle guard
+    visited.add(current.name);
+    inheritanceChain.unshift(current);
+    if (current.baseClass) {
+      current = resolveClassNode(converter, current.baseClass);
+    } else {
+      break;
+    }
+  }
+  return inheritanceChain;
+}
+
+export function resolveClassProperty(
+  converter: ASTToTACConverter,
+  className: string,
+  property: string,
+):
+  | {
+      prop: PropertyDeclarationNode;
+      declaringClassName: string;
+    }
+  | undefined {
+  let current = resolveClassNode(converter, className);
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.name)) break; // cycle guard
+    visited.add(current.name);
+    const prop = current.properties.find(
+      (candidate) => candidate.name === property && !candidate.isStatic,
+    );
+    if (prop) {
+      return { prop, declaringClassName: current.name };
+    }
+    if (!current.baseClass) break;
+    current = resolveClassNode(converter, current.baseClass);
+  }
+  return undefined;
+}
+
+function emitInlinePropertyInitializersForClass(
+  converter: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+  state: InlineInitializerState,
+): void {
+  for (const prop of classNode.properties) {
+    if (!prop.initializer || prop.isStatic) continue;
+    const previousSerializeFieldState = converter.inSerializeFieldInitializer;
+    converter.inSerializeFieldInitializer = !!prop.isSerializeField;
+    const propVarName =
+      state.kind === "inline"
+        ? `${state.instancePrefix}_${prop.name}`
+        : getEntryPointPropertyNameForClass(
+            converter,
+            state.entryClassName,
+            prop.name,
+          );
+    const propVar = createVariable(propVarName, prop.type);
+    const value = converter.visitExpression(prop.initializer);
+    converter.inSerializeFieldInitializer = previousSerializeFieldState;
+    converter.instructions.push(new AssignmentInstruction(propVar, value));
+    converter.maybeTrackInlineInstanceAssignment(propVar, value);
+  }
+}
+
+export function emitDeferredInlineInitializers(
+  converter: ASTToTACConverter,
+  className: string,
+): void {
+  const state = converter.currentInlineInitializerState;
+  if (!state || state.emittedClassNames.has(className)) return;
+  const classNode =
+    state.classNodesByName.get(className) ??
+    resolveClassNode(converter, className);
+  if (!classNode) return;
+  state.classNodesByName.set(className, classNode);
+  emitInlinePropertyInitializersForClass(converter, classNode, state);
+  state.emittedClassNames.add(className);
+}
+
+export function getCurrentDeferredInitializerClassName(
+  converter: ASTToTACConverter,
+): string | undefined {
+  if (converter.currentInlineContext) {
+    return converter.currentInlineContext.className;
+  }
+  if (converter.currentInlineConstructorClassName) {
+    return converter.currentInlineConstructorClassName;
+  }
+  const state = converter.currentInlineInitializerState;
+  if (state?.kind === "entry-point") {
+    return state.entryClassName;
+  }
+  return undefined;
+}
+
+export function inlineSuperConstructorFromArgs(
+  converter: ASTToTACConverter,
+  baseClassName: string,
+  superArgs: TACOperand[],
+): void {
+  const baseClassNode = resolveClassNode(converter, baseClassName);
+  if (!baseClassNode) return;
+
+  const previousInlineContext = converter.currentInlineContext;
+  const previousInlineCtorClass = converter.currentInlineConstructorClassName;
+  const previousBaseClass = converter.currentInlineBaseClass;
+  // NOTE: currentInlineInitializerState is intentionally NOT saved/restored here.
+  // It is shared with the outer visitInlineConstructor / emitEntryPointPropertyInit
+  // call so that emittedClassNames accumulates across the full super() chain and
+  // prevents double-emission of property initializers.
+  converter.currentInlineBaseClass = baseClassNode.baseClass ?? undefined;
+  converter.currentInlineConstructorClassName = baseClassNode.name;
+  // Only update currentInlineContext for inline-instance constructors.
+  // Entry-point constructors (currentInlineContext === undefined) use the
+  // entry-point property path instead, keyed off currentClassName.
+  if (previousInlineContext) {
+    converter.currentInlineContext = {
+      className: baseClassNode.name,
+      instancePrefix: previousInlineContext.instancePrefix,
+    };
+  }
+
+  try {
+    if (baseClassNode.constructor) {
+      converter.symbolTable.enterScope();
+      const typedParams = baseClassNode.constructor.parameters.map((param) => ({
+        name: param.name,
+        type: converter.typeMapper.mapTypeScriptType(param.type),
+      }));
+      const savedParamEntries = saveAndBindInlineParams(
+        converter,
+        typedParams,
+        superArgs,
+      );
+      try {
+        if (!baseClassNode.baseClass) {
+          emitDeferredInlineInitializers(converter, baseClassNode.name);
+        }
+        converter.visitStatement(baseClassNode.constructor.body);
+        // Safety-net: if the constructor body contains a super() call, its
+        // handler already emitted the deferred initializers (guarded by
+        // emittedClassNames). This only does real work when super() was
+        // omitted (invalid TypeScript) to avoid silently dropping inits.
+        if (baseClassNode.baseClass) {
+          emitDeferredInlineInitializers(converter, baseClassNode.name);
+        }
+      } finally {
+        restoreInlineParams(converter, savedParamEntries);
+        converter.symbolTable.exitScope();
+      }
+      return;
+    }
+
+    if (baseClassNode.baseClass) {
+      inlineSuperConstructorFromArgs(
+        converter,
+        baseClassNode.baseClass,
+        superArgs,
+      );
+    }
+    emitDeferredInlineInitializers(converter, baseClassNode.name);
+  } finally {
+    converter.currentInlineContext = previousInlineContext;
+    converter.currentInlineConstructorClassName = previousInlineCtorClass;
+    converter.currentInlineBaseClass = previousBaseClass;
   }
 }
 
@@ -135,18 +348,7 @@ export function visitInlineConstructor(
     return fallback;
   }
 
-  let classNode = this.classMap.get(className);
-  if (!classNode && this.classRegistry) {
-    const meta = this.classRegistry.getClass(className);
-    if (
-      meta &&
-      !this.udonBehaviourClasses.has(className) &&
-      !this.classRegistry.isStub(className)
-    ) {
-      classNode = meta.node;
-      this.classMap.set(className, classNode);
-    }
-  }
+  const classNode = resolveClassNode(this, className);
   if (!classNode) {
     const fallback = this.newTemp(ObjectType);
     this.instructions.push(new CallInstruction(fallback, className, args));
@@ -200,36 +402,61 @@ export function visitInlineConstructor(
     }
   }
 
-  for (const prop of classNode.properties) {
-    if (!prop.initializer) continue;
-    const previousSerializeFieldState = this.inSerializeFieldInitializer;
-    this.inSerializeFieldInitializer = !!prop.isSerializeField;
-    const propVar = createVariable(`${instancePrefix}_${prop.name}`, prop.type);
-    const value = this.visitExpression(prop.initializer);
-    this.inSerializeFieldInitializer = previousSerializeFieldState;
-    this.instructions.push(new AssignmentInstruction(propVar, value));
-    this.maybeTrackInlineInstanceAssignment(propVar, value);
-  }
+  const inheritanceChain = buildInheritanceChain(this, classNode);
 
-  if (classNode.constructor) {
-    this.symbolTable.enterScope();
-    const typedParams = classNode.constructor.parameters.map((p) => ({
-      name: p.name,
-      type: this.typeMapper.mapTypeScriptType(p.type),
-    }));
-    const savedParamEntries = saveAndBindInlineParams(this, typedParams, args);
-    const previousContext = this.currentInlineContext;
-    const previousThisOverride = this.currentThisOverride;
-    this.currentInlineContext = { className, instancePrefix };
-    this.currentThisOverride = null;
-    try {
-      this.visitStatement(classNode.constructor.body);
-    } finally {
-      this.currentInlineContext = previousContext;
-      this.currentThisOverride = previousThisOverride;
-      restoreInlineParams(this, savedParamEntries);
-      this.symbolTable.exitScope();
+  const previousInitializerState = this.currentInlineInitializerState;
+  this.currentInlineInitializerState = {
+    kind: "inline",
+    entryClassName: undefined,
+    instancePrefix,
+    classNodesByName: new Map(inheritanceChain.map((cls) => [cls.name, cls])),
+    emittedClassNames: new Set(),
+  };
+
+  const previousContext = this.currentInlineContext;
+  const previousInlineCtorClass = this.currentInlineConstructorClassName;
+  const previousThisOverride = this.currentThisOverride;
+  const previousBaseClass = this.currentInlineBaseClass;
+  this.currentInlineContext = { className, instancePrefix };
+  this.currentInlineConstructorClassName = className;
+  this.currentThisOverride = null;
+  this.currentInlineBaseClass = classNode.baseClass ?? undefined;
+  try {
+    if (classNode.constructor) {
+      this.symbolTable.enterScope();
+      const typedParams = classNode.constructor.parameters.map((param) => ({
+        name: param.name,
+        type: this.typeMapper.mapTypeScriptType(param.type),
+      }));
+      const savedParamEntries = saveAndBindInlineParams(
+        this,
+        typedParams,
+        args,
+      );
+      try {
+        if (!classNode.baseClass) {
+          emitDeferredInlineInitializers(this, classNode.name);
+        }
+        this.visitStatement(classNode.constructor.body);
+        if (classNode.baseClass) {
+          emitDeferredInlineInitializers(this, classNode.name);
+        }
+      } finally {
+        restoreInlineParams(this, savedParamEntries);
+        this.symbolTable.exitScope();
+      }
+    } else if (classNode.baseClass) {
+      inlineSuperConstructorFromArgs(this, classNode.baseClass, args);
+      emitDeferredInlineInitializers(this, classNode.name);
+    } else {
+      emitDeferredInlineInitializers(this, classNode.name);
     }
+  } finally {
+    this.currentInlineContext = previousContext;
+    this.currentInlineConstructorClassName = previousInlineCtorClass;
+    this.currentThisOverride = previousThisOverride;
+    this.currentInlineBaseClass = previousBaseClass;
+    this.currentInlineInitializerState = previousInitializerState;
   }
 
   return instanceHandle;
@@ -245,14 +472,7 @@ export function visitInlineStaticMethodCall(
   if (this.inlineMethodStack.has(inlineKey)) {
     return null;
   }
-  let classNode = this.classMap.get(className);
-  if (!classNode && this.classRegistry) {
-    const meta = this.classRegistry.getClass(className);
-    if (meta && !this.classRegistry.isStub(className)) {
-      classNode = meta.node;
-      this.classMap.set(className, classNode);
-    }
-  }
+  const classNode = resolveClassNode(this, className);
   if (!classNode) return null;
   const method = classNode.methods.find(
     (candidate) => candidate.name === methodName && candidate.isStatic,
@@ -278,12 +498,16 @@ export function visitInlineStaticMethodCall(
   const savedParamExportReverseMap = this.currentParamExportReverseMap;
   const savedMethodLayout = this.currentMethodLayout;
   const savedInlineContext = this.currentInlineContext;
+  const savedInlineCtorClass = this.currentInlineConstructorClassName;
   const savedThisOverride = this.currentThisOverride;
+  const savedBaseClass = this.currentInlineBaseClass;
   this.currentParamExportMap = new Map();
   this.currentParamExportReverseMap = new Map();
   this.currentMethodLayout = null;
   this.currentInlineContext = undefined;
+  this.currentInlineConstructorClassName = undefined;
   this.currentThisOverride = null;
+  this.currentInlineBaseClass = undefined;
 
   this.inlineMethodStack.add(inlineKey);
   this.inlineReturnStack.push({
@@ -301,7 +525,9 @@ export function visitInlineStaticMethodCall(
     this.currentParamExportReverseMap = savedParamExportReverseMap;
     this.currentMethodLayout = savedMethodLayout;
     this.currentInlineContext = savedInlineContext;
+    this.currentInlineConstructorClassName = savedInlineCtorClass;
     this.currentThisOverride = savedThisOverride;
+    this.currentInlineBaseClass = savedBaseClass;
     restoreInlineParams(this, savedParamEntries);
     this.symbolTable.exitScope();
   }
@@ -326,14 +552,7 @@ function inlineInstanceMethodCallCore(
   if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
-  let classNode = converter.classMap.get(className);
-  if (!classNode && converter.classRegistry) {
-    const meta = converter.classRegistry.getClass(className);
-    if (meta && !converter.classRegistry.isStub(className)) {
-      classNode = meta.node;
-      converter.classMap.set(className, classNode);
-    }
-  }
+  const classNode = resolveClassNode(converter, className);
   if (!classNode) return null;
   const method = classNode.methods.find(
     (candidate) => candidate.name === methodName && !candidate.isStatic,
@@ -359,11 +578,15 @@ function inlineInstanceMethodCallCore(
   const savedParamExportReverseMap = converter.currentParamExportReverseMap;
   const savedMethodLayout = converter.currentMethodLayout;
   const savedInlineContext = converter.currentInlineContext;
+  const savedInlineCtorClass = converter.currentInlineConstructorClassName;
   const savedThisOverride = converter.currentThisOverride;
+  const savedBaseClass = converter.currentInlineBaseClass;
   converter.currentParamExportMap = new Map();
   converter.currentParamExportReverseMap = new Map();
   converter.currentMethodLayout = null;
+  converter.currentInlineConstructorClassName = undefined;
   converter.currentThisOverride = null;
+  converter.currentInlineBaseClass = undefined;
   converter.currentInlineContext = instancePrefix
     ? { className, instancePrefix }
     : undefined;
@@ -384,7 +607,9 @@ function inlineInstanceMethodCallCore(
     converter.currentParamExportReverseMap = savedParamExportReverseMap;
     converter.currentMethodLayout = savedMethodLayout;
     converter.currentInlineContext = savedInlineContext;
+    converter.currentInlineConstructorClassName = savedInlineCtorClass;
     converter.currentThisOverride = savedThisOverride;
+    converter.currentInlineBaseClass = savedBaseClass;
     restoreInlineParams(converter, savedParamEntries);
     converter.symbolTable.exitScope();
   }
@@ -432,40 +657,57 @@ export function emitEntryPointPropertyInit(
   this: ASTToTACConverter,
   classNode: ClassDeclarationNode,
 ): void {
-  for (const prop of classNode.properties) {
-    if (!prop.initializer || prop.isStatic) continue;
-    const previousSerializeFieldState = this.inSerializeFieldInitializer;
-    this.inSerializeFieldInitializer = !!prop.isSerializeField;
-    const value = this.visitExpression(prop.initializer);
-    this.inSerializeFieldInitializer = previousSerializeFieldState;
-    const targetVar = createVariable(
-      this.entryPointPropName(prop.name),
-      prop.type,
-    );
-    this.instructions.push(new CopyInstruction(targetVar, value));
-    this.maybeTrackInlineInstanceAssignment(targetVar, value);
-  }
-  if (classNode.constructor?.body) {
-    const nonSerializeFieldParams = classNode.constructor.parameters.filter(
-      (p) => !p.isSerializeField,
-    );
-    if (nonSerializeFieldParams.length > 0) {
-      throw new Error(
-        `Entry-point class "${classNode.name}" constructor must be parameterless`,
+  const inheritanceChain = buildInheritanceChain(this, classNode);
+  const previousInitializerState = this.currentInlineInitializerState;
+  this.currentInlineInitializerState = {
+    kind: "entry-point",
+    entryClassName: classNode.name,
+    instancePrefix: undefined,
+    classNodesByName: new Map(inheritanceChain.map((cls) => [cls.name, cls])),
+    emittedClassNames: new Set(),
+  };
+  try {
+    if (classNode.constructor?.body) {
+      const nonSerializeFieldParams = classNode.constructor.parameters.filter(
+        (p) => !p.isSerializeField,
       );
-    }
-    this.symbolTable.enterScope();
-    try {
-      // Register @SerializeField params so the constructor body can reference them
-      for (const param of classNode.constructor.parameters) {
-        if (!param.isSerializeField) continue;
-        const paramType = this.typeMapper.mapTypeScriptType(param.type);
-        this.symbolTable.addSymbol(param.name, paramType, true, false);
+      if (nonSerializeFieldParams.length > 0) {
+        throw new Error(
+          `Entry-point class "${classNode.name}" constructor must be parameterless`,
+        );
       }
-      this.visitStatement(classNode.constructor.body);
-    } finally {
-      this.symbolTable.exitScope();
+      this.symbolTable.enterScope();
+      const previousInlineCtorClass = this.currentInlineConstructorClassName;
+      const previousBaseClass = this.currentInlineBaseClass;
+      this.currentInlineConstructorClassName = classNode.name;
+      this.currentInlineBaseClass = classNode.baseClass ?? undefined;
+      try {
+        if (!classNode.baseClass) {
+          emitDeferredInlineInitializers(this, classNode.name);
+        }
+        // Register @SerializeField params so the constructor body can reference them
+        for (const param of classNode.constructor.parameters) {
+          if (!param.isSerializeField) continue;
+          const paramType = this.typeMapper.mapTypeScriptType(param.type);
+          this.symbolTable.addSymbol(param.name, paramType, true, false);
+        }
+        this.visitStatement(classNode.constructor.body);
+        if (classNode.baseClass) {
+          emitDeferredInlineInitializers(this, classNode.name);
+        }
+      } finally {
+        this.currentInlineConstructorClassName = previousInlineCtorClass;
+        this.currentInlineBaseClass = previousBaseClass;
+        this.symbolTable.exitScope();
+      }
+    } else if (classNode.baseClass) {
+      inlineSuperConstructorFromArgs(this, classNode.baseClass, []);
+      emitDeferredInlineInitializers(this, classNode.name);
+    } else {
+      emitDeferredInlineInitializers(this, classNode.name);
     }
+  } finally {
+    this.currentInlineInitializerState = previousInitializerState;
   }
 }
 
@@ -515,9 +757,10 @@ export function mapInlineProperty(
   instancePrefix: string,
   property: string,
 ): VariableOperand | undefined {
-  const classNode = this.classMap.get(className);
-  const prop = classNode?.properties.find((p) => p.name === property);
-  if (prop) return createVariable(`${instancePrefix}_${property}`, prop.type);
+  const resolved = resolveClassProperty(this, className, property);
+  if (resolved) {
+    return createVariable(`${instancePrefix}_${property}`, resolved.prop.type);
+  }
 
   // Fallback: InterfaceTypeSymbol from type alias
   const alias = this.typeMapper.getAlias(className);

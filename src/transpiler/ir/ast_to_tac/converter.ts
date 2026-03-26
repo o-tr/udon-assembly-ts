@@ -222,6 +222,24 @@ export class ASTToTACConverter {
   currentParamExportMap: Map<string, string> = new Map();
   currentParamExportReverseMap: Map<string, string> = new Map();
   currentMethodLayout: UdonBehaviourMethodLayout | null = null;
+  currentInlineBaseClass: string | undefined;
+  currentInlineConstructorClassName: string | undefined;
+  currentInlineInitializerState:
+    | {
+        kind: "inline";
+        instancePrefix: string;
+        entryClassName?: undefined;
+        classNodesByName: Map<string, ClassDeclarationNode>;
+        emittedClassNames: Set<string>;
+      }
+    | {
+        kind: "entry-point";
+        entryClassName: string;
+        instancePrefix?: undefined;
+        classNodesByName: Map<string, ClassDeclarationNode>;
+        emittedClassNames: Set<string>;
+      }
+    | undefined;
   inSerializeFieldInitializer = false;
   pendingTopLevelInits: VariableDeclarationNode[] = [];
   currentExpectedType: TypeSymbol | undefined = undefined;
@@ -286,6 +304,9 @@ export class ASTToTACConverter {
     this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
+    this.currentInlineBaseClass = undefined;
+    this.currentInlineConstructorClassName = undefined;
+    this.currentInlineInitializerState = undefined;
     this.recursiveReturnSites = new Map();
     this.currentParamExportMap = new Map();
     this.currentParamExportReverseMap = new Map();
