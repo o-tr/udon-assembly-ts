@@ -135,10 +135,26 @@ export class DependencyResolver {
     );
     let token = scanner.scan();
     while (token !== ts.SyntaxKind.EndOfFileToken) {
-      if (token === ts.SyntaxKind.ImportKeyword) {
+      if (
+        token === ts.SyntaxKind.ImportKeyword ||
+        token === ts.SyntaxKind.ExportKeyword
+      ) {
+        const isExport = token === ts.SyntaxKind.ExportKeyword;
         token = scanner.scan();
+        // For export type { X } from "Y", skip past `type` keyword
+        if (isExport && token === ts.SyntaxKind.TypeKeyword) {
+          token = scanner.scan();
+        }
+        // For export, only handle re-export forms: export { X } from "Y" / export * from "Y"
+        if (
+          isExport &&
+          token !== ts.SyntaxKind.OpenBraceToken &&
+          token !== ts.SyntaxKind.AsteriskToken
+        ) {
+          continue;
+        }
         // Side-effect import: import "path"
-        if (token === ts.SyntaxKind.StringLiteral) {
+        if (!isExport && token === ts.SyntaxKind.StringLiteral) {
           moduleTexts.push(scanner.getTokenValue());
           token = scanner.scan();
           continue;
