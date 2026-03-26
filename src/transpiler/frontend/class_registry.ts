@@ -383,6 +383,8 @@ export class ClassRegistry {
     return this.getAllImplementedInterfaces(className).includes(interfaceName);
   }
 
+  /** Returns ALL interfaces each class implements, including those
+   *  inherited through the base-class chain (via getAllImplementedInterfaces). */
   getClassImplementsMap(): Map<string, string[]> {
     const result = new Map<string, string[]>();
     for (const cls of this.classes.values()) {

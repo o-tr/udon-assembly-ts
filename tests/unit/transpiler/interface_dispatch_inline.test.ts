@@ -24,7 +24,7 @@ function getStartSection(tac: string): string {
   // control-flow labels (viface_end_0:, forof_start_1:) or viface variables.
   const nextLabelIdx = lines.findIndex(
     (line, i) =>
-      i > startIdx && /^_{1,2}[A-Za-z][A-Za-z0-9_]*:$/.test(line.trim()),
+      i > startIdx && /^_{1,2}[A-Za-z0-9][A-Za-z0-9_]*:$/.test(line.trim()),
   );
   const searchEnd = nextLabelIdx !== -1 ? nextLabelIdx : lines.length;
   let endIdx = -1;
