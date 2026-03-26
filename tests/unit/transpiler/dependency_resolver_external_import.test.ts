@@ -60,6 +60,34 @@ describe("DependencyResolver external imports", () => {
   });
 });
 
+describe("DependencyResolver export type re-exports", () => {
+  it("records dependency from export type { X } from './Y'", () => {
+    const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-deps-"));
+    const tmpDir = fs.realpathSync(rawTmpDir);
+    try {
+      fs.writeFileSync(
+        path.join(tmpDir, "a.ts"),
+        `export type { Foo } from "./b";\n`,
+      );
+      fs.writeFileSync(
+        path.join(tmpDir, "b.ts"),
+        `export type Foo = { x: number };\n`,
+      );
+
+      const entry = path.join(tmpDir, "a.ts");
+      const resolver = new DependencyResolver(tmpDir);
+      const graph = resolver.buildGraph(entry);
+      const deps = graph.get(entry);
+
+      expect(deps).toBeDefined();
+      const resolved = deps ? Array.from(deps) : [];
+      expect(resolved.some((dep) => dep.endsWith("b.ts"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("DependencyResolver graph caching", () => {
   it("returns cached graph on repeated buildGraph calls", () => {
     const rawTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "udon-cache-"));

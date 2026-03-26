@@ -151,7 +151,6 @@ export class DependencyResolver {
           token !== ts.SyntaxKind.OpenBraceToken &&
           token !== ts.SyntaxKind.AsteriskToken
         ) {
-          token = scanner.scan();
           continue;
         }
         // Side-effect import: import "path"
