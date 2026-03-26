@@ -211,7 +211,10 @@ export class ASTToTACConverter {
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
   nextInstanceId = 1;
-  /** Cache for isAllInlineInterface results to avoid O(N) rescans */
+  /** Cache for isAllInlineInterface results to avoid O(N) rescans.
+   *  Valid under the single-pass invariant: all classes are registered in
+   *  ClassRegistry before convert() runs. If multi-pass/incremental compilation
+   *  ever calls register() during conversion, this cache must be cleared. */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;

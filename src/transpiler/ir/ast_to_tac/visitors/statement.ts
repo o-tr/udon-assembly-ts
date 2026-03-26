@@ -985,6 +985,9 @@ export function visitReturnStatement(
     // correct because write-back copies viface→concrete without clearing the
     // viface heap slot. tempValue is a fresh temp with no inlineInstanceMap
     // entry, so stale inline tracking is not a concern here.
+    // Note: emitLoopExitEpilogues (no depth guard) is correct here because
+    // recursive methods are compiled as a unit — loopContextStack only
+    // contains loops from this method body, not from outer call sites.
     emitLoopExitEpilogues(this);
     const tempValue = value
       ? this.newTemp(this.getOperandType(value))

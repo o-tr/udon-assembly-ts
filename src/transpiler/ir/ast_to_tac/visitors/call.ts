@@ -1617,6 +1617,11 @@ export function visitCallExpression(
           }
 
           if (!dispatchFailed) {
+            // Post-loop: inlineInstanceMap is equivalent to the pre-dispatch
+            // state (savedInlineInstanceMap) because each iteration restores
+            // from its own branchMapSnapshot. Only resultInlineMapping (if
+            // all branches agreed) is re-inserted for result.name below.
+            //
             // If classIdVar is the sentinel (-1) at runtime, no branch
             // matched. This should not happen — every classId assigned in
             // the for-of dispatch has a corresponding branch. If it does,
