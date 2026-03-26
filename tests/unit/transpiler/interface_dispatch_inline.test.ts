@@ -487,4 +487,25 @@ describe("interface dispatch with all-inline implementors", () => {
     // Should have three classId dispatch branches
     expect(startSection).toContain("iface_dispatch_next");
   });
+
+  it("dispatches interface property access via classId when mapInlineProperty falls through", () => {
+    const source = `
+      interface IItem { readonly score: number; }
+      class ItemA implements IItem { score: number = 10; }
+      class ItemB implements IItem { score: number = 20; }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const items: IItem[] = [new ItemA(), new ItemB()];
+          for (const item of items) {
+            Debug.Log(item.score);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // No EXTERN for interface property access
+    expect(result.uasm).not.toMatch(/IItem\.__get_/);
+    expect(result.tac).not.toContain("EXTERN");
+  });
 });

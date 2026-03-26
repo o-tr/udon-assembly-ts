@@ -69,6 +69,7 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import { resolveClassProperty } from "../helpers/inline.js";
+import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
  * Widen operands to a common promoted numeric type when they differ.
@@ -1344,6 +1345,75 @@ export function visitPropertyAccessExpression(
           node.property,
         );
         if (mapped) return mapped;
+
+        // Interface classId-based property dispatch: when the interface-level
+        // mapInlineProperty fails (e.g. property not in interface metadata),
+        // fall back to dispatching by classId to each concrete implementor.
+        const classIds = this.interfaceClassIdMap.get(instanceInfo.className);
+        if (
+          classIds &&
+          classIds.size > 0 &&
+          isAllInlineInterface(this, instanceInfo.className)
+        ) {
+          let propType: TypeSymbol | undefined;
+          for (const [className] of classIds) {
+            const resolved = resolveClassProperty(
+              this,
+              className,
+              node.property,
+            );
+            if (resolved) {
+              propType = resolved.prop.type;
+              break;
+            }
+          }
+          if (propType) {
+            const result = createVariable(
+              `__iface_prop_${this.tempCounter++}`,
+              propType,
+              { isLocal: true },
+            );
+            const endLabel = this.newLabel("iface_prop_end");
+            const classIdVar = createVariable(
+              `${instanceInfo.prefix}__classId`,
+              PrimitiveTypes.int32,
+            );
+
+            for (const [className, classId] of classIds) {
+              const nextLabel = this.newLabel("iface_prop_next");
+              const cond = this.newTemp(PrimitiveTypes.boolean);
+              this.instructions.push(
+                new BinaryOpInstruction(
+                  cond,
+                  classIdVar,
+                  "==",
+                  createConstant(classId, PrimitiveTypes.int32),
+                ),
+              );
+              this.instructions.push(
+                new ConditionalJumpInstruction(cond, nextLabel),
+              );
+
+              const concreteMapped = this.mapInlineProperty(
+                className,
+                instanceInfo.prefix,
+                node.property,
+              );
+              if (concreteMapped) {
+                this.instructions.push(
+                  new CopyInstruction(result, concreteMapped),
+                );
+              }
+
+              this.instructions.push(
+                new UnconditionalJumpInstruction(endLabel),
+              );
+              this.instructions.push(new LabelInstruction(nextLabel));
+            }
+            this.instructions.push(new LabelInstruction(endLabel));
+            return result;
+          }
+        }
       }
     }
 
