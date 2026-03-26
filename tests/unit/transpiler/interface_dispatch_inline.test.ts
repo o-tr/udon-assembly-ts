@@ -513,4 +513,30 @@ describe("interface dispatch with all-inline implementors", () => {
     // Positive: concrete property copy is present
     expect(result.tac).toMatch(/__viface_IItem_\d+_score/);
   });
+
+  it("dispatches inherited interface property via classId when mapInlineProperty falls through", () => {
+    const source = `
+      interface IBase { readonly score: number; }
+      interface IChild extends IBase { doSomething(): void; }
+      class ItemA implements IChild { score: number = 10; doSomething(): void {} }
+      class ItemB implements IChild { score: number = 20; doSomething(): void {} }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const items: IChild[] = [new ItemA(), new ItemB()];
+          for (const item of items) {
+            Debug.Log(item.score);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // No EXTERN for inherited interface property access
+    expect(result.tac).not.toContain("EXTERN");
+    // Positive: classId property dispatch labels were emitted
+    expect(result.tac).toContain("iface_prop_next");
+    expect(result.tac).toContain("iface_prop_end");
+    // Positive: dispatched result variable is present
+    expect(result.tac).toMatch(/__iface_prop_\d+/);
+  });
 });
