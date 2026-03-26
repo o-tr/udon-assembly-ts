@@ -965,7 +965,20 @@ export function visitReturnStatement(
   this: ASTToTACConverter,
   node: ReturnStatementNode,
 ): void {
+  // Set currentExpectedType from inline return context so that object literal
+  // return values (e.g. `return { value: 42, ok: true }`) are recognised as
+  // type-alias inline instances by visitObjectLiteralExpression.
+  const inlineCtx = this.inlineReturnStack[this.inlineReturnStack.length - 1];
+  const prevExpectedType = this.currentExpectedType;
+  if (
+    inlineCtx &&
+    node.value &&
+    inlineCtx.returnVar.type instanceof InterfaceTypeSymbol
+  ) {
+    this.currentExpectedType = inlineCtx.returnVar.type;
+  }
   const value = node.value ? this.visitExpression(node.value) : undefined;
+  this.currentExpectedType = prevExpectedType;
 
   // Check inlineReturnStack FIRST: if we are inside an inlined method body,
   // return must go to the inline return label, not the recursive dispatch.

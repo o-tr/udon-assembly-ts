@@ -534,4 +534,25 @@ describe("inline instance method calls", () => {
     expect(result.uasm).toContain("value");
     expect(result.uasm).toContain(".export value");
   });
+
+  it("tracks type alias return value from inlined method", () => {
+    const source = `
+      type Result = { value: number; ok: boolean };
+      class Calc {
+        compute(): Result { return { value: 42, ok: true }; }
+      }
+      class Main {
+        private calc: Calc = new Calc();
+        Start(): void {
+          const r = this.calc.compute();
+          const v = r.value;
+          const b = r.ok;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // r.value / r.ok should be resolved as inline properties, not EXTERN calls
+    expect(result.uasm).not.toMatch(/Result\.__get_/);
+    expect(result.tac).toContain("42");
+  });
 });
