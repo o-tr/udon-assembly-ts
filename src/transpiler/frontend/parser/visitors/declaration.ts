@@ -476,9 +476,10 @@ export function visitMethodDeclaration(
   });
 
   const returnTypeText = node.type ? node.type.getText() : undefined;
-  const returnType = returnTypeText
-    ? this.mapTypeWithGenerics(returnTypeText, node.type!)
-    : this.mapTypeWithGenerics("void");
+  const returnType =
+    returnTypeText !== undefined && node.type !== undefined
+      ? this.mapTypeWithGenerics(returnTypeText, node.type)
+      : this.mapTypeWithGenerics("void");
 
   const body = this.visitBlock(node.body);
 
