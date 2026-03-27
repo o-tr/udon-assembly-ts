@@ -314,6 +314,23 @@ export function visitTypeAliasDeclaration(
         params: parameters.map((param) => param.type),
         returnType,
       });
+    } else if (ts.isGetAccessorDeclaration(member)) {
+      const propName = member.name.getText();
+      const propType = member.type
+        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
+        : this.mapTypeWithGenerics("object");
+      properties.push({ name: propName, type: propType });
+      propertyMap.set(propName, propType);
+    } else if (ts.isSetAccessorDeclaration(member)) {
+      const propName = member.name.getText();
+      const param = member.parameters[0];
+      const propType = param?.type
+        ? this.mapTypeWithGenerics(param.type.getText(), param.type)
+        : this.mapTypeWithGenerics("object");
+      if (!propertyMap.has(propName)) {
+        properties.push({ name: propName, type: propType });
+        propertyMap.set(propName, propType);
+      }
     }
   }
 

@@ -64,6 +64,7 @@ import {
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
   resolveClassNode,
+  resolveConcreteClassName,
 } from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
@@ -1498,7 +1499,7 @@ export function visitCallExpression(
     }
     // Inline instance method call: object.method() where object is inline instance
     if (object.kind === TACOperandKind.Variable) {
-      const instanceInfo = this.inlineInstanceMap.get(
+      const instanceInfo = this.resolveInlineInstance(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
@@ -1509,6 +1510,21 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult != null) return inlineResult;
+
+        // When className is an interface/type alias, resolve to the concrete
+        // class via allInlineInstances and retry. This handles cases where
+        // copy tracking or saveAndBindInlineParams stored the interface name
+        // instead of the concrete class name.
+        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        if (concreteClass !== instanceInfo.className) {
+          const concreteResult = this.visitInlineInstanceMethodCallWithContext(
+            concreteClass,
+            instanceInfo.prefix,
+            propAccess.property,
+            evaluatedArgs,
+          );
+          if (concreteResult != null) return concreteResult;
+        }
 
         // Interface classId-based dispatch: when className is an interface
         // with all-inline implementors, dispatch by classId.

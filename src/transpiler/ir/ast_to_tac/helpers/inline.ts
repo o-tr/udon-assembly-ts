@@ -801,6 +801,27 @@ export function mapInlineProperty(
   return undefined;
 }
 
+/**
+ * Resolve the concrete class name for an inline instance.
+ * When className is an interface/type alias (not a concrete class),
+ * search allInlineInstances to find the actual implementing class
+ * that owns the given prefix.
+ */
+export function resolveConcreteClassName(
+  converter: ASTToTACConverter,
+  instanceInfo: { prefix: string; className: string },
+): string {
+  if (resolveClassNode(converter, instanceInfo.className)) {
+    return instanceInfo.className;
+  }
+  for (const [, info] of converter.allInlineInstances) {
+    if (info.prefix === instanceInfo.prefix) {
+      return info.className;
+    }
+  }
+  return instanceInfo.className;
+}
+
 export function tryResolveUnitySelfReference(
   this: ASTToTACConverter,
   node: PropertyAccessExpressionNode,

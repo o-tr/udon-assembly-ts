@@ -68,7 +68,10 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
-import { resolveClassProperty } from "../helpers/inline.js";
+import {
+  resolveClassProperty,
+  resolveConcreteClassName,
+} from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
@@ -1298,6 +1301,16 @@ export function visitPropertyAccessExpression(
           node.property,
         );
         if (mapped) return mapped;
+
+        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        if (concreteClass !== instanceInfo.className) {
+          const concreteMapped = this.mapInlineProperty(
+            concreteClass,
+            instanceInfo.prefix,
+            node.property,
+          );
+          if (concreteMapped) return concreteMapped;
+        }
       }
     }
 
@@ -1345,6 +1358,18 @@ export function visitPropertyAccessExpression(
           node.property,
         );
         if (mapped) return mapped;
+
+        // When className is an interface/type alias, resolve to the concrete
+        // class via allInlineInstances and retry property mapping.
+        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        if (concreteClass !== instanceInfo.className) {
+          const concreteMapped = this.mapInlineProperty(
+            concreteClass,
+            instanceInfo.prefix,
+            node.property,
+          );
+          if (concreteMapped) return concreteMapped;
+        }
 
         // Interface classId-based property dispatch: when the interface-level
         // mapInlineProperty fails (e.g. property not in interface metadata),
