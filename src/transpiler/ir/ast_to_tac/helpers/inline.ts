@@ -61,6 +61,7 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
@@ -115,9 +116,15 @@ export function saveAndBindInlineParams(
     converter.inlineInstanceMap.delete(param.name);
     const arg = args[i];
     if (arg) {
-      converter.emitCopyWithTracking(
-        createVariable(param.name, param.type, { isParameter: true }),
-        arg,
+      // Use plain CopyInstruction here — the argInfo/type-based tracking
+      // logic below is the authoritative source for parameter tracking.
+      // emitCopyWithTracking would be redundant when argInfo is truthy
+      // and a no-op otherwise.
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          arg,
+        ),
       );
       const argInfo = argInlineInfos[i];
       if (argInfo) {
@@ -725,13 +732,25 @@ export function emitEntryPointPropertyInit(
   }
 }
 
+/**
+ * Extract the inlineInstanceMap key for an operand, or undefined if the
+ * operand kind does not participate in tracking (Constants, Labels).
+ */
+function operandTrackingKey(op: TACOperand): string | undefined {
+  if (op.kind === TACOperandKind.Variable) return (op as VariableOperand).name;
+  if (op.kind === TACOperandKind.Temporary)
+    return `t${(op as TemporaryOperand).id}`;
+  return undefined;
+}
+
 export function maybeTrackInlineInstanceAssignment(
   this: ASTToTACConverter,
   target: VariableOperand,
   value: TACOperand,
 ): void {
-  if (value.kind !== TACOperandKind.Variable) return;
-  const mapped = this.inlineInstanceMap.get((value as VariableOperand).name);
+  const srcName = operandTrackingKey(value);
+  if (!srcName) return;
+  const mapped = this.resolveInlineInstance(srcName);
   if (mapped) {
     this.inlineInstanceMap.set(target.name, mapped);
   }
@@ -742,7 +761,7 @@ export function maybeTrackInlineInstanceAssignment(
  *
  * Uses `resolveInlineInstance` (3-step lookup: direct → forward → reverse)
  * so that tracking survives multi-hop copy chains (return values, parameters,
- * intermediate variables).
+ * intermediate variables). Handles both Variable and Temporary operands.
  */
 export function emitCopyWithTracking(
   this: ASTToTACConverter,
@@ -750,13 +769,12 @@ export function emitCopyWithTracking(
   src: TACOperand,
 ): void {
   this.instructions.push(new CopyInstruction(dest, src));
-  if (
-    src.kind === TACOperandKind.Variable &&
-    dest.kind === TACOperandKind.Variable
-  ) {
-    const srcInfo = this.resolveInlineInstance((src as VariableOperand).name);
+  const srcName = operandTrackingKey(src);
+  const destName = operandTrackingKey(dest);
+  if (srcName && destName) {
+    const srcInfo = this.resolveInlineInstance(srcName);
     if (srcInfo) {
-      this.inlineInstanceMap.set((dest as VariableOperand).name, srcInfo);
+      this.inlineInstanceMap.set(destName, srcInfo);
     }
   }
 }

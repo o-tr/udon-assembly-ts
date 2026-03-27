@@ -1007,7 +1007,9 @@ export function visitReturnStatement(
       ? this.newTemp(this.getOperandType(value))
       : undefined;
     if (tempValue && value) {
-      this.emitCopyWithTracking(tempValue, value);
+      // Plain copy: the shared recursive return slot is used across dispatch
+      // paths — tracking would leak stale provenance from one return path.
+      this.instructions.push(new CopyInstruction(tempValue, value));
     }
     // Copy return value to the return export variable before epilogue
     if (tempValue && this.currentReturnVar) {
@@ -1015,7 +1017,7 @@ export function visitReturnStatement(
         this.currentReturnVar,
         this.getOperandType(tempValue),
       );
-      this.emitCopyWithTracking(returnVar, tempValue);
+      this.instructions.push(new CopyInstruction(returnVar, tempValue));
     }
     // Decrement depth and jump to dispatch.
     // dispatchLabel is always set when currentRecursiveContext is created,
@@ -1695,7 +1697,9 @@ export function visitTryCatchStatement(
         const catchVar = createVariable(node.catchVariable, ObjectType, {
           isLocal: true,
         });
-        this.emitCopyWithTracking(catchVar, errorValueVar);
+        // Plain copy: the error slot may receive values from multiple throw
+        // paths — tracking would leak single-path inline provenance.
+        this.instructions.push(new CopyInstruction(catchVar, errorValueVar));
       }
       this.scanDeclarations(node.catchBody.statements);
       for (const stmt of node.catchBody.statements) {
@@ -1767,7 +1771,9 @@ export function visitThrowStatement(
       createConstant(true, PrimitiveTypes.boolean),
     ),
   );
-  this.emitCopyWithTracking(context.errorValue, value);
+  // Plain copy: the shared error slot can receive values from multiple throw
+  // sites — tracking would leak single-path inline provenance.
+  this.instructions.push(new CopyInstruction(context.errorValue, value));
   this.instructions.push(new UnconditionalJumpInstruction(context.errorTarget));
 }
 

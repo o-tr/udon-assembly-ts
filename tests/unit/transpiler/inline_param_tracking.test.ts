@@ -301,4 +301,49 @@ describe("inline instance tracking across method boundaries", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     expect(result.uasm).not.toMatch(/Vec\.__get_/);
   });
+
+  it("invalidates tracking when branches return different inline instances", () => {
+    // Different branches create different inline instances — tracking must
+    // be invalidated to prevent incorrect property resolution.
+    const source = `
+      type Pair = { a: number; b: number };
+      class Logic {
+        static choose(flag: boolean): Pair {
+          if (flag) { return { a: 1, b: 2 }; }
+          return { a: 3, b: 4 };
+        }
+      }
+      class Main {
+        Start(): void {
+          const p = Logic.choose(true);
+          let x: number = p.a;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Tracking is intentionally invalidated — EXTERN fallback is correct
+    expect(result.uasm).toMatch(/Pair\.__get_/);
+  });
+
+  it("preserves tracking when single return path is used", () => {
+    const source = `
+      type Pair = { a: number; b: number };
+      class Logic {
+        static make(): Pair {
+          const p: Pair = { a: 10, b: 20 };
+          return p;
+        }
+      }
+      class Main {
+        Start(): void {
+          const p = Logic.make();
+          let x: number = p.a;
+          let y: number = p.b;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Single return path — tracking should propagate
+    expect(result.uasm).not.toMatch(/Pair\.__get_/);
+  });
 });
