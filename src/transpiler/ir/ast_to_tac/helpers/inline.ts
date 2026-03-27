@@ -749,6 +749,9 @@ function operandTrackingKey(op: TACOperand): string | undefined {
  *
  * Sets `target`'s mapping when `value` resolves to an inline instance;
  * **clears** any existing mapping for `target` when it does not.
+ *
+ * NOTE: Unlike `emitCopyWithTracking`, this does not emit an instruction —
+ * call it after manually emitting an AssignmentInstruction.
  */
 export function maybeTrackInlineInstanceAssignment(
   this: ASTToTACConverter,
