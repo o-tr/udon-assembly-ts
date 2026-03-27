@@ -101,11 +101,11 @@ export function saveAndBindInlineParams(
   params: Array<{ name: string; type: TypeSymbol }>,
   args: TACOperand[],
 ): InlineParamSave {
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? converter.resolveInlineInstance((arg as VariableOperand).name)
-      : undefined,
-  );
+  const argInlineInfos = args.map((arg) => {
+    if (!arg) return undefined;
+    const key = operandTrackingKey(arg);
+    return key ? converter.resolveInlineInstance(key) : undefined;
+  });
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
@@ -116,10 +116,8 @@ export function saveAndBindInlineParams(
     converter.inlineInstanceMap.delete(param.name);
     const arg = args[i];
     if (arg) {
-      // Use plain CopyInstruction here — the argInfo/type-based tracking
-      // logic below is the authoritative source for parameter tracking.
-      // emitCopyWithTracking would be redundant when argInfo is truthy
-      // and a no-op otherwise.
+      // Plain CopyInstruction — the argInfo/type-based tracking logic
+      // below is the authoritative source for parameter tracking.
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
@@ -1153,6 +1151,10 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
       new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
     );
     const unwrapped = this.unwrapDataToken(token, local.type);
+    // emitCopyWithTracking for consistency across copy sites. Currently a
+    // no-op for tracking (unwrapDataToken returns a fresh temp with no
+    // inlineInstanceMap entry), but future-proofs if serialization later
+    // preserves tracking metadata.
     this.emitCopyWithTracking(
       createVariable(local.name, local.type, { isLocal: true }),
       unwrapped,
