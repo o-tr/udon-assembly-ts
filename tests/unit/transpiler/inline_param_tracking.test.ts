@@ -248,4 +248,127 @@ describe("inline instance tracking across method boundaries", () => {
     // No EXTERN for Vec property access
     expect(result.uasm).not.toMatch(/Vec\.__get_/);
   });
+
+  it("tracks inline instance through return value copy chain", () => {
+    const source = `
+      type Result = { value: number; ok: boolean };
+      class Calc {
+        compute(): Result { return { value: 42, ok: true }; }
+      }
+      class Main {
+        Start(): void {
+          const c = new Calc();
+          const r = c.compute();
+          let v: number = r.value;
+          let o: boolean = r.ok;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/Result\.__get_/);
+  });
+
+  it("tracks inline instance parameter through copy", () => {
+    const source = `
+      type Config = { x: number; y: number };
+      class Helper {
+        static sum(cfg: Config): number { return cfg.x + cfg.y; }
+      }
+      class Main {
+        Start(): void {
+          const cfg: Config = { x: 10, y: 20 };
+          let s: number = Helper.sum(cfg);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/Config\.__get_/);
+  });
+
+  it("tracks class instance parameter through copy", () => {
+    const source = `
+      class Vec { x: number = 0; y: number = 0; }
+      class Math2 {
+        static len(v: Vec): number { return v.x + v.y; }
+      }
+      class Main {
+        Start(): void {
+          const v = new Vec(); v.x = 3; v.y = 4;
+          let l: number = Math2.len(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/Vec\.__get_/);
+  });
+
+  it("invalidates tracking when branches return different inline instances", () => {
+    // Different branches create different inline instances — tracking must
+    // be invalidated to prevent incorrect property resolution.
+    const source = `
+      type Pair = { a: number; b: number };
+      class Logic {
+        static choose(flag: boolean): Pair {
+          if (flag) { return { a: 1, b: 2 }; }
+          return { a: 3, b: 4 };
+        }
+      }
+      class Main {
+        Start(): void {
+          const p = Logic.choose(true);
+          let x: number = p.a;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Tracking is intentionally invalidated — EXTERN fallback is correct
+    expect(result.uasm).toMatch(/Pair\.__get_/);
+  });
+
+  it("preserves tracking when single return path is used", () => {
+    const source = `
+      type Pair = { a: number; b: number };
+      class Logic {
+        static make(): Pair {
+          const p: Pair = { a: 10, b: 20 };
+          return p;
+        }
+      }
+      class Main {
+        Start(): void {
+          const p = Logic.make();
+          let x: number = p.a;
+          let y: number = p.b;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Single return path — tracking should propagate
+    expect(result.uasm).not.toMatch(/Pair\.__get_/);
+  });
+
+  it("does not track ternary result when branches produce different inline instances", () => {
+    // Ternary writes a shared result temp from two diverging branches.
+    // Tracking must not be set — otherwise property access resolves
+    // against the wrong branch's prefix at runtime.
+    const source = `
+      type Pt = { x: number };
+      class A {
+        static choose(flag: boolean): Pt {
+          const p1: Pt = { x: 1 };
+          const p2: Pt = { x: 2 };
+          return flag ? p1 : p2;
+        }
+      }
+      class Main {
+        Start(): void {
+          const r = A.choose(true);
+          let v: number = r.x;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Ternary tracking is intentionally suppressed — EXTERN fallback is safe
+    expect(result.uasm).toMatch(/Pt\.__get_/);
+  });
 });

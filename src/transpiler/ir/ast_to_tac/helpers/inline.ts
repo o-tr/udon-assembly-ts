@@ -61,6 +61,7 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
@@ -100,11 +101,11 @@ export function saveAndBindInlineParams(
   params: Array<{ name: string; type: TypeSymbol }>,
   args: TACOperand[],
 ): InlineParamSave {
-  const argInlineInfos = args.map((arg) =>
-    arg && arg.kind === TACOperandKind.Variable
-      ? converter.resolveInlineInstance((arg as VariableOperand).name)
-      : undefined,
-  );
+  const argInlineInfos = args.map((arg) => {
+    if (!arg) return undefined;
+    const key = operandTrackingKey(arg);
+    return key ? converter.resolveInlineInstance(key) : undefined;
+  });
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
@@ -115,6 +116,8 @@ export function saveAndBindInlineParams(
     converter.inlineInstanceMap.delete(param.name);
     const arg = args[i];
     if (arg) {
+      // Plain CopyInstruction — the argInfo/type-based tracking logic
+      // below is the authoritative source for parameter tracking.
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
@@ -727,15 +730,65 @@ export function emitEntryPointPropertyInit(
   }
 }
 
+/**
+ * Extract the inlineInstanceMap key for an operand, or undefined if the
+ * operand kind does not participate in tracking (Constants, Labels).
+ */
+// Keys share the inlineInstanceMap namespace. The __tmp prefix is assumed
+// not to collide with user variable names; a collision would only degrade
+// tracking (EXTERN fallback), not produce incorrect code.
+function operandTrackingKey(op: TACOperand): string | undefined {
+  if (op.kind === TACOperandKind.Variable) return (op as VariableOperand).name;
+  if (op.kind === TACOperandKind.Temporary)
+    return `__tmp${(op as TemporaryOperand).id}`;
+  return undefined;
+}
+
+/**
+ * Update inline-instance tracking after an AssignmentInstruction.
+ *
+ * Sets `target`'s mapping when `value` resolves to an inline instance;
+ * **clears** any existing mapping for `target` when it does not.
+ *
+ * NOTE: Unlike `emitCopyWithTracking`, this does not emit an instruction —
+ * call it after manually emitting an AssignmentInstruction.
+ */
 export function maybeTrackInlineInstanceAssignment(
   this: ASTToTACConverter,
   target: VariableOperand,
   value: TACOperand,
 ): void {
-  if (value.kind !== TACOperandKind.Variable) return;
-  const mapped = this.inlineInstanceMap.get((value as VariableOperand).name);
+  const srcName = operandTrackingKey(value);
+  const mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (mapped) {
     this.inlineInstanceMap.set(target.name, mapped);
+  } else {
+    this.inlineInstanceMap.delete(target.name);
+  }
+}
+
+/**
+ * Emit a CopyInstruction and propagate inline instance tracking from src to dest.
+ *
+ * Uses `resolveInlineInstance` (3-step lookup: direct → forward → reverse)
+ * so that tracking survives multi-hop copy chains (return values, parameters,
+ * intermediate variables). Handles both Variable and Temporary operands.
+ * Clears stale tracking on dest when src is not an inline instance.
+ */
+export function emitCopyWithTracking(
+  this: ASTToTACConverter,
+  dest: TACOperand,
+  src: TACOperand,
+): void {
+  this.instructions.push(new CopyInstruction(dest, src));
+  const destName = operandTrackingKey(dest);
+  if (!destName) return;
+  const srcName = operandTrackingKey(src);
+  const srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
+  if (srcInfo) {
+    this.inlineInstanceMap.set(destName, srcInfo);
+  } else {
+    this.inlineInstanceMap.delete(destName);
   }
 }
 
@@ -1079,7 +1132,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new CopyInstruction(spVar, spTemp));
+  this.emitCopyWithTracking(spVar, spTemp);
 
   // Save each local at stack[SP]
   for (let index = 0; index < context.locals.length; index++) {
@@ -1137,6 +1190,11 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
       new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
     );
     const unwrapped = this.unwrapDataToken(token, local.type);
+    // Plain copy: must NOT use emitCopyWithTracking here because
+    // unwrapDataToken returns a fresh temp with no tracking info, and
+    // emitCopyWithTracking would clear the local's pre-existing
+    // inlineInstanceMap entry. The local's inline tracking remains valid
+    // across the recursive call since the instance identity is unchanged.
     this.instructions.push(
       new CopyInstruction(
         createVariable(local.name, local.type, { isLocal: true }),
@@ -1155,7 +1213,7 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new CopyInstruction(spVar, spTemp));
+  this.emitCopyWithTracking(spVar, spTemp);
   this.instructions.push(new UnconditionalJumpInstruction(afterPopLabel));
 
   // Underflow handler: log error and skip restore

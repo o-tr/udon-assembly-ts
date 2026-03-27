@@ -12,7 +12,6 @@ import {
 import {
   BinaryOpInstruction,
   ConditionalJumpInstruction,
-  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   ReturnInstruction,
@@ -226,7 +225,7 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     // PropertyGetInstruction avoids generating a self-referencing extern.
     const currentVal = this.newTemp(prop.type);
     const fieldVar = createVariable(prop.name, prop.type);
-    this.instructions.push(new CopyInstruction(currentVal, fieldVar));
+    this.emitCopyWithTracking(currentVal, fieldVar);
 
     const changed = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
@@ -234,7 +233,7 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     );
     const skipLabel = this.newLabel("fcb_skip");
     this.instructions.push(new ConditionalJumpInstruction(changed, skipLabel));
-    this.instructions.push(new CopyInstruction(prevVar, currentVal));
+    this.emitCopyWithTracking(prevVar, currentVal);
     if (prop.fieldChangeCallback) {
       const inlined = this.visitInlineInstanceMethodCall(
         classNode.name,
