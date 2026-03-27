@@ -1,7 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
-  ClassTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
@@ -196,8 +195,13 @@ export function visitVariableDeclaration(
       !(resolvedType instanceof InterfaceTypeSymbol) &&
       node.originalTypeName
     ) {
-      const lateResolved = this.typeMapper.mapTypeScriptType(node.originalTypeName);
-      if (lateResolved instanceof InterfaceTypeSymbol && lateResolved.properties.size > 0) {
+      const lateResolved = this.typeMapper.mapTypeScriptType(
+        node.originalTypeName,
+      );
+      if (
+        lateResolved instanceof InterfaceTypeSymbol &&
+        lateResolved.properties.size > 0
+      ) {
         resolvedType = lateResolved;
       } else {
         // For union type aliases (e.g. WinResult = WinResultWin | WinResultNotWin),

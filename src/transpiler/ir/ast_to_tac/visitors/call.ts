@@ -1652,7 +1652,8 @@ export function visitCallExpression(
                   // All branches must agree on className to use unified prefix.
                   (resultInlineMapping === undefined ||
                     (resultInlineMapping !== null &&
-                      resultInlineMapping.className === inlineMapping.className))
+                      resultInlineMapping.className ===
+                        inlineMapping.className))
                 ) {
                   for (const [propName, propType] of fieldsToCopy) {
                     const srcField = createVariable(
@@ -1663,7 +1664,9 @@ export function visitCallExpression(
                       `${result.name}_${propName}`,
                       propType,
                     );
-                    this.instructions.push(new CopyInstruction(dstField, srcField));
+                    this.instructions.push(
+                      new CopyInstruction(dstField, srcField),
+                    );
                   }
                   resultInlineMapping = {
                     prefix: result.name,

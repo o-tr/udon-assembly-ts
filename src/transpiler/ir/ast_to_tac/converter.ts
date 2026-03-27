@@ -7,7 +7,10 @@ import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
 import { TypeMapper } from "../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../frontend/type_symbols.js";
-import { InterfaceTypeSymbol, PrimitiveTypes } from "../../frontend/type_symbols.js";
+import {
+  InterfaceTypeSymbol,
+  PrimitiveTypes,
+} from "../../frontend/type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,

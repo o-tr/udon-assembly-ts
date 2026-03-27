@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 describe("CheckWinContext tracking", () => {
