@@ -267,11 +267,13 @@ export function extractInterfaceMembers(
       const propType = member.type
         ? mapType(member.type.getText(), member.type)
         : mapType("object");
-      if (!propertyMap.has(propName)) {
+      const existingIdx = properties.findIndex((p) => p.name === propName);
+      if (existingIdx === -1) {
         properties.push({ name: propName, type: propType });
+      } else {
+        // Getter takes precedence: update the entry pushed by a preceding setter.
+        properties[existingIdx] = { name: propName, type: propType };
       }
-      // Always update propertyMap: get accessor type takes precedence over
-      // a set accessor that may have been registered first.
       propertyMap.set(propName, propType);
     } else if (ts.isMethodSignature(member)) {
       const methodName = member.name.getText();
