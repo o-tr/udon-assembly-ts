@@ -47,6 +47,7 @@ import {
   CallInstruction,
   CastInstruction,
   ConditionalJumpInstruction,
+  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -629,12 +630,15 @@ export function visitConditionalExpression(
 
   const trueVal = this.visitExpression(node.whenTrue);
   const result = this.newTemp(this.getOperandType(trueVal));
-  this.emitCopyWithTracking(result, trueVal);
+  // Plain copy: the shared result temp is written from two diverging
+  // branches — tracking would retain only the last-written branch's
+  // prefix, producing incorrect property resolution for the other branch.
+  this.instructions.push(new CopyInstruction(result, trueVal));
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
-  this.emitCopyWithTracking(result, falseVal);
+  this.instructions.push(new CopyInstruction(result, falseVal));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -656,11 +660,12 @@ export function visitNullCoalescingExpression(
   this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  // Plain copy: same shared-result reasoning as visitConditionalExpression.
+  this.instructions.push(new CopyInstruction(result, right));
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(notNullLabel));
-  this.emitCopyWithTracking(result, left);
+  this.instructions.push(new CopyInstruction(result, left));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }

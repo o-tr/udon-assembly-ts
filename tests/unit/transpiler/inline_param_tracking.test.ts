@@ -346,4 +346,29 @@ describe("inline instance tracking across method boundaries", () => {
     // Single return path — tracking should propagate
     expect(result.uasm).not.toMatch(/Pair\.__get_/);
   });
+
+  it("does not track ternary result when branches produce different inline instances", () => {
+    // Ternary writes a shared result temp from two diverging branches.
+    // Tracking must not be set — otherwise property access resolves
+    // against the wrong branch's prefix at runtime.
+    const source = `
+      type Pt = { x: number };
+      class A {
+        static choose(flag: boolean): Pt {
+          const p1: Pt = { x: 1 };
+          const p2: Pt = { x: 2 };
+          return flag ? p1 : p2;
+        }
+      }
+      class Main {
+        Start(): void {
+          const r = A.choose(true);
+          let v: number = r.x;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Ternary tracking is intentionally suppressed — EXTERN fallback is safe
+    expect(result.uasm).toMatch(/Pt\.__get_/);
+  });
 });
