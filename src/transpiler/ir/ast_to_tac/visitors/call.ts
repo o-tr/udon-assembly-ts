@@ -1631,12 +1631,17 @@ export function visitCallExpression(
               // different concrete prefixes.
               if (inlineMapping) {
                 let fieldsToCopy: Array<[string, TypeSymbol]> | null = null;
+                // For interface return types, always use the interface's
+                // property list regardless of the concrete className.
+                // This allows different implementors to converge on a single
+                // stable prefix with effectiveClassName = returnType.name.
+                let effectiveClassName = inlineMapping.className;
                 if (
                   returnType instanceof InterfaceTypeSymbol &&
-                  returnType.properties.size > 0 &&
-                  inlineMapping.className === returnType.name
+                  returnType.properties.size > 0
                 ) {
                   fieldsToCopy = Array.from(returnType.properties.entries());
+                  effectiveClassName = returnType.name;
                 } else {
                   const classNode = this.classMap.get(inlineMapping.className);
                   if (classNode) {
@@ -1649,11 +1654,10 @@ export function visitCallExpression(
                 if (
                   fieldsToCopy &&
                   fieldsToCopy.length > 0 &&
-                  // All branches must agree on className to use unified prefix.
+                  // All branches must agree on effectiveClassName.
                   (resultInlineMapping === undefined ||
                     (resultInlineMapping !== null &&
-                      resultInlineMapping.className ===
-                        inlineMapping.className))
+                      resultInlineMapping.className === effectiveClassName))
                 ) {
                   for (const [propName, propType] of fieldsToCopy) {
                     const srcField = createVariable(
@@ -1670,7 +1674,7 @@ export function visitCallExpression(
                   }
                   resultInlineMapping = {
                     prefix: result.name,
-                    className: inlineMapping.className,
+                    className: effectiveClassName,
                   };
                 } else if (fieldsToCopy && fieldsToCopy.length > 0) {
                   // className mismatch across branches — invalidate

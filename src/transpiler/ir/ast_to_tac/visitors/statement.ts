@@ -1142,15 +1142,19 @@ export function visitReturnStatement(
     // uniform prefix.
     const returnInstancePrefix = inlineContext.returnInstancePrefix;
     if (returnInstancePrefix && value && valueMapping) {
+      // returnInstancePrefix is only set when returnType is an InterfaceTypeSymbol
+      // (see inline.ts). Normalize className to the interface name so that
+      // different concrete implementors converge on the same stable prefix.
       const returnType = inlineContext.returnVar.type;
       let fieldsToCopy: Array<[string, TypeSymbol]> | null = null;
+      let effectiveClassName = valueMapping.className;
 
       if (
         returnType instanceof InterfaceTypeSymbol &&
-        returnType.properties.size > 0 &&
-        valueMapping.className === returnType.name
+        returnType.properties.size > 0
       ) {
         fieldsToCopy = Array.from(returnType.properties.entries());
+        effectiveClassName = returnType.name;
       } else {
         const classNode = this.classMap.get(valueMapping.className);
         if (classNode) {
@@ -1175,10 +1179,25 @@ export function visitReturnStatement(
         this.instructions.push(
           new CopyInstruction(inlineContext.returnVar, value),
         );
-        this.inlineInstanceMap.set(inlineContext.returnVar.name, {
-          prefix: returnInstancePrefix,
-          className: valueMapping.className,
-        });
+        // Track returnTrackingInvalidated: if a previous return path used a
+        // different interface name, the stable prefix is ambiguous.
+        if (!inlineContext.returnTrackingInvalidated) {
+          const existingMapping = this.inlineInstanceMap.get(
+            inlineContext.returnVar.name,
+          );
+          if (
+            existingMapping &&
+            existingMapping.className !== effectiveClassName
+          ) {
+            this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+            inlineContext.returnTrackingInvalidated = true;
+          } else {
+            this.inlineInstanceMap.set(inlineContext.returnVar.name, {
+              prefix: returnInstancePrefix,
+              className: effectiveClassName,
+            });
+          }
+        }
         this.instructions.push(
           new UnconditionalJumpInstruction(inlineContext.returnLabel),
         );

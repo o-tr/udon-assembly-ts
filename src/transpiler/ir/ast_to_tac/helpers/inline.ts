@@ -1,6 +1,5 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
-  ClassTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
   ObjectType,
@@ -569,11 +568,12 @@ export function visitInlineStaticMethodCall(
   this.currentInlineBaseClass = undefined;
 
   this.inlineMethodStack.add(inlineKey);
+  // Only apply the stable-prefix strategy for interface return types.
+  // For concrete ClassTypeSymbol returns, direct tracking is preserved so
+  // that property writes (e.g. compound assignments) reach the original
+  // inline instance fields rather than a one-shot copy.
   const returnInstancePrefix =
-    (returnType instanceof InterfaceTypeSymbol &&
-      returnType.properties.size > 0) ||
-    (returnType instanceof ClassTypeSymbol &&
-      this.classMap.has(returnType.name))
+    returnType instanceof InterfaceTypeSymbol && returnType.properties.size > 0
       ? result.name
       : undefined;
   this.inlineReturnStack.push({
@@ -673,11 +673,12 @@ function inlineInstanceMethodCallCore(
     : undefined;
 
   converter.inlineMethodStack.add(inlineKey);
+  // Only apply the stable-prefix strategy for interface return types.
+  // For concrete ClassTypeSymbol returns, direct tracking is preserved so
+  // that property writes (e.g. compound assignments) reach the original
+  // inline instance fields rather than a one-shot copy.
   const returnInstancePrefix =
-    (returnType instanceof InterfaceTypeSymbol &&
-      returnType.properties.size > 0) ||
-    (returnType instanceof ClassTypeSymbol &&
-      converter.classMap.has(returnType.name))
+    returnType instanceof InterfaceTypeSymbol && returnType.properties.size > 0
       ? result.name
       : undefined;
   converter.inlineReturnStack.push({
