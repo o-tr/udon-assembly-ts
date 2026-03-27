@@ -747,10 +747,11 @@ export function maybeTrackInlineInstanceAssignment(
   value: TACOperand,
 ): void {
   const srcName = operandTrackingKey(value);
-  if (!srcName) return;
-  const mapped = this.resolveInlineInstance(srcName);
+  const mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (mapped) {
     this.inlineInstanceMap.set(target.name, mapped);
+  } else {
+    this.inlineInstanceMap.delete(target.name);
   }
 }
 
@@ -760,6 +761,7 @@ export function maybeTrackInlineInstanceAssignment(
  * Uses `resolveInlineInstance` (3-step lookup: direct → forward → reverse)
  * so that tracking survives multi-hop copy chains (return values, parameters,
  * intermediate variables). Handles both Variable and Temporary operands.
+ * Clears stale tracking on dest when src is not an inline instance.
  */
 export function emitCopyWithTracking(
   this: ASTToTACConverter,
@@ -767,13 +769,14 @@ export function emitCopyWithTracking(
   src: TACOperand,
 ): void {
   this.instructions.push(new CopyInstruction(dest, src));
-  const srcName = operandTrackingKey(src);
   const destName = operandTrackingKey(dest);
-  if (srcName && destName) {
-    const srcInfo = this.resolveInlineInstance(srcName);
-    if (srcInfo) {
-      this.inlineInstanceMap.set(destName, srcInfo);
-    }
+  if (!destName) return;
+  const srcName = operandTrackingKey(src);
+  const srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
+  if (srcInfo) {
+    this.inlineInstanceMap.set(destName, srcInfo);
+  } else {
+    this.inlineInstanceMap.delete(destName);
   }
 }
 
