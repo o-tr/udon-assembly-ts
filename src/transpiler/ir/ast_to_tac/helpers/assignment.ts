@@ -24,7 +24,6 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   CastInstruction,
-  CopyInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
@@ -95,8 +94,7 @@ export function assignToTarget(
         propAccess.property,
       );
       if (mapped) {
-        this.instructions.push(new CopyInstruction(mapped, value));
-        this.maybeTrackInlineInstanceAssignment(mapped, value);
+        this.emitCopyWithTracking(mapped, value);
         return value;
       }
     }
@@ -118,8 +116,7 @@ export function assignToTarget(
           this.entryPointPropName(propAccess.property),
           resolved.prop.type,
         );
-        this.instructions.push(new CopyInstruction(targetVar, value));
-        this.maybeTrackInlineInstanceAssignment(targetVar, value);
+        this.emitCopyWithTracking(targetVar, value);
         const callback = this.resolveFieldChangeCallback(
           propAccess.object,
           propAccess.property,
@@ -155,8 +152,7 @@ export function assignToTarget(
           propAccess.property,
         );
         if (mapped) {
-          this.instructions.push(new CopyInstruction(mapped, value));
-          this.maybeTrackInlineInstanceAssignment(mapped, value);
+          this.emitCopyWithTracking(mapped, value);
           return value;
         }
       }
@@ -192,7 +188,7 @@ export function assignToTarget(
           propAccess.property,
         );
         if (mapped) {
-          this.instructions.push(new CopyInstruction(mapped, value));
+          this.emitCopyWithTracking(mapped, value);
           return value;
         }
       }
@@ -213,13 +209,7 @@ export function assignToTarget(
   }
 
   const targetOperand = this.visitExpression(target);
-  this.instructions.push(new CopyInstruction(targetOperand, value));
-  if (targetOperand.kind === TACOperandKind.Variable) {
-    this.maybeTrackInlineInstanceAssignment(
-      targetOperand as VariableOperand,
-      value,
-    );
-  }
+  this.emitCopyWithTracking(targetOperand, value);
   return targetOperand;
 }
 
@@ -259,7 +249,7 @@ export function visitUpdateExpression(
 
   const postfixSnapshot = node.isPostfix ? this.newTemp(resultType) : null;
   if (postfixSnapshot) {
-    this.instructions.push(new CopyInstruction(postfixSnapshot, currentValue));
+    this.emitCopyWithTracking(postfixSnapshot, currentValue);
   }
 
   const newValue = this.newTemp(resultType);

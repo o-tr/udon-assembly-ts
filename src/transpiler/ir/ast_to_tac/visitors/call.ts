@@ -1718,7 +1718,7 @@ export function visitCallExpression(
                 createConstant(1, PrimitiveTypes.int32),
               ),
             );
-            this.instructions.push(new CopyInstruction(depthVarOp, depthInc));
+            this.emitCopyWithTracking(depthVarOp, depthInc);
 
             // 3. Set parameters for the callee
             for (let i = 0; i < evaluatedArgs.length; i++) {
@@ -1728,9 +1728,7 @@ export function visitCallExpression(
                   paramExportName,
                   layout.parameterTypes[i] ?? PrimitiveTypes.single,
                 );
-                this.instructions.push(
-                  new CopyInstruction(paramVar, evaluatedArgs[i]),
-                );
+                this.emitCopyWithTracking(paramVar, evaluatedArgs[i]);
               }
             }
 
@@ -1768,7 +1766,7 @@ export function visitCallExpression(
                 layout.returnType,
               );
               capturedTemp = this.newTemp(layout.returnType);
-              this.instructions.push(new CopyInstruction(capturedTemp, retVar));
+              this.emitCopyWithTracking(capturedTemp, retVar);
             }
 
             // 8. Pop all locals from stack (restore caller's state)
@@ -1786,9 +1784,7 @@ export function visitCallExpression(
                 layout.returnType,
                 { isLocal: true },
               );
-              this.instructions.push(
-                new CopyInstruction(selfCallResultVar, capturedTemp),
-              );
+              this.emitCopyWithTracking(selfCallResultVar, capturedTemp);
               result = selfCallResultVar;
             }
 
@@ -1813,9 +1809,7 @@ export function visitCallExpression(
                 paramExportName,
                 layout.parameterTypes[i] ?? PrimitiveTypes.single,
               );
-              this.instructions.push(
-                new CopyInstruction(paramVar, evaluatedArgs[i]),
-              );
+              this.emitCopyWithTracking(paramVar, evaluatedArgs[i]);
             }
           }
           // Set return site index.
@@ -1838,11 +1832,9 @@ export function visitCallExpression(
             `__recursionDepth_${this.currentClassName}_${propAccess.property}`,
             PrimitiveTypes.int32,
           );
-          this.instructions.push(
-            new CopyInstruction(
-              depthVar,
-              createConstant(0, PrimitiveTypes.int32),
-            ),
+          this.emitCopyWithTracking(
+            depthVar,
+            createConstant(0, PrimitiveTypes.int32),
           );
           // JUMP to method entry
           const methodLabel = createLabel(layout.exportMethodName);
@@ -1866,7 +1858,7 @@ export function visitCallExpression(
               layout.returnType,
             );
             result = this.newTemp(layout.returnType);
-            this.instructions.push(new CopyInstruction(result, retVar));
+            this.emitCopyWithTracking(result, retVar);
           }
           return result;
         }
@@ -2001,7 +1993,7 @@ export function visitCallExpression(
     const evaluatedArgs = getArgs();
     const object = this.visitExpression(opt.object);
     const objTemp = this.newTemp(this.getOperandType(object));
-    this.instructions.push(new CopyInstruction(objTemp, object));
+    this.emitCopyWithTracking(objTemp, object);
 
     const isNotNull = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
@@ -2609,9 +2601,7 @@ function visitSetMethodCall(
           const thisArgTemp = converter.newTemp(
             converter.getOperandType(thisArg),
           );
-          converter.instructions.push(
-            new CopyInstruction(thisArgTemp, thisArg),
-          );
+          converter.emitCopyWithTracking(thisArgTemp, thisArg);
           thisOverride = thisArgTemp;
         } else {
           thisOverride = createConstant(null, ObjectType);
@@ -2665,15 +2655,13 @@ function visitSetMethodCall(
       const value = converter.unwrapDataToken(keyToken, elementType);
 
       if (paramVars[0]) {
-        converter.instructions.push(new CopyInstruction(paramVars[0], value));
+        converter.emitCopyWithTracking(paramVars[0], value);
       }
       if (paramVars[1]) {
-        converter.instructions.push(new CopyInstruction(paramVars[1], value));
+        converter.emitCopyWithTracking(paramVars[1], value);
       }
       if (paramVars[2]) {
-        converter.instructions.push(
-          new CopyInstruction(paramVars[2], setOperand),
-        );
+        converter.emitCopyWithTracking(paramVars[2], setOperand);
       }
 
       const previousThisOverride = converter.currentThisOverride;
@@ -2826,9 +2814,7 @@ function visitMapMethodCall(
           const thisArgTemp = converter.newTemp(
             converter.getOperandType(thisArg),
           );
-          converter.instructions.push(
-            new CopyInstruction(thisArgTemp, thisArg),
-          );
+          converter.emitCopyWithTracking(thisArgTemp, thisArg);
           thisOverride = thisArgTemp;
         } else {
           thisOverride = createConstant(null, ObjectType);
@@ -2892,19 +2878,13 @@ function visitMapMethodCall(
       const valueValue = unwrapToken(valueToken, valueType);
 
       if (paramVars[0]) {
-        converter.instructions.push(
-          new CopyInstruction(paramVars[0], valueValue),
-        );
+        converter.emitCopyWithTracking(paramVars[0], valueValue);
       }
       if (paramVars[1]) {
-        converter.instructions.push(
-          new CopyInstruction(paramVars[1], keyValue),
-        );
+        converter.emitCopyWithTracking(paramVars[1], keyValue);
       }
       if (paramVars[2]) {
-        converter.instructions.push(
-          new CopyInstruction(paramVars[2], mapOperand),
-        );
+        converter.emitCopyWithTracking(paramVars[2], mapOperand);
       }
 
       const previousThisOverride = converter.currentThisOverride;

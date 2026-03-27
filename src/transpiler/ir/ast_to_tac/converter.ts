@@ -54,6 +54,7 @@ import {
   collectRecursiveLocals,
   emitCallSitePop,
   emitCallSitePush,
+  emitCopyWithTracking,
   emitEntryPointPropertyInit,
   emitReturnSiteDispatch,
   mapInlineProperty,
@@ -560,6 +561,7 @@ export class ASTToTACConverter {
   visitInlineInstanceMethodCallWithContext =
     visitInlineInstanceMethodCallWithContext;
   maybeTrackInlineInstanceAssignment = maybeTrackInlineInstanceAssignment;
+  emitCopyWithTracking = emitCopyWithTracking;
   emitEntryPointPropertyInit = emitEntryPointPropertyInit;
   mapInlineProperty = mapInlineProperty;
   resolveInlineInstance = resolveInlineInstance;

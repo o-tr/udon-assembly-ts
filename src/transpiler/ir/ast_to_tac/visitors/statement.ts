@@ -472,7 +472,7 @@ export function visitForOfStatement(
       elementType.name !== ExternTypes.dataToken.name
         ? this.unwrapDataToken(tokenValue, elementType)
         : tokenValue;
-    this.instructions.push(new CopyInstruction(elementVar, resolvedValue));
+    this.emitCopyWithTracking(elementVar, resolvedValue);
   } else {
     this.instructions.push(
       new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
@@ -498,7 +498,7 @@ export function visitForOfStatement(
           createConstant(i, PrimitiveTypes.int32),
         ]),
       );
-      this.instructions.push(new CopyInstruction(targetVar, elementValue));
+      this.emitCopyWithTracking(targetVar, elementValue);
     }
   }
   if (isObjectDestructured && node.destructureProperties) {
@@ -513,7 +513,7 @@ export function visitForOfStatement(
       this.instructions.push(
         new PropertyGetInstruction(propValue, elementVar, entry.property),
       );
-      this.instructions.push(new CopyInstruction(targetVar, propValue));
+      this.emitCopyWithTracking(targetVar, propValue);
     }
   }
   // Interface dispatch: when element type is an interface with all-inline implementors,
@@ -590,8 +590,7 @@ export function visitForOfStatement(
             vifaceType,
           );
           const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
-          this.instructions.push(new CopyInstruction(dst, src));
-          this.maybeTrackInlineInstanceAssignment(dst, src);
+          this.emitCopyWithTracking(dst, src);
         }
 
         this.instructions.push(
@@ -706,7 +705,7 @@ export function visitForOfStatement(
 
       // elementVar is Object (from array access); copy to Int32 for comparison
       const handleVar = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(new CopyInstruction(handleVar, elementVar));
+      this.emitCopyWithTracking(handleVar, elementVar);
 
       // Reset classId to sentinel so an unmatched instanceId doesn't
       // silently reuse the previous iteration's stale value.
@@ -742,8 +741,7 @@ export function visitForOfStatement(
             `${virtualPrefix}_${prop.name}`,
             vifaceType,
           );
-          this.instructions.push(new CopyInstruction(dst, src));
-          this.maybeTrackInlineInstanceAssignment(dst, src);
+          this.emitCopyWithTracking(dst, src);
         }
 
         // Set classId
@@ -862,7 +860,7 @@ export function visitSwitchStatement(
   const switchValue = this.visitExpression(node.expression);
   const switchType = this.getOperandType(switchValue);
   const switchTemp = this.newTemp(switchType);
-  this.instructions.push(new CopyInstruction(switchTemp, switchValue));
+  this.emitCopyWithTracking(switchTemp, switchValue);
   const caseEntries = node.cases.map((caseNode) => ({
     node: caseNode,
     label: this.newLabel("switch_case"),
@@ -1009,7 +1007,7 @@ export function visitReturnStatement(
       ? this.newTemp(this.getOperandType(value))
       : undefined;
     if (tempValue && value) {
-      this.instructions.push(new CopyInstruction(tempValue, value));
+      this.emitCopyWithTracking(tempValue, value);
     }
     // Copy return value to the return export variable before epilogue
     if (tempValue && this.currentReturnVar) {
@@ -1017,7 +1015,7 @@ export function visitReturnStatement(
         this.currentReturnVar,
         this.getOperandType(tempValue),
       );
-      this.instructions.push(new CopyInstruction(returnVar, tempValue));
+      this.emitCopyWithTracking(returnVar, tempValue);
     }
     // Decrement depth and jump to dispatch.
     // dispatchLabel is always set when currentRecursiveContext is created,
@@ -1037,7 +1035,7 @@ export function visitReturnStatement(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      this.instructions.push(new CopyInstruction(depthVar, depthTemp));
+      this.emitCopyWithTracking(depthVar, depthTemp);
       this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
     }
     return;
@@ -1347,11 +1345,9 @@ export function visitClassDeclaration(
 
       {
         // Mark as initialized
-        this.instructions.push(
-          new CopyInstruction(
-            stackInitFlag,
-            createConstant(true, PrimitiveTypes.boolean),
-          ),
+        this.emitCopyWithTracking(
+          stackInitFlag,
+          createConstant(true, PrimitiveTypes.boolean),
         );
         const maxRecursionDepth = MAX_RECURSION_STACK_DEPTH;
         // Default token is Single-typed regardless of each stack's actual local type.
@@ -1408,20 +1404,16 @@ export function visitClassDeclaration(
           new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
         );
         const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
-        this.instructions.push(
-          new CopyInstruction(
-            spVarOp,
-            createConstant(-1, PrimitiveTypes.int32),
-          ),
+        this.emitCopyWithTracking(
+          spVarOp,
+          createConstant(-1, PrimitiveTypes.int32),
         );
         // Also reset depth to 0 to normalize the post-completion -1 state.
         // Without this, depth stays at -1, and the first self-call increments
         // it to 0, causing the SP reset to fire again on re-entry.
-        this.instructions.push(
-          new CopyInstruction(
-            depthVarOp,
-            createConstant(0, PrimitiveTypes.int32),
-          ),
+        this.emitCopyWithTracking(
+          depthVarOp,
+          createConstant(0, PrimitiveTypes.int32),
         );
         this.instructions.push(new LabelInstruction(skipSpResetLabel));
       }
@@ -1455,11 +1447,9 @@ export function visitClassDeclaration(
         // Reset depth to 0 so a subsequent SendCustomEvent invocation
         // triggers SP reset at method entry and can call this method again.
         const overflowDepthVar = createVariable(depthVar, PrimitiveTypes.int32);
-        this.instructions.push(
-          new CopyInstruction(
-            overflowDepthVar,
-            createConstant(0, PrimitiveTypes.int32),
-          ),
+        this.emitCopyWithTracking(
+          overflowDepthVar,
+          createConstant(0, PrimitiveTypes.int32),
         );
         this.instructions.push(
           new ReturnInstruction(undefined, this.currentReturnVar),
@@ -1574,7 +1564,7 @@ export function visitClassDeclaration(
             createConstant(1, PrimitiveTypes.int32),
           ),
         );
-        this.instructions.push(new CopyInstruction(depthVarEnd, depthTmpEnd));
+        this.emitCopyWithTracking(depthVarEnd, depthTmpEnd);
       }
       // Jump to dispatch (dispatch uses current siteIdx)
       if (this.currentRecursiveContext.dispatchLabel) {
@@ -1705,7 +1695,7 @@ export function visitTryCatchStatement(
         const catchVar = createVariable(node.catchVariable, ObjectType, {
           isLocal: true,
         });
-        this.instructions.push(new CopyInstruction(catchVar, errorValueVar));
+        this.emitCopyWithTracking(catchVar, errorValueVar);
       }
       this.scanDeclarations(node.catchBody.statements);
       for (const stmt of node.catchBody.statements) {
@@ -1756,11 +1746,9 @@ export function visitThrowStatement(
           this.currentRecursiveContext.depthVar,
           PrimitiveTypes.int32,
         );
-        this.instructions.push(
-          new CopyInstruction(
-            depthVar,
-            createConstant(0, PrimitiveTypes.int32),
-          ),
+        this.emitCopyWithTracking(
+          depthVar,
+          createConstant(0, PrimitiveTypes.int32),
         );
       }
       this.instructions.push(
@@ -1779,7 +1767,7 @@ export function visitThrowStatement(
       createConstant(true, PrimitiveTypes.boolean),
     ),
   );
-  this.instructions.push(new CopyInstruction(context.errorValue, value));
+  this.emitCopyWithTracking(context.errorValue, value);
   this.instructions.push(new UnconditionalJumpInstruction(context.errorTarget));
 }
 

@@ -248,4 +248,57 @@ describe("inline instance tracking across method boundaries", () => {
     // No EXTERN for Vec property access
     expect(result.uasm).not.toMatch(/Vec\.__get_/);
   });
+
+  it("tracks inline instance through return value copy chain", () => {
+    const source = `
+      type Result = { value: number; ok: boolean };
+      class Calc {
+        compute(): Result { return { value: 42, ok: true }; }
+      }
+      class Main {
+        Start(): void {
+          const c = new Calc();
+          const r = c.compute();
+          let v: number = r.value;
+          let o: boolean = r.ok;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/Result\.__get_/);
+  });
+
+  it("tracks inline instance parameter through copy", () => {
+    const source = `
+      type Config = { x: number; y: number };
+      class Helper {
+        static sum(cfg: Config): number { return cfg.x + cfg.y; }
+      }
+      class Main {
+        Start(): void {
+          const cfg: Config = { x: 10, y: 20 };
+          let s: number = Helper.sum(cfg);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/Config\.__get_/);
+  });
+
+  it("tracks class instance parameter through copy", () => {
+    const source = `
+      class Vec { x: number = 0; y: number = 0; }
+      class Math2 {
+        static len(v: Vec): number { return v.x + v.y; }
+      }
+      class Main {
+        Start(): void {
+          const v = new Vec(); v.x = 3; v.y = 4;
+          let l: number = Math2.len(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/Vec\.__get_/);
+  });
 });

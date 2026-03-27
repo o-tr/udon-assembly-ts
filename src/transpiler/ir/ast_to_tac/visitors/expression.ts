@@ -47,7 +47,6 @@ import {
   CallInstruction,
   CastInstruction,
   ConditionalJumpInstruction,
-  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -365,8 +364,7 @@ export function visitBinaryExpression(
 
     if (leftOriginal.kind === TACOperandKind.Variable) {
       const target = leftOriginal as VariableOperand;
-      this.instructions.push(new CopyInstruction(target, assignValue));
-      this.maybeTrackInlineInstanceAssignment(target, assignValue);
+      this.emitCopyWithTracking(target, assignValue);
       return assignValue;
     }
 
@@ -572,7 +570,7 @@ export function visitShortCircuitAnd(
   this.instructions.push(new ConditionalJumpInstruction(left, endLabel));
 
   const right = this.visitExpression(node.right);
-  this.instructions.push(new CopyInstruction(result, right));
+  this.emitCopyWithTracking(result, right);
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -600,7 +598,7 @@ export function visitShortCircuitOr(
 
   this.instructions.push(new LabelInstruction(shortCircuitLabel));
   const right = this.visitExpression(node.right);
-  this.instructions.push(new CopyInstruction(result, right));
+  this.emitCopyWithTracking(result, right);
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -631,12 +629,12 @@ export function visitConditionalExpression(
 
   const trueVal = this.visitExpression(node.whenTrue);
   const result = this.newTemp(this.getOperandType(trueVal));
-  this.instructions.push(new CopyInstruction(result, trueVal));
+  this.emitCopyWithTracking(result, trueVal);
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
-  this.instructions.push(new CopyInstruction(result, falseVal));
+  this.emitCopyWithTracking(result, falseVal);
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -658,11 +656,11 @@ export function visitNullCoalescingExpression(
   this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
-  this.instructions.push(new CopyInstruction(result, right));
+  this.emitCopyWithTracking(result, right);
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(notNullLabel));
-  this.instructions.push(new CopyInstruction(result, left));
+  this.emitCopyWithTracking(result, left);
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -1404,9 +1402,7 @@ export function visitPropertyAccessExpression(
                   `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
                 );
               }
-              this.instructions.push(
-                new CopyInstruction(result, concreteMapped),
-              );
+              this.emitCopyWithTracking(result, concreteMapped);
 
               this.instructions.push(
                 new UnconditionalJumpInstruction(endLabel),
@@ -1635,7 +1631,7 @@ export function visitOptionalChainingExpression(
 ): TACOperand {
   const obj = this.visitExpression(node.object);
   const objTemp = this.newTemp(this.getOperandType(obj));
-  this.instructions.push(new CopyInstruction(objTemp, obj));
+  this.emitCopyWithTracking(objTemp, obj);
 
   let resultType: TypeSymbol | undefined;
   if (
@@ -1727,7 +1723,7 @@ export function visitAsExpression(
   ) {
     this.instructions.push(new CastInstruction(result, operand));
   } else {
-    this.instructions.push(new CopyInstruction(result, operand));
+    this.emitCopyWithTracking(result, operand);
   }
   return result;
 }

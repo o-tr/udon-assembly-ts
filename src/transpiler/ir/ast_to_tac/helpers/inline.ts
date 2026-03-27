@@ -115,11 +115,9 @@ export function saveAndBindInlineParams(
     converter.inlineInstanceMap.delete(param.name);
     const arg = args[i];
     if (arg) {
-      converter.instructions.push(
-        new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
-          arg,
-        ),
+      converter.emitCopyWithTracking(
+        createVariable(param.name, param.type, { isParameter: true }),
+        arg,
       );
       const argInfo = argInlineInfos[i];
       if (argInfo) {
@@ -740,6 +738,30 @@ export function maybeTrackInlineInstanceAssignment(
 }
 
 /**
+ * Emit a CopyInstruction and propagate inline instance tracking from src to dest.
+ *
+ * Uses `resolveInlineInstance` (3-step lookup: direct → forward → reverse)
+ * so that tracking survives multi-hop copy chains (return values, parameters,
+ * intermediate variables).
+ */
+export function emitCopyWithTracking(
+  this: ASTToTACConverter,
+  dest: TACOperand,
+  src: TACOperand,
+): void {
+  this.instructions.push(new CopyInstruction(dest, src));
+  if (
+    src.kind === TACOperandKind.Variable &&
+    dest.kind === TACOperandKind.Variable
+  ) {
+    const srcInfo = this.resolveInlineInstance((src as VariableOperand).name);
+    if (srcInfo) {
+      this.inlineInstanceMap.set((dest as VariableOperand).name, srcInfo);
+    }
+  }
+}
+
+/**
  * Look up inline instance info by variable name, bridging raw ↔ export names.
  *
  * Tries three lookups in order:
@@ -1055,7 +1077,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new CopyInstruction(spVar, spTemp));
+  this.emitCopyWithTracking(spVar, spTemp);
 
   // Save each local at stack[SP]
   for (let index = 0; index < context.locals.length; index++) {
@@ -1113,11 +1135,9 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
       new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
     );
     const unwrapped = this.unwrapDataToken(token, local.type);
-    this.instructions.push(
-      new CopyInstruction(
-        createVariable(local.name, local.type, { isLocal: true }),
-        unwrapped,
-      ),
+    this.emitCopyWithTracking(
+      createVariable(local.name, local.type, { isLocal: true }),
+      unwrapped,
     );
   }
 
@@ -1131,7 +1151,7 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new CopyInstruction(spVar, spTemp));
+  this.emitCopyWithTracking(spVar, spTemp);
   this.instructions.push(new UnconditionalJumpInstruction(afterPopLabel));
 
   // Underflow handler: log error and skip restore

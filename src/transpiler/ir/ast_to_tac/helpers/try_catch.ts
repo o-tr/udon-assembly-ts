@@ -4,7 +4,6 @@ import {
   BinaryOpInstruction,
   type CallInstruction,
   ConditionalJumpInstruction,
-  CopyInstruction,
   LabelInstruction,
   type MethodCallInstruction,
   type PropertyGetInstruction,
@@ -53,7 +52,7 @@ export function emitTryInstructionsWithChecks(
         createConstant(true, PrimitiveTypes.boolean),
       ),
     );
-    this.instructions.push(new CopyInstruction(errorValue, checkOperand));
+    this.emitCopyWithTracking(errorValue, checkOperand);
     this.instructions.push(new UnconditionalJumpInstruction(errorTarget));
     this.instructions.push(new LabelInstruction(continueLabel));
   }
