@@ -1504,6 +1504,7 @@ export function visitPropertyAccessExpression(
                   ),
                 );
                 this.instructions.push(
+                  // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
                   new ConditionalJumpInstruction(dispCond, dispNext),
                 );
                 const pv = this.mapInlineProperty(

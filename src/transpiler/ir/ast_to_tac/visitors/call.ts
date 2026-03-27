@@ -1674,7 +1674,12 @@ export function visitCallExpression(
                     if (classNode) {
                       fieldsToCopy = classNode.properties
                         .filter((p) => !p.isStatic)
-                        .map((p) => [p.name, p.type] as [string, TypeSymbol]);
+                        .map((p) => {
+                          const resolvedType = p.type.name
+                            ? (this.typeMapper.getAlias(p.type.name) ?? p.type)
+                            : p.type;
+                          return [p.name, resolvedType] as [string, TypeSymbol];
+                        });
                     }
                   }
                 }
