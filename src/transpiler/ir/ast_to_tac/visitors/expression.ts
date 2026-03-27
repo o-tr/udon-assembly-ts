@@ -665,7 +665,7 @@ export function visitNullCoalescingExpression(
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(notNullLabel));
-  this.instructions.push(new CopyInstruction(result, left));
+  this.instructions.push(new CopyInstruction(result, left)); // Plain copy: see null-path comment above.
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }

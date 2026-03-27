@@ -741,6 +741,12 @@ function operandTrackingKey(op: TACOperand): string | undefined {
   return undefined;
 }
 
+/**
+ * Update inline-instance tracking after an AssignmentInstruction.
+ *
+ * Sets `target`'s mapping when `value` resolves to an inline instance;
+ * **clears** any existing mapping for `target` when it does not.
+ */
 export function maybeTrackInlineInstanceAssignment(
   this: ASTToTACConverter,
   target: VariableOperand,
