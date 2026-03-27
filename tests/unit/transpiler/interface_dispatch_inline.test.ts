@@ -539,4 +539,112 @@ describe("interface dispatch with all-inline implementors", () => {
     // Positive: dispatched result variable is present
     expect(result.tac).toMatch(/__iface_prop_\d+/);
   });
+
+  it("dispatches interface property and method via for-of without EXTERN", () => {
+    const source = `
+      interface IScorer {
+        readonly name: string;
+        getScore(bonus: number): number;
+      }
+      class ScorerA implements IScorer {
+        name: string = "A";
+        getScore(bonus: number): number { return 10 + bonus; }
+      }
+      class ScorerB implements IScorer {
+        name: string = "B";
+        getScore(bonus: number): number { return 20 + bonus; }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const scorers: IScorer[] = [new ScorerA(), new ScorerB()];
+          for (const s of scorers) {
+            Debug.Log(s.name);
+            Debug.Log(s.getScore(5));
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/IScorer\./);
+    // Virtual interface variables should be generated for the for-of dispatch
+    expect(result.tac).toContain("__viface_IScorer");
+    // Concrete property copies present
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerA_\d+_name/,
+    );
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerB_\d+_name/,
+    );
+  });
+
+  it("dispatches interface getter property via classId", () => {
+    const source = `
+      interface ILabeled {
+        get label(): string;
+        get priority(): number;
+      }
+      class LabelA implements ILabeled {
+        get label(): string { return "A"; }
+        get priority(): number { return 1; }
+      }
+      class LabelB implements ILabeled {
+        get label(): string { return "B"; }
+        get priority(): number { return 2; }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const items: ILabeled[] = [new LabelA(), new LabelB()];
+          for (const item of items) {
+            Debug.Log(item.label);
+            Debug.Log(item.priority);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/ILabeled\./);
+    // Getter properties should be registered and dispatched via virtual variables
+    expect(result.tac).toContain("__viface_ILabeled");
+    expect(result.tac).toMatch(/__viface_ILabeled_\d+_label/);
+    expect(result.tac).toMatch(/__viface_ILabeled_\d+_priority/);
+  });
+
+  it("dispatches type alias interface property and method", () => {
+    const source = `
+      type IScorer = {
+        readonly name: string;
+        getScore(bonus: number): number;
+      };
+      class ScorerA implements IScorer {
+        name: string = "A";
+        getScore(bonus: number): number { return 10 + bonus; }
+      }
+      class ScorerB implements IScorer {
+        name: string = "B";
+        getScore(bonus: number): number { return 20 + bonus; }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const scorers: IScorer[] = [new ScorerA(), new ScorerB()];
+          for (const s of scorers) {
+            Debug.Log(s.name);
+            Debug.Log(s.getScore(5));
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(result.uasm).not.toMatch(/IScorer\./);
+    // Virtual interface variables should be generated for the for-of dispatch
+    expect(result.tac).toContain("__viface_IScorer");
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerA_\d+_name/,
+    );
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerB_\d+_name/,
+    );
+  });
 });

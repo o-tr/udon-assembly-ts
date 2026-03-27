@@ -31,6 +31,7 @@ import {
   type WhileStatementNode,
 } from "../../types.js";
 import type { TypeScriptParser } from "../type_script_parser.js";
+import { extractInterfaceMembers } from "./declaration.js";
 
 export function visitNode(
   this: TypeScriptParser,
@@ -282,40 +283,10 @@ export function visitTypeAliasDeclaration(
     return undefined;
   }
 
-  const properties: InterfaceDeclarationNode["properties"] = [];
-  const methods: InterfaceDeclarationNode["methods"] = [];
-  const propertyMap = new Map<string, TypeSymbol>();
-  const methodMap = new Map<
-    string,
-    { params: TypeSymbol[]; returnType: TypeSymbol }
-  >();
-
-  for (const member of node.type.members) {
-    if (ts.isPropertySignature(member)) {
-      const propName = member.name.getText();
-      const propType = member.type
-        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-        : this.mapTypeWithGenerics("object");
-      properties.push({ name: propName, type: propType });
-      propertyMap.set(propName, propType);
-    } else if (ts.isMethodSignature(member)) {
-      const methodName = member.name.getText();
-      const parameters = member.parameters.map((param) => ({
-        name: param.name.getText(),
-        type: param.type
-          ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-          : this.mapTypeWithGenerics("object"),
-      }));
-      const returnType = member.type
-        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-        : this.mapTypeWithGenerics("void");
-      methods.push({ name: methodName, parameters, returnType });
-      methodMap.set(methodName, {
-        params: parameters.map((param) => param.type),
-        returnType,
-      });
-    }
-  }
+  const { properties, methods, propertyMap, methodMap } =
+    extractInterfaceMembers(node.type.members, (text, typeNode) =>
+      this.mapTypeWithGenerics(text, typeNode),
+    );
 
   this.typeMapper.registerTypeAlias(
     name,

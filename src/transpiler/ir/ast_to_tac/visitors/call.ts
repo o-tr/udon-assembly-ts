@@ -64,6 +64,7 @@ import {
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
   resolveClassNode,
+  resolveConcreteClassName,
 } from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
@@ -203,6 +204,9 @@ const emitMapValuesList = (
  * Resolve the inline class name for a property-access method call.
  * Returns the class name if the call target is an inline instance (or an
  * entry-point self-method), otherwise undefined.
+ * When the tracked className is an interface/type alias, resolves to the
+ * concrete implementing class so evaluateArgsWithExpectedTypes can find
+ * the method signature.
  */
 function resolveInlineClassName(
   converter: ASTToTACConverter,
@@ -225,11 +229,14 @@ function resolveInlineClassName(
     }
   }
   if (object.kind === TACOperandKind.Variable) {
-    const instanceInfo = converter.inlineInstanceMap.get(
+    const instanceInfo = converter.resolveInlineInstance(
       (object as VariableOperand).name,
     );
     if (instanceInfo) {
-      return instanceInfo.className;
+      // When className is an interface/type alias, resolve to concrete class
+      // so evaluateArgsWithExpectedTypes can find the method signature.
+      const concrete = resolveConcreteClassName(converter, instanceInfo);
+      return concrete;
     }
   }
   return undefined;
@@ -1498,7 +1505,7 @@ export function visitCallExpression(
     }
     // Inline instance method call: object.method() where object is inline instance
     if (object.kind === TACOperandKind.Variable) {
-      const instanceInfo = this.inlineInstanceMap.get(
+      const instanceInfo = this.resolveInlineInstance(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
@@ -1509,6 +1516,21 @@ export function visitCallExpression(
           evaluatedArgs,
         );
         if (inlineResult != null) return inlineResult;
+
+        // When className is an interface/type alias, resolve to the concrete
+        // class via allInlineInstances and retry. This handles cases where
+        // copy tracking or saveAndBindInlineParams stored the interface name
+        // instead of the concrete class name.
+        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        if (concreteClass !== instanceInfo.className) {
+          const concreteResult = this.visitInlineInstanceMethodCallWithContext(
+            concreteClass,
+            instanceInfo.prefix,
+            propAccess.property,
+            evaluatedArgs,
+          );
+          if (concreteResult != null) return concreteResult;
+        }
 
         // Interface classId-based dispatch: when className is an interface
         // with all-inline implementors, dispatch by classId.

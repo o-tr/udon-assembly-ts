@@ -68,8 +68,38 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
-import { resolveClassProperty } from "../helpers/inline.js";
+import {
+  resolveClassProperty,
+  resolveConcreteClassName,
+} from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
+
+/**
+ * Try to map an inline property, falling back to concrete class resolution
+ * when the className is an interface/type alias.
+ */
+function tryMapInlinePropertyWithConcreteFallback(
+  converter: ASTToTACConverter,
+  instanceInfo: { prefix: string; className: string },
+  property: string,
+): VariableOperand | undefined {
+  const mapped = converter.mapInlineProperty(
+    instanceInfo.className,
+    instanceInfo.prefix,
+    property,
+  );
+  if (mapped) return mapped;
+
+  const concreteClass = resolveConcreteClassName(converter, instanceInfo);
+  if (concreteClass !== instanceInfo.className) {
+    return converter.mapInlineProperty(
+      concreteClass,
+      instanceInfo.prefix,
+      property,
+    );
+  }
+  return undefined;
+}
 
 /**
  * Widen operands to a common promoted numeric type when they differ.
@@ -1292,9 +1322,9 @@ export function visitPropertyAccessExpression(
         (node.object as IdentifierNode).name,
       );
       if (instanceInfo) {
-        const mapped = this.mapInlineProperty(
-          instanceInfo.className,
-          instanceInfo.prefix,
+        const mapped = tryMapInlinePropertyWithConcreteFallback(
+          this,
+          instanceInfo,
           node.property,
         );
         if (mapped) return mapped;
@@ -1339,9 +1369,9 @@ export function visitPropertyAccessExpression(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
-        const mapped = this.mapInlineProperty(
-          instanceInfo.className,
-          instanceInfo.prefix,
+        const mapped = tryMapInlinePropertyWithConcreteFallback(
+          this,
+          instanceInfo,
           node.property,
         );
         if (mapped) return mapped;

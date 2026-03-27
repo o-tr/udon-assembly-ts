@@ -238,44 +238,84 @@ export function visitClassDeclaration(
   return result;
 }
 
-export function visitInterfaceDeclaration(
-  this: TypeScriptParser,
-  node: ts.InterfaceDeclaration,
-): InterfaceDeclarationNode {
-  const name = node.name.text;
-  const properties: InterfaceDeclarationNode["properties"] = [];
+/**
+ * Extract properties and methods from interface/type-literal members.
+ * Handles PropertySignature, MethodSignature, GetAccessorDeclaration,
+ * and SetAccessorDeclaration. Shared by visitInterfaceDeclaration and
+ * visitTypeAliasDeclaration.
+ */
+export function extractInterfaceMembers(
+  members: ts.NodeArray<ts.TypeElement>,
+  mapType: (text: string, node?: ts.TypeNode) => TypeSymbol,
+): {
+  properties: Array<{ name: string; type: TypeSymbol }>;
+  methods: InterfaceDeclarationNode["methods"];
+  propertyMap: Map<string, TypeSymbol>;
+  methodMap: Map<string, { params: TypeSymbol[]; returnType: TypeSymbol }>;
+} {
+  const properties: Array<{ name: string; type: TypeSymbol }> = [];
   const methods: InterfaceDeclarationNode["methods"] = [];
   const propertyMap = new Map<string, TypeSymbol>();
   const methodMap = new Map<
     string,
     { params: TypeSymbol[]; returnType: TypeSymbol }
   >();
-  for (const member of node.members) {
-    if (ts.isPropertySignature(member)) {
+
+  for (const member of members) {
+    if (ts.isPropertySignature(member) || ts.isGetAccessorDeclaration(member)) {
       const propName = member.name.getText();
       const propType = member.type
-        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-        : this.mapTypeWithGenerics("object");
-      properties.push({ name: propName, type: propType });
+        ? mapType(member.type.getText(), member.type)
+        : mapType("object");
+      const existingIdx = properties.findIndex((p) => p.name === propName);
+      if (existingIdx === -1) {
+        properties.push({ name: propName, type: propType });
+      } else {
+        // Getter takes precedence: update the entry pushed by a preceding setter.
+        properties[existingIdx] = { name: propName, type: propType };
+      }
       propertyMap.set(propName, propType);
     } else if (ts.isMethodSignature(member)) {
       const methodName = member.name.getText();
       const parameters = member.parameters.map((param) => ({
         name: param.name.getText(),
         type: param.type
-          ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-          : this.mapTypeWithGenerics("object"),
+          ? mapType(param.type.getText(), param.type)
+          : mapType("object"),
       }));
       const returnType = member.type
-        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-        : this.mapTypeWithGenerics("void");
+        ? mapType(member.type.getText(), member.type)
+        : mapType("void");
       methods.push({ name: methodName, parameters, returnType });
       methodMap.set(methodName, {
         params: parameters.map((param) => param.type),
         returnType,
       });
+    } else if (ts.isSetAccessorDeclaration(member)) {
+      const propName = member.name.getText();
+      const param = member.parameters[0];
+      const propType = param?.type
+        ? mapType(param.type.getText(), param.type)
+        : mapType("object");
+      if (!propertyMap.has(propName)) {
+        properties.push({ name: propName, type: propType });
+        propertyMap.set(propName, propType);
+      }
     }
   }
+
+  return { properties, methods, propertyMap, methodMap };
+}
+
+export function visitInterfaceDeclaration(
+  this: TypeScriptParser,
+  node: ts.InterfaceDeclaration,
+): InterfaceDeclarationNode {
+  const name = node.name.text;
+  const { properties, methods, propertyMap, methodMap } =
+    extractInterfaceMembers(node.members, (text, typeNode) =>
+      this.mapTypeWithGenerics(text, typeNode),
+    );
 
   this.typeMapper.registerTypeAlias(
     name,
