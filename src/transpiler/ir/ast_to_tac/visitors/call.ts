@@ -1643,11 +1643,29 @@ export function visitCallExpression(
                   fieldsToCopy = Array.from(returnType.properties.entries());
                   effectiveClassName = returnType.name;
                 } else {
-                  const classNode = this.classMap.get(inlineMapping.className);
-                  if (classNode) {
-                    fieldsToCopy = classNode.properties
-                      .filter((p) => !p.isStatic)
-                      .map((p) => [p.name, p.type] as [string, TypeSymbol]);
+                  // Use merged class metadata to include inherited properties.
+                  if (this.classRegistry) {
+                    const mergedProps = this.classRegistry.getMergedProperties(
+                      inlineMapping.className,
+                    );
+                    if (mergedProps.length > 0) {
+                      fieldsToCopy = mergedProps.map(
+                        (p) =>
+                          [
+                            p.name,
+                            this.typeMapper.mapTypeScriptType(p.type),
+                          ] as [string, TypeSymbol],
+                      );
+                    }
+                  } else {
+                    const classNode = this.classMap.get(
+                      inlineMapping.className,
+                    );
+                    if (classNode) {
+                      fieldsToCopy = classNode.properties
+                        .filter((p) => !p.isStatic)
+                        .map((p) => [p.name, p.type] as [string, TypeSymbol]);
+                    }
                   }
                 }
 

@@ -243,8 +243,11 @@ export function visitVariableDeclaration(
     ) {
       const prev = this.currentExpectedType;
       this.currentExpectedType = resolvedType;
-      src = this.visitExpression(node.initializer);
-      this.currentExpectedType = prev;
+      try {
+        src = this.visitExpression(node.initializer);
+      } finally {
+        this.currentExpectedType = prev;
+      }
     } else {
       src = this.visitExpression(node.initializer);
     }
@@ -524,7 +527,7 @@ export function visitForOfStatement(
       elementType.name !== ExternTypes.dataToken.name
         ? this.unwrapDataToken(tokenValue, elementType)
         : tokenValue;
-    this.emitCopyWithTracking(elementVar, resolvedValue, false);
+    this.emitCopyWithTracking(elementVar, resolvedValue, true);
   } else {
     this.instructions.push(
       new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
@@ -550,7 +553,7 @@ export function visitForOfStatement(
           createConstant(i, PrimitiveTypes.int32),
         ]),
       );
-      this.emitCopyWithTracking(targetVar, elementValue, false);
+      this.emitCopyWithTracking(targetVar, elementValue, true);
     }
   }
   if (isObjectDestructured && node.destructureProperties) {
@@ -565,7 +568,7 @@ export function visitForOfStatement(
       this.instructions.push(
         new PropertyGetInstruction(propValue, elementVar, entry.property),
       );
-      this.emitCopyWithTracking(targetVar, propValue, false);
+      this.emitCopyWithTracking(targetVar, propValue, true);
     }
   }
   // Interface dispatch: when element type is an interface with all-inline implementors,
@@ -642,7 +645,7 @@ export function visitForOfStatement(
             vifaceType,
           );
           const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
-          this.emitCopyWithTracking(dst, src, false);
+          this.emitCopyWithTracking(dst, src, true);
         }
 
         this.instructions.push(
@@ -757,7 +760,7 @@ export function visitForOfStatement(
 
       // elementVar is Object (from array access); copy to Int32 for comparison
       const handleVar = this.newTemp(PrimitiveTypes.int32);
-      this.emitCopyWithTracking(handleVar, elementVar, false);
+      this.emitCopyWithTracking(handleVar, elementVar, true);
 
       // Reset classId to sentinel so an unmatched instanceId doesn't
       // silently reuse the previous iteration's stale value.
@@ -793,7 +796,7 @@ export function visitForOfStatement(
             `${virtualPrefix}_${prop.name}`,
             vifaceType,
           );
-          this.emitCopyWithTracking(dst, src, false);
+          this.emitCopyWithTracking(dst, src, true);
         }
 
         // Set classId
