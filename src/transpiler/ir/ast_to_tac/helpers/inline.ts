@@ -734,6 +734,9 @@ export function emitEntryPointPropertyInit(
  * Extract the inlineInstanceMap key for an operand, or undefined if the
  * operand kind does not participate in tracking (Constants, Labels).
  */
+// Keys share the inlineInstanceMap namespace. The __tmp prefix is assumed
+// not to collide with user variable names; a collision would only degrade
+// tracking (EXTERN fallback), not produce incorrect code.
 function operandTrackingKey(op: TACOperand): string | undefined {
   if (op.kind === TACOperandKind.Variable) return (op as VariableOperand).name;
   if (op.kind === TACOperandKind.Temporary)
