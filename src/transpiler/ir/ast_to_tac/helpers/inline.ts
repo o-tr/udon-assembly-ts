@@ -1154,13 +1154,16 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
       new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
     );
     const unwrapped = this.unwrapDataToken(token, local.type);
-    // emitCopyWithTracking for consistency across copy sites. Currently a
-    // no-op for tracking (unwrapDataToken returns a fresh temp with no
-    // inlineInstanceMap entry), but future-proofs if serialization later
-    // preserves tracking metadata.
-    this.emitCopyWithTracking(
-      createVariable(local.name, local.type, { isLocal: true }),
-      unwrapped,
+    // Plain copy: must NOT use emitCopyWithTracking here because
+    // unwrapDataToken returns a fresh temp with no tracking info, and
+    // emitCopyWithTracking would clear the local's pre-existing
+    // inlineInstanceMap entry. The local's inline tracking remains valid
+    // across the recursive call since the instance identity is unchanged.
+    this.instructions.push(
+      new CopyInstruction(
+        createVariable(local.name, local.type, { isLocal: true }),
+        unwrapped,
+      ),
     );
   }
 
