@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
@@ -20,6 +21,7 @@ import {
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
+  type ObjectLiteralExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
   type ThrowStatementNode,
@@ -188,13 +190,55 @@ export function visitVariableDeclaration(
   let src: TACOperand | null = null;
 
   if (node.initializer) {
+    let resolvedType = node.type;
     if (
       node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
-      node.type instanceof InterfaceTypeSymbol &&
-      node.type.properties.size > 0
+      !(resolvedType instanceof InterfaceTypeSymbol) &&
+      node.originalTypeName
+    ) {
+      const lateResolved = this.typeMapper.mapTypeScriptType(node.originalTypeName);
+      if (lateResolved instanceof InterfaceTypeSymbol && lateResolved.properties.size > 0) {
+        resolvedType = lateResolved;
+      } else {
+        // For union type aliases (e.g. WinResult = WinResultWin | WinResultNotWin),
+        // find the union member whose properties best match the object literal.
+        const unionParts = this.typeMapper.getUnionParts(node.originalTypeName);
+        if (unionParts) {
+          const initNode = node.initializer as ObjectLiteralExpressionNode;
+          const objKeys = new Set(
+            initNode.properties
+              .filter((p) => p.kind === "property")
+              .map((p) => p.key),
+          );
+          let bestMatch: InterfaceTypeSymbol | undefined;
+          let bestMatchSize = 0;
+          for (const part of unionParts) {
+            const partType = this.typeMapper.mapTypeScriptType(part);
+            if (
+              partType instanceof InterfaceTypeSymbol &&
+              partType.properties.size > 0
+            ) {
+              const partProps = [...partType.properties.keys()];
+              if (
+                partProps.every((k) => objKeys.has(k)) &&
+                partType.properties.size > bestMatchSize
+              ) {
+                bestMatch = partType;
+                bestMatchSize = partType.properties.size;
+              }
+            }
+          }
+          if (bestMatch) resolvedType = bestMatch;
+        }
+      }
+    }
+    if (
+      node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
+      resolvedType instanceof InterfaceTypeSymbol &&
+      resolvedType.properties.size > 0
     ) {
       const prev = this.currentExpectedType;
-      this.currentExpectedType = node.type;
+      this.currentExpectedType = resolvedType;
       src = this.visitExpression(node.initializer);
       this.currentExpectedType = prev;
     } else {
@@ -254,7 +298,11 @@ export function visitVariableDeclaration(
 
   if (src) {
     this.instructions.push(new AssignmentInstruction(dest, src));
-    this.maybeTrackInlineInstanceAssignment(dest, src);
+    // Preserve pre-existing tracking when src is untracked: a local variable
+    // may shadow a same-named parameter/outer-scope variable whose tracking
+    // is still valid (e.g. `const { hand } = context` inside an inlined method
+    // body where `hand` inherits tracking from the enclosing inline expansion).
+    this.maybeTrackInlineInstanceAssignment(dest, src, false);
   }
 }
 
@@ -472,7 +520,7 @@ export function visitForOfStatement(
       elementType.name !== ExternTypes.dataToken.name
         ? this.unwrapDataToken(tokenValue, elementType)
         : tokenValue;
-    this.emitCopyWithTracking(elementVar, resolvedValue);
+    this.emitCopyWithTracking(elementVar, resolvedValue, false);
   } else {
     this.instructions.push(
       new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
@@ -498,7 +546,7 @@ export function visitForOfStatement(
           createConstant(i, PrimitiveTypes.int32),
         ]),
       );
-      this.emitCopyWithTracking(targetVar, elementValue);
+      this.emitCopyWithTracking(targetVar, elementValue, false);
     }
   }
   if (isObjectDestructured && node.destructureProperties) {
@@ -513,7 +561,7 @@ export function visitForOfStatement(
       this.instructions.push(
         new PropertyGetInstruction(propValue, elementVar, entry.property),
       );
-      this.emitCopyWithTracking(targetVar, propValue);
+      this.emitCopyWithTracking(targetVar, propValue, false);
     }
   }
   // Interface dispatch: when element type is an interface with all-inline implementors,
@@ -590,7 +638,7 @@ export function visitForOfStatement(
             vifaceType,
           );
           const dst = createVariable(`${info.prefix}_${prop.name}`, prop.type);
-          this.emitCopyWithTracking(dst, src);
+          this.emitCopyWithTracking(dst, src, false);
         }
 
         this.instructions.push(
@@ -705,7 +753,7 @@ export function visitForOfStatement(
 
       // elementVar is Object (from array access); copy to Int32 for comparison
       const handleVar = this.newTemp(PrimitiveTypes.int32);
-      this.emitCopyWithTracking(handleVar, elementVar);
+      this.emitCopyWithTracking(handleVar, elementVar, false);
 
       // Reset classId to sentinel so an unmatched instanceId doesn't
       // silently reuse the previous iteration's stale value.
@@ -741,7 +789,7 @@ export function visitForOfStatement(
             `${virtualPrefix}_${prop.name}`,
             vifaceType,
           );
-          this.emitCopyWithTracking(dst, src);
+          this.emitCopyWithTracking(dst, src, false);
         }
 
         // Set classId
@@ -975,12 +1023,44 @@ export function visitReturnStatement(
   // return values (e.g. `return { value: 42, ok: true }`) are recognised as
   // type-alias inline instances by visitObjectLiteralExpression.
   const prevExpectedType = this.currentExpectedType;
-  if (
-    inlineContext &&
-    node.value &&
-    inlineContext.returnVar.type instanceof InterfaceTypeSymbol
-  ) {
-    this.currentExpectedType = inlineContext.returnVar.type;
+  if (inlineContext && node.value) {
+    const retType = inlineContext.returnVar.type;
+    if (retType instanceof InterfaceTypeSymbol) {
+      this.currentExpectedType = retType;
+    } else if (
+      node.value.kind === ASTNodeKind.ObjectLiteralExpression &&
+      retType.name !== ObjectType.name
+    ) {
+      // Union return type (e.g. WinResult): try to find the matching union member
+      const unionParts = this.typeMapper.getUnionParts(retType.name);
+      if (unionParts) {
+        const initNode = node.value as ObjectLiteralExpressionNode;
+        const objKeys = new Set(
+          initNode.properties
+            .filter((p) => p.kind === "property")
+            .map((p) => p.key),
+        );
+        let bestMatch: InterfaceTypeSymbol | undefined;
+        let bestMatchSize = 0;
+        for (const part of unionParts) {
+          const partType = this.typeMapper.mapTypeScriptType(part);
+          if (
+            partType instanceof InterfaceTypeSymbol &&
+            partType.properties.size > 0
+          ) {
+            const partProps = [...partType.properties.keys()];
+            if (
+              partProps.every((k) => objKeys.has(k)) &&
+              partType.properties.size > bestMatchSize
+            ) {
+              bestMatch = partType;
+              bestMatchSize = partType.properties.size;
+            }
+          }
+        }
+        if (bestMatch) this.currentExpectedType = bestMatch;
+      }
+    }
   }
   let value: TACOperand | undefined;
   try {
@@ -1050,6 +1130,58 @@ export function visitReturnStatement(
       value?.kind === TACOperandKind.Variable
         ? this.inlineInstanceMap.get((value as VariableOperand).name)
         : undefined;
+
+    // When the method declares an InterfaceTypeSymbol or inline ClassTypeSymbol
+    // return type, copy each field from the returned instance to a stable
+    // per-call-site prefix so that multiple return paths (which produce
+    // different instance prefixes) still leave the caller with a trackable,
+    // uniform prefix.
+    const returnInstancePrefix = inlineContext.returnInstancePrefix;
+    if (returnInstancePrefix && value && valueMapping) {
+      const returnType = inlineContext.returnVar.type;
+      let fieldsToCopy: Array<[string, TypeSymbol]> | null = null;
+
+      if (
+        returnType instanceof InterfaceTypeSymbol &&
+        returnType.properties.size > 0 &&
+        valueMapping.className === returnType.name
+      ) {
+        fieldsToCopy = Array.from(returnType.properties.entries());
+      } else {
+        const classNode = this.classMap.get(valueMapping.className);
+        if (classNode) {
+          fieldsToCopy = classNode.properties
+            .filter((p) => !p.isStatic)
+            .map((p) => [p.name, p.type] as [string, TypeSymbol]);
+        }
+      }
+
+      if (fieldsToCopy && fieldsToCopy.length > 0) {
+        for (const [propName, propType] of fieldsToCopy) {
+          const srcField = createVariable(
+            `${valueMapping.prefix}_${propName}`,
+            propType,
+          );
+          const dstField = createVariable(
+            `${returnInstancePrefix}_${propName}`,
+            propType,
+          );
+          this.instructions.push(new CopyInstruction(dstField, srcField));
+        }
+        this.instructions.push(
+          new CopyInstruction(inlineContext.returnVar, value),
+        );
+        this.inlineInstanceMap.set(inlineContext.returnVar.name, {
+          prefix: returnInstancePrefix,
+          className: valueMapping.className,
+        });
+        this.instructions.push(
+          new UnconditionalJumpInstruction(inlineContext.returnLabel),
+        );
+        return;
+      }
+    }
+
     if (value) {
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, value),

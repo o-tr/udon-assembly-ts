@@ -302,9 +302,10 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.uasm).not.toMatch(/Vec\.__get_/);
   });
 
-  it("invalidates tracking when branches return different inline instances", () => {
-    // Different branches create different inline instances — tracking must
-    // be invalidated to prevent incorrect property resolution.
+  it("preserves tracking when branches return different inline instances of the same type", () => {
+    // Different branches create different inline instances, but both are the
+    // same interface type. Fields are copied to a stable per-call-site prefix
+    // so the caller can still resolve properties without EXTERN.
     const source = `
       type Pair = { a: number; b: number };
       class Logic {
@@ -321,8 +322,8 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    // Tracking is intentionally invalidated — EXTERN fallback is correct
-    expect(result.uasm).toMatch(/Pair\.__get_/);
+    // Fields are copied to a unified return prefix — no EXTERN needed
+    expect(result.uasm).not.toMatch(/Pair\.__get_/);
   });
 
   it("preserves tracking when single return path is used", () => {
@@ -347,10 +348,10 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.uasm).not.toMatch(/Pair\.__get_/);
   });
 
-  it("does not track ternary result when branches produce different inline instances", () => {
+  it("dispatches by handle when ternary branches produce different inline instances", () => {
     // Ternary writes a shared result temp from two diverging branches.
-    // Tracking must not be set — otherwise property access resolves
-    // against the wrong branch's prefix at runtime.
+    // Tracking is not set for the result, but handle-based dispatch is
+    // generated to correctly select the right instance at runtime.
     const source = `
       type Pt = { x: number };
       class A {
@@ -368,7 +369,8 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    // Ternary tracking is intentionally suppressed — EXTERN fallback is safe
-    expect(result.uasm).toMatch(/Pt\.__get_/);
+    // Handle-based dispatch should be generated (no Pt.__get_ extern needed)
+    expect(result.uasm).not.toMatch(/Pt\.__get_/);
+    expect(result.uasm).toMatch(/uninst_prop_next/);
   });
 });

@@ -1623,22 +1623,73 @@ export function visitCallExpression(
                       (inlineRes as VariableOperand).name,
                     )
                   : undefined;
+              // When the return type is a known InterfaceTypeSymbol or inline
+              // class and this branch returned a tracked instance of that type,
+              // copy each field to a stable per-call-site prefix
+              // (result.name_fieldName). This allows the caller to track the
+              // result uniformly even when different dispatch branches produce
+              // different concrete prefixes.
               if (inlineMapping) {
-                if (resultInlineMapping === undefined) {
-                  resultInlineMapping = inlineMapping;
-                } else if (
-                  resultInlineMapping &&
-                  (resultInlineMapping.prefix !== inlineMapping.prefix ||
-                    resultInlineMapping.className !== inlineMapping.className)
+                let fieldsToCopy: Array<[string, TypeSymbol]> | null = null;
+                if (
+                  returnType instanceof InterfaceTypeSymbol &&
+                  returnType.properties.size > 0 &&
+                  inlineMapping.className === returnType.name
                 ) {
-                  // Different branches return different concrete prefixes —
-                  // we can't merge them into a single tracking entry.
-                  // Known limitation: chained calls on the return value
-                  // (e.g. item.getChild().doWork()) will fall through to the
-                  // generic path if getChild() returns a freshly-constructed
-                  // inline instance. The for-of loop variable itself is
-                  // unaffected because it dispatches via classId.
+                  fieldsToCopy = Array.from(returnType.properties.entries());
+                } else {
+                  const classNode = this.classMap.get(inlineMapping.className);
+                  if (classNode) {
+                    fieldsToCopy = classNode.properties
+                      .filter((p) => !p.isStatic)
+                      .map((p) => [p.name, p.type] as [string, TypeSymbol]);
+                  }
+                }
+
+                if (
+                  fieldsToCopy &&
+                  fieldsToCopy.length > 0 &&
+                  // All branches must agree on className to use unified prefix.
+                  (resultInlineMapping === undefined ||
+                    (resultInlineMapping !== null &&
+                      resultInlineMapping.className === inlineMapping.className))
+                ) {
+                  for (const [propName, propType] of fieldsToCopy) {
+                    const srcField = createVariable(
+                      `${inlineMapping.prefix}_${propName}`,
+                      propType,
+                    );
+                    const dstField = createVariable(
+                      `${result.name}_${propName}`,
+                      propType,
+                    );
+                    this.instructions.push(new CopyInstruction(dstField, srcField));
+                  }
+                  resultInlineMapping = {
+                    prefix: result.name,
+                    className: inlineMapping.className,
+                  };
+                } else if (fieldsToCopy && fieldsToCopy.length > 0) {
+                  // className mismatch across branches — invalidate
                   resultInlineMapping = null;
+                } else {
+                  // No fields to copy — fall back to simple prefix merging.
+                  if (resultInlineMapping === undefined) {
+                    resultInlineMapping = inlineMapping;
+                  } else if (
+                    resultInlineMapping &&
+                    (resultInlineMapping.prefix !== inlineMapping.prefix ||
+                      resultInlineMapping.className !== inlineMapping.className)
+                  ) {
+                    // Different branches return different concrete prefixes —
+                    // we can't merge them into a single tracking entry.
+                    // Known limitation: chained calls on the return value
+                    // (e.g. item.getChild().doWork()) will fall through to the
+                    // generic path if getChild() returns a freshly-constructed
+                    // inline instance. The for-of loop variable itself is
+                    // unaffected because it dispatches via classId.
+                    resultInlineMapping = null;
+                  }
                 }
               } else {
                 resultInlineMapping = null;

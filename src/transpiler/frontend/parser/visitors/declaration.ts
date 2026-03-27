@@ -379,8 +379,11 @@ export function visitPropertyDeclaration(
   const name = node.name.getText();
 
   let type: TypeSymbol = this.mapTypeWithGenerics("number");
+  let originalTypeName: string | undefined;
   if (node.type) {
-    type = this.mapTypeWithGenerics(node.type.getText(), node.type);
+    const typeText = node.type.getText();
+    type = this.mapTypeWithGenerics(typeText, node.type);
+    originalTypeName = typeText;
   } else if (node.initializer) {
     type = this.inferType(node.initializer);
   }
@@ -440,6 +443,7 @@ export function visitPropertyDeclaration(
     kind: ASTNodeKind.PropertyDeclaration,
     name,
     type,
+    originalTypeName,
     initializer,
     isPublic,
     isStatic,
@@ -471,8 +475,9 @@ export function visitMethodDeclaration(
     return { name: paramName, type: paramType };
   });
 
-  const returnType = node.type
-    ? this.mapTypeWithGenerics(node.type.getText(), node.type)
+  const returnTypeText = node.type ? node.type.getText() : undefined;
+  const returnType = returnTypeText
+    ? this.mapTypeWithGenerics(returnTypeText, node.type!)
     : this.mapTypeWithGenerics("void");
 
   const body = this.visitBlock(node.body);
@@ -503,6 +508,7 @@ export function visitMethodDeclaration(
     name,
     parameters,
     returnType,
+    originalReturnTypeName: returnTypeText,
     body,
     isPublic,
     isStatic,
