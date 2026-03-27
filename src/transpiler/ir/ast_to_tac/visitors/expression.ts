@@ -1564,7 +1564,12 @@ export function visitObjectLiteralExpression(
     });
     for (const prop of node.properties) {
       if (prop.kind !== "property") continue;
-      const propType = expected.properties.get(prop.key);
+      const rawPropType = expected.properties.get(prop.key);
+      // Re-resolve through typeMapper in case the property type was registered
+      // before its type alias (e.g. Wind) was defined (parse-order issue).
+      const propType = rawPropType?.name
+        ? (this.typeMapper.getAlias(rawPropType.name) ?? rawPropType)
+        : rawPropType;
       const propVar = createVariable(
         `${instancePrefix}_${prop.key}`,
         propType ?? ObjectType,

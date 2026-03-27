@@ -394,7 +394,7 @@ export class BatchTranspiler {
         udonBehaviourClasses,
         udonBehaviourLayouts,
         registry,
-        { useStringBuilder: options.useStringBuilder },
+        { useStringBuilder: options.useStringBuilder, typeMapper: parser.typeMapper },
       );
       let tacInstructions = tacConverter.convert(methodProgram);
       if (options?.verbose) {
@@ -687,7 +687,7 @@ export class BatchTranspiler {
       udonBehaviourClasses,
       udonBehaviourLayouts,
       registry,
-      { useStringBuilder },
+      { useStringBuilder, typeMapper: parser.typeMapper },
     );
     let tacInstructions = tacConverter.convert(methodProgram);
 
