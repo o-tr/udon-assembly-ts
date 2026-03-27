@@ -638,7 +638,7 @@ export function visitConditionalExpression(
 
   this.instructions.push(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
-  this.instructions.push(new CopyInstruction(result, falseVal));
+  this.instructions.push(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
