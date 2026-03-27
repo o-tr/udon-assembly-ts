@@ -1514,6 +1514,10 @@ export function visitPropertyAccessExpression(
                 if (pv) {
                   this.emitCopyWithTracking(dispResult, pv);
                 }
+                // If pv is undefined here it means mapInlineProperty failed for
+                // this instance. This should not happen: all entries in
+                // dispInstances share the same className (enforced by the filter
+                // above), so every instance must expose the same property set.
                 this.instructions.push(
                   new UnconditionalJumpInstruction(dispEnd),
                 );
