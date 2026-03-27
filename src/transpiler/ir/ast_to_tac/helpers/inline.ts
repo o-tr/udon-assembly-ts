@@ -737,7 +737,7 @@ export function emitEntryPointPropertyInit(
 function operandTrackingKey(op: TACOperand): string | undefined {
   if (op.kind === TACOperandKind.Variable) return (op as VariableOperand).name;
   if (op.kind === TACOperandKind.Temporary)
-    return `t${(op as TemporaryOperand).id}`;
+    return `__tmp${(op as TemporaryOperand).id}`;
   return undefined;
 }
 
