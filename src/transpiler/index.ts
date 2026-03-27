@@ -128,7 +128,7 @@ export class TypeScriptToUdonTranspiler {
       udonBehaviourClasses,
       udonBehaviourLayouts,
       registry,
-      { useStringBuilder: options.useStringBuilder },
+      { useStringBuilder: options.useStringBuilder, typeMapper: parser.typeMapper },
     );
     let tacInstructions = tacConverter.convert(program);
 

@@ -1158,13 +1158,6 @@ export function visitReturnStatement(
       ) {
         fieldsToCopy = Array.from(returnType.properties.entries());
         effectiveClassName = returnType.name;
-      } else {
-        const classNode = this.classMap.get(valueMapping.className);
-        if (classNode) {
-          fieldsToCopy = classNode.properties
-            .filter((p) => !p.isStatic)
-            .map((p) => [p.name, p.type] as [string, TypeSymbol]);
-        }
       }
 
       if (fieldsToCopy && fieldsToCopy.length > 0) {
