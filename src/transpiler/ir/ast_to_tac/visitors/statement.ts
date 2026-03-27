@@ -1156,7 +1156,13 @@ export function visitReturnStatement(
         returnType instanceof InterfaceTypeSymbol &&
         returnType.properties.size > 0
       ) {
-        fieldsToCopy = Array.from(returnType.properties.entries());
+        fieldsToCopy = Array.from(returnType.properties.entries()).map(
+          ([name, sym]) =>
+            [
+              name,
+              sym.name ? (this.typeMapper.getAlias(sym.name) ?? sym) : sym,
+            ] as [string, TypeSymbol],
+        );
         effectiveClassName = returnType.name;
       }
 
