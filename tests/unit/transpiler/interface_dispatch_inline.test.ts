@@ -567,6 +567,15 @@ describe("interface dispatch with all-inline implementors", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     expect(result.uasm).not.toMatch(/IScorer\./);
+    // Virtual interface variables should be generated for the for-of dispatch
+    expect(result.tac).toContain("__viface_IScorer");
+    // Concrete property copies present
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerA_\d+_name/,
+    );
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerB_\d+_name/,
+    );
   });
 
   it("dispatches interface getter property via classId", () => {
@@ -596,6 +605,10 @@ describe("interface dispatch with all-inline implementors", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     expect(result.uasm).not.toMatch(/ILabeled\./);
+    // Getter properties should be registered and dispatched via virtual variables
+    expect(result.tac).toContain("__viface_ILabeled");
+    expect(result.tac).toMatch(/__viface_ILabeled_\d+_label/);
+    expect(result.tac).toMatch(/__viface_ILabeled_\d+_priority/);
   });
 
   it("dispatches type alias interface property and method", () => {
@@ -625,5 +638,13 @@ describe("interface dispatch with all-inline implementors", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     expect(result.uasm).not.toMatch(/IScorer\./);
+    // Virtual interface variables should be generated for the for-of dispatch
+    expect(result.tac).toContain("__viface_IScorer");
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerA_\d+_name/,
+    );
+    expect(result.tac).toMatch(
+      /__viface_IScorer_\d+_name = __inst_ScorerB_\d+_name/,
+    );
   });
 });

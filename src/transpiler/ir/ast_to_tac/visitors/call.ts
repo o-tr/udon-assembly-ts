@@ -204,6 +204,9 @@ const emitMapValuesList = (
  * Resolve the inline class name for a property-access method call.
  * Returns the class name if the call target is an inline instance (or an
  * entry-point self-method), otherwise undefined.
+ * When the tracked className is an interface/type alias, resolves to the
+ * concrete implementing class so evaluateArgsWithExpectedTypes can find
+ * the method signature.
  */
 function resolveInlineClassName(
   converter: ASTToTACConverter,
@@ -226,11 +229,14 @@ function resolveInlineClassName(
     }
   }
   if (object.kind === TACOperandKind.Variable) {
-    const instanceInfo = converter.inlineInstanceMap.get(
+    const instanceInfo = converter.resolveInlineInstance(
       (object as VariableOperand).name,
     );
     if (instanceInfo) {
-      return instanceInfo.className;
+      // When className is an interface/type alias, resolve to concrete class
+      // so evaluateArgsWithExpectedTypes can find the method signature.
+      const concrete = resolveConcreteClassName(converter, instanceInfo);
+      return concrete;
     }
   }
   return undefined;

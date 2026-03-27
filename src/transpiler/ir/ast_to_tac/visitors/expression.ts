@@ -75,6 +75,33 @@ import {
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
+ * Try to map an inline property, falling back to concrete class resolution
+ * when the className is an interface/type alias.
+ */
+function tryMapInlinePropertyWithConcreteFallback(
+  converter: ASTToTACConverter,
+  instanceInfo: { prefix: string; className: string },
+  property: string,
+): VariableOperand | undefined {
+  const mapped = converter.mapInlineProperty(
+    instanceInfo.className,
+    instanceInfo.prefix,
+    property,
+  );
+  if (mapped) return mapped;
+
+  const concreteClass = resolveConcreteClassName(converter, instanceInfo);
+  if (concreteClass !== instanceInfo.className) {
+    return converter.mapInlineProperty(
+      concreteClass,
+      instanceInfo.prefix,
+      property,
+    );
+  }
+  return undefined;
+}
+
+/**
  * Widen operands to a common promoted numeric type when they differ.
  * Returns the (possibly widened) operands.
  */
@@ -1295,22 +1322,12 @@ export function visitPropertyAccessExpression(
         (node.object as IdentifierNode).name,
       );
       if (instanceInfo) {
-        const mapped = this.mapInlineProperty(
-          instanceInfo.className,
-          instanceInfo.prefix,
+        const mapped = tryMapInlinePropertyWithConcreteFallback(
+          this,
+          instanceInfo,
           node.property,
         );
         if (mapped) return mapped;
-
-        const concreteClass = resolveConcreteClassName(this, instanceInfo);
-        if (concreteClass !== instanceInfo.className) {
-          const concreteMapped = this.mapInlineProperty(
-            concreteClass,
-            instanceInfo.prefix,
-            node.property,
-          );
-          if (concreteMapped) return concreteMapped;
-        }
       }
     }
 
@@ -1352,24 +1369,12 @@ export function visitPropertyAccessExpression(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
-        const mapped = this.mapInlineProperty(
-          instanceInfo.className,
-          instanceInfo.prefix,
+        const mapped = tryMapInlinePropertyWithConcreteFallback(
+          this,
+          instanceInfo,
           node.property,
         );
         if (mapped) return mapped;
-
-        // When className is an interface/type alias, resolve to the concrete
-        // class via allInlineInstances and retry property mapping.
-        const concreteClass = resolveConcreteClassName(this, instanceInfo);
-        if (concreteClass !== instanceInfo.className) {
-          const concreteMapped = this.mapInlineProperty(
-            concreteClass,
-            instanceInfo.prefix,
-            node.property,
-          );
-          if (concreteMapped) return concreteMapped;
-        }
 
         // Interface classId-based property dispatch: when the interface-level
         // mapInlineProperty fails (e.g. property not in interface metadata),

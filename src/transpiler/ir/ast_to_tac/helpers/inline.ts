@@ -815,7 +815,10 @@ export function resolveConcreteClassName(
     return instanceInfo.className;
   }
   for (const [, info] of converter.allInlineInstances) {
-    if (info.prefix === instanceInfo.prefix) {
+    if (
+      info.prefix === instanceInfo.prefix &&
+      resolveClassNode(converter, info.className)
+    ) {
       return info.className;
     }
   }
