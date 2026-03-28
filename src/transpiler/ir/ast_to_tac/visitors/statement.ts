@@ -718,7 +718,14 @@ export function visitForOfStatement(
         }
       }
 
-      if (relevantInstances.length > 0) {
+      if (relevantInstances.length === 0) {
+        // classIds exists (from pre-seeding or prior constructors) but no
+        // matching inline instances — indicates a registration mismatch.
+        throw new Error(
+          `Interface "${ifaceName}" has classIds but no relevant inline instances. ` +
+            `Check that allInlineInstances is populated correctly.`,
+        );
+      }
       // instanceCounter is shared with concrete instances (__inst_*) — the
       // __viface_ prefix prevents name collisions while keeping IDs unique.
       const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
@@ -820,7 +827,6 @@ export function visitForOfStatement(
       vifaceHandleVar = handleVar;
       vifaceInterfaceName = ifaceName;
       vifaceRelevantInstances = relevantInstances;
-      } // if (relevantInstances.length > 0)
       } // else (classIds exists)
     }
   }
