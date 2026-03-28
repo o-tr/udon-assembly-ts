@@ -701,139 +701,137 @@ export function visitForOfStatement(
         this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
       const implementorNames = new Set(implementors.map((impl) => impl.name));
       const classIds = this.interfaceClassIdMap.get(ifaceName);
-      if (!classIds) {
-        // classIds is populated lazily by visitInlineConstructor. If the
-        // for-of loop appears before any constructor call for this
-        // interface's implementors, the dispatch cannot be generated and
-        // method calls would silently become no-ops at runtime. Fail hard.
-        throw new Error(
-          `Interface "${ifaceName}" has all-inline implementors but no classId map was found. ` +
-            `Inline constructors must be visited before the for-of loop.`,
-        );
-      }
-      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
-      // outer ifaceMeta check at line 624 and the throw at line 640).
-      const relevantInstances: Array<
-        [number, { prefix: string; className: string }]
-      > = [];
-      for (const [id, info] of this.allInlineInstances) {
-        if (implementorNames.has(info.className)) {
-          relevantInstances.push([id, info]);
-        }
-      }
-
-      // Only emit dispatch when there are known instances to dispatch to.
-      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
-      // throw above and the outer ifaceMeta check at line 624).
-      if (relevantInstances.length === 0) {
-        // classIds exists (constructors were visited) but no instances found
-        // in allInlineInstances — indicates a registration mismatch.
-        throw new Error(
-          `Interface "${ifaceName}" has classIds but no relevant inline instances. ` +
-            `Check that allInlineInstances is populated before the for-of loop.`,
-        );
-      }
-      // instanceCounter is shared with concrete instances (__inst_*) — the
-      // __viface_ prefix prevents name collisions while keeping IDs unique.
-      const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
-      const classIdVar = createVariable(
-        `${virtualPrefix}__classId`,
-        PrimitiveTypes.int32,
-      );
-      const dispatchEndLabel = this.newLabel("viface_end");
-
-      // Build a unified type map for virtual-prefix variables: when
-      // implementors declare the same private field name with different
-      // types, fall back to ObjectType so the TAC remains type-consistent.
-      vifaceFieldTypes = new Map<string, TypeSymbol>();
-      for (const [, info] of relevantInstances) {
-        const props = getAllClassProps(info.className);
-        for (const prop of props) {
-          const existing = vifaceFieldTypes.get(prop.name);
-          if (!existing) {
-            vifaceFieldTypes.set(prop.name, prop.type);
-          } else if (existing.name !== prop.type.name) {
-            vifaceFieldTypes.set(prop.name, ObjectType);
+      // classIds is populated lazily by visitInlineConstructor.
+      // In pass 1 (pre-seeding) a for-of may be compiled before any
+      // constructor for this interface — skip viface dispatch and fall
+      // through to generic handling.  Pass 2 will have classIds pre-seeded
+      // from pass 1 and will generate the correct dispatch.
+      if (classIds) {
+        const relevantInstances: Array<
+          [number, { prefix: string; className: string }]
+        > = [];
+        for (const [id, info] of this.allInlineInstances) {
+          if (implementorNames.has(info.className)) {
+            relevantInstances.push([id, info]);
           }
         }
-      }
 
-      // elementVar is Object (from array access); copy to Int32 for comparison
-      const handleVar = this.newTemp(PrimitiveTypes.int32);
-      this.emitCopyWithTracking(handleVar, elementVar, true);
-
-      // Reset classId to sentinel so an unmatched instanceId doesn't
-      // silently reuse the previous iteration's stale value.
-      this.instructions.push(
-        new AssignmentInstruction(
-          classIdVar,
-          createConstant(-1, PrimitiveTypes.int32),
-        ),
-      );
-
-      // Generate instanceId-based if-else dispatch
-      for (const [instanceId, info] of relevantInstances) {
-        const nextLabel = this.newLabel("viface_next");
-        const cond = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
-          new BinaryOpInstruction(
-            cond,
-            handleVar,
-            "==",
-            createConstant(instanceId, PrimitiveTypes.int32),
-          ),
-        );
-        this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
-
-        // Copy all class properties (including inherited) to virtual variables
-        // so inlined method bodies can access private/internal/inherited fields.
-        // Virtual variable types are unified via vifaceFieldTypes above.
-        const propsToCopy = getAllClassProps(info.className);
-        for (const prop of propsToCopy) {
-          const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;
-          const src = createVariable(`${info.prefix}_${prop.name}`, prop.type);
-          const dst = createVariable(
-            `${virtualPrefix}_${prop.name}`,
-            vifaceType,
-          );
-          this.emitCopyWithTracking(dst, src, true);
-        }
-
-        // Set classId
-        // classId should always be defined: every class in allInlineInstances
-        // went through visitInlineConstructor, which populates interfaceClassIdMap.
-        const classId = classIds.get(info.className);
-        if (classId === undefined) {
+        if (relevantInstances.length === 0) {
+          // classIds exists (from pre-seeding or prior constructors) but no
+          // matching inline instances — indicates a registration mismatch.
           throw new Error(
-            `[viface dispatch] classId missing for "${info.className}" in interface "${ifaceName}". ` +
-              `This indicates a mismatch between allInlineInstances and interfaceClassIdMap.`,
+            `Interface "${ifaceName}" has classIds but no relevant inline instances. ` +
+              `Check that allInlineInstances is populated correctly.`,
           );
         }
+        // Use vifaceCounter (not instanceCounter) so the viface block in pass 2
+        // does not shift instanceCounter relative to pass 1, which would make
+        // pre-seeded allInlineInstances prefixes point to non-existent variables.
+        const virtualPrefix = `__viface_${ifaceName}_${this.vifaceCounter++}`;
+        const classIdVar = createVariable(
+          `${virtualPrefix}__classId`,
+          PrimitiveTypes.int32,
+        );
+        const dispatchEndLabel = this.newLabel("viface_end");
+
+        // Build a unified type map for virtual-prefix variables: when
+        // implementors declare the same private field name with different
+        // types, fall back to ObjectType so the TAC remains type-consistent.
+        vifaceFieldTypes = new Map<string, TypeSymbol>();
+        for (const [, info] of relevantInstances) {
+          const props = getAllClassProps(info.className);
+          for (const prop of props) {
+            const existing = vifaceFieldTypes.get(prop.name);
+            if (!existing) {
+              vifaceFieldTypes.set(prop.name, prop.type);
+            } else if (existing.name !== prop.type.name) {
+              vifaceFieldTypes.set(prop.name, ObjectType);
+            }
+          }
+        }
+
+        // elementVar is Object (from array access); copy to Int32 for comparison
+        const handleVar = this.newTemp(PrimitiveTypes.int32);
+        this.emitCopyWithTracking(handleVar, elementVar, true);
+
+        // Reset classId to sentinel so an unmatched instanceId doesn't
+        // silently reuse the previous iteration's stale value.
         this.instructions.push(
           new AssignmentInstruction(
             classIdVar,
-            createConstant(classId, PrimitiveTypes.int32),
+            createConstant(-1, PrimitiveTypes.int32),
           ),
         );
 
-        this.instructions.push(
-          new UnconditionalJumpInstruction(dispatchEndLabel),
-        );
-        this.instructions.push(new LabelInstruction(nextLabel));
-      }
-      this.instructions.push(new LabelInstruction(dispatchEndLabel));
+        // Generate instanceId-based if-else dispatch
+        for (const [instanceId, info] of relevantInstances) {
+          const nextLabel = this.newLabel("viface_next");
+          const cond = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(
+              cond,
+              handleVar,
+              "==",
+              createConstant(instanceId, PrimitiveTypes.int32),
+            ),
+          );
+          this.instructions.push(
+            new ConditionalJumpInstruction(cond, nextLabel),
+          );
 
-      // Register virtual prefix in inlineInstanceMap for the loop variable
-      savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
-      this.inlineInstanceMap.set(variableName, {
-        prefix: virtualPrefix,
-        className: ifaceName,
-      });
+          // Copy all class properties (including inherited) to virtual variables
+          // so inlined method bodies can access private/internal/inherited fields.
+          // Virtual variable types are unified via vifaceFieldTypes above.
+          const propsToCopy = getAllClassProps(info.className);
+          for (const prop of propsToCopy) {
+            const vifaceType = vifaceFieldTypes.get(prop.name) ?? prop.type;
+            const src = createVariable(
+              `${info.prefix}_${prop.name}`,
+              prop.type,
+            );
+            const dst = createVariable(
+              `${virtualPrefix}_${prop.name}`,
+              vifaceType,
+            );
+            this.emitCopyWithTracking(dst, src, true);
+          }
 
-      vifacePrefix = virtualPrefix;
-      vifaceHandleVar = handleVar;
-      vifaceInterfaceName = ifaceName;
-      vifaceRelevantInstances = relevantInstances;
+          // Set classId
+          // classId should always be defined: every class in allInlineInstances
+          // went through visitInlineConstructor, which populates interfaceClassIdMap.
+          const classId = classIds.get(info.className);
+          if (classId === undefined) {
+            throw new Error(
+              `[viface dispatch] classId missing for "${info.className}" in interface "${ifaceName}". ` +
+                `This indicates a mismatch between allInlineInstances and interfaceClassIdMap.`,
+            );
+          }
+          this.instructions.push(
+            new AssignmentInstruction(
+              classIdVar,
+              createConstant(classId, PrimitiveTypes.int32),
+            ),
+          );
+
+          this.instructions.push(
+            new UnconditionalJumpInstruction(dispatchEndLabel),
+          );
+          this.instructions.push(new LabelInstruction(nextLabel));
+        }
+        this.instructions.push(new LabelInstruction(dispatchEndLabel));
+
+        // Register virtual prefix in inlineInstanceMap for the loop variable
+        savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
+        this.inlineInstanceMap.set(variableName, {
+          prefix: virtualPrefix,
+          className: ifaceName,
+        });
+
+        vifacePrefix = virtualPrefix;
+        vifaceHandleVar = handleVar;
+        vifaceInterfaceName = ifaceName;
+        vifaceRelevantInstances = relevantInstances;
+      } // if (classIds)
     }
   }
 

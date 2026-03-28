@@ -85,6 +85,7 @@ import {
 import {
   emitOnDeserializationForFieldChangeCallbacks,
   getUdonBehaviourLayout,
+  isAllInlineInterface,
   isUdonBehaviourPropertyAccess,
   isUdonBehaviourType,
   resolveFieldChangeCallback,
@@ -150,6 +151,9 @@ export class ASTToTACConverter {
   tempCounter = 0;
   labelCounter = 0;
   instanceCounter = 0;
+  /** Separate counter for __viface_ prefixes so it never shifts instanceCounter
+   *  between pass 1 and pass 2 (viface blocks fire in pass 2 but not pass 1). */
+  vifaceCounter = 0;
   useStringBuilder = true;
   stringBuilderThreshold = 6;
   symbolTable: SymbolTable;
@@ -216,10 +220,16 @@ export class ASTToTACConverter {
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
   nextInstanceId = 1;
+  /** Cache for getImplementorsOfInterface results in expression.ts dispatch.
+   *  Keyed by interface name; value is Set<implementor class name> or null when
+   *  classRegistry is absent. Reset per pass so stale entries don't survive. */
+  implementorNamesCache: Map<string, Set<string> | null> = new Map();
   /** Cache for isAllInlineInterface results to avoid O(N) rescans.
-   *  Valid under the single-pass invariant: all classes are registered in
-   *  ClassRegistry before convert() runs. If multi-pass/incremental compilation
-   *  ever calls register() during conversion, this cache must be cleared. */
+   *  The cache is reset in resetState() before each pass, so it is always
+   *  valid within a single pass. ClassRegistry does not change between passes,
+   *  so results are identical across passes.
+   *  If incremental compilation ever calls register() during convertImpl(),
+   *  this cache must be cleared. */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
@@ -296,19 +306,22 @@ export class ASTToTACConverter {
   }
 
   /**
-   * Convert program to TAC
+   * Reset all mutable compilation state (but not constructor args or typeMapper).
+   * Called before each compilation pass.
    */
-  convert(program: ProgramNode): TACInstruction[] {
+  private resetState(): void {
     this.instructions = [];
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.instanceCounter = 0;
+    this.vifaceCounter = 0;
     this.classMap = new Map();
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
+    this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
     this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];
@@ -319,7 +332,66 @@ export class ASTToTACConverter {
     this.recursiveReturnSites = new Map();
     this.currentParamExportMap = new Map();
     this.currentParamExportReverseMap = new Map();
+    this.tryCounter = 0;
+    // Defensive: these stacks are always balanced for non-throwing execution,
+    // but reset them so that any unexpected exception in pass 1 can't leak
+    // context into pass 2.
+    this.loopContextStack = [];
+    this.tryContextStack = [];
+    this.inlineReturnStack = [];
+    this.currentReturnVar = undefined;
+    this.currentClassName = undefined;
+    this.currentMethodName = undefined;
+    this.currentInlineContext = undefined;
+    this.currentRecursiveContext = undefined;
+    this.currentThisOverride = null;
+    this.propertyAccessDepth = 0;
+    this.currentMethodLayout = null;
+    this.inSerializeFieldInitializer = false;
+  }
 
+  /**
+   * Convert program to TAC (two-pass).
+   * Pass 1 collects allInlineInstances and interfaceClassIdMap so that
+   * forward references (e.g. a Meld instance created *after* the for-of
+   * loop that iterates over it) are already known in pass 2.
+   */
+  convert(program: ProgramNode): TACInstruction[] {
+    // Pass 1: collect inline instance and interface metadata; discard output
+    this.resetState();
+    this.convertImpl(program);
+
+    // Diagnostic: warn when an all-inline interface is used in source but no
+    // constructor for any of its implementors was ever called.  In that case
+    // pass 2 will fall through to generic (EXTERN) handling rather than viface
+    // dispatch — the same silent failure the old single-pass code had.
+    if (this.classRegistry) {
+      for (const iface of this.classRegistry.getAllInterfaces()) {
+        if (
+          isAllInlineInterface(this, iface.name) &&
+          !this.interfaceClassIdMap.has(iface.name)
+        ) {
+          console.warn(
+            `transpiler: all-inline interface "${iface.name}" has no instantiated implementors — ` +
+              `for-of loops over this type will fall back to EXTERN dispatch.`,
+          );
+        }
+      }
+    }
+
+    const allInstancesFromPass1 = new Map(this.allInlineInstances);
+    const interfaceClassIdMapFromPass1 = new Map(
+      [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
+    );
+
+    // Pass 2: actual codegen, pre-seeded with pass-1 metadata
+    this.resetState();
+    this.allInlineInstances = allInstancesFromPass1;
+    this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
+    return this.convertImpl(program);
+  }
+
+  private convertImpl(program: ProgramNode): TACInstruction[] {
     // Pre-register all interface / type-alias types from classRegistry so that
     // late-binding in visitVariableDeclaration can resolve them even when the
     // type alias was defined in a dependency file parsed after the file that
