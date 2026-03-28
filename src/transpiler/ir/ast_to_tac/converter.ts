@@ -321,6 +321,21 @@ export class ASTToTACConverter {
     this.currentParamExportMap = new Map();
     this.currentParamExportReverseMap = new Map();
     this.tryCounter = 0;
+    // Defensive: these stacks are always balanced for non-throwing execution,
+    // but reset them so that any unexpected exception in pass 1 can't leak
+    // context into pass 2.
+    this.loopContextStack = [];
+    this.tryContextStack = [];
+    this.inlineReturnStack = [];
+    this.currentReturnVar = undefined;
+    this.currentClassName = undefined;
+    this.currentMethodName = undefined;
+    this.currentInlineContext = undefined;
+    this.currentRecursiveContext = undefined;
+    this.currentThisOverride = null;
+    this.propertyAccessDepth = 0;
+    this.currentMethodLayout = null;
+    this.inSerializeFieldInitializer = false;
   }
 
   /**
