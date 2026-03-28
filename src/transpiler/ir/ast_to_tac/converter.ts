@@ -150,6 +150,9 @@ export class ASTToTACConverter {
   tempCounter = 0;
   labelCounter = 0;
   instanceCounter = 0;
+  /** Separate counter for __viface_ prefixes so it never shifts instanceCounter
+   *  between pass 1 and pass 2 (viface blocks fire in pass 2 but not pass 1). */
+  vifaceCounter = 0;
   useStringBuilder = true;
   stringBuilderThreshold = 6;
   symbolTable: SymbolTable;
@@ -216,6 +219,10 @@ export class ASTToTACConverter {
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
   nextInstanceId = 1;
+  /** Cache for getImplementorsOfInterface results in expression.ts dispatch.
+   *  Keyed by interface name; value is Set<implementor class name> or null when
+   *  classRegistry is absent. Reset per pass so stale entries don't survive. */
+  implementorNamesCache: Map<string, Set<string> | null> = new Map();
   /** Cache for isAllInlineInterface results to avoid O(N) rescans.
    *  Valid under the single-pass invariant: all classes are registered in
    *  ClassRegistry before convert() runs. If multi-pass/incremental compilation
@@ -304,12 +311,14 @@ export class ASTToTACConverter {
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.instanceCounter = 0;
+    this.vifaceCounter = 0;
     this.classMap = new Map();
     this.entryPointClasses = new Set();
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
+    this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
     this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];

@@ -706,9 +706,7 @@ export function visitForOfStatement(
       // constructor for this interface — skip viface dispatch and fall
       // through to generic handling.  Pass 2 will have classIds pre-seeded
       // from pass 1 and will generate the correct dispatch.
-      if (!classIds) {
-        // fall through to generic for-of handling
-      } else {
+      if (classIds) {
         const relevantInstances: Array<
           [number, { prefix: string; className: string }]
         > = [];
@@ -726,9 +724,10 @@ export function visitForOfStatement(
               `Check that allInlineInstances is populated correctly.`,
           );
         }
-        // instanceCounter is shared with concrete instances (__inst_*) — the
-        // __viface_ prefix prevents name collisions while keeping IDs unique.
-        const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
+        // Use vifaceCounter (not instanceCounter) so the viface block in pass 2
+        // does not shift instanceCounter relative to pass 1, which would make
+        // pre-seeded allInlineInstances prefixes point to non-existent variables.
+        const virtualPrefix = `__viface_${ifaceName}_${this.vifaceCounter++}`;
         const classIdVar = createVariable(
           `${virtualPrefix}__classId`,
           PrimitiveTypes.int32,
@@ -832,7 +831,7 @@ export function visitForOfStatement(
         vifaceHandleVar = handleVar;
         vifaceInterfaceName = ifaceName;
         vifaceRelevantInstances = relevantInstances;
-      } // else (classIds exists)
+      } // if (classIds)
     }
   }
 
