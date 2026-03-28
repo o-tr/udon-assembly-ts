@@ -85,6 +85,7 @@ import {
 import {
   emitOnDeserializationForFieldChangeCallbacks,
   getUdonBehaviourLayout,
+  isAllInlineInterface,
   isUdonBehaviourPropertyAccess,
   isUdonBehaviourType,
   resolveFieldChangeCallback,
@@ -224,9 +225,11 @@ export class ASTToTACConverter {
    *  classRegistry is absent. Reset per pass so stale entries don't survive. */
   implementorNamesCache: Map<string, Set<string> | null> = new Map();
   /** Cache for isAllInlineInterface results to avoid O(N) rescans.
-   *  Valid under the single-pass invariant: all classes are registered in
-   *  ClassRegistry before convert() runs. If multi-pass/incremental compilation
-   *  ever calls register() during conversion, this cache must be cleared. */
+   *  The cache is reset in resetState() before each pass, so it is always
+   *  valid within a single pass. ClassRegistry does not change between passes,
+   *  so results are identical across passes.
+   *  If incremental compilation ever calls register() during convertImpl(),
+   *  this cache must be cleared. */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
   udonBehaviourClasses: Set<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
@@ -357,6 +360,25 @@ export class ASTToTACConverter {
     // Pass 1: collect inline instance and interface metadata; discard output
     this.resetState();
     this.convertImpl(program);
+
+    // Diagnostic: warn when an all-inline interface is used in source but no
+    // constructor for any of its implementors was ever called.  In that case
+    // pass 2 will fall through to generic (EXTERN) handling rather than viface
+    // dispatch — the same silent failure the old single-pass code had.
+    if (this.classRegistry) {
+      for (const iface of this.classRegistry.getAllInterfaces()) {
+        if (
+          isAllInlineInterface(this, iface.name) &&
+          !this.interfaceClassIdMap.has(iface.name)
+        ) {
+          console.warn(
+            `transpiler: all-inline interface "${iface.name}" has no instantiated implementors — ` +
+              `for-of loops over this type will fall back to EXTERN dispatch.`,
+          );
+        }
+      }
+    }
+
     const allInstancesFromPass1 = new Map(this.allInlineInstances);
     const interfaceClassIdMapFromPass1 = new Map(
       [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
