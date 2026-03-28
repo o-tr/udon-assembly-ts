@@ -718,6 +718,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     expectedLogs: ["7", "14", "simple", "double"],
   },
   {
+    name: "interface_untracked_dispatch",
+    sourceFile: "interface_untracked_dispatch.ts",
+    expectedLogs: ["1", "basic", "3", "special"],
+  },
+  {
     name: "inline_interface_return_dispatch",
     sourceFile: "inline_interface_return_dispatch.ts",
     expectedLogs: ["15", "True", "12", "False"],

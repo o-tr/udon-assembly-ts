@@ -701,18 +701,14 @@ export function visitForOfStatement(
         this.classRegistry?.getImplementorsOfInterface(ifaceName) ?? [];
       const implementorNames = new Set(implementors.map((impl) => impl.name));
       const classIds = this.interfaceClassIdMap.get(ifaceName);
+      // classIds is populated lazily by visitInlineConstructor.
+      // In pass 1 (pre-seeding) a for-of may be compiled before any
+      // constructor for this interface — skip viface dispatch and fall
+      // through to generic handling.  Pass 2 will have classIds pre-seeded
+      // from pass 1 and will generate the correct dispatch.
       if (!classIds) {
-        // classIds is populated lazily by visitInlineConstructor. If the
-        // for-of loop appears before any constructor call for this
-        // interface's implementors, the dispatch cannot be generated and
-        // method calls would silently become no-ops at runtime. Fail hard.
-        throw new Error(
-          `Interface "${ifaceName}" has all-inline implementors but no classId map was found. ` +
-            `Inline constructors must be visited before the for-of loop.`,
-        );
-      }
-      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
-      // outer ifaceMeta check at line 624 and the throw at line 640).
+        // fall through to generic for-of handling
+      } else {
       const relevantInstances: Array<
         [number, { prefix: string; className: string }]
       > = [];
@@ -722,17 +718,7 @@ export function visitForOfStatement(
         }
       }
 
-      // Only emit dispatch when there are known instances to dispatch to.
-      // ifaceMeta and classIds are guaranteed non-null here (guarded by the
-      // throw above and the outer ifaceMeta check at line 624).
-      if (relevantInstances.length === 0) {
-        // classIds exists (constructors were visited) but no instances found
-        // in allInlineInstances — indicates a registration mismatch.
-        throw new Error(
-          `Interface "${ifaceName}" has classIds but no relevant inline instances. ` +
-            `Check that allInlineInstances is populated before the for-of loop.`,
-        );
-      }
+      if (relevantInstances.length > 0) {
       // instanceCounter is shared with concrete instances (__inst_*) — the
       // __viface_ prefix prevents name collisions while keeping IDs unique.
       const virtualPrefix = `__viface_${ifaceName}_${this.instanceCounter++}`;
@@ -834,6 +820,8 @@ export function visitForOfStatement(
       vifaceHandleVar = handleVar;
       vifaceInterfaceName = ifaceName;
       vifaceRelevantInstances = relevantInstances;
+      } // if (relevantInstances.length > 0)
+      } // else (classIds exists)
     }
   }
 

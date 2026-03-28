@@ -1465,8 +1465,21 @@ export function visitPropertyAccessExpression(
           const dispInstances: Array<
             [number, { prefix: string; className: string }]
           > = [];
+          // Also match concrete implementors when untrackedTypeName is an
+          // interface name (e.g. IYaku). classRegistry is authoritative because
+          // it is built from class declarations before codegen starts.
+          const implementorNames = this.classRegistry
+            ? new Set(
+                this.classRegistry
+                  .getImplementorsOfInterface(untrackedTypeName)
+                  .map((i) => i.name),
+              )
+            : null;
           for (const [instId, info] of this.allInlineInstances) {
-            if (info.className === untrackedTypeName) {
+            if (
+              info.className === untrackedTypeName ||
+              implementorNames?.has(info.className)
+            ) {
               dispInstances.push([instId, info]);
             }
           }
