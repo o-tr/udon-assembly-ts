@@ -220,6 +220,33 @@ export class ASTToTACConverter {
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
   nextInstanceId = 1;
+  /**
+   * When a method body is inlined at multiple call sites, each site would
+   * normally generate fresh instance IDs for every `new Cls()` inside the body.
+   * This creates O(N_call_sites × N_instances) entries in allInlineInstances,
+   * causing massive code-size blow-up for flyweight-pattern classes (e.g. Tile).
+   *
+   * Fix: when the same method body AST node is inlined again, reuse the prefix
+   * and instanceId from the first invocation (same position within the body).
+   * All invocations then reference the same heap variables and the same runtime
+   * handles, so D-3 dispatch and viface dispatch work uniformly across call sites.
+   *
+   * Cache key: the body AST node object (identity, not structural equality).
+   * Cache value: ordered list of {prefix, instanceId} for each constructor call
+   *   encountered in visit order within that body.
+   */
+  methodBodyInstanceCache: Map<
+    ASTNode,
+    Array<{ prefix: string; instanceId: number }>
+  > = new Map();
+  /** Per-body call index for the current invocation of that body.
+   *  Reset to 0 at the start of each visitInlineStaticMethodCall /
+   *  inlineInstanceMethodCallCore invocation so subsequent constructors pick
+   *  up from the beginning of the cache. */
+  methodBodyConstructorIndex: Map<ASTNode, number> = new Map();
+  /** Stack of body AST nodes currently being inlined (innermost at the end).
+   *  Used by visitInlineConstructor to know which cache entry to look up. */
+  inlinedBodyStack: ASTNode[] = [];
   /** Cache for getImplementorsOfInterface results in expression.ts dispatch.
    *  Keyed by interface name; value is Set<implementor class name> or null when
    *  classRegistry is absent. Reset per pass so stale entries don't survive. */
@@ -323,6 +350,9 @@ export class ASTToTACConverter {
     this.allInlineInstances = new Map();
     this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
+    this.methodBodyInstanceCache = new Map();
+    this.methodBodyConstructorIndex = new Map();
+    this.inlinedBodyStack = [];
     this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;

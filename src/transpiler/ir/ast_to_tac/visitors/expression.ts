@@ -1367,188 +1367,185 @@ export function visitPropertyAccessExpression(
     // Inside inlined methods this is typically a direct hit since
     // currentParamExportMap is empty; in caller context the helper
     // bridges raw ↔ export names via currentParamExportMap.
-    if (object.kind === TACOperandKind.Variable) {
-      const instanceInfo = this.resolveInlineInstance(
-        (object as VariableOperand).name,
-      );
-      if (instanceInfo) {
-        const mapped = tryMapInlinePropertyWithConcreteFallback(
-          this,
-          instanceInfo,
-          node.property,
-        );
-        if (mapped) return mapped;
+    // Tracking is name-based so only Variable operands can be tracked.
+    const instanceInfo =
+      object.kind === TACOperandKind.Variable
+        ? this.resolveInlineInstance((object as VariableOperand).name)
+        : undefined;
 
-        // Interface classId-based property dispatch: when the interface-level
-        // mapInlineProperty fails (e.g. property not in interface metadata),
-        // fall back to dispatching by classId to each concrete implementor.
-        const classIds = this.interfaceClassIdMap.get(instanceInfo.className);
-        if (
-          classIds &&
-          classIds.size > 0 &&
-          isAllInlineInterface(this, instanceInfo.className)
-        ) {
-          let propType: TypeSymbol | undefined;
-          for (const [className] of classIds) {
-            const resolved = resolveClassProperty(
-              this,
+    if (instanceInfo) {
+      const mapped = tryMapInlinePropertyWithConcreteFallback(
+        this,
+        instanceInfo,
+        node.property,
+      );
+      if (mapped) return mapped;
+
+      // Interface classId-based property dispatch: when the interface-level
+      // mapInlineProperty fails (e.g. property not in interface metadata),
+      // fall back to dispatching by classId to each concrete implementor.
+      const classIds = this.interfaceClassIdMap.get(instanceInfo.className);
+      if (
+        classIds &&
+        classIds.size > 0 &&
+        isAllInlineInterface(this, instanceInfo.className)
+      ) {
+        let propType: TypeSymbol | undefined;
+        for (const [className] of classIds) {
+          const resolved = resolveClassProperty(this, className, node.property);
+          if (resolved) {
+            propType = resolved.prop.type;
+            break;
+          }
+        }
+        if (propType) {
+          const result = createVariable(
+            `__iface_prop_${this.tempCounter++}`,
+            propType,
+            { isLocal: true },
+          );
+          const endLabel = this.newLabel("iface_prop_end");
+          const classIdVar = createVariable(
+            `${instanceInfo.prefix}__classId`,
+            PrimitiveTypes.int32,
+          );
+
+          for (const [className, classId] of classIds) {
+            const nextLabel = this.newLabel("iface_prop_next");
+            const cond = this.newTemp(PrimitiveTypes.boolean);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                cond,
+                classIdVar,
+                "==",
+                createConstant(classId, PrimitiveTypes.int32),
+              ),
+            );
+            this.instructions.push(
+              new ConditionalJumpInstruction(cond, nextLabel),
+            );
+
+            const concreteMapped = this.mapInlineProperty(
               className,
+              instanceInfo.prefix,
               node.property,
             );
-            if (resolved) {
-              propType = resolved.prop.type;
+            if (!concreteMapped) {
+              throw new Error(
+                `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
+              );
+            }
+            this.emitCopyWithTracking(result, concreteMapped);
+
+            this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+            this.instructions.push(new LabelInstruction(nextLabel));
+          }
+          this.instructions.push(new LabelInstruction(endLabel));
+          return result;
+        }
+      }
+    }
+
+    // Handle-based dispatch for untracked variables/temporaries of known
+    // concrete inline types. Fires when object has no tracking entry but its
+    // TypeSymbol name matches a concrete inline class in allInlineInstances.
+    // Limited to ≤100 instances per class to avoid excessive code.
+    // Covers both untracked Variable and Temporary operands (e.g. tiles[i].code).
+    if (
+      !instanceInfo &&
+      (object.kind === TACOperandKind.Variable ||
+        object.kind === TACOperandKind.Temporary)
+    ) {
+      const untrackedType = this.getOperandType(object);
+      const untrackedTypeName = untrackedType.name;
+      if (
+        untrackedTypeName &&
+        !this.udonBehaviourClasses.has(untrackedTypeName)
+      ) {
+        const dispInstances: Array<
+          [number, { prefix: string; className: string }]
+        > = [];
+        // Also match concrete implementors when untrackedTypeName is an
+        // interface name (e.g. IYaku). classRegistry is authoritative because
+        // it is built from class declarations before codegen starts.
+        // Cache per-type to avoid repeated O(N) lookups across property accesses
+        // on the same untracked interface-typed variable.
+        if (!this.implementorNamesCache.has(untrackedTypeName)) {
+          this.implementorNamesCache.set(
+            untrackedTypeName,
+            this.classRegistry
+              ? new Set(
+                  this.classRegistry
+                    .getImplementorsOfInterface(untrackedTypeName)
+                    .map((i) => i.name),
+                )
+              : null,
+          );
+        }
+        const implementorNames =
+          this.implementorNamesCache.get(untrackedTypeName) ?? null;
+        for (const [instId, info] of this.allInlineInstances) {
+          if (
+            info.className === untrackedTypeName ||
+            implementorNames?.has(info.className)
+          ) {
+            dispInstances.push([instId, info]);
+          }
+        }
+        if (dispInstances.length > 0 && dispInstances.length <= 100) {
+          let untrackedPropType: TypeSymbol | undefined;
+          for (const [, info] of dispInstances) {
+            const pv = this.mapInlineProperty(
+              info.className,
+              info.prefix,
+              node.property,
+            );
+            if (pv) {
+              untrackedPropType = pv.type;
               break;
             }
           }
-          if (propType) {
-            const result = createVariable(
-              `__iface_prop_${this.tempCounter++}`,
-              propType,
+          if (untrackedPropType) {
+            const dispResult = createVariable(
+              `__uninst_prop_${this.tempCounter++}`,
+              untrackedPropType,
               { isLocal: true },
             );
-            const endLabel = this.newLabel("iface_prop_end");
-            const classIdVar = createVariable(
-              `${instanceInfo.prefix}__classId`,
-              PrimitiveTypes.int32,
-            );
-
-            for (const [className, classId] of classIds) {
-              const nextLabel = this.newLabel("iface_prop_next");
-              const cond = this.newTemp(PrimitiveTypes.boolean);
+            const hdlVar = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(new CopyInstruction(hdlVar, object));
+            const dispEnd = this.newLabel("uninst_prop_end");
+            for (const [instId, info] of dispInstances) {
+              const dispNext = this.newLabel("uninst_prop_next");
+              const dispCond = this.newTemp(PrimitiveTypes.boolean);
               this.instructions.push(
                 new BinaryOpInstruction(
-                  cond,
-                  classIdVar,
+                  dispCond,
+                  hdlVar,
                   "==",
-                  createConstant(classId, PrimitiveTypes.int32),
+                  createConstant(instId, PrimitiveTypes.int32),
                 ),
               );
               this.instructions.push(
-                new ConditionalJumpInstruction(cond, nextLabel),
+                // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
+                new ConditionalJumpInstruction(dispCond, dispNext),
               );
-
-              const concreteMapped = this.mapInlineProperty(
-                className,
-                instanceInfo.prefix,
-                node.property,
-              );
-              if (!concreteMapped) {
-                throw new Error(
-                  `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
-                );
-              }
-              this.emitCopyWithTracking(result, concreteMapped);
-
-              this.instructions.push(
-                new UnconditionalJumpInstruction(endLabel),
-              );
-              this.instructions.push(new LabelInstruction(nextLabel));
-            }
-            this.instructions.push(new LabelInstruction(endLabel));
-            return result;
-          }
-        }
-      }
-
-      // Handle-based dispatch for untracked variables of known concrete inline
-      // types. Fires when the object has no tracking but its TypeSymbol name
-      // matches a concrete inline class registered in allInlineInstances.
-      // Limited to ≤50 instances per class to avoid excessive code for large
-      // inline types like Tile (100+ instances per compilation unit).
-      if (!instanceInfo) {
-        const untrackedType = this.getOperandType(object);
-        const untrackedTypeName = untrackedType.name;
-        if (
-          untrackedTypeName &&
-          !this.udonBehaviourClasses.has(untrackedTypeName)
-        ) {
-          const dispInstances: Array<
-            [number, { prefix: string; className: string }]
-          > = [];
-          // Also match concrete implementors when untrackedTypeName is an
-          // interface name (e.g. IYaku). classRegistry is authoritative because
-          // it is built from class declarations before codegen starts.
-          // Cache per-type to avoid repeated O(N) lookups across property accesses
-          // on the same untracked interface-typed variable.
-          if (!this.implementorNamesCache.has(untrackedTypeName)) {
-            this.implementorNamesCache.set(
-              untrackedTypeName,
-              this.classRegistry
-                ? new Set(
-                    this.classRegistry
-                      .getImplementorsOfInterface(untrackedTypeName)
-                      .map((i) => i.name),
-                  )
-                : null,
-            );
-          }
-          const implementorNames =
-            this.implementorNamesCache.get(untrackedTypeName) ?? null;
-          for (const [instId, info] of this.allInlineInstances) {
-            if (
-              info.className === untrackedTypeName ||
-              implementorNames?.has(info.className)
-            ) {
-              dispInstances.push([instId, info]);
-            }
-          }
-          if (dispInstances.length > 0 && dispInstances.length <= 50) {
-            let untrackedPropType: TypeSymbol | undefined;
-            for (const [, info] of dispInstances) {
               const pv = this.mapInlineProperty(
                 info.className,
                 info.prefix,
                 node.property,
               );
               if (pv) {
-                untrackedPropType = pv.type;
-                break;
+                this.emitCopyWithTracking(dispResult, pv);
               }
+              // If pv is undefined here it means mapInlineProperty failed for
+              // this instance. This should not happen: all entries in
+              // dispInstances share the same className (enforced by the filter
+              // above), so every instance must expose the same property set.
+              this.instructions.push(new UnconditionalJumpInstruction(dispEnd));
+              this.instructions.push(new LabelInstruction(dispNext));
             }
-            if (untrackedPropType) {
-              const dispResult = createVariable(
-                `__uninst_prop_${this.tempCounter++}`,
-                untrackedPropType,
-                { isLocal: true },
-              );
-              const hdlVar = this.newTemp(PrimitiveTypes.int32);
-              this.instructions.push(new CopyInstruction(hdlVar, object));
-              const dispEnd = this.newLabel("uninst_prop_end");
-              for (const [instId, info] of dispInstances) {
-                const dispNext = this.newLabel("uninst_prop_next");
-                const dispCond = this.newTemp(PrimitiveTypes.boolean);
-                this.instructions.push(
-                  new BinaryOpInstruction(
-                    dispCond,
-                    hdlVar,
-                    "==",
-                    createConstant(instId, PrimitiveTypes.int32),
-                  ),
-                );
-                this.instructions.push(
-                  // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
-                  new ConditionalJumpInstruction(dispCond, dispNext),
-                );
-                const pv = this.mapInlineProperty(
-                  info.className,
-                  info.prefix,
-                  node.property,
-                );
-                if (pv) {
-                  this.emitCopyWithTracking(dispResult, pv);
-                }
-                // If pv is undefined here it means mapInlineProperty failed for
-                // this instance. This should not happen: all entries in
-                // dispInstances share the same className (enforced by the filter
-                // above), so every instance must expose the same property set.
-                this.instructions.push(
-                  new UnconditionalJumpInstruction(dispEnd),
-                );
-                this.instructions.push(new LabelInstruction(dispNext));
-              }
-              this.instructions.push(new LabelInstruction(dispEnd));
-              return dispResult;
-            }
+            this.instructions.push(new LabelInstruction(dispEnd));
+            return dispResult;
           }
         }
       }
@@ -1656,8 +1653,33 @@ export function visitObjectLiteralExpression(
     if (!this.typeMapper.getAlias(className)) {
       this.typeMapper.registerTypeAlias(className, expected);
     }
-    const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
-    const instanceId = this.nextInstanceId++;
+    // Deduplicate object literal instances across repeated method body inlinings.
+    // When inside an inlined method body, reuse the same prefix/instanceId for
+    // the Nth object literal in that body across all inlinings of the same body.
+    let instancePrefix: string;
+    let instanceId: number;
+    const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
+    if (currentBody !== undefined) {
+      let cache = this.methodBodyInstanceCache.get(currentBody);
+      const idx = this.methodBodyConstructorIndex.get(currentBody) ?? 0;
+      if (cache !== undefined && idx < cache.length) {
+        const cached = cache[idx];
+        instancePrefix = cached.prefix;
+        instanceId = cached.instanceId;
+      } else {
+        instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+        instanceId = this.nextInstanceId++;
+        if (cache === undefined) {
+          cache = [];
+          this.methodBodyInstanceCache.set(currentBody, cache);
+        }
+        cache.push({ prefix: instancePrefix, instanceId });
+      }
+      this.methodBodyConstructorIndex.set(currentBody, idx + 1);
+    } else {
+      instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+      instanceId = this.nextInstanceId++;
+    }
     // Use Int32 handle (same as visitInlineConstructor) so allInlineInstances
     // dispatch can match by instanceId at runtime.
     const instanceHandle = createVariable(

@@ -399,8 +399,35 @@ export function visitInlineConstructor(
     return fallback;
   }
 
-  const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
-  const instanceId = this.nextInstanceId++;
+  // When we're inside an inlined method body, reuse the same prefix+instanceId
+  // for the same constructor call position across all invocations of that body.
+  // This prevents O(N_call_sites × N_instances) explosion for flyweight classes.
+  let instancePrefix: string;
+  let instanceId: number;
+  const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
+  if (currentBody !== undefined) {
+    let cache = this.methodBodyInstanceCache.get(currentBody);
+    const idx = this.methodBodyConstructorIndex.get(currentBody) ?? 0;
+    if (cache !== undefined && idx < cache.length) {
+      // Reuse cached prefix and instanceId — do NOT increment counters
+      const cached = cache[idx];
+      instancePrefix = cached.prefix;
+      instanceId = cached.instanceId;
+    } else {
+      // First visit at this body position: allocate and cache
+      instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+      instanceId = this.nextInstanceId++;
+      if (cache === undefined) {
+        cache = [];
+        this.methodBodyInstanceCache.set(currentBody, cache);
+      }
+      cache.push({ prefix: instancePrefix, instanceId });
+    }
+    this.methodBodyConstructorIndex.set(currentBody, idx + 1);
+  } else {
+    instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+    instanceId = this.nextInstanceId++;
+  }
   // Handle is Int32 (instanceId) for runtime dispatch via classId switch.
   // When stored in an interface-typed array (Object[] in Udon), the Int32
   // is CLR-boxed at the Object[] array boundary. The for-of dispatch
@@ -583,9 +610,15 @@ export function visitInlineStaticMethodCall(
     loopDepth: this.loopContextStack.length,
     returnInstancePrefix,
   });
+  // Reset constructor index for this body so deduplication picks up from
+  // position 0 on each invocation (cache may already be populated from a
+  // prior call to the same body).
+  this.methodBodyConstructorIndex.set(method.body, 0);
+  this.inlinedBodyStack.push(method.body);
   try {
     this.visitBlockStatement(method.body);
   } finally {
+    this.inlinedBodyStack.pop();
     this.inlineReturnStack.pop();
     this.inlineMethodStack.delete(inlineKey);
     this.currentParamExportMap = savedParamExportMap;
@@ -688,9 +721,14 @@ function inlineInstanceMethodCallCore(
     loopDepth: converter.loopContextStack.length,
     returnInstancePrefix,
   });
+  // Reset constructor index for this body so deduplication picks up from
+  // position 0 on each invocation (cache may already be populated).
+  converter.methodBodyConstructorIndex.set(method.body, 0);
+  converter.inlinedBodyStack.push(method.body);
   try {
     converter.visitBlockStatement(method.body);
   } finally {
+    converter.inlinedBodyStack.pop();
     converter.inlineReturnStack.pop();
     converter.inlineMethodStack.delete(inlineKey);
     converter.currentParamExportMap = savedParamExportMap;
