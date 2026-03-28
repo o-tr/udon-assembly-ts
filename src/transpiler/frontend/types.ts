@@ -141,6 +141,7 @@ export interface VariableDeclarationNode extends ASTNode {
   kind: ASTNodeKind.VariableDeclaration;
   name: string;
   type: TypeSymbol;
+  originalTypeName?: string;
   initializer?: ASTNode;
   isConst: boolean;
 }
@@ -418,6 +419,7 @@ export interface MethodDeclarationNode extends ASTNode {
   name: string;
   parameters: Array<{ name: string; type: TypeSymbol }>;
   returnType: TypeSymbol;
+  originalReturnTypeName?: string;
   body: BlockStatementNode;
   isPublic: boolean;
   isStatic: boolean;
@@ -432,6 +434,7 @@ export interface PropertyDeclarationNode extends ASTNode {
   kind: ASTNodeKind.PropertyDeclaration;
   name: string;
   type: TypeSymbol;
+  originalTypeName?: string;
   initializer?: ASTNode;
   isPublic: boolean;
   isStatic: boolean;

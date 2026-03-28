@@ -21,6 +21,7 @@ const STRING_LITERAL_UNION_RE =
 export class TypeMapper {
   private typeAliases = new Map<string, TypeSymbol>();
   private typeCache = new Map<string, TypeSymbol>();
+  private unionAliases = new Map<string, string[]>();
 
   constructor(private enumRegistry?: EnumRegistry) {}
 
@@ -31,6 +32,14 @@ export class TypeMapper {
   registerTypeAlias(name: string, symbol: TypeSymbol): void {
     this.typeAliases.set(name, symbol);
     this.typeCache.clear();
+  }
+
+  registerUnionAlias(name: string, parts: string[]): void {
+    this.unionAliases.set(name, parts);
+  }
+
+  getUnionParts(name: string): string[] | undefined {
+    return this.unionAliases.get(name);
   }
 
   mapTypeScriptType(tsType: string): TypeSymbol {

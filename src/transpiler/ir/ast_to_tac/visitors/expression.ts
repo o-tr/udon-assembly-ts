@@ -1449,6 +1449,87 @@ export function visitPropertyAccessExpression(
           }
         }
       }
+
+      // Handle-based dispatch for untracked variables of known concrete inline
+      // types. Fires when the object has no tracking but its TypeSymbol name
+      // matches a concrete inline class registered in allInlineInstances.
+      // Limited to ≤50 instances per class to avoid excessive code for large
+      // inline types like Tile (100+ instances per compilation unit).
+      if (!instanceInfo) {
+        const untrackedType = this.getOperandType(object);
+        const untrackedTypeName = untrackedType.name;
+        if (
+          untrackedTypeName &&
+          !this.udonBehaviourClasses.has(untrackedTypeName)
+        ) {
+          const dispInstances: Array<
+            [number, { prefix: string; className: string }]
+          > = [];
+          for (const [instId, info] of this.allInlineInstances) {
+            if (info.className === untrackedTypeName) {
+              dispInstances.push([instId, info]);
+            }
+          }
+          if (dispInstances.length > 0 && dispInstances.length <= 50) {
+            let untrackedPropType: TypeSymbol | undefined;
+            for (const [, info] of dispInstances) {
+              const pv = this.mapInlineProperty(
+                info.className,
+                info.prefix,
+                node.property,
+              );
+              if (pv) {
+                untrackedPropType = pv.type;
+                break;
+              }
+            }
+            if (untrackedPropType) {
+              const dispResult = createVariable(
+                `__uninst_prop_${this.tempCounter++}`,
+                untrackedPropType,
+                { isLocal: true },
+              );
+              const hdlVar = this.newTemp(PrimitiveTypes.int32);
+              this.instructions.push(new CopyInstruction(hdlVar, object));
+              const dispEnd = this.newLabel("uninst_prop_end");
+              for (const [instId, info] of dispInstances) {
+                const dispNext = this.newLabel("uninst_prop_next");
+                const dispCond = this.newTemp(PrimitiveTypes.boolean);
+                this.instructions.push(
+                  new BinaryOpInstruction(
+                    dispCond,
+                    hdlVar,
+                    "==",
+                    createConstant(instId, PrimitiveTypes.int32),
+                  ),
+                );
+                this.instructions.push(
+                  // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
+                  new ConditionalJumpInstruction(dispCond, dispNext),
+                );
+                const pv = this.mapInlineProperty(
+                  info.className,
+                  info.prefix,
+                  node.property,
+                );
+                if (pv) {
+                  this.emitCopyWithTracking(dispResult, pv);
+                }
+                // If pv is undefined here it means mapInlineProperty failed for
+                // this instance. This should not happen: all entries in
+                // dispInstances share the same className (enforced by the filter
+                // above), so every instance must expose the same property set.
+                this.instructions.push(
+                  new UnconditionalJumpInstruction(dispEnd),
+                );
+                this.instructions.push(new LabelInstruction(dispNext));
+              }
+              this.instructions.push(new LabelInstruction(dispEnd));
+              return dispResult;
+            }
+          }
+        }
+      }
     }
 
     const objectType = this.getOperandType(object);
@@ -1554,17 +1635,35 @@ export function visitObjectLiteralExpression(
       this.typeMapper.registerTypeAlias(className, expected);
     }
     const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+    const instanceId = this.nextInstanceId++;
+    // Use Int32 handle (same as visitInlineConstructor) so allInlineInstances
+    // dispatch can match by instanceId at runtime.
     const instanceHandle = createVariable(
       `${instancePrefix}__handle`,
-      ObjectType,
+      PrimitiveTypes.int32,
+    );
+    this.instructions.push(
+      new AssignmentInstruction(
+        instanceHandle,
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
     );
     this.inlineInstanceMap.set(instanceHandle.name, {
       prefix: instancePrefix,
       className,
     });
+    this.allInlineInstances.set(instanceId, {
+      prefix: instancePrefix,
+      className,
+    });
     for (const prop of node.properties) {
       if (prop.kind !== "property") continue;
-      const propType = expected.properties.get(prop.key);
+      const rawPropType = expected.properties.get(prop.key);
+      // Re-resolve through typeMapper in case the property type was registered
+      // before its type alias (e.g. Wind) was defined (parse-order issue).
+      const propType = rawPropType?.name
+        ? (this.typeMapper.getAlias(rawPropType.name) ?? rawPropType)
+        : rawPropType;
       const propVar = createVariable(
         `${instancePrefix}_${prop.key}`,
         propType ?? ObjectType,

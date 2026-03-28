@@ -236,8 +236,33 @@ function emitInlinePropertyInitializersForClass(
             state.entryClassName,
             prop.name,
           );
-    const propVar = createVariable(propVarName, prop.type);
+    let resolvedPropType = prop.type;
+    if (
+      prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
+      !(resolvedPropType instanceof InterfaceTypeSymbol) &&
+      prop.originalTypeName
+    ) {
+      const lateResolved = converter.typeMapper.mapTypeScriptType(
+        prop.originalTypeName,
+      );
+      if (
+        lateResolved instanceof InterfaceTypeSymbol &&
+        lateResolved.properties.size > 0
+      ) {
+        resolvedPropType = lateResolved;
+      }
+    }
+    const propVar = createVariable(propVarName, resolvedPropType);
+    const prevExpected = converter.currentExpectedType;
+    if (
+      prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
+      resolvedPropType instanceof InterfaceTypeSymbol &&
+      resolvedPropType.properties.size > 0
+    ) {
+      converter.currentExpectedType = resolvedPropType;
+    }
     const value = converter.visitExpression(prop.initializer);
+    converter.currentExpectedType = prevExpected;
     converter.inSerializeFieldInitializer = previousSerializeFieldState;
     converter.instructions.push(new AssignmentInstruction(propVar, value));
     converter.maybeTrackInlineInstanceAssignment(propVar, value);
@@ -498,7 +523,21 @@ export function visitInlineStaticMethodCall(
   );
   if (!method) return null;
 
-  const returnType = method.returnType;
+  let returnType: TypeSymbol = method.returnType;
+  if (
+    !(returnType instanceof InterfaceTypeSymbol) &&
+    method.originalReturnTypeName
+  ) {
+    const lateResolved = this.typeMapper.mapTypeScriptType(
+      method.originalReturnTypeName,
+    );
+    if (
+      lateResolved instanceof InterfaceTypeSymbol &&
+      lateResolved.properties.size > 0
+    ) {
+      returnType = lateResolved;
+    }
+  }
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
     returnType,
@@ -529,11 +568,20 @@ export function visitInlineStaticMethodCall(
   this.currentInlineBaseClass = undefined;
 
   this.inlineMethodStack.add(inlineKey);
+  // Only apply the stable-prefix strategy for interface return types.
+  // For concrete ClassTypeSymbol returns, direct tracking is preserved so
+  // that property writes (e.g. compound assignments) reach the original
+  // inline instance fields rather than a one-shot copy.
+  const returnInstancePrefix =
+    returnType instanceof InterfaceTypeSymbol && returnType.properties.size > 0
+      ? result.name
+      : undefined;
   this.inlineReturnStack.push({
     returnVar: result,
     returnLabel,
     returnTrackingInvalidated: false,
     loopDepth: this.loopContextStack.length,
+    returnInstancePrefix,
   });
   try {
     this.visitBlockStatement(method.body);
@@ -578,7 +626,21 @@ function inlineInstanceMethodCallCore(
   );
   if (!method) return null;
 
-  const returnType = method.returnType;
+  let returnType: TypeSymbol = method.returnType;
+  if (
+    !(returnType instanceof InterfaceTypeSymbol) &&
+    method.originalReturnTypeName
+  ) {
+    const lateResolved = converter.typeMapper.mapTypeScriptType(
+      method.originalReturnTypeName,
+    );
+    if (
+      lateResolved instanceof InterfaceTypeSymbol &&
+      lateResolved.properties.size > 0
+    ) {
+      returnType = lateResolved;
+    }
+  }
   const result = createVariable(
     `__inline_ret_${converter.tempCounter++}`,
     returnType,
@@ -611,11 +673,20 @@ function inlineInstanceMethodCallCore(
     : undefined;
 
   converter.inlineMethodStack.add(inlineKey);
+  // Only apply the stable-prefix strategy for interface return types.
+  // For concrete ClassTypeSymbol returns, direct tracking is preserved so
+  // that property writes (e.g. compound assignments) reach the original
+  // inline instance fields rather than a one-shot copy.
+  const returnInstancePrefix =
+    returnType instanceof InterfaceTypeSymbol && returnType.properties.size > 0
+      ? result.name
+      : undefined;
   converter.inlineReturnStack.push({
     returnVar: result,
     returnLabel,
     returnTrackingInvalidated: false,
     loopDepth: converter.loopContextStack.length,
+    returnInstancePrefix,
   });
   try {
     converter.visitBlockStatement(method.body);
@@ -747,8 +818,15 @@ function operandTrackingKey(op: TACOperand): string | undefined {
 /**
  * Update inline-instance tracking after an AssignmentInstruction.
  *
- * Sets `target`'s mapping when `value` resolves to an inline instance;
- * **clears** any existing mapping for `target` when it does not.
+ * Sets `target`'s mapping when `value` resolves to an inline instance.
+ * When `value` is not a tracked inline instance:
+ *   - `clearIfUntracked=true` (default): clears any existing mapping for `target`.
+ *   - `clearIfUntracked=false`: preserves any existing mapping for `target`.
+ *
+ * Use `clearIfUntracked=false` for variable declarations where the target may
+ * carry pre-existing tracking from an outer scope (e.g. a local variable that
+ * shadows a same-named parameter). Clearing in those cases would break inline
+ * field access even though the runtime object identity is unchanged.
  *
  * NOTE: Unlike `emitCopyWithTracking`, this does not emit an instruction —
  * call it after manually emitting an AssignmentInstruction.
@@ -757,12 +835,13 @@ export function maybeTrackInlineInstanceAssignment(
   this: ASTToTACConverter,
   target: VariableOperand,
   value: TACOperand,
+  clearIfUntracked = true,
 ): void {
   const srcName = operandTrackingKey(value);
   const mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (mapped) {
     this.inlineInstanceMap.set(target.name, mapped);
-  } else {
+  } else if (clearIfUntracked) {
     this.inlineInstanceMap.delete(target.name);
   }
 }
@@ -773,12 +852,14 @@ export function maybeTrackInlineInstanceAssignment(
  * Uses `resolveInlineInstance` (3-step lookup: direct → forward → reverse)
  * so that tracking survives multi-hop copy chains (return values, parameters,
  * intermediate variables). Handles both Variable and Temporary operands.
- * Clears stale tracking on dest when src is not an inline instance.
+ * Clears stale tracking on dest when src is not an inline instance (unless
+ * clearIfUntracked=false, which preserves existing tracking on dest).
  */
 export function emitCopyWithTracking(
   this: ASTToTACConverter,
   dest: TACOperand,
   src: TACOperand,
+  clearIfUntracked = true,
 ): void {
   this.instructions.push(new CopyInstruction(dest, src));
   const destName = operandTrackingKey(dest);
@@ -787,7 +868,7 @@ export function emitCopyWithTracking(
   const srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (srcInfo) {
     this.inlineInstanceMap.set(destName, srcInfo);
-  } else {
+  } else if (clearIfUntracked) {
     this.inlineInstanceMap.delete(destName);
   }
 }
@@ -834,9 +915,16 @@ export function mapInlineProperty(
   // Fallback: InterfaceTypeSymbol from type alias
   const alias = this.typeMapper.getAlias(className);
   if (alias instanceof InterfaceTypeSymbol) {
-    const propType = alias.properties.get(property);
-    if (propType)
-      return createVariable(`${instancePrefix}_${property}`, propType);
+    const rawPropType = alias.properties.get(property);
+    if (rawPropType) {
+      // Re-resolve through typeMapper: if the property type was a stale alias
+      // (e.g. Wind was parsed before its definition was registered), look up
+      // its name now that all files have been parsed.
+      const resolvedPropType = rawPropType.name
+        ? (this.typeMapper.getAlias(rawPropType.name) ?? rawPropType)
+        : rawPropType;
+      return createVariable(`${instancePrefix}_${property}`, resolvedPropType);
+    }
   }
 
   // Fallback: InterfaceMetadata from classRegistry

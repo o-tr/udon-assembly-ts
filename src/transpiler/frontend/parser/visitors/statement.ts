@@ -238,9 +238,11 @@ export function visitVariableStatement(
 
   // Infer type from initializer or type annotation
   let type: TypeSymbol = this.mapTypeWithGenerics("number");
+  let originalTypeName: string | undefined;
   if (declaration.type) {
     const typeText = declaration.type.getText();
     type = this.mapTypeWithGenerics(typeText, declaration.type);
+    originalTypeName = typeText;
   } else if (declaration.initializer) {
     type = this.inferType(declaration.initializer);
   }
@@ -252,6 +254,7 @@ export function visitVariableStatement(
     kind: ASTNodeKind.VariableDeclaration,
     name,
     type,
+    originalTypeName,
     isConst,
   };
 
@@ -280,6 +283,14 @@ export function visitTypeAliasDeclaration(
   if (!ts.isTypeLiteralNode(node.type)) {
     const mapped = this.mapTypeWithGenerics(node.type.getText(), node.type);
     this.typeMapper.registerTypeAlias(name, mapped);
+    if (ts.isUnionTypeNode(node.type)) {
+      const parts = node.type.types
+        .map((t) => t.getText())
+        .filter((p) => p !== "null" && p !== "undefined");
+      if (parts.length > 1) {
+        this.typeMapper.registerUnionAlias(name, parts);
+      }
+    }
     return undefined;
   }
 

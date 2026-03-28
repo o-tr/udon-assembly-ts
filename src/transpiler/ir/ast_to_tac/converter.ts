@@ -7,7 +7,10 @@ import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
 import { TypeMapper } from "../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../frontend/type_symbols.js";
-import { PrimitiveTypes } from "../../frontend/type_symbols.js";
+import {
+  InterfaceTypeSymbol,
+  PrimitiveTypes,
+} from "../../frontend/type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -193,6 +196,7 @@ export class ASTToTACConverter {
     returnLabel: TACOperand;
     returnTrackingInvalidated: boolean;
     loopDepth: number;
+    returnInstancePrefix?: string;
   }> = [];
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;
@@ -251,11 +255,15 @@ export class ASTToTACConverter {
     udonBehaviourClasses?: Set<string>,
     udonBehaviourLayouts?: UdonBehaviourLayouts,
     classRegistry?: ClassRegistry,
-    options?: { useStringBuilder?: boolean; stringBuilderThreshold?: number },
+    options?: {
+      useStringBuilder?: boolean;
+      stringBuilderThreshold?: number;
+      typeMapper?: TypeMapper;
+    },
   ) {
     this.symbolTable = symbolTable;
     this.enumRegistry = enumRegistry ?? new EnumRegistry();
-    this.typeMapper = new TypeMapper(this.enumRegistry);
+    this.typeMapper = options?.typeMapper ?? new TypeMapper(this.enumRegistry);
     this.udonBehaviourClasses = udonBehaviourClasses ?? new Set();
     this.udonBehaviourLayouts = udonBehaviourLayouts ?? new Map();
     this.classRegistry = classRegistry ?? null;
@@ -311,6 +319,35 @@ export class ASTToTACConverter {
     this.recursiveReturnSites = new Map();
     this.currentParamExportMap = new Map();
     this.currentParamExportReverseMap = new Map();
+
+    // Pre-register all interface / type-alias types from classRegistry so that
+    // late-binding in visitVariableDeclaration can resolve them even when the
+    // type alias was defined in a dependency file parsed after the file that
+    // uses it (batch-transpiler parse-order issue).
+    if (this.classRegistry) {
+      for (const iface of this.classRegistry.getAllInterfaces()) {
+        if (!this.typeMapper.getAlias(iface.name)) {
+          const propertyMap = new Map<string, TypeSymbol>();
+          const methodMap = new Map<
+            string,
+            { params: TypeSymbol[]; returnType: TypeSymbol }
+          >();
+          for (const prop of iface.node.properties) {
+            propertyMap.set(prop.name, prop.type);
+          }
+          for (const method of iface.node.methods) {
+            methodMap.set(method.name, {
+              params: method.parameters.map((p) => p.type),
+              returnType: method.returnType,
+            });
+          }
+          this.typeMapper.registerTypeAlias(
+            iface.name,
+            new InterfaceTypeSymbol(iface.name, methodMap, propertyMap),
+          );
+        }
+      }
+    }
 
     // Separate top-level const declarations from other statements
     const topLevelConsts: VariableDeclarationNode[] = [];

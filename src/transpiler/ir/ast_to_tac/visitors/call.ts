@@ -1623,22 +1623,113 @@ export function visitCallExpression(
                       (inlineRes as VariableOperand).name,
                     )
                   : undefined;
+              // When the return type is a known InterfaceTypeSymbol or inline
+              // class and this branch returned a tracked instance of that type,
+              // copy each field to a stable per-call-site prefix
+              // (result.name_fieldName). This allows the caller to track the
+              // result uniformly even when different dispatch branches produce
+              // different concrete prefixes.
               if (inlineMapping) {
-                if (resultInlineMapping === undefined) {
-                  resultInlineMapping = inlineMapping;
-                } else if (
-                  resultInlineMapping &&
-                  (resultInlineMapping.prefix !== inlineMapping.prefix ||
-                    resultInlineMapping.className !== inlineMapping.className)
+                let fieldsToCopy: Array<[string, TypeSymbol]> | null = null;
+                // For interface return types, always use the interface's
+                // property list regardless of the concrete className.
+                // This allows different implementors to converge on a single
+                // stable prefix with effectiveClassName = returnType.name.
+                let effectiveClassName = inlineMapping.className;
+                if (
+                  returnType instanceof InterfaceTypeSymbol &&
+                  returnType.properties.size > 0
                 ) {
-                  // Different branches return different concrete prefixes —
-                  // we can't merge them into a single tracking entry.
-                  // Known limitation: chained calls on the return value
-                  // (e.g. item.getChild().doWork()) will fall through to the
-                  // generic path if getChild() returns a freshly-constructed
-                  // inline instance. The for-of loop variable itself is
-                  // unaffected because it dispatches via classId.
+                  fieldsToCopy = Array.from(
+                    returnType.properties.entries(),
+                  ).map(
+                    ([name, sym]) =>
+                      [
+                        name,
+                        sym.name
+                          ? (this.typeMapper.getAlias(sym.name) ?? sym)
+                          : sym,
+                      ] as [string, TypeSymbol],
+                  );
+                  effectiveClassName = returnType.name;
+                } else {
+                  // Use merged class metadata to include inherited properties.
+                  if (this.classRegistry) {
+                    const mergedProps = this.classRegistry.getMergedProperties(
+                      inlineMapping.className,
+                    );
+                    if (mergedProps.length > 0) {
+                      fieldsToCopy = mergedProps.map(
+                        (p) =>
+                          [
+                            p.name,
+                            this.typeMapper.mapTypeScriptType(p.type),
+                          ] as [string, TypeSymbol],
+                      );
+                    }
+                  } else {
+                    const classNode = this.classMap.get(
+                      inlineMapping.className,
+                    );
+                    if (classNode) {
+                      fieldsToCopy = classNode.properties
+                        .filter((p) => !p.isStatic)
+                        .map((p) => {
+                          const resolvedType = p.type.name
+                            ? (this.typeMapper.getAlias(p.type.name) ?? p.type)
+                            : p.type;
+                          return [p.name, resolvedType] as [string, TypeSymbol];
+                        });
+                    }
+                  }
+                }
+
+                if (
+                  fieldsToCopy &&
+                  fieldsToCopy.length > 0 &&
+                  // All branches must agree on effectiveClassName.
+                  (resultInlineMapping === undefined ||
+                    (resultInlineMapping !== null &&
+                      resultInlineMapping.className === effectiveClassName))
+                ) {
+                  for (const [propName, propType] of fieldsToCopy) {
+                    const srcField = createVariable(
+                      `${inlineMapping.prefix}_${propName}`,
+                      propType,
+                    );
+                    const dstField = createVariable(
+                      `${result.name}_${propName}`,
+                      propType,
+                    );
+                    this.instructions.push(
+                      new CopyInstruction(dstField, srcField),
+                    );
+                  }
+                  resultInlineMapping = {
+                    prefix: result.name,
+                    className: effectiveClassName,
+                  };
+                } else if (fieldsToCopy && fieldsToCopy.length > 0) {
+                  // className mismatch across branches — invalidate
                   resultInlineMapping = null;
+                } else {
+                  // No fields to copy — fall back to simple prefix merging.
+                  if (resultInlineMapping === undefined) {
+                    resultInlineMapping = inlineMapping;
+                  } else if (
+                    resultInlineMapping &&
+                    (resultInlineMapping.prefix !== inlineMapping.prefix ||
+                      resultInlineMapping.className !== inlineMapping.className)
+                  ) {
+                    // Different branches return different concrete prefixes —
+                    // we can't merge them into a single tracking entry.
+                    // Known limitation: chained calls on the return value
+                    // (e.g. item.getChild().doWork()) will fall through to the
+                    // generic path if getChild() returns a freshly-constructed
+                    // inline instance. The for-of loop variable itself is
+                    // unaffected because it dispatches via classId.
+                    resultInlineMapping = null;
+                  }
                 }
               } else {
                 resultInlineMapping = null;

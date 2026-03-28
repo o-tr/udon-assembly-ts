@@ -717,6 +717,16 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "interface_inline_dispatch.ts",
     expectedLogs: ["7", "14", "simple", "double"],
   },
+  {
+    name: "inline_interface_return_dispatch",
+    sourceFile: "inline_interface_return_dispatch.ts",
+    expectedLogs: ["15", "True", "12", "False"],
+  },
+  {
+    name: "inline_multi_return_paths",
+    sourceFile: "inline_multi_return_paths.ts",
+    expectedLogs: ["1", "positive", "-1", "negative", "0", "zero"],
+  },
   // --- TS/Udon string compat methods ---
   {
     name: "string_ts_compat_methods",
