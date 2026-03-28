@@ -1482,7 +1482,8 @@ export function visitPropertyAccessExpression(
                 : null,
             );
           }
-          const implementorNames = this.implementorNamesCache.get(untrackedTypeName) ?? null;
+          const implementorNames =
+            this.implementorNamesCache.get(untrackedTypeName) ?? null;
           for (const [instId, info] of this.allInlineInstances) {
             if (
               info.className === untrackedTypeName ||
