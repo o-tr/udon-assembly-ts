@@ -60,7 +60,9 @@ describe("2-pass compilation: forward-referenced inline instances", () => {
     expect(result.tac).toMatch(/__inst_BoxA_0__handle/);
     expect(result.tac).toMatch(/__inst_BoxB_1__handle/);
     // Both branches of the dispatch must assign __uninst_prop_N
-    const dispatchMatches = result.tac.match(/__uninst_prop_\d+ = __inst_Box[AB]_\d+_value/g);
+    const dispatchMatches = result.tac.match(
+      /__uninst_prop_\d+ = __inst_Box[AB]_\d+_value/g,
+    );
     expect(dispatchMatches).toHaveLength(2);
     // No EXTERN for IItem property getter
     expect(result.uasm).not.toMatch(/IItem\.__get_value/);
