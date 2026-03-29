@@ -78,7 +78,13 @@ export class DataToken {
     } else if (typeof _value === "boolean") {
       this._tokenType = TokenType.Boolean;
     } else if (typeof _value === "number") {
-      // Distinguish Int vs Float: if the value is a 32-bit integer, treat as Int
+      // Heuristic: whole numbers in the Int32 range → TokenType.Int.
+      // LIMITATION: TypeScript branded types (UdonInt vs UdonFloat) are
+      // erased at runtime, so `new DataToken(42 as UdonFloat)` is
+      // indistinguishable from `new DataToken(42 as UdonInt)` here and
+      // will receive TokenType.Int, diverging from the Udon VM which
+      // assigns TokenType.Float. Use DataToken.fromFloat(v) explicitly
+      // when you need a Float token for a whole-number value.
       this._tokenType =
         Number.isInteger(_value) &&
         _value >= -2147483648 &&
@@ -105,6 +111,17 @@ export class DataToken {
   _copyFrom(other: DataToken): void {
     this._value = other._value;
     this._tokenType = other._tokenType;
+  }
+
+  /**
+   * Create a DataToken that is always typed as Float, even for whole numbers.
+   * Use this when the Udon VM would store the value as a float token
+   * (e.g., a UdonFloat that happens to be a whole number like 42.0).
+   */
+  static fromFloat(v: number): DataToken {
+    const token = new DataToken(v);
+    token._tokenType = TokenType.Float;
+    return token;
   }
 
   /** Value equality for Remove/IndexOf operations */

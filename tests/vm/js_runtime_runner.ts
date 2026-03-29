@@ -7,7 +7,11 @@
  * - vm_test.test.ts (to dynamically generate expectedLogs for VM comparison)
  */
 import path from "node:path";
-import { clearCapturedLogs, getCapturedLogs } from "./runtime-stubs/capture.js";
+import {
+  beginCapture,
+  endCapture,
+  getCapturedLogs,
+} from "./runtime-stubs/capture.js";
 import { UdonSharpBehaviour } from "./runtime-stubs/UdonSharpBehaviour.js";
 import type { VmTestCase } from "./vm_test_definitions.js";
 
@@ -35,7 +39,7 @@ export interface JsRuntimeResult {
 export async function runTestCaseInJs(
   testCase: VmTestCase,
 ): Promise<JsRuntimeResult> {
-  clearCapturedLogs();
+  beginCapture();
 
   const methodName = entryPointToMethodName(testCase.entryPoint ?? "_start");
 
@@ -47,6 +51,7 @@ export async function runTestCaseInJs(
 
     const ExportedClass = findUdonClass(mod);
     if (!ExportedClass) {
+      endCapture();
       return {
         name: testCase.name,
         logs: [],
@@ -57,6 +62,7 @@ export async function runTestCaseInJs(
     const instance = new ExportedClass();
     const method = (instance as unknown as Record<string, unknown>)[methodName];
     if (typeof method !== "function") {
+      endCapture();
       return {
         name: testCase.name,
         logs: [],
@@ -65,11 +71,15 @@ export async function runTestCaseInJs(
     }
 
     await method.call(instance);
-    return { name: testCase.name, logs: getCapturedLogs() };
+    const logs = getCapturedLogs();
+    endCapture();
+    return { name: testCase.name, logs };
   } catch (err) {
+    const logs = getCapturedLogs();
+    endCapture();
     return {
       name: testCase.name,
-      logs: getCapturedLogs(),
+      logs,
       error: String(err),
     };
   }

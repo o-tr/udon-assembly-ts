@@ -41,6 +41,8 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
 
   const testResults: Map<string, TestResultEntry> = new Map();
   const jsRuntimeResults: Map<string, JsRuntimeResult> = new Map();
+  /** Resolved expected logs per test case, populated once in beforeAll. */
+  const resolvedExpectedLogs: Map<string, string[]> = new Map();
 
   beforeAll(async () => {
     // Step 1: Run all test cases in JS runtime to generate expected logs
@@ -83,11 +85,12 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       const uasmFileName = `${testCase.name}.uasm`;
       writeFileSync(path.join(inputDir, uasmFileName), result.uasm, "utf-8");
 
-      // Use JS runtime logs as expected when expectedLogs is not specified.
-      // For expectError cases, we don't need expected logs.
+      // Resolve expected logs once here and cache for use in it() callbacks.
+      // For expectError cases we don't need expected logs from the JS runtime.
       const expectedLogs = testCase.expectError
         ? (testCase.expectedLogs ?? [])
         : resolveExpectedLogs(testCase.name, testCase.expectedLogs);
+      resolvedExpectedLogs.set(testCase.name, expectedLogs);
 
       testDefinitions.tests.push({
         name: testCase.name,
@@ -214,9 +217,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         throw new Error(`No result found for test "${testCase.name}"`);
       }
 
-      const expectedLogs = testCase.expectError
-        ? (testCase.expectedLogs ?? [])
-        : resolveExpectedLogs(testCase.name, testCase.expectedLogs);
+      const expectedLogs = resolvedExpectedLogs.get(testCase.name) ?? [];
 
       if (!result.passed) {
         throw new Error(
