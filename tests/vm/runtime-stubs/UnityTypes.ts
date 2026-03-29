@@ -10,6 +10,7 @@
  */
 
 import { captureLog } from "./capture.js";
+import { bankerRound } from "./SystemTypes.js";
 import { UdonExtern, UdonStub } from "./UdonDecorators.js";
 import type { UdonFloat, UdonInt } from "./UdonTypes.js";
 
@@ -74,11 +75,16 @@ export class Mathf {
   }
   static Clamp(value: UdonFloat, min: UdonFloat, max: UdonFloat): UdonFloat {
     return Math.fround(
-      Math.min(Math.max(Math.fround(value), Math.fround(min)), Math.fround(max)),
+      Math.min(
+        Math.max(Math.fround(value), Math.fround(min)),
+        Math.fround(max),
+      ),
     ) as UdonFloat;
   }
   static Clamp01(value: UdonFloat): UdonFloat {
-    return Math.fround(Math.min(Math.max(Math.fround(value), 0), 1)) as UdonFloat;
+    return Math.fround(
+      Math.min(Math.max(Math.fround(value), 0), 1),
+    ) as UdonFloat;
   }
   static Floor(value: UdonFloat): UdonFloat {
     return Math.floor(Math.fround(value)) as UdonFloat;
@@ -91,7 +97,9 @@ export class Mathf {
     const fb = Math.fround(b);
     const clamped = Math.fround(Math.min(Math.max(Math.fround(t), 0), 1));
     // Each intermediate step uses fround to match C# float arithmetic
-    return Math.fround(fa + Math.fround(Math.fround(fb - fa) * clamped)) as UdonFloat;
+    return Math.fround(
+      fa + Math.fround(Math.fround(fb - fa) * clamped),
+    ) as UdonFloat;
   }
   static Max(a: UdonFloat, b: UdonFloat): UdonFloat {
     return Math.max(Math.fround(a), Math.fround(b)) as UdonFloat;
@@ -100,19 +108,15 @@ export class Mathf {
     return Math.min(Math.fround(a), Math.fround(b)) as UdonFloat;
   }
   static Pow(a: UdonFloat, b: UdonFloat): UdonFloat {
-    return Math.fround(Math.pow(Math.fround(a), Math.fround(b))) as UdonFloat;
+    return Math.fround(Math.fround(a) ** Math.fround(b)) as UdonFloat;
   }
   static Round(value: UdonFloat): UdonFloat {
-    // Unity Mathf.Round uses MidpointRounding.AwayFromZero
-    // For negative midpoints: C# rounds away from zero, JS rounds toward +Infinity
-    const fv = Math.fround(value);
-    if (fv > 0) {
-      return Math.floor(Math.fround(fv + 0.5)) as UdonFloat;
-    }
-    return Math.ceil(Math.fround(fv - 0.5)) as UdonFloat;
+    // Unity Mathf.Round uses banker's rounding (MidpointRounding.ToEven):
+    // at midpoints (.5), rounds to the nearest even integer.
+    return bankerRound(Math.fround(value)) as UdonFloat;
   }
   static RoundToInt(value: UdonFloat): UdonInt {
-    return Mathf.Round(value) as unknown as UdonInt;
+    return bankerRound(Math.fround(value)) as UdonInt;
   }
   static Sqrt(value: UdonFloat): UdonFloat {
     return Math.fround(Math.sqrt(Math.fround(value))) as UdonFloat;
@@ -149,7 +153,10 @@ export class Mathf {
 }
 
 // ---------------------------------------------------------------------------
-// Vector3 — real implementation with formatted toString()
+// Vector3 — single-precision implementation with formatted toString()
+//
+// All intermediate arithmetic uses Math.fround() to match C# float precision.
+// The constructor also fround's inputs to ensure stored components are float32.
 // ---------------------------------------------------------------------------
 
 @UdonStub("UnityEngine.Vector3")
@@ -159,15 +166,22 @@ export class Vector3 {
   z: UdonFloat;
 
   get magnitude(): UdonFloat {
-    return Math.sqrt(
-      this.x * this.x + this.y * this.y + this.z * this.z,
+    const xx = Math.fround(this.x * this.x);
+    const yy = Math.fround(this.y * this.y);
+    const zz = Math.fround(this.z * this.z);
+    return Math.fround(
+      Math.sqrt(Math.fround(Math.fround(xx + yy) + zz)),
     ) as UdonFloat;
   }
 
   get normalized(): Vector3 {
     const mag = this.magnitude;
     if (mag === 0) return new Vector3(0, 0, 0);
-    return new Vector3(this.x / mag, this.y / mag, this.z / mag);
+    return new Vector3(
+      Math.fround(this.x / mag),
+      Math.fround(this.y / mag),
+      Math.fround(this.z / mag),
+    );
   }
 
   constructor(
@@ -175,9 +189,9 @@ export class Vector3 {
     y: UdonFloat | number,
     z: UdonFloat | number,
   ) {
-    this.x = x as UdonFloat;
-    this.y = y as UdonFloat;
-    this.z = z as UdonFloat;
+    this.x = Math.fround(x as number) as UdonFloat;
+    this.y = Math.fround(y as number) as UdonFloat;
+    this.z = Math.fround(z as number) as UdonFloat;
   }
 
   toString(): string {
@@ -195,36 +209,50 @@ export class Vector3 {
   static left: Vector3 = Object.freeze(new Vector3(-1, 0, 0)) as Vector3;
 
   static Distance(a: Vector3, b: Vector3): UdonFloat {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    const dz = a.z - b.z;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz) as UdonFloat;
+    const dx = Math.fround(a.x - b.x);
+    const dy = Math.fround(a.y - b.y);
+    const dz = Math.fround(a.z - b.z);
+    return Math.fround(
+      Math.sqrt(
+        Math.fround(
+          Math.fround(Math.fround(dx * dx) + Math.fround(dy * dy)) +
+            Math.fround(dz * dz),
+        ),
+      ),
+    ) as UdonFloat;
   }
 
   static Dot(a: Vector3, b: Vector3): UdonFloat {
-    return (a.x * b.x + a.y * b.y + a.z * b.z) as UdonFloat;
+    return Math.fround(
+      Math.fround(Math.fround(a.x * b.x) + Math.fround(a.y * b.y)) +
+        Math.fround(a.z * b.z),
+    ) as UdonFloat;
   }
 
   static Cross(a: Vector3, b: Vector3): Vector3 {
     return new Vector3(
-      a.y * b.z - a.z * b.y,
-      a.z * b.x - a.x * b.z,
-      a.x * b.y - a.y * b.x,
+      Math.fround(Math.fround(a.y * b.z) - Math.fround(a.z * b.y)),
+      Math.fround(Math.fround(a.z * b.x) - Math.fround(a.x * b.z)),
+      Math.fround(Math.fround(a.x * b.y) - Math.fround(a.y * b.x)),
     );
   }
 
   static Lerp(a: Vector3, b: Vector3, t: UdonFloat | number): Vector3 {
-    const clamped = Math.min(Math.max(t as number, 0), 1);
+    const clamped = Math.fround(
+      Math.min(Math.max(Math.fround(t as number), 0), 1),
+    );
     return new Vector3(
-      a.x + (b.x - a.x) * clamped,
-      a.y + (b.y - a.y) * clamped,
-      a.z + (b.z - a.z) * clamped,
+      Math.fround(a.x + Math.fround(Math.fround(b.x - a.x) * clamped)),
+      Math.fround(a.y + Math.fround(Math.fround(b.y - a.y) * clamped)),
+      Math.fround(a.z + Math.fround(Math.fround(b.z - a.z) * clamped)),
     );
   }
 
   static Angle(from: Vector3, to: Vector3): UdonFloat {
     const dot = Vector3.Dot(from.normalized, to.normalized);
-    const clamped = Math.min(Math.max(dot, -1), 1);
-    return (Math.acos(clamped) * (180 / Math.PI)) as UdonFloat;
+    const clamped = Math.fround(Math.min(Math.max(Math.fround(dot), -1), 1));
+    return Math.fround(
+      Math.fround(Math.acos(clamped)) * Mathf.Rad2Deg,
+    ) as UdonFloat;
   }
 }

@@ -154,7 +154,7 @@ export { SystemMath as Math };
  * C# banker's rounding (MidpointRounding.ToEven).
  * Rounds to nearest; if exactly .5, rounds to nearest even number.
  */
-function bankerRound(v: number): number {
+export function bankerRound(v: number): number {
   const floor = Math.floor(v);
   const frac = v - floor;
   // Not at midpoint: use normal rounding
