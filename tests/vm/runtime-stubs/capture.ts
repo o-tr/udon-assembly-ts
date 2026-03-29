@@ -62,6 +62,11 @@ export function endCapture(): void {
  *   float literals (e.g. 3.25, 7.5, 0.125) to guarantee that JS and C#
  *   produce the same string. Non-exact fractions like 1.1 may diverge even
  *   with G7 formatting due to single-precision rounding differences.
+ *   IMPORTANT for integer values (UdonInt): TypeScript branded types are erased
+ *   at runtime, so all JS numbers pass through Math.fround() here. Integers
+ *   larger than 2^24 (16,777,216) lose precision when converted to float32 —
+ *   e.g. formatSingle(16_777_217 as UdonInt) produces "16777216" while C#'s
+ *   int.ToString() produces "16777217". Keep integer test values below 2^24.
  * - Vector3: "(x.xx, y.yy, z.zz)" format
  * - null/undefined: "Null"
  */

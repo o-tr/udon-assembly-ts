@@ -47,7 +47,8 @@ export function udonCastPlugin(): VitePlugin {
     transform(code: string, id: string) {
       // Strip query string (e.g. ?t=... from cache-busted dynamic imports)
       // before checking path and extension, so transforms are never skipped.
-      const cleanId = id.split("?")[0];
+      // Normalise backslashes to forward slashes for Windows compatibility.
+      const cleanId = id.split("?")[0].replaceAll("\\", "/");
       // Only transform test case files
       if (!cleanId.includes("tests/vm/cases/")) return;
       if (!cleanId.endsWith(".ts")) return;

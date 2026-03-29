@@ -7,6 +7,7 @@
  * - vm_test.test.ts (to dynamically generate expectedLogs for VM comparison)
  */
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   beginCapture,
   endCapture,
@@ -18,13 +19,15 @@ import type { VmTestCase } from "./vm_test_definitions.js";
 const casesDir = path.resolve(import.meta.dirname, "cases");
 
 /**
- * Map VM entry point symbols to method names on the UdonSharpBehaviour class.
- * The default entry point "_start" maps to the Start() method.
+ * Map a Udon VM entry point symbol to the corresponding method name on
+ * the UdonSharpBehaviour class.
+ *
+ * The convention is to strip the leading underscore and capitalise the
+ * first letter: "_start" → "Start", "_update" → "Update".
  */
 function entryPointToMethodName(entryPoint: string): string {
-  if (entryPoint === "_start") return "Start";
-  // Custom entry points are not supported in JS runtime
-  return entryPoint;
+  const raw = entryPoint.replace(/^_/, "");
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 export interface JsRuntimeResult {
@@ -39,19 +42,19 @@ export interface JsRuntimeResult {
 export async function runTestCaseInJs(
   testCase: VmTestCase,
 ): Promise<JsRuntimeResult> {
-  beginCapture();
-
   const methodName = entryPointToMethodName(testCase.entryPoint ?? "_start");
 
+  // beginCapture() throws if a concurrent runTestCaseInJs() is already running.
+  beginCapture();
   try {
+    // Use a file URL so the import specifier is portable across platforms
+    // (on Windows, absolute paths in dynamic imports require file:// URLs).
     const modulePath = path.join(casesDir, testCase.sourceFile);
-    const mod = await import(
-      /* @vite-ignore */ `${modulePath}?t=${Date.now()}`
-    );
+    const moduleUrl = new URL(`?t=${Date.now()}`, pathToFileURL(modulePath));
+    const mod = await import(/* @vite-ignore */ moduleUrl.href);
 
     const ExportedClass = findUdonClass(mod);
     if (!ExportedClass) {
-      endCapture();
       return {
         name: testCase.name,
         logs: [],
@@ -62,7 +65,6 @@ export async function runTestCaseInJs(
     const instance = new ExportedClass();
     const method = (instance as unknown as Record<string, unknown>)[methodName];
     if (typeof method !== "function") {
-      endCapture();
       return {
         name: testCase.name,
         logs: [],
@@ -71,17 +73,16 @@ export async function runTestCaseInJs(
     }
 
     await method.call(instance);
-    const logs = getCapturedLogs();
-    endCapture();
-    return { name: testCase.name, logs };
+    return { name: testCase.name, logs: getCapturedLogs() };
   } catch (err) {
-    const logs = getCapturedLogs();
-    endCapture();
     return {
       name: testCase.name,
-      logs,
+      logs: getCapturedLogs(),
       error: String(err),
     };
+  } finally {
+    // Guaranteed to run regardless of early returns or thrown errors.
+    endCapture();
   }
 }
 

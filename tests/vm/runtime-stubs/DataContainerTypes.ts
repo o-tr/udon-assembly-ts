@@ -226,7 +226,10 @@ export class DataList extends DataListImpl {
       },
       set(target, prop, value, receiver) {
         if (typeof prop === "string" && /^\d+$/.test(prop)) {
-          target._items[Number(prop)] = value;
+          // Ensure stored values are always DataToken instances so that
+          // Remove / Sort / TryGetValue never see raw primitives.
+          target._items[Number(prop)] =
+            value instanceof DataToken ? value : new DataToken(value);
           return true;
         }
         return Reflect.set(target, prop, value, receiver);
