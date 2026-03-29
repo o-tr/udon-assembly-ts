@@ -2,7 +2,7 @@
  * Runtime implementations of VRC DataContainer types for JS runtime tests.
  */
 import { UdonExtern, UdonStub } from "./UdonDecorators.js";
-import type { UdonInt } from "./UdonTypes.js";
+import type { UdonInt, UdonLong } from "./UdonTypes.js";
 
 // DataToken type enum (matches VRC SDK)
 const TokenType = {
@@ -38,8 +38,8 @@ export class DataToken {
   get Int(): UdonInt {
     return (Number(this._value) | 0) as UdonInt;
   }
-  get Long(): number {
-    return Number(this._value);
+  get Long(): UdonLong {
+    return BigInt(Math.trunc(Number(this._value))) as UdonLong;
   }
   get Float(): number {
     return Number(this._value);
@@ -166,11 +166,12 @@ class DataListImpl {
   }
 
   Sort(): void {
+    const collator = new Intl.Collator("en-US", { sensitivity: "variant" });
     this._items.sort((a, b) => {
       const av = a._getRawValue();
       const bv = b._getRawValue();
       if (typeof av === "number" && typeof bv === "number") return av - bv;
-      return String(av).localeCompare(String(bv));
+      return collator.compare(String(av), String(bv));
     });
   }
 
