@@ -54,89 +54,97 @@ export class Debug {
 }
 
 // ---------------------------------------------------------------------------
-// Mathf — real implementations using JS Math
+// Mathf — single-precision implementations using JS Math + Math.fround()
+//
+// Unity's Mathf operates on C# float (IEEE 754 single-precision).
+// All inputs are fround'd to simulate float parameters, and all float
+// outputs are fround'd to match single-precision return values.
 // ---------------------------------------------------------------------------
 
 @UdonStub("UnityEngine.Mathf")
 export class Mathf {
   static Abs(value: UdonFloat): UdonFloat {
-    return Math.abs(value) as UdonFloat;
+    return Math.fround(Math.abs(Math.fround(value))) as UdonFloat;
   }
   static Ceil(value: UdonFloat): UdonFloat {
-    return Math.ceil(value) as UdonFloat;
+    return Math.ceil(Math.fround(value)) as UdonFloat;
   }
   static CeilToInt(value: UdonFloat): UdonInt {
-    return Math.ceil(value) as UdonInt;
+    return Math.ceil(Math.fround(value)) as UdonInt;
   }
   static Clamp(value: UdonFloat, min: UdonFloat, max: UdonFloat): UdonFloat {
-    return Math.min(Math.max(value, min), max) as UdonFloat;
+    return Math.fround(
+      Math.min(Math.max(Math.fround(value), Math.fround(min)), Math.fround(max)),
+    ) as UdonFloat;
   }
   static Clamp01(value: UdonFloat): UdonFloat {
-    return Math.min(Math.max(value, 0), 1) as UdonFloat;
+    return Math.fround(Math.min(Math.max(Math.fround(value), 0), 1)) as UdonFloat;
   }
   static Floor(value: UdonFloat): UdonFloat {
-    return Math.floor(value) as UdonFloat;
+    return Math.floor(Math.fround(value)) as UdonFloat;
   }
   static FloorToInt(value: UdonFloat): UdonInt {
-    return Math.floor(value) as UdonInt;
+    return Math.floor(Math.fround(value)) as UdonInt;
   }
   static Lerp(a: UdonFloat, b: UdonFloat, t: UdonFloat): UdonFloat {
-    const clamped = Math.min(Math.max(t, 0), 1);
-    return (a + (b - a) * clamped) as UdonFloat;
+    const fa = Math.fround(a);
+    const fb = Math.fround(b);
+    const clamped = Math.fround(Math.min(Math.max(Math.fround(t), 0), 1));
+    // Each intermediate step uses fround to match C# float arithmetic
+    return Math.fround(fa + Math.fround(Math.fround(fb - fa) * clamped)) as UdonFloat;
   }
   static Max(a: UdonFloat, b: UdonFloat): UdonFloat {
-    return Math.max(a, b) as UdonFloat;
+    return Math.max(Math.fround(a), Math.fround(b)) as UdonFloat;
   }
   static Min(a: UdonFloat, b: UdonFloat): UdonFloat {
-    return Math.min(a, b) as UdonFloat;
+    return Math.min(Math.fround(a), Math.fround(b)) as UdonFloat;
   }
   static Pow(a: UdonFloat, b: UdonFloat): UdonFloat {
-    return (a ** b) as UdonFloat;
+    return Math.fround(Math.pow(Math.fround(a), Math.fround(b))) as UdonFloat;
   }
   static Round(value: UdonFloat): UdonFloat {
     // Unity Mathf.Round uses MidpointRounding.AwayFromZero
-    // Math.round in JS also rounds .5 up, so matches for positive numbers
     // For negative midpoints: C# rounds away from zero, JS rounds toward +Infinity
-    // Implement C# behavior for correctness
-    if (value > 0) {
-      return Math.floor(value + 0.5) as UdonFloat;
+    const fv = Math.fround(value);
+    if (fv > 0) {
+      return Math.floor(Math.fround(fv + 0.5)) as UdonFloat;
     }
-    return Math.ceil(value - 0.5) as UdonFloat;
+    return Math.ceil(Math.fround(fv - 0.5)) as UdonFloat;
   }
   static RoundToInt(value: UdonFloat): UdonInt {
     return Mathf.Round(value) as unknown as UdonInt;
   }
   static Sqrt(value: UdonFloat): UdonFloat {
-    return Math.sqrt(value) as UdonFloat;
+    return Math.fround(Math.sqrt(Math.fround(value))) as UdonFloat;
   }
   static Sin(value: UdonFloat): UdonFloat {
-    return Math.sin(value) as UdonFloat;
+    return Math.fround(Math.sin(Math.fround(value))) as UdonFloat;
   }
   static Cos(value: UdonFloat): UdonFloat {
-    return Math.cos(value) as UdonFloat;
+    return Math.fround(Math.cos(Math.fround(value))) as UdonFloat;
   }
   static Tan(value: UdonFloat): UdonFloat {
-    return Math.tan(value) as UdonFloat;
+    return Math.fround(Math.tan(Math.fround(value))) as UdonFloat;
   }
   static Atan2(y: UdonFloat, x: UdonFloat): UdonFloat {
-    return Math.atan2(y, x) as UdonFloat;
+    return Math.fround(Math.atan2(Math.fround(y), Math.fround(x))) as UdonFloat;
   }
   static Log(value: UdonFloat): UdonFloat {
-    return Math.log(value) as UdonFloat;
+    return Math.fround(Math.log(Math.fround(value))) as UdonFloat;
   }
   static Log10(value: UdonFloat): UdonFloat {
-    return Math.log10(value) as UdonFloat;
+    return Math.fround(Math.log10(Math.fround(value))) as UdonFloat;
   }
   static Sign(value: UdonFloat): UdonFloat {
-    return Math.sign(value) as UdonFloat;
+    return Math.fround(Math.sign(Math.fround(value))) as UdonFloat;
   }
 
-  static readonly PI: UdonFloat = Math.PI as UdonFloat;
+  static readonly PI: UdonFloat = Math.fround(Math.PI) as UdonFloat;
   static readonly Infinity: UdonFloat = Number.POSITIVE_INFINITY as UdonFloat;
   static readonly NegativeInfinity: UdonFloat =
     Number.NEGATIVE_INFINITY as UdonFloat;
-  static readonly Deg2Rad: UdonFloat = (Math.PI / 180) as UdonFloat;
-  static readonly Rad2Deg: UdonFloat = (180 / Math.PI) as UdonFloat;
+  static readonly Deg2Rad: UdonFloat = Math.fround(Math.PI / 180) as UdonFloat;
+  static readonly Rad2Deg: UdonFloat = Math.fround(180 / Math.PI) as UdonFloat;
   static readonly Epsilon: UdonFloat = 1.1920929e-7 as UdonFloat;
 }
 

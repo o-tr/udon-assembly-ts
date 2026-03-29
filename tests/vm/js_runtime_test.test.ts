@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { runTestCaseInJs } from "./js_runtime_runner.js";
 import { VM_TEST_CASES } from "./vm_test_definitions.js";
 
-describe("JS Runtime Equivalence Tests", () => {
+describe.sequential("JS Runtime Equivalence Tests", () => {
   for (const testCase of VM_TEST_CASES) {
     // Skip tests that expect VM/assembly errors — those can't run in JS
     if (testCase.expectError) continue;

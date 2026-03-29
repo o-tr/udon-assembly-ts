@@ -142,7 +142,6 @@ export function udonCastPlugin(): VitePlugin {
             }
 
             // Build left-to-right concatenation chain
-            if (parts.length === 0) return ts.factory.createStringLiteral("");
             let result: ts.Expression = parts[0];
             for (let i = 1; i < parts.length; i++) {
               result = ts.factory.createBinaryExpression(
