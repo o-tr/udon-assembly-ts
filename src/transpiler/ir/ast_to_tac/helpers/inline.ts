@@ -402,32 +402,8 @@ export function visitInlineConstructor(
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
   // This prevents O(N_call_sites × N_instances) explosion for flyweight classes.
-  let instancePrefix: string;
-  let instanceId: number;
-  const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
-  if (currentBody !== undefined) {
-    let cache = this.methodBodyInstanceCache.get(currentBody);
-    const idx = this.methodBodyConstructorIndex.get(currentBody) ?? 0;
-    if (cache !== undefined && idx < cache.length) {
-      // Reuse cached prefix and instanceId — do NOT increment counters
-      const cached = cache[idx];
-      instancePrefix = cached.prefix;
-      instanceId = cached.instanceId;
-    } else {
-      // First visit at this body position: allocate and cache
-      instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
-      instanceId = this.nextInstanceId++;
-      if (cache === undefined) {
-        cache = [];
-        this.methodBodyInstanceCache.set(currentBody, cache);
-      }
-      cache.push({ prefix: instancePrefix, instanceId });
-    }
-    this.methodBodyConstructorIndex.set(currentBody, idx + 1);
-  } else {
-    instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
-    instanceId = this.nextInstanceId++;
-  }
+  const { instancePrefix, instanceId } =
+    this.allocateBodyCachedInstance(className);
   // Handle is Int32 (instanceId) for runtime dispatch via classId switch.
   // When stored in an interface-typed array (Object[] in Udon), the Int32
   // is CLR-boxed at the Object[] array boundary. The for-of dispatch
@@ -846,11 +822,45 @@ export function emitEntryPointPropertyInit(
 // Keys share the inlineInstanceMap namespace. The __tmp prefix is assumed
 // not to collide with user variable names; a collision would only degrade
 // tracking (EXTERN fallback), not produce incorrect code.
-function operandTrackingKey(op: TACOperand): string | undefined {
+export function operandTrackingKey(op: TACOperand): string | undefined {
   if (op.kind === TACOperandKind.Variable) return (op as VariableOperand).name;
   if (op.kind === TACOperandKind.Temporary)
     return `__tmp${(op as TemporaryOperand).id}`;
   return undefined;
+}
+
+/**
+ * Allocate (or reuse) an instance prefix and instanceId for a new inline instance,
+ * deduplicating across repeated inlinings of the same method body via
+ * `methodBodyInstanceCache` / `methodBodyConstructorIndex`.
+ */
+export function allocateBodyCachedInstance(
+  this: ASTToTACConverter,
+  className: string,
+): { instancePrefix: string; instanceId: number } {
+  const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
+  if (currentBody !== undefined) {
+    let cache = this.methodBodyInstanceCache.get(currentBody);
+    const idx = this.methodBodyConstructorIndex.get(currentBody) ?? 0;
+    if (cache !== undefined && idx < cache.length) {
+      const cached = cache[idx];
+      this.methodBodyConstructorIndex.set(currentBody, idx + 1);
+      return { instancePrefix: cached.prefix, instanceId: cached.instanceId };
+    }
+    const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+    const instanceId = this.nextInstanceId++;
+    if (cache === undefined) {
+      cache = [];
+      this.methodBodyInstanceCache.set(currentBody, cache);
+    }
+    cache.push({ prefix: instancePrefix, instanceId });
+    this.methodBodyConstructorIndex.set(currentBody, idx + 1);
+    return { instancePrefix, instanceId };
+  }
+  return {
+    instancePrefix: `__inst_${className}_${this.instanceCounter++}`,
+    instanceId: this.nextInstanceId++,
+  };
 }
 
 /**

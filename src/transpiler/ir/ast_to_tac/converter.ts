@@ -54,6 +54,7 @@ import {
 } from "./helpers/data_dictionary.js";
 import { requireExternSignature } from "./helpers/extern.js";
 import {
+  allocateBodyCachedInstance,
   collectRecursiveLocals,
   emitCallSitePop,
   emitCallSitePush,
@@ -694,6 +695,7 @@ export class ASTToTACConverter {
   emitOnDeserializationForFieldChangeCallbacks =
     emitOnDeserializationForFieldChangeCallbacks;
 
+  allocateBodyCachedInstance = allocateBodyCachedInstance;
   visitInlineConstructor = visitInlineConstructor;
   visitInlineStaticMethodCall = visitInlineStaticMethodCall;
   visitInlineInstanceMethodCall = visitInlineInstanceMethodCall;

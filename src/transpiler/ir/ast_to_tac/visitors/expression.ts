@@ -69,6 +69,7 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
+  operandTrackingKey,
   resolveClassProperty,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
@@ -1367,11 +1368,11 @@ export function visitPropertyAccessExpression(
     // Inside inlined methods this is typically a direct hit since
     // currentParamExportMap is empty; in caller context the helper
     // bridges raw ↔ export names via currentParamExportMap.
-    // Tracking is name-based so only Variable operands can be tracked.
-    const instanceInfo =
-      object.kind === TACOperandKind.Variable
-        ? this.resolveInlineInstance((object as VariableOperand).name)
-        : undefined;
+    // operandTrackingKey handles both Variable and Temporary operands.
+    const instanceKey = operandTrackingKey(object);
+    const instanceInfo = instanceKey
+      ? this.resolveInlineInstance(instanceKey)
+      : undefined;
 
     if (instanceInfo) {
       const mapped = tryMapInlinePropertyWithConcreteFallback(
@@ -1446,15 +1447,16 @@ export function visitPropertyAccessExpression(
       }
     }
 
-    // Handle-based dispatch for untracked variables/temporaries of known
-    // concrete inline types. Fires when object has no tracking entry but its
-    // TypeSymbol name matches a concrete inline class in allInlineInstances.
+    // Handle-based dispatch for variables/temporaries of known concrete inline
+    // types. Fires when the tracked path above did not return a result — either
+    // because the operand has no tracking entry, or because both
+    // tryMapInlinePropertyWithConcreteFallback and the classId dispatch failed.
+    // This acts as the final fallback before a raw PropertyGetInstruction.
     // Limited to ≤100 instances per class to avoid excessive code.
-    // Covers both untracked Variable and Temporary operands (e.g. tiles[i].code).
+    // Covers both Variable and Temporary operands (e.g. tiles[i].code).
     if (
-      !instanceInfo &&
-      (object.kind === TACOperandKind.Variable ||
-        object.kind === TACOperandKind.Temporary)
+      object.kind === TACOperandKind.Variable ||
+      object.kind === TACOperandKind.Temporary
     ) {
       const untrackedType = this.getOperandType(object);
       const untrackedTypeName = untrackedType.name;
@@ -1544,6 +1546,10 @@ export function visitPropertyAccessExpression(
               this.instructions.push(new UnconditionalJumpInstruction(dispEnd));
               this.instructions.push(new LabelInstruction(dispNext));
             }
+            // If no handle matched, dispResult retains its Udon heap default
+            // (zero/null). This fallthrough is unreachable for valid data: every
+            // object of this type was constructed via one of the tracked
+            // constructors, so its runtime handle always matches one branch above.
             this.instructions.push(new LabelInstruction(dispEnd));
             return dispResult;
           }
@@ -1656,30 +1662,8 @@ export function visitObjectLiteralExpression(
     // Deduplicate object literal instances across repeated method body inlinings.
     // When inside an inlined method body, reuse the same prefix/instanceId for
     // the Nth object literal in that body across all inlinings of the same body.
-    let instancePrefix: string;
-    let instanceId: number;
-    const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
-    if (currentBody !== undefined) {
-      let cache = this.methodBodyInstanceCache.get(currentBody);
-      const idx = this.methodBodyConstructorIndex.get(currentBody) ?? 0;
-      if (cache !== undefined && idx < cache.length) {
-        const cached = cache[idx];
-        instancePrefix = cached.prefix;
-        instanceId = cached.instanceId;
-      } else {
-        instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
-        instanceId = this.nextInstanceId++;
-        if (cache === undefined) {
-          cache = [];
-          this.methodBodyInstanceCache.set(currentBody, cache);
-        }
-        cache.push({ prefix: instancePrefix, instanceId });
-      }
-      this.methodBodyConstructorIndex.set(currentBody, idx + 1);
-    } else {
-      instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
-      instanceId = this.nextInstanceId++;
-    }
+    const { instancePrefix, instanceId } =
+      this.allocateBodyCachedInstance(className);
     // Use Int32 handle (same as visitInlineConstructor) so allInlineInstances
     // dispatch can match by instanceId at runtime.
     const instanceHandle = createVariable(
