@@ -305,8 +305,14 @@ export class DataDictionary {
   ShallowClone(): DataDictionary {
     const clone = new DataDictionary();
     for (let i = 0; i < this._keys.length; i++) {
-      clone._keys.push(this._keys[i]);
-      clone._values.push(this._values[i]);
+      // C# DataToken is a struct — copy each token into a new wrapper
+      // so the clone's entries are independent of the original's.
+      const clonedKey = new DataToken();
+      clonedKey._copyFrom(this._keys[i]);
+      const clonedValue = new DataToken();
+      clonedValue._copyFrom(this._values[i]);
+      clone._keys.push(clonedKey);
+      clone._values.push(clonedValue);
     }
     return clone;
   }

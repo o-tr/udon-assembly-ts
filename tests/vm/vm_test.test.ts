@@ -39,12 +39,14 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
   const outputDir = path.join(UNITY_PROJECT_PATH, "TestResults");
   const casesDir = path.resolve(import.meta.dirname, "cases");
 
-  let testResults: Map<string, TestResultEntry> = new Map();
-  let jsRuntimeResults: Map<string, JsRuntimeResult> = new Map();
+  const testResults: Map<string, TestResultEntry> = new Map();
+  const jsRuntimeResults: Map<string, JsRuntimeResult> = new Map();
 
   beforeAll(async () => {
     // Step 1: Run all test cases in JS runtime to generate expected logs
-    jsRuntimeResults = await runAllTestCasesInJs(VM_TEST_CASES);
+    const jsMap = await runAllTestCasesInJs(VM_TEST_CASES);
+    jsRuntimeResults.clear();
+    for (const [k, v] of jsMap) jsRuntimeResults.set(k, v);
 
     // Step 2: Clean I/O directories
     if (existsSync(inputDir))
@@ -163,7 +165,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     const rawResults: TestResultsJson = JSON.parse(
       readFileSync(resultsPath, "utf-8"),
     );
-    testResults = new Map();
+    testResults.clear();
     for (const result of rawResults.results) {
       if (testResults.has(result.name)) {
         throw new Error(`Duplicate test result name: "${result.name}"`);

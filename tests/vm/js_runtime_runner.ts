@@ -64,7 +64,7 @@ export async function runTestCaseInJs(
       };
     }
 
-    method.call(instance);
+    await method.call(instance);
     return { name: testCase.name, logs: getCapturedLogs() };
   } catch (err) {
     return {

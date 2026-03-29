@@ -45,9 +45,12 @@ export function udonCastPlugin(): VitePlugin {
     name: "udon-cast-transform",
     enforce: "pre",
     transform(code: string, id: string) {
+      // Strip query string (e.g. ?t=... from cache-busted dynamic imports)
+      // before checking path and extension, so transforms are never skipped.
+      const cleanId = id.split("?")[0];
       // Only transform test case files
-      if (!id.includes("tests/vm/cases/")) return;
-      if (!id.endsWith(".ts")) return;
+      if (!cleanId.includes("tests/vm/cases/")) return;
+      if (!cleanId.endsWith(".ts")) return;
 
       const sourceFile = ts.createSourceFile(
         id,
@@ -98,6 +101,11 @@ export function udonCastPlugin(): VitePlugin {
             if (ts.isPropertyAccessExpression(arg)) {
               return ts.factory.createStringLiteral(arg.name.text);
             }
+            // Unsupported nameof argument form — fail fast at transform time
+            throw new Error(
+              `[udon-cast-plugin] Unsupported nameof() argument at position ${arg.pos} in ${cleanId}: ` +
+                `expected identifier or property access, got ${ts.SyntaxKind[arg.kind]}`,
+            );
           }
 
           // Transform template literals to use __udonFormat for each expression
