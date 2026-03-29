@@ -2,11 +2,10 @@
  * JS Runtime Equivalence Tests
  *
  * Executes each VM test case TypeScript file in the Node.js runtime
- * and verifies that the captured Debug.Log output matches the expected
- * values (same as the Udon VM would produce).
+ * and verifies that the captured Debug.Log output matches a snapshot.
  *
- * This test suite runs without Unity — it validates that the JS runtime
- * stubs produce identical output to the Udon VM for all test cases.
+ * This provides regression coverage for the JS runtime stubs:
+ * if a stub changes its output, the snapshot diff will catch it.
  */
 import { describe, expect, it } from "vitest";
 import { runTestCaseInJs } from "./js_runtime_runner.js";
@@ -26,9 +25,13 @@ describe("JS Runtime Equivalence Tests", () => {
         );
       }
 
+      // When hardcoded expectedLogs exist, validate against them
       if (testCase.expectedLogs) {
         expect(result.logs).toEqual(testCase.expectedLogs);
       }
+
+      // Always snapshot to catch regressions in runtime stubs
+      expect(result.logs).toMatchSnapshot();
     });
   }
 });

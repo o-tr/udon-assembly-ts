@@ -25,16 +25,17 @@ interface VitePlugin {
 
 const HELPERS = `
 var __castToInt = (v) => typeof v === 'number' ? (v | 0) : v;
+var __castToByte = (v) => typeof v === 'number' ? ((v | 0) & 0xFF) : v;
 var __castToFloat = (v) => typeof v === 'number' ? Math.fround(v) : v;
 var __castToLong = (v) => typeof v === 'bigint' ? v : BigInt(Math.trunc(Number(v)));
-var __castToULong = (v) => typeof v === 'bigint' ? v : BigInt(Math.max(0, Math.trunc(Number(v))));
+var __castToULong = (v) => typeof v === 'bigint' ? BigInt.asUintN(64, v) : BigInt.asUintN(64, BigInt(Math.trunc(Number(v))));
 `;
 
 // Udon branded types that need runtime cast behavior
 const CAST_MAP: Record<string, string> = {
   UdonInt: "__castToInt",
   UdonFloat: "__castToFloat",
-  UdonByte: "__castToInt",
+  UdonByte: "__castToByte",
   UdonLong: "__castToLong",
   UdonULong: "__castToULong",
 };
@@ -69,7 +70,11 @@ export function udonCastPlugin(): VitePlugin {
             const helperName = CAST_MAP[typeName];
             if (helperName) {
               needsHelpers = true;
-              const inner = ts.visitEachChild(node.expression, visitor, context);
+              const inner = ts.visitEachChild(
+                node.expression,
+                visitor,
+                context,
+              );
               return ts.factory.createCallExpression(
                 ts.factory.createIdentifier(helperName),
                 undefined,

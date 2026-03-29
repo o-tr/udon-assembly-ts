@@ -9,9 +9,9 @@
  * infinite recursion (Vector3.normalized field creates new Vector3 instances).
  */
 
+import { captureLog } from "./capture.js";
 import { UdonExtern, UdonStub } from "./UdonDecorators.js";
 import type { UdonFloat, UdonInt } from "./UdonTypes.js";
-import { captureLog } from "./capture.js";
 
 // ---------------------------------------------------------------------------
 // Debug — captures log output via captureLog()
@@ -91,7 +91,7 @@ export class Mathf {
     return Math.min(a, b) as UdonFloat;
   }
   static Pow(a: UdonFloat, b: UdonFloat): UdonFloat {
-    return Math.pow(a, b) as UdonFloat;
+    return (a ** b) as UdonFloat;
   }
   static Round(value: UdonFloat): UdonFloat {
     // Unity Mathf.Round uses MidpointRounding.AwayFromZero
@@ -151,7 +151,9 @@ export class Vector3 {
   z: UdonFloat;
 
   get magnitude(): UdonFloat {
-    return Math.sqrt(this.x * this.x + this.y * this.y + this.z * this.z) as UdonFloat;
+    return Math.sqrt(
+      this.x * this.x + this.y * this.y + this.z * this.z,
+    ) as UdonFloat;
   }
 
   get normalized(): Vector3 {
@@ -175,14 +177,14 @@ export class Vector3 {
     return `(${this.x.toFixed(2)}, ${this.y.toFixed(2)}, ${this.z.toFixed(2)})`;
   }
 
-  static zero: Vector3 = new Vector3(0, 0, 0);
-  static one: Vector3 = new Vector3(1, 1, 1);
-  static up: Vector3 = new Vector3(0, 1, 0);
-  static forward: Vector3 = new Vector3(0, 0, 1);
-  static right: Vector3 = new Vector3(1, 0, 0);
-  static down: Vector3 = new Vector3(0, -1, 0);
-  static back: Vector3 = new Vector3(0, 0, -1);
-  static left: Vector3 = new Vector3(-1, 0, 0);
+  static zero: Vector3 = Object.freeze(new Vector3(0, 0, 0)) as Vector3;
+  static one: Vector3 = Object.freeze(new Vector3(1, 1, 1)) as Vector3;
+  static up: Vector3 = Object.freeze(new Vector3(0, 1, 0)) as Vector3;
+  static forward: Vector3 = Object.freeze(new Vector3(0, 0, 1)) as Vector3;
+  static right: Vector3 = Object.freeze(new Vector3(1, 0, 0)) as Vector3;
+  static down: Vector3 = Object.freeze(new Vector3(0, -1, 0)) as Vector3;
+  static back: Vector3 = Object.freeze(new Vector3(0, 0, -1)) as Vector3;
+  static left: Vector3 = Object.freeze(new Vector3(-1, 0, 0)) as Vector3;
 
   static Distance(a: Vector3, b: Vector3): UdonFloat {
     const dx = a.x - b.x;

@@ -81,8 +81,11 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       const uasmFileName = `${testCase.name}.uasm`;
       writeFileSync(path.join(inputDir, uasmFileName), result.uasm, "utf-8");
 
-      // Use JS runtime logs as expected when expectedLogs is not specified
-      const expectedLogs = resolveExpectedLogs(testCase.name, testCase.expectedLogs);
+      // Use JS runtime logs as expected when expectedLogs is not specified.
+      // For expectError cases, we don't need expected logs.
+      const expectedLogs = testCase.expectError
+        ? (testCase.expectedLogs ?? [])
+        : resolveExpectedLogs(testCase.name, testCase.expectedLogs);
 
       testDefinitions.tests.push({
         name: testCase.name,
@@ -209,10 +212,9 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         throw new Error(`No result found for test "${testCase.name}"`);
       }
 
-      const expectedLogs = resolveExpectedLogs(
-        testCase.name,
-        testCase.expectedLogs,
-      );
+      const expectedLogs = testCase.expectError
+        ? (testCase.expectedLogs ?? [])
+        : resolveExpectedLogs(testCase.name, testCase.expectedLogs);
 
       if (!result.passed) {
         throw new Error(

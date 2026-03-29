@@ -1,10 +1,10 @@
 export {
-  UdonStatic,
+  SerializeField,
+  TsOnly,
+  UdonBehaviour,
   UdonExport,
   UdonExtern,
-  TsOnly,
-  UdonTsOnly,
-  UdonBehaviour,
-  SerializeField,
+  UdonStatic,
   UdonStub,
+  UdonTsOnly,
 } from "../../../src/stubs/UdonDecorators.js";

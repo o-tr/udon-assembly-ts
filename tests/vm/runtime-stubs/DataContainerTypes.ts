@@ -78,8 +78,13 @@ export class DataToken {
     } else if (typeof _value === "boolean") {
       this._tokenType = TokenType.Boolean;
     } else if (typeof _value === "number") {
-      // Treat as Float by default (matches Udon VM behavior)
-      this._tokenType = TokenType.Float;
+      // Distinguish Int vs Float: if the value is a 32-bit integer, treat as Int
+      this._tokenType =
+        Number.isInteger(_value) &&
+        _value >= -2147483648 &&
+        _value <= 2147483647
+          ? TokenType.Int
+          : TokenType.Float;
     } else if (typeof _value === "string") {
       this._tokenType = TokenType.String;
     } else if (_value instanceof DataList) {
@@ -94,6 +99,12 @@ export class DataToken {
   /** Internal: get the raw stored value for equality comparison */
   _getRawValue(): unknown {
     return this._value;
+  }
+
+  /** Internal: copy another token's value into this one */
+  _copyFrom(other: DataToken): void {
+    this._value = other._value;
+    this._tokenType = other._tokenType;
   }
 
   /** Value equality for Remove/IndexOf operations */
@@ -151,9 +162,13 @@ class DataListImpl {
     return idx as UdonInt;
   }
 
-  TryGetValue(index: UdonInt, _value: DataToken): boolean {
+  TryGetValue(index: UdonInt, outToken: DataToken): boolean {
     const i = index as number;
-    return i >= 0 && i < this._items.length;
+    if (i >= 0 && i < this._items.length) {
+      outToken._copyFrom(this._items[i]);
+      return true;
+    }
+    return false;
   }
 
   [Symbol.iterator](): Iterator<DataToken> {
@@ -170,13 +185,21 @@ class DataListImpl {
   }
 }
 
-// Proxy-based DataList that supports bracket notation (list[0])
+/**
+ * Proxy-based DataList that supports bracket notation (list[0]).
+ *
+ * Returns a Proxy from the constructor to intercept numeric property access,
+ * emulating C# list-style indexing (e.g., `list[0]`) via get/set handlers
+ * on `_items`. This is required because test case source files use
+ * `new DataList()` with bracket notation.
+ */
 @UdonStub("VRC.SDK3.Data.DataList")
 export class DataList extends DataListImpl {
   [index: number]: DataToken;
 
   constructor() {
     super();
+    // biome-ignore lint/correctness/noConstructorReturn: Proxy wrapping is required for list-style indexing
     return new Proxy(this, {
       get(target, prop, receiver) {
         if (typeof prop === "string" && /^\d+$/.test(prop)) {
@@ -237,8 +260,13 @@ export class DataDictionary {
     return this._values[idx];
   }
 
-  TryGetValue(key: DataToken, _value: DataToken): boolean {
-    return this._findKeyIndex(key) !== -1;
+  TryGetValue(key: DataToken, outToken: DataToken): boolean {
+    const idx = this._findKeyIndex(key);
+    if (idx !== -1) {
+      outToken._copyFrom(this._values[idx]);
+      return true;
+    }
+    return false;
   }
 
   ContainsKey(key: DataToken): boolean {

@@ -7,14 +7,21 @@
  * - vm_test.test.ts (to dynamically generate expectedLogs for VM comparison)
  */
 import path from "node:path";
-import {
-  clearCapturedLogs,
-  getCapturedLogs,
-} from "./runtime-stubs/capture.js";
+import { clearCapturedLogs, getCapturedLogs } from "./runtime-stubs/capture.js";
 import { UdonSharpBehaviour } from "./runtime-stubs/UdonSharpBehaviour.js";
 import type { VmTestCase } from "./vm_test_definitions.js";
 
 const casesDir = path.resolve(import.meta.dirname, "cases");
+
+/**
+ * Map VM entry point symbols to method names on the UdonSharpBehaviour class.
+ * The default entry point "_start" maps to the Start() method.
+ */
+function entryPointToMethodName(entryPoint: string): string {
+  if (entryPoint === "_start") return "Start";
+  // Custom entry points are not supported in JS runtime
+  return entryPoint;
+}
 
 export interface JsRuntimeResult {
   name: string;
@@ -29,6 +36,8 @@ export async function runTestCaseInJs(
   testCase: VmTestCase,
 ): Promise<JsRuntimeResult> {
   clearCapturedLogs();
+
+  const methodName = entryPointToMethodName(testCase.entryPoint ?? "_start");
 
   try {
     const modulePath = path.join(casesDir, testCase.sourceFile);
@@ -46,15 +55,16 @@ export async function runTestCaseInJs(
     }
 
     const instance = new ExportedClass();
-    if (typeof instance.Start !== "function") {
+    const method = (instance as unknown as Record<string, unknown>)[methodName];
+    if (typeof method !== "function") {
       return {
         name: testCase.name,
         logs: [],
-        error: `Class in ${testCase.sourceFile} has no Start() method`,
+        error: `Class in ${testCase.sourceFile} has no ${methodName}() method`,
       };
     }
 
-    instance.Start();
+    method.call(instance);
     return { name: testCase.name, logs: getCapturedLogs() };
   } catch (err) {
     return {
@@ -90,14 +100,14 @@ export async function runAllTestCasesInJs(
  */
 function findUdonClass(
   mod: Record<string, unknown>,
-): (new () => UdonSharpBehaviour & { Start(): void }) | null {
+): (new () => UdonSharpBehaviour) | null {
   for (const key of Object.keys(mod)) {
     const value = mod[key];
     if (
       typeof value === "function" &&
       value.prototype instanceof UdonSharpBehaviour
     ) {
-      return value as new () => UdonSharpBehaviour & { Start(): void };
+      return value as new () => UdonSharpBehaviour;
     }
   }
   return null;

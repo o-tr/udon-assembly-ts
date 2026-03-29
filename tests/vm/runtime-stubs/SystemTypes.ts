@@ -14,16 +14,15 @@ import type {
   UdonLong,
   UdonULong,
 } from "./UdonTypes.js";
-import { formatForUdon } from "./capture.js";
 
 // Re-export types not overridden
 export {
-  SystemString,
-  StringBuilder,
   Int32,
+  String,
+  StringBuilder,
   SystemArray,
   SystemCollectionsIEnumerator,
-  String,
+  SystemString,
 } from "../../../src/stubs/SystemTypes.js";
 
 // ---------------------------------------------------------------------------
