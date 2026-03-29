@@ -44,9 +44,11 @@ export async function runTestCaseInJs(
 ): Promise<JsRuntimeResult> {
   const methodName = entryPointToMethodName(testCase.entryPoint ?? "_start");
 
-  // beginCapture() throws if a concurrent runTestCaseInJs() is already running.
-  beginCapture();
   try {
+    // beginCapture() throws if a concurrent runTestCaseInJs() is already running.
+    // It must be inside the try so that finally always calls endCapture(),
+    // preventing isCapturing from staying true permanently after an error.
+    beginCapture();
     // Use a file URL so the import specifier is portable across platforms
     // (on Windows, absolute paths in dynamic imports require file:// URLs).
     const modulePath = path.join(casesDir, testCase.sourceFile);
