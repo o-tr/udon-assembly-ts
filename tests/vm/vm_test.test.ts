@@ -10,6 +10,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { TypeScriptToUdonTranspiler } from "../../src/transpiler/index.js";
+import {
+  type JsRuntimeResult,
+  runAllTestCasesInJs,
+} from "./js_runtime_runner.js";
 import { VM_TEST_CASES } from "./vm_test_definitions.js";
 
 const UNITY_EDITOR_PATH: string = process.env.UNITY_EDITOR_PATH ?? "";
@@ -35,17 +39,25 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
   const outputDir = path.join(UNITY_PROJECT_PATH, "TestResults");
   const casesDir = path.resolve(import.meta.dirname, "cases");
 
-  let testResults: Map<string, TestResultEntry> = new Map();
+  const testResults: Map<string, TestResultEntry> = new Map();
+  const jsRuntimeResults: Map<string, JsRuntimeResult> = new Map();
+  /** Resolved expected logs per test case, populated once in beforeAll. */
+  const resolvedExpectedLogs: Map<string, string[]> = new Map();
 
-  beforeAll(() => {
-    // Clean I/O directories
+  beforeAll(async () => {
+    // Step 1: Run all test cases in JS runtime to generate expected logs
+    const jsMap = await runAllTestCasesInJs(VM_TEST_CASES);
+    jsRuntimeResults.clear();
+    for (const [k, v] of jsMap) jsRuntimeResults.set(k, v);
+
+    // Step 2: Clean I/O directories
     if (existsSync(inputDir))
       rmSync(inputDir, { recursive: true, force: true });
     if (existsSync(outputDir))
       rmSync(outputDir, { recursive: true, force: true });
     mkdirSync(inputDir, { recursive: true });
 
-    // Transpile each test case and write .uasm
+    // Step 3: Transpile each test case and write .uasm
     const transpiler = new TypeScriptToUdonTranspiler();
     const testDefinitions: {
       tests: Array<{
@@ -73,23 +85,30 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       const uasmFileName = `${testCase.name}.uasm`;
       writeFileSync(path.join(inputDir, uasmFileName), result.uasm, "utf-8");
 
+      // Resolve expected logs once here and cache for use in it() callbacks.
+      // For expectError cases we don't need expected logs from the JS runtime.
+      const expectedLogs = testCase.expectError
+        ? (testCase.expectedLogs ?? [])
+        : resolveExpectedLogs(testCase.name, testCase.expectedLogs);
+      resolvedExpectedLogs.set(testCase.name, expectedLogs);
+
       testDefinitions.tests.push({
         name: testCase.name,
         uasmFile: uasmFileName,
         entryPoint: testCase.entryPoint ?? "_start",
-        expectedLogs: testCase.expectedLogs,
+        expectedLogs,
         expectError: testCase.expectError ?? false,
       });
     }
 
-    // Write test definitions JSON
+    // Step 4: Write test definitions JSON
     writeFileSync(
       path.join(inputDir, "test_definitions.json"),
       JSON.stringify(testDefinitions, null, 2),
       "utf-8",
     );
 
-    // Run Unity in batch mode
+    // Step 5: Run Unity in batch mode
     const logFile = path.join(tmpdir(), `uasm-vm-test-${Date.now()}.log`);
     const unityArgs = [
       "-batchmode",
@@ -121,7 +140,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       }
     }
 
-    // Read results
+    // Step 6: Read results
     const resultsPath = path.join(outputDir, "test_results.json");
     if (!existsSync(resultsPath)) {
       // Read Unity log for diagnostics
@@ -149,7 +168,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     const rawResults: TestResultsJson = JSON.parse(
       readFileSync(resultsPath, "utf-8"),
     );
-    testResults = new Map();
+    testResults.clear();
     for (const result of rawResults.results) {
       if (testResults.has(result.name)) {
         throw new Error(`Duplicate test result name: "${result.name}"`);
@@ -165,6 +184,31 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     }
   }, 600_000); // 10 minute timeout for beforeAll
 
+  /**
+   * Resolve expected logs for a test case.
+   * Uses hardcoded expectedLogs if provided, otherwise falls back to JS runtime output.
+   */
+  function resolveExpectedLogs(
+    name: string,
+    hardcodedLogs?: string[],
+  ): string[] {
+    if (hardcodedLogs) return hardcodedLogs;
+
+    const jsResult = jsRuntimeResults.get(name);
+    if (!jsResult) {
+      throw new Error(
+        `No JS runtime result for "${name}" and no hardcoded expectedLogs`,
+      );
+    }
+    if (jsResult.error) {
+      throw new Error(
+        `JS runtime failed for "${name}": ${jsResult.error}. ` +
+          `Provide hardcoded expectedLogs or fix the JS runtime error.`,
+      );
+    }
+    return jsResult.logs;
+  }
+
   // Generate individual vitest assertions per test case
   for (const testCase of VM_TEST_CASES) {
     it(`VM: ${testCase.name}`, () => {
@@ -173,16 +217,18 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         throw new Error(`No result found for test "${testCase.name}"`);
       }
 
+      const expectedLogs = resolvedExpectedLogs.get(testCase.name) ?? [];
+
       if (!result.passed) {
         throw new Error(
           `VM test "${testCase.name}" failed:\n` +
             `  Error: ${result.error}\n` +
-            `  Expected logs: ${JSON.stringify(testCase.expectedLogs)}\n` +
+            `  Expected logs: ${JSON.stringify(expectedLogs)}\n` +
             `  Captured logs: ${JSON.stringify(result.capturedLogs)}`,
         );
       }
 
-      expect(result.capturedLogs).toEqual(testCase.expectedLogs);
+      expect(result.capturedLogs).toEqual(expectedLogs);
     });
   }
 });

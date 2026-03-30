@@ -1,0 +1,1104 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`JS Runtime Equivalence Tests > JS: arithmetic 1`] = `
+[
+  "15",
+  "5",
+  "50",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: array_index_write_read 1`] = `
+[
+  "10",
+  "20",
+  "99",
+  "10",
+  "30",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: array_literal_basic 1`] = `
+[
+  "3",
+  "10",
+  "30",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: array_literal_iteration 1`] = `
+[
+  "10",
+  "20",
+  "30",
+  "60",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: bitwise_operators 1`] = `
+[
+  "15",
+  "255",
+  "240",
+  "255",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: block_scoping 1`] = `
+[
+  "60",
+  "10",
+  "Hello World",
+  "2",
+  "1",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: boolean_coercion_not 1`] = `
+[
+  "False",
+  "True",
+  "True",
+  "correct",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: boolean_to_string_format 1`] = `
+[
+  "True",
+  "False",
+  "True",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: cast_as_expression 1`] = `
+[
+  "42",
+  "hello",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: cast_float_to_int 1`] = `
+[
+  "3",
+  "-3",
+  "0",
+  "100",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: complex_boolean 1`] = `
+[
+  "True",
+  "False",
+  "False",
+  "True",
+  "True",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: compound_assignment 1`] = `
+[
+  "15",
+  "12",
+  "24",
+  "6",
+  "2",
+  "15",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: compound_assignment_lhs_eval 1`] = `
+[
+  "15",
+  "1",
+  "15",
+  "3",
+  "1",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: compound_assignment_mixed 1`] = `
+[
+  "3",
+  "55",
+  "2",
+  "7.5",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: compound_assignment_operators 1`] = `
+[
+  "15",
+  "12",
+  "24",
+  "6",
+  "2",
+  "7.5",
+  "15",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: control_flow 1`] = `
+[
+  "greater",
+  "0",
+  "1",
+  "2",
+  "10",
+  "11",
+  "12",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: convert_overload 1`] = `
+[
+  "4",
+  "42",
+  "42",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_dictionary 1`] = `
+[
+  "set 2 values",
+  "True",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_dictionary_getkeys 1`] = `
+[
+  "2",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_dictionary_operations 1`] = `
+[
+  "Alice",
+  "2",
+  "True",
+  "1",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_dictionary_shallow_clone 1`] = `
+[
+  "Alice",
+  "Alice",
+  "Bob",
+  "Alice",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_list 1`] = `
+[
+  "added 3 items",
+  "added 4th item",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_list_operations 1`] = `
+[
+  "3",
+  "20",
+  "True",
+  "2",
+  "10",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: data_list_set_item 1`] = `
+[
+  "10",
+  "20",
+  "99",
+  "30",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: do_while 1`] = `
+[
+  "0",
+  "1",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: early_return 1`] = `
+[
+  "negative",
+  "zero",
+  "small",
+  "large",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: element_access_computed 1`] = `
+[
+  "30",
+  "60",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: enum_auto_increment 1`] = `
+[
+  "0",
+  "1",
+  "10",
+  "11",
+  "above medium",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: enum_usage 1`] = `
+[
+  "3",
+  "is right",
+  "right",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: expression_in_call_args 1`] = `
+[
+  "15",
+  "10",
+  "15",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: fibonacci_iterative 1`] = `
+[
+  "0",
+  "1",
+  "5",
+  "55",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: field_init_order 1`] = `
+[
+  "10",
+  "default",
+  "True",
+  "3.25",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: for_loop_break_continue 1`] = `
+[
+  "1",
+  "3",
+  "5",
+  "0",
+  "1",
+  "0",
+  "1",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: for_of_array 1`] = `
+[
+  "1",
+  "2",
+  "3",
+  "6",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: for_of_data_list 1`] = `
+[
+  "10",
+  "20",
+  "30",
+  "60",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: for_of_dict_destructure 1`] = `
+[
+  "2",
+  "30",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: for_of_dict_keys_lookup 1`] = `
+[
+  "30",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: for_of_with_break 1`] = `
+[
+  "1",
+  "2",
+  "3",
+  "1",
+  "3",
+  "4",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: increment_decrement 1`] = `
+[
+  "1",
+  "2",
+  "1",
+  "55",
+  "120",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: increment_operators 1`] = `
+[
+  "6",
+  "5",
+  "8",
+  "5",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_as_parameter 1`] = `
+[
+  "42",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_basic 1`] = `
+[
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_constructor 1`] = `
+[
+  "200",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_cross_method_call 1`] = `
+[
+  "15",
+  "25",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_field_defaults 1`] = `
+[
+  "5",
+  "15",
+  "20",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_interface_return_dispatch 1`] = `
+[
+  "15",
+  "True",
+  "12",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_internal_calls 1`] = `
+[
+  "11",
+  "20",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_method_chain 1`] = `
+[
+  "10",
+  "13",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_multi_class_interaction 1`] = `
+[
+  "5",
+  "12",
+  "5",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_multi_return_paths 1`] = `
+[
+  "1",
+  "positive",
+  "-1",
+  "negative",
+  "0",
+  "zero",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_multiple_instances 1`] = `
+[
+  "15",
+  "20",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_multiple_returns 1`] = `
+[
+  "negative",
+  "zero",
+  "positive",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_nested 1`] = `
+[
+  "42",
+  "84",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_return_value_chain 1`] = `
+[
+  "20",
+  "26",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_state_machine 1`] = `
+[
+  "idle",
+  "running",
+  "done",
+  "idle",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_state_read_after_write 1`] = `
+[
+  "5",
+  "15",
+  "20",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_type_alias_arg 1`] = `
+[
+  "99",
+  "world",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: inline_with_params 1`] = `
+[
+  "42",
+  "60",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: int_arithmetic 1`] = `
+[
+  "3",
+  "1",
+  "-3",
+  "14",
+  "9",
+  "5",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: interface_inline_dispatch 1`] = `
+[
+  "7",
+  "14",
+  "simple",
+  "double",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: interface_untracked_dispatch 1`] = `
+[
+  "1",
+  "basic",
+  "3",
+  "special",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: large_float_literal 1`] = `
+[
+  "True",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: long_field_init 1`] = `
+[
+  "100",
+  "-50",
+  "0",
+  "50",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: loop_variable_scoping 1`] = `
+[
+  "0",
+  "1",
+  "2",
+  "10",
+  "11",
+  "12",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: mathf_advanced 1`] = `
+[
+  "3",
+  "1024",
+  "4",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: mathf_basic 1`] = `
+[
+  "5",
+  "3",
+  "7",
+  "3",
+  "4",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: method_calls 1`] = `
+[
+  "7",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: method_chain_calls 1`] = `
+[
+  "14",
+  "16",
+  "-6",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: method_patterns 1`] = `
+[
+  "20",
+  "30",
+  "5",
+  "0",
+  "10",
+  "9",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: mixed_numeric_arithmetic 1`] = `
+[
+  "11.5",
+  "20",
+  "0.75",
+  "23",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: mixed_numeric_comparison 1`] = `
+[
+  "True",
+  "True",
+  "False",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: nameof_expression 1`] = `
+[
+  "myValue",
+  "anotherVar",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: negative_numbers 1`] = `
+[
+  "-5",
+  "-10",
+  "5",
+  "-1",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: nested_control_flow_deep 1`] = `
+[
+  "6",
+  "3",
+  "12",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: nested_loops 1`] = `
+[
+  "4",
+  "10",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: nested_ternary 1`] = `
+[
+  "big",
+  "medium",
+  "small",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: null_coalescing 1`] = `
+[
+  "hello",
+  "fallback",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: null_coalescing_chain 1`] = `
+[
+  "first",
+  "second",
+  "fallback",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: null_coalescing_method_returns 1`] = `
+[
+  "hello",
+  "was-null",
+  "deep",
+  "hello",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: numeric_cast_chain 1`] = `
+[
+  "3",
+  "3",
+  "7",
+  "7.5",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: numeric_type_promotion 1`] = `
+[
+  "13",
+  "35",
+  "False",
+  "True",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: object_literal_basic 1`] = `
+[
+  "Alice",
+  "30",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: object_literal_nested 1`] = `
+[
+  "True",
+  "hello",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: object_literal_spread 1`] = `
+[
+  "Alice",
+  "30",
+  "NYC",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: operators_arithmetic 1`] = `
+[
+  "2",
+  "15",
+  "12",
+  "24",
+  "-24",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: operators_comparison 1`] = `
+[
+  "eq",
+  "neq",
+  "lt",
+  "gt",
+  "lte",
+  "gte",
+  "not",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: optimized_complex_control_flow 1`] = `
+[
+  "343",
+  "280",
+  "30",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: optional_chaining 1`] = `
+[
+  "hello",
+  "fallback",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: property_access_type_fallback 1`] = `
+[
+  "hello",
+  "True",
+  "42",
+  "hello",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: recursive_factorial 1`] = `
+[
+  "1",
+  "1",
+  "6",
+  "120",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: recursive_fibonacci 1`] = `
+[
+  "0",
+  "1",
+  "8",
+  "55",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: recursive_with_locals 1`] = `
+[
+  "55",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: restricted_type_init 1`] = `
+[
+  "True",
+  "False",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: shift_operators 1`] = `
+[
+  "16",
+  "64",
+  "-4",
+  "1024",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: short_circuit_side_effects 1`] = `
+[
+  "check-a",
+  "False",
+  "check-b",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: shortcircuit_side_effects 1`] = `
+[
+  "False",
+  "0",
+  "True",
+  "0",
+  "True",
+  "1",
+  "True",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: simple_log 1`] = `
+[
+  "hello udon-sharp",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: static_getter_vector3 1`] = `
+[
+  "(0.00, 0.00, 0.00)",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_basic 1`] = `
+[
+  "Hello World",
+  "HelloWorld",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_binary_fallback 1`] = `
+[
+  "8 items",
+  "total: 8",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_chain 1`] = `
+[
+  "abcdef",
+  "x=10, y=20",
+  "sum=30",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_many_parts 1`] = `
+[
+  "abcde",
+  "abcde",
+  "xyzw",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_mixed_types 1`] = `
+[
+  "val=42",
+  "flag=True",
+  "f=3.25",
+  "n=42 b=True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_multi 1`] = `
+[
+  "Name: Player, Score: 42",
+  "Hello World",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_concat_parts 1`] = `
+[
+  "Hello World",
+  "HelloWorld",
+  "Hello",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_ops 1`] = `
+[
+  "Hello World",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: string_ts_compat_methods 1`] = `
+[
+  "6",
+  "-1",
+  "True",
+  "False",
+  "True",
+  "False",
+  "True",
+  "False",
+  "hello world",
+  "HELLO WORLD",
+  "hi",
+  "World",
+  "Hello",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_call_analyzer 1`] = `
+[
+  "20",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_case 1`] = `
+[
+  "two",
+  "default",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_continue_in_loop 1`] = `
+[
+  "0",
+  "1",
+  "skip",
+  "3",
+  "4",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_enum_advanced 1`] = `
+[
+  "green",
+  "not red",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_expression_discriminant 1`] = `
+[
+  "matched 5",
+  "computed match",
+  "1",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_fallthrough 1`] = `
+[
+  "one",
+  "two",
+  "b-two",
+  "c-default",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: switch_string 1`] = `
+[
+  "matched hello",
+  "default",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: template_literal_basic 1`] = `
+[
+  "Hello World",
+  "15",
+  "5",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: template_literal_complex 1`] = `
+[
+  "result: 30",
+  "Alice is True",
+  "1-2-3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: template_literal_many_parts 1`] = `
+[
+  "1-2-3",
+  "sum=30",
+  "test:42",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: ternary_and_shortcircuit 1`] = `
+[
+  "big",
+  "small",
+  "False",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: try_catch_basic 1`] = `
+[
+  "before",
+  "after",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: try_catch_error 1`] = `
+[
+  "before",
+  "caught",
+  "after",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: try_catch_finally 1`] = `
+[
+  "try-ok",
+  "finally-1",
+  "caught-2",
+  "finally-2",
+  "done",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: try_catch_nested 1`] = `
+[
+  "outer-start",
+  "inner-start",
+  "inner-caught",
+  "outer-continues",
+  "done",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: type_coercion_int_float 1`] = `
+[
+  "3.25",
+  "6.5",
+  "3",
+  "7",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: type_coercion_string_number 1`] = `
+[
+  "42",
+  "The answer is 42",
+  "100",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: type_conversion 1`] = `
+[
+  "3.25",
+  "100",
+  "-42",
+  "True",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: typeof_expression 1`] = `
+[
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: unary_negation_typed 1`] = `
+[
+  "-10",
+  "-42",
+  "42",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: update_expression_semantics 1`] = `
+[
+  "5",
+  "6",
+  "6",
+  "6",
+  "11",
+  "11",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: update_statement_effect 1`] = `
+[
+  "2",
+  "1",
+]
+`;
