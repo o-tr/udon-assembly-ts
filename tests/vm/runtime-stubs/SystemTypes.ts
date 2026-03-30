@@ -157,8 +157,8 @@ export { SystemMath as Math };
 export function bankerRound(v: number): number {
   const floor = Math.floor(v);
   const frac = v - floor;
-  // Not at midpoint: use normal rounding
-  if (Math.abs(frac - 0.5) > 1e-10) {
+  // Exact midpoint check — no epsilon needed; 0.5 is exactly representable
+  if (frac !== 0.5) {
     return Math.round(v);
   }
   // At midpoint: round to even
