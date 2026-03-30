@@ -74,11 +74,7 @@ export function udonCastPlugin(): VitePlugin {
             const helperName = CAST_MAP[typeName];
             if (helperName) {
               needsHelpers = true;
-              const inner = ts.visitEachChild(
-                node.expression,
-                visitor,
-                context,
-              );
+              const inner = ts.visitNode(node.expression, visitor);
               return ts.factory.createCallExpression(
                 ts.factory.createIdentifier(helperName),
                 undefined,
