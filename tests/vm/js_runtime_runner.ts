@@ -109,19 +109,26 @@ export async function runAllTestCasesInJs(
 }
 
 /**
- * Find the first exported class that extends UdonSharpBehaviour.
+ * Find the single exported class that extends UdonSharpBehaviour.
+ * Throws if multiple matching exports are found.
  */
 function findUdonClass(
   mod: Record<string, unknown>,
 ): (new () => UdonSharpBehaviour) | null {
+  const matches: Array<new () => UdonSharpBehaviour> = [];
   for (const key of Object.keys(mod)) {
     const value = mod[key];
     if (
       typeof value === "function" &&
       value.prototype instanceof UdonSharpBehaviour
     ) {
-      return value as new () => UdonSharpBehaviour;
+      matches.push(value as new () => UdonSharpBehaviour);
     }
   }
-  return null;
+  if (matches.length > 1) {
+    throw new Error(
+      "Multiple UdonSharpBehaviour subclasses exported — expected exactly one.",
+    );
+  }
+  return matches[0] ?? null;
 }

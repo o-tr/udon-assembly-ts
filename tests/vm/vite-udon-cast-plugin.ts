@@ -122,10 +122,7 @@ export function udonCastPlugin(): VitePlugin {
             }
 
             for (const span of node.templateSpans) {
-              const innerExpr = ts.visitNode(
-                span.expression,
-                visitor,
-              );
+              const innerExpr = ts.visitNode(span.expression, visitor);
               parts.push(
                 ts.factory.createCallExpression(
                   ts.factory.createIdentifier("__udonFormat"),
@@ -164,17 +161,17 @@ export function udonCastPlugin(): VitePlugin {
       let output = printer.printFile(result.transformed[0]);
       result.dispose();
 
-      // Prepend helpers if needed
+      // Prepend helpers if needed — imports must come before var declarations
       const preamble: string[] = [];
-      if (needsHelpers) {
-        preamble.push(HELPERS);
-      }
       if (needsUdonFormat) {
         // Import udonFormat from the runtime capture module
         // Use the alias path which will be resolved by Vite
         preamble.push(
           `import { udonFormat as __udonFormat } from "@ootr/udon-assembly-ts/stubs/capture";\n`,
         );
+      }
+      if (needsHelpers) {
+        preamble.push(HELPERS);
       }
 
       if (preamble.length > 0) {

@@ -166,6 +166,10 @@ class DataListImpl {
   }
 
   Sort(): void {
+    // LIMITATION: The VRC SDK sorts by TokenType first, then by value within
+    // the same type — so Int tokens always precede Float tokens. This stub
+    // treats all numbers uniformly. Avoid mixing Int and Float tokens in a
+    // sorted list if equivalence with the VM matters.
     this._items.sort((a, b) => {
       const av = a._getRawValue();
       const bv = b._getRawValue();
