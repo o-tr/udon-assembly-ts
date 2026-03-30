@@ -55,7 +55,9 @@ export class Convert {
     _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonLong {
     if (typeof _value === "bigint") return _value as UdonLong;
-    return BigInt(bankerRound(Number(_value))) as UdonLong;
+    const n = Number(_value);
+    if (!Number.isFinite(n)) return 0n as UdonLong;
+    return BigInt(bankerRound(n)) as UdonLong;
   }
 
   static ToUInt64(_value: UdonByte): UdonULong;
@@ -70,7 +72,9 @@ export class Convert {
     if (typeof _value === "bigint") {
       return (_value < 0n ? 0n : _value) as UdonULong;
     }
-    const v = Math.max(0, bankerRound(Number(_value)));
+    const n = Number(_value);
+    if (!Number.isFinite(n)) return 0n as UdonULong;
+    const v = Math.max(0, bankerRound(n));
     return BigInt(v) as UdonULong;
   }
 
