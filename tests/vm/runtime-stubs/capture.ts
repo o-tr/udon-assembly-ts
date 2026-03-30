@@ -63,10 +63,11 @@ export function endCapture(): void {
  *   produce the same string. Non-exact fractions like 1.1 may diverge even
  *   with G7 formatting due to single-precision rounding differences.
  *   IMPORTANT for integer values (UdonInt): TypeScript branded types are erased
- *   at runtime, so all JS numbers pass through Math.fround() here. Integers
- *   larger than 2^24 (16,777,216) lose precision when converted to float32 —
- *   e.g. formatSingle(16_777_217 as UdonInt) produces "16777216" while C#'s
- *   int.ToString() produces "16777217". Keep integer test values below 2^24.
+ *   at runtime, so all JS numbers pass through Math.fround() here. Keep logged
+ *   integer values below 10^7 (10,000,000): above that threshold formatSingle
+ *   switches to scientific notation (e.g. "1E+07") while C# int.ToString()
+ *   always uses plain decimal ("10000000"). Integers in [10^7, 2^24) are exact
+ *   in float32 but will still produce mismatched log strings.
  * - Vector3: "(x.xx, y.yy, z.zz)" format
  * - null/undefined: "Null"
  */
