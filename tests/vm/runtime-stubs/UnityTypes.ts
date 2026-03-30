@@ -140,7 +140,8 @@ export class Mathf {
     return Math.fround(Math.log10(Math.fround(value))) as UdonFloat;
   }
   static Sign(value: UdonFloat): UdonFloat {
-    return Math.fround(Math.sign(Math.fround(value))) as UdonFloat;
+    // Unity's Mathf.Sign returns 1 for zero/positive, -1 for negative
+    return (Math.fround(value) < 0 ? -1 : 1) as UdonFloat;
   }
 
   static readonly PI: UdonFloat = Math.fround(Math.PI) as UdonFloat;
@@ -176,7 +177,7 @@ export class Vector3 {
 
   get normalized(): Vector3 {
     const mag = this.magnitude;
-    if (mag === 0) return new Vector3(0, 0, 0);
+    if (mag < 1e-5) return new Vector3(0, 0, 0);
     return new Vector3(
       Math.fround(this.x / mag),
       Math.fround(this.y / mag),
@@ -249,8 +250,12 @@ export class Vector3 {
   }
 
   static Angle(from: Vector3, to: Vector3): UdonFloat {
-    const dot = Vector3.Dot(from.normalized, to.normalized);
-    const clamped = Math.fround(Math.min(Math.max(Math.fround(dot), -1), 1));
+    const magFrom = from.magnitude;
+    const magTo = to.magnitude;
+    const denom = Math.fround(magFrom * magTo);
+    if (denom < 1e-10) return 0 as UdonFloat;
+    const dot = Math.fround(Vector3.Dot(from, to) / denom);
+    const clamped = Math.fround(Math.min(Math.max(dot, -1), 1));
     return Math.fround(
       Math.fround(Math.acos(clamped)) * Mathf.Rad2Deg,
     ) as UdonFloat;

@@ -42,7 +42,7 @@ export class DataToken {
     return BigInt(Math.trunc(Number(this._value))) as UdonLong;
   }
   get Float(): number {
-    return Number(this._value);
+    return Math.fround(Number(this._value));
   }
   get Double(): number {
     return Number(this._value);

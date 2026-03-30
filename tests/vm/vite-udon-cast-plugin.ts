@@ -27,8 +27,8 @@ const HELPERS = `
 var __castToInt = (v) => typeof v === 'number' ? (v | 0) : v;
 var __castToByte = (v) => typeof v === 'number' ? ((v | 0) & 0xFF) : v;
 var __castToFloat = (v) => typeof v === 'number' ? Math.fround(v) : v;
-var __castToLong = (v) => typeof v === 'bigint' ? v : BigInt(Math.trunc(Number(v)));
-var __castToULong = (v) => typeof v === 'bigint' ? BigInt.asUintN(64, v) : BigInt.asUintN(64, BigInt(Math.trunc(Number(v))));
+var __castToLong = (v) => { if (typeof v === 'bigint') return v; var n = Number(v); return Number.isFinite(n) ? BigInt(Math.trunc(n)) : 0n; };
+var __castToULong = (v) => { if (typeof v === 'bigint') return BigInt.asUintN(64, v); var n = Number(v); return Number.isFinite(n) ? BigInt.asUintN(64, BigInt(Math.trunc(n))) : 0n; };
 `;
 
 // Udon branded types that need runtime cast behavior
