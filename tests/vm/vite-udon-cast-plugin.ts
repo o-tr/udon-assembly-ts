@@ -122,10 +122,9 @@ export function udonCastPlugin(): VitePlugin {
             }
 
             for (const span of node.templateSpans) {
-              const innerExpr = ts.visitEachChild(
+              const innerExpr = ts.visitNode(
                 span.expression,
                 visitor,
-                context,
               );
               parts.push(
                 ts.factory.createCallExpression(

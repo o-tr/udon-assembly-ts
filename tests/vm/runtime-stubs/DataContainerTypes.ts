@@ -166,12 +166,13 @@ class DataListImpl {
   }
 
   Sort(): void {
-    const collator = new Intl.Collator("en-US", { sensitivity: "variant" });
     this._items.sort((a, b) => {
       const av = a._getRawValue();
       const bv = b._getRawValue();
       if (typeof av === "number" && typeof bv === "number") return av - bv;
-      return collator.compare(String(av), String(bv));
+      const sa = String(av);
+      const sb = String(bv);
+      return sa < sb ? -1 : sa > sb ? 1 : 0;
     });
   }
 
