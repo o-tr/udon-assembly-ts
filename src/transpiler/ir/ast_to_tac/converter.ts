@@ -396,14 +396,28 @@ export class ASTToTACConverter {
     // constructor for any of its implementors was ever called.  In that case
     // pass 2 will fall through to generic (EXTERN) handling rather than viface
     // dispatch — the same silent failure the old single-pass code had.
+    // Only check interfaces whose implementors are actually part of the current
+    // compilation unit (program statements), otherwise the warning fires for
+    // every entry point that doesn't use the interface — a false positive.
+    // Pre-calculate the set of relevant interfaces from program classes to
+    // avoid O(I × C) iteration over all interfaces × all classes.
     if (this.classRegistry) {
-      for (const iface of this.classRegistry.getAllInterfaces()) {
+      const relevantInterfaces = new Set<string>();
+      for (const stmt of program.statements) {
+        if (stmt.kind !== ASTNodeKind.ClassDeclaration) continue;
+        for (const iface of this.classRegistry.getAllImplementedInterfaces(
+          (stmt as ClassDeclarationNode).name,
+        )) {
+          relevantInterfaces.add(iface);
+        }
+      }
+      for (const ifaceName of relevantInterfaces) {
         if (
-          isAllInlineInterface(this, iface.name) &&
-          !this.interfaceClassIdMap.has(iface.name)
+          isAllInlineInterface(this, ifaceName) &&
+          !this.interfaceClassIdMap.has(ifaceName)
         ) {
           console.warn(
-            `transpiler: all-inline interface "${iface.name}" has no instantiated implementors — ` +
+            `transpiler: all-inline interface "${ifaceName}" has no instantiated implementors — ` +
               `for-of loops over this type will fall back to EXTERN dispatch.`,
           );
         }
