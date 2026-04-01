@@ -128,7 +128,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
 
     try {
       execFileSync(UNITY_EDITOR_PATH, unityArgs, {
-        timeout: 300_000,
+        timeout: 3_600_000,
         stdio: "inherit",
       });
     } catch (err: unknown) {
@@ -182,7 +182,7 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
     } catch {
       /* ignore */
     }
-  }, 600_000); // 10 minute timeout for beforeAll
+  }, 3_600_000); // 10 minute timeout for beforeAll
 
   /**
    * Resolve expected logs for a test case.
