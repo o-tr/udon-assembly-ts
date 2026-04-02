@@ -141,6 +141,24 @@ export function saveAndBindInlineParams(
             prefix: argVar.name,
             className: argType.name,
           });
+        } else {
+          // Fallback: when the argument's operand type is erased (e.g.
+          // ObjectType from a Map.get or conditional), try the parameter's
+          // declared type. The method signature is more reliable than the
+          // operand's runtime type in this case.
+          const paramTypeName = param.type.name;
+          const isParamTypeAlias =
+            converter.typeMapper.getAlias(paramTypeName) instanceof
+            InterfaceTypeSymbol;
+          const isParamInlineClass =
+            resolveClassNode(converter, paramTypeName) !== undefined &&
+            !converter.udonBehaviourClasses.has(paramTypeName);
+          if (isParamTypeAlias || isParamInlineClass) {
+            converter.inlineInstanceMap.set(param.name, {
+              prefix: argVar.name,
+              className: paramTypeName,
+            });
+          }
         }
       }
     }

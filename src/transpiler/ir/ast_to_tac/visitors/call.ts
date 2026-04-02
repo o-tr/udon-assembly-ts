@@ -1,6 +1,10 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
-import { mapTypeScriptToCSharp } from "../../../codegen/udon_type_resolver.js";
+import {
+  isKnownExternElementType,
+  mapTypeScriptToCSharp,
+  toUdonTypeNameWithArray,
+} from "../../../codegen/udon_type_resolver.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -29,6 +33,7 @@ import {
 } from "../../../frontend/types.js";
 import {
   ArrayAccessInstruction,
+  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -63,6 +68,7 @@ import {
   emitDeferredInlineInitializers,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
+  operandTrackingKey,
   resolveClassNode,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
@@ -228,15 +234,13 @@ function resolveInlineClassName(
       return converter.currentClassName;
     }
   }
-  if (object.kind === TACOperandKind.Variable) {
-    const instanceInfo = converter.resolveInlineInstance(
-      (object as VariableOperand).name,
-    );
+  const key = operandTrackingKey(object);
+  if (key) {
+    const instanceInfo = converter.resolveInlineInstance(key);
     if (instanceInfo) {
       // When className is an interface/type alias, resolve to concrete class
       // so evaluateArgsWithExpectedTypes can find the method signature.
-      const concrete = resolveConcreteClassName(converter, instanceInfo);
-      return concrete;
+      return resolveConcreteClassName(converter, instanceInfo);
     }
   }
   return undefined;
@@ -1471,6 +1475,76 @@ export function visitCallExpression(
           );
           return result;
         }
+        case "push": {
+          // push() with no args: return current length without mutation
+          if (evaluatedArgs.length === 0) {
+            const curLen = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new PropertyGetInstruction(curLen, object, "length"),
+            );
+            return curLen;
+          }
+
+          // Udon arrays are fixed-size. Implement push as:
+          //   wrapper = new T[N]
+          //   wrapper[0] = arg0; wrapper[1] = arg1; ...
+          //   newArr = array.concat(wrapper)
+          //   array = newArr  (reference replacement)
+          //   return newArr.length
+
+          // Determine the Udon array type for the constructor EXTERN
+          const elemName =
+            objectType instanceof ArrayTypeSymbol
+              ? objectType.elementType.name
+              : "object";
+          const arrayUdonType = isKnownExternElementType(elemName)
+            ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
+            : "SystemObjectArray";
+          const ctorSig = `${arrayUdonType}.__ctor__SystemInt32__${arrayUdonType}`;
+
+          // 1. Create wrapper array of size N
+          const wrapperSize = createConstant(
+            evaluatedArgs.length,
+            PrimitiveTypes.int32,
+          );
+          const wrapper = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new CallInstruction(wrapper, ctorSig, [wrapperSize]),
+          );
+
+          // 2. Set each element in the wrapper
+          for (let i = 0; i < evaluatedArgs.length; i++) {
+            this.instructions.push(
+              new ArrayAssignmentInstruction(
+                wrapper,
+                createConstant(i, PrimitiveTypes.int32),
+                evaluatedArgs[i],
+              ),
+            );
+          }
+
+          // 3. Concat original array with wrapper
+          const newArr = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(newArr, object, "concat", [wrapper]),
+          );
+
+          // 4. Write back new array reference to original variable.
+          // Only Variable operands (locals, inline class fields) can be
+          // updated persistently. Temporary operands originate from
+          // PropertyGet and writing to them would not propagate back to
+          // the source property.
+          if (object.kind === TACOperandKind.Variable) {
+            this.instructions.push(new CopyInstruction(object, newArr));
+          }
+
+          // 5. Return new length (push returns the new array length)
+          const newLen = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new PropertyGetInstruction(newLen, newArr, "length"),
+          );
+          return newLen;
+        }
       }
     }
     if (
@@ -1503,11 +1577,11 @@ export function visitCallExpression(
       );
       if (inlineResult != null) return inlineResult;
     }
-    // Inline instance method call: object.method() where object is inline instance
-    if (object.kind === TACOperandKind.Variable) {
-      const instanceInfo = this.resolveInlineInstance(
-        (object as VariableOperand).name,
-      );
+    // Inline instance method call: object.method() where object is inline instance.
+    // operandTrackingKey handles both Variable and Temporary operands.
+    const methodInstanceKey = operandTrackingKey(object);
+    if (methodInstanceKey) {
+      const instanceInfo = this.resolveInlineInstance(methodInstanceKey);
       if (instanceInfo) {
         const inlineResult = this.visitInlineInstanceMethodCallWithContext(
           instanceInfo.className,

@@ -439,14 +439,26 @@ export function visitForOfStatement(
   }
 
   const iterableType = this.getOperandType(iterableOperand);
-  const inferredElementType =
-    iterableType instanceof ArrayTypeSymbol
-      ? iterableType.elementType
-      : iterableType instanceof DataListTypeSymbol
-        ? iterableType.elementType
-        : iterableType?.name === ExternTypes.dataList.name
-          ? ObjectType
-          : null;
+
+  // Infer the element type from the iterable's operand type first, then
+  // fall back to the AST-resolved type. The latter recovers the element
+  // type when the operand's stored type is erased (e.g. ObjectType) but
+  // the AST still carries the declared type.
+  let inferredElementType: TypeSymbol | null = null;
+  for (const t of [iterableType, inferredIterableType]) {
+    if (t instanceof ArrayTypeSymbol) {
+      inferredElementType = t.elementType;
+      break;
+    }
+    if (t instanceof DataListTypeSymbol) {
+      inferredElementType = t.elementType;
+      break;
+    }
+    if (t?.name === ExternTypes.dataList.name) {
+      inferredElementType = ObjectType;
+      break;
+    }
+  }
   // Only unwrap DataToken elements when we have a DataListTypeSymbol (e.g.,
   // Set iteration via GetKeys() yields DataListTypeSymbol) so we can use the
   // element type. When matching ExternTypes.dataList or UdonType.DataList by
@@ -469,7 +481,7 @@ export function visitForOfStatement(
         inferredElementType ??
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
-          : PrimitiveTypes.single));
+          : ObjectType));
 
   // If we're iterating an untyped `DataList` (matched by name/udonType), the
   // elements we get are raw `DataToken`s — force the loop variable to be a
