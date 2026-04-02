@@ -60,6 +60,7 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
@@ -669,6 +670,11 @@ export function visitConditionalExpression(
 
   this.instructions.push(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
+  // Upgrade result type if the false branch provides a more specific type.
+  const falseType = this.getOperandType(falseVal);
+  if ((result as TemporaryOperand).type === ObjectType && falseType !== ObjectType) {
+    (result as TemporaryOperand).type = falseType;
+  }
   this.instructions.push(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
@@ -691,6 +697,11 @@ export function visitNullCoalescingExpression(
   this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
+  // Upgrade result type if the right operand provides a more specific type.
+  const rightType = this.getOperandType(right);
+  if ((result as TemporaryOperand).type === ObjectType && rightType !== ObjectType) {
+    (result as TemporaryOperand).type = rightType;
+  }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
   this.instructions.push(new CopyInstruction(result, right));
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
@@ -1241,7 +1252,7 @@ export function visitArrayAccessExpression(
       elementType = ObjectType;
     }
   }
-  const resolvedElementType = elementType ?? PrimitiveTypes.single;
+  const resolvedElementType = elementType ?? ObjectType;
   const result = this.newTemp(resolvedElementType);
   this.instructions.push(new ArrayAccessInstruction(result, array, index));
   return result;
@@ -1494,6 +1505,67 @@ export function visitPropertyAccessExpression(
             dispInstances.push([instId, info]);
           }
         }
+        // AST type fallback: when operand type is erased (ObjectType,
+        // CollectionTypeSymbol, etc.) and no instances matched, try resolving
+        // the base type from the AST and retry with that name.
+        if (dispInstances.length === 0) {
+          const astBaseType = resolveTypeFromNode(this, node.object);
+          const astTypeName = astBaseType?.name;
+          if (astTypeName && astTypeName !== untrackedTypeName) {
+            if (!this.implementorNamesCache.has(astTypeName)) {
+              this.implementorNamesCache.set(
+                astTypeName,
+                this.classRegistry
+                  ? new Set(
+                      this.classRegistry
+                        .getImplementorsOfInterface(astTypeName)
+                        .map((i) => i.name),
+                    )
+                  : null,
+              );
+            }
+            const astImplementorNames =
+              this.implementorNamesCache.get(astTypeName) ?? null;
+            for (const [instId, info] of this.allInlineInstances) {
+              if (
+                info.className === astTypeName ||
+                astImplementorNames?.has(info.className)
+              ) {
+                dispInstances.push([instId, info]);
+              }
+            }
+          }
+        }
+        // Property-based fallback: when type is fully erased ("object") and
+        // no instances matched by type name, scan inline instances for classes
+        // that expose the accessed property. This handles for-of loop variables
+        // where the element type is ObjectType but the actual runtime values
+        // are inline class instances.
+        if (
+          dispInstances.length === 0 &&
+          (untrackedTypeName === "object" ||
+            untrackedTypeName === "DataDictionary")
+        ) {
+          const candidateClasses = new Set<string>();
+          for (const [, info] of this.allInlineInstances) {
+            if (candidateClasses.has(info.className)) continue;
+            const pv = this.mapInlineProperty(
+              info.className,
+              info.prefix,
+              node.property,
+            );
+            if (pv) {
+              candidateClasses.add(info.className);
+            }
+          }
+          if (candidateClasses.size > 0) {
+            for (const [instId, info] of this.allInlineInstances) {
+              if (candidateClasses.has(info.className)) {
+                dispInstances.push([instId, info]);
+              }
+            }
+          }
+        }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
           for (const [, info] of dispInstances) {
@@ -1558,6 +1630,43 @@ export function visitPropertyAccessExpression(
     }
 
     const objectType = this.getOperandType(object);
+
+    // Early return for .length on arrays — always int32.
+    if (objectType instanceof ArrayTypeSymbol && node.property === "length") {
+      const result = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, node.property),
+      );
+      return result;
+    }
+
+    // DataList .length → .Count mapping with int32 return type.
+    if (
+      (objectType instanceof DataListTypeSymbol ||
+        objectType.name === ExternTypes.dataList.name ||
+        objectType.udonType === UdonType.DataList) &&
+      node.property === "length"
+    ) {
+      const result = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, "Count"),
+      );
+      return result;
+    }
+
+    // Iterator result .value on DataToken: unwrap via Reference property.
+    // Handles the tail of the `map.keys().next().value` pattern.
+    if (
+      objectType.name === ExternTypes.dataToken.name &&
+      node.property === "value"
+    ) {
+      const result = this.newTemp(ObjectType);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, "Reference"),
+      );
+      return result;
+    }
+
     const resolvedBaseType = resolveTypeFromNode(this, node.object);
     const isSet =
       isSetCollectionType(objectType) || isSetCollectionType(resolvedBaseType);

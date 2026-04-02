@@ -928,11 +928,19 @@ export function visitCallExpression(
       : isSetCollectionType(resolvedType)
         ? resolvedType
         : null;
-    const mapType = isMapCollectionType(objectType)
-      ? objectType
-      : isMapCollectionType(resolvedType)
-        ? resolvedType
-        : null;
+    // Prefer resolvedType when it's a CollectionTypeSymbol (carries valueType)
+    // but objectType is a plain ExternTypeSymbol (no valueType info).
+    let mapType: TypeSymbol | null = null;
+    if (isMapCollectionType(objectType)) {
+      mapType =
+        !(objectType instanceof CollectionTypeSymbol) &&
+        resolvedType instanceof CollectionTypeSymbol &&
+        isMapCollectionType(resolvedType)
+          ? resolvedType
+          : objectType;
+    } else if (isMapCollectionType(resolvedType)) {
+      mapType = resolvedType;
+    }
     if (setType) {
       const setResult = visitSetMethodCall(
         this,
@@ -1547,6 +1555,24 @@ export function visitCallExpression(
         }
       }
     }
+
+    // Iterator .next() on DataList: translate to get_Item(0) returning DataToken.
+    // Handles the JS pattern `map.keys().next().value` → DataList[0] + unwrap.
+    if (
+      propAccess.property === "next" &&
+      (objectType instanceof DataListTypeSymbol ||
+        objectType.name === ExternTypes.dataList.name ||
+        objectType.udonType === UdonType.DataList)
+    ) {
+      const tokenResult = this.newTemp(ExternTypes.dataToken);
+      this.instructions.push(
+        new MethodCallInstruction(tokenResult, object, "get_Item", [
+          createConstant(0, PrimitiveTypes.int32),
+        ]),
+      );
+      return tokenResult;
+    }
+
     if (
       propAccess.property === "RequestSerialization" &&
       evaluatedArgs.length === 0

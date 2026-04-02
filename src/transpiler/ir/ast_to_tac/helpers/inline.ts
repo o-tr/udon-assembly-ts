@@ -127,9 +127,18 @@ export function saveAndBindInlineParams(
       const argInfo = argInlineInfos[i];
       if (argInfo) {
         converter.inlineInstanceMap.set(param.name, argInfo);
-      } else if (arg.kind === TACOperandKind.Variable) {
-        const argVar = arg as VariableOperand;
-        const argType = converter.getOperandType(argVar);
+      } else if (
+        arg.kind === TACOperandKind.Variable ||
+        arg.kind === TACOperandKind.Temporary
+      ) {
+        const argType = converter.getOperandType(arg);
+        // For Variable args, use the variable name as prefix (points to
+        // existing heap variables). For Temporary args, use the param name
+        // (the value is copied to the param variable).
+        const prefix =
+          arg.kind === TACOperandKind.Variable
+            ? (arg as VariableOperand).name
+            : param.name;
         const isTypeAlias =
           converter.typeMapper.getAlias(argType.name) instanceof
           InterfaceTypeSymbol;
@@ -138,7 +147,7 @@ export function saveAndBindInlineParams(
           !converter.udonBehaviourClasses.has(argType.name);
         if (isTypeAlias || isInlineClass) {
           converter.inlineInstanceMap.set(param.name, {
-            prefix: argVar.name,
+            prefix,
             className: argType.name,
           });
         } else {
@@ -155,7 +164,7 @@ export function saveAndBindInlineParams(
             !converter.udonBehaviourClasses.has(paramTypeName);
           if (isParamTypeAlias || isParamInlineClass) {
             converter.inlineInstanceMap.set(param.name, {
-              prefix: argVar.name,
+              prefix,
               className: paramTypeName,
             });
           }
