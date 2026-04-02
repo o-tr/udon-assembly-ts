@@ -672,7 +672,10 @@ export function visitConditionalExpression(
   const falseVal = this.visitExpression(node.whenFalse);
   // Upgrade result type if the false branch provides a more specific type.
   const falseType = this.getOperandType(falseVal);
-  if ((result as TemporaryOperand).type === ObjectType && falseType !== ObjectType) {
+  if (
+    (result as TemporaryOperand).type === ObjectType &&
+    falseType !== ObjectType
+  ) {
     (result as TemporaryOperand).type = falseType;
   }
   this.instructions.push(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
@@ -699,7 +702,10 @@ export function visitNullCoalescingExpression(
   const right = this.visitExpression(node.right);
   // Upgrade result type if the right operand provides a more specific type.
   const rightType = this.getOperandType(right);
-  if ((result as TemporaryOperand).type === ObjectType && rightType !== ObjectType) {
+  if (
+    (result as TemporaryOperand).type === ObjectType &&
+    rightType !== ObjectType
+  ) {
     (result as TemporaryOperand).type = rightType;
   }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
