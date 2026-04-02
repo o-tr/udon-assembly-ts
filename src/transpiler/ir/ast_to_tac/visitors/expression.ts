@@ -675,16 +675,18 @@ export function visitConditionalExpression(
   // inline dispatch (ArrayTypeSymbol, InterfaceTypeSymbol, CollectionTypeSymbol).
   // Primitive types (int, float, bool, string) must not override ObjectType
   // because the true branch may hold an incompatible boxed value.
-  const falseType = this.getOperandType(falseVal);
-  if (
-    (result as TemporaryOperand).type === ObjectType &&
-    falseType !== ObjectType &&
-    (falseType instanceof ArrayTypeSymbol ||
-      falseType instanceof InterfaceTypeSymbol ||
-      falseType instanceof CollectionTypeSymbol ||
-      falseType instanceof DataListTypeSymbol)
-  ) {
-    (result as TemporaryOperand).type = falseType;
+  if (result.kind === TACOperandKind.Temporary) {
+    const falseType = this.getOperandType(falseVal);
+    if (
+      (result as TemporaryOperand).type === ObjectType &&
+      falseType !== ObjectType &&
+      (falseType instanceof ArrayTypeSymbol ||
+        falseType instanceof InterfaceTypeSymbol ||
+        falseType instanceof CollectionTypeSymbol ||
+        falseType instanceof DataListTypeSymbol)
+    ) {
+      (result as TemporaryOperand).type = falseType;
+    }
   }
   this.instructions.push(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
   this.instructions.push(new LabelInstruction(endLabel));
@@ -710,16 +712,18 @@ export function visitNullCoalescingExpression(
   const right = this.visitExpression(node.right);
   // Upgrade result type if the right operand provides a more specific
   // non-primitive reference type. Same guard as visitConditionalExpression.
-  const rightType = this.getOperandType(right);
-  if (
-    (result as TemporaryOperand).type === ObjectType &&
-    rightType !== ObjectType &&
-    (rightType instanceof ArrayTypeSymbol ||
-      rightType instanceof InterfaceTypeSymbol ||
-      rightType instanceof CollectionTypeSymbol ||
-      rightType instanceof DataListTypeSymbol)
-  ) {
-    (result as TemporaryOperand).type = rightType;
+  if (result.kind === TACOperandKind.Temporary) {
+    const rightType = this.getOperandType(right);
+    if (
+      (result as TemporaryOperand).type === ObjectType &&
+      rightType !== ObjectType &&
+      (rightType instanceof ArrayTypeSymbol ||
+        rightType instanceof InterfaceTypeSymbol ||
+        rightType instanceof CollectionTypeSymbol ||
+        rightType instanceof DataListTypeSymbol)
+    ) {
+      (result as TemporaryOperand).type = rightType;
+    }
   }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
   this.instructions.push(new CopyInstruction(result, right));
