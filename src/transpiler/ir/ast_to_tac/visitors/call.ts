@@ -1478,7 +1478,14 @@ export function visitCallExpression(
           return result;
         }
         case "push": {
-          if (evaluatedArgs.length === 0) break;
+          // push() with no args: return current length without mutation
+          if (evaluatedArgs.length === 0) {
+            const curLen = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new PropertyGetInstruction(curLen, object, "length"),
+            );
+            return curLen;
+          }
 
           // Udon arrays are fixed-size. Implement push as:
           //   wrapper = new T[N]
@@ -1524,11 +1531,12 @@ export function visitCallExpression(
             new MethodCallInstruction(newArr, object, "concat", [wrapper]),
           );
 
-          // 4. Write back new array reference to original variable
-          if (
-            object.kind === TACOperandKind.Variable ||
-            object.kind === TACOperandKind.Temporary
-          ) {
+          // 4. Write back new array reference to original variable.
+          // Only Variable operands (locals, inline class fields) can be
+          // updated persistently. Temporary operands originate from
+          // PropertyGet and writing to them would not propagate back to
+          // the source property.
+          if (object.kind === TACOperandKind.Variable) {
             this.instructions.push(new CopyInstruction(object, newArr));
           }
 
@@ -1571,14 +1579,10 @@ export function visitCallExpression(
       );
       if (inlineResult != null) return inlineResult;
     }
-    // Inline instance method call: object.method() where object is inline instance
-    // Support both Variable and Temporary operands (e.g. array[i].method())
+    // Inline instance method call: object.method() where object is inline instance.
+    // operandTrackingKey handles both Variable and Temporary operands.
     const methodInstanceKey = operandTrackingKey(object);
-    if (
-      methodInstanceKey &&
-      (object.kind === TACOperandKind.Variable ||
-        object.kind === TACOperandKind.Temporary)
-    ) {
+    if (methodInstanceKey) {
       const instanceInfo = this.resolveInlineInstance(methodInstanceKey);
       if (instanceInfo) {
         const inlineResult = this.visitInlineInstanceMethodCallWithContext(
