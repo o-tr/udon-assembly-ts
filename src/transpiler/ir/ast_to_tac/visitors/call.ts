@@ -234,15 +234,13 @@ function resolveInlineClassName(
       return converter.currentClassName;
     }
   }
-  if (object.kind === TACOperandKind.Variable) {
-    const instanceInfo = converter.resolveInlineInstance(
-      (object as VariableOperand).name,
-    );
+  const key = operandTrackingKey(object);
+  if (key) {
+    const instanceInfo = converter.resolveInlineInstance(key);
     if (instanceInfo) {
       // When className is an interface/type alias, resolve to concrete class
       // so evaluateArgsWithExpectedTypes can find the method signature.
-      const concrete = resolveConcreteClassName(converter, instanceInfo);
-      return concrete;
+      return resolveConcreteClassName(converter, instanceInfo);
     }
   }
   return undefined;
