@@ -446,7 +446,14 @@ export function visitForOfStatement(
         ? iterableType.elementType
         : iterableType?.name === ExternTypes.dataList.name
           ? ObjectType
-          : null;
+          : // Fallback: try AST-resolved iterable type for element inference.
+            // This recovers the element type when the operand's stored type is
+            // erased (e.g. ObjectType) but the AST still carries the declared type.
+            inferredIterableType instanceof ArrayTypeSymbol
+            ? inferredIterableType.elementType
+            : inferredIterableType instanceof DataListTypeSymbol
+              ? inferredIterableType.elementType
+              : null;
   // Only unwrap DataToken elements when we have a DataListTypeSymbol (e.g.,
   // Set iteration via GetKeys() yields DataListTypeSymbol) so we can use the
   // element type. When matching ExternTypes.dataList or UdonType.DataList by
@@ -469,7 +476,7 @@ export function visitForOfStatement(
         inferredElementType ??
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
-          : PrimitiveTypes.single));
+          : ObjectType));
 
   // If we're iterating an untyped `DataList` (matched by name/udonType), the
   // elements we get are raw `DataToken`s — force the loop variable to be a
