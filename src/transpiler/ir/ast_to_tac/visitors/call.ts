@@ -1493,9 +1493,7 @@ export function visitCallExpression(
               ? objectType.elementType.name
               : "object";
           const arrayUdonType = isKnownExternElementType(elemName)
-            ? toUdonTypeNameWithArray(
-                `${mapTypeScriptToCSharp(elemName)}[]`,
-              )
+            ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
             : "SystemObjectArray";
           const ctorSig = `${arrayUdonType}.__ctor__SystemInt32__${arrayUdonType}`;
 
