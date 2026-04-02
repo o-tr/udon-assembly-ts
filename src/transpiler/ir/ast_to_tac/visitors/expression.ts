@@ -670,11 +670,19 @@ export function visitConditionalExpression(
 
   this.instructions.push(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
-  // Upgrade result type if the false branch provides a more specific type.
+  // Upgrade result type if the false branch provides a more specific
+  // non-primitive reference type. Only upgrade for types that benefit from
+  // inline dispatch (ArrayTypeSymbol, InterfaceTypeSymbol, CollectionTypeSymbol).
+  // Primitive types (int, float, bool, string) must not override ObjectType
+  // because the true branch may hold an incompatible boxed value.
   const falseType = this.getOperandType(falseVal);
   if (
     (result as TemporaryOperand).type === ObjectType &&
-    falseType !== ObjectType
+    falseType !== ObjectType &&
+    (falseType instanceof ArrayTypeSymbol ||
+      falseType instanceof InterfaceTypeSymbol ||
+      falseType instanceof CollectionTypeSymbol ||
+      falseType instanceof DataListTypeSymbol)
   ) {
     (result as TemporaryOperand).type = falseType;
   }
@@ -700,11 +708,16 @@ export function visitNullCoalescingExpression(
   this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
-  // Upgrade result type if the right operand provides a more specific type.
+  // Upgrade result type if the right operand provides a more specific
+  // non-primitive reference type. Same guard as visitConditionalExpression.
   const rightType = this.getOperandType(right);
   if (
     (result as TemporaryOperand).type === ObjectType &&
-    rightType !== ObjectType
+    rightType !== ObjectType &&
+    (rightType instanceof ArrayTypeSymbol ||
+      rightType instanceof InterfaceTypeSymbol ||
+      rightType instanceof CollectionTypeSymbol ||
+      rightType instanceof DataListTypeSymbol)
   ) {
     (result as TemporaryOperand).type = rightType;
   }
@@ -1542,16 +1555,13 @@ export function visitPropertyAccessExpression(
             }
           }
         }
-        // Property-based fallback: when type is fully erased ("object") and
+        // Property-based fallback: when type is fully erased to "object" and
         // no instances matched by type name, scan inline instances for classes
-        // that expose the accessed property. This handles for-of loop variables
-        // where the element type is ObjectType but the actual runtime values
-        // are inline class instances.
-        if (
-          dispInstances.length === 0 &&
-          (untrackedTypeName === "object" ||
-            untrackedTypeName === "DataDictionary")
-        ) {
+        // that expose the accessed property. Only fires for ObjectType operands
+        // (not DataDictionary — a real DataDictionary is not an inline handle).
+        // Limited to finding exactly one candidate class to avoid false matches
+        // when multiple unrelated classes share the same property name.
+        if (dispInstances.length === 0 && untrackedTypeName === "object") {
           const candidateClasses = new Set<string>();
           for (const [, info] of this.allInlineInstances) {
             if (candidateClasses.has(info.className)) continue;
@@ -1564,7 +1574,9 @@ export function visitPropertyAccessExpression(
               candidateClasses.add(info.className);
             }
           }
-          if (candidateClasses.size > 0) {
+          // Only use this fallback when exactly one class matches to avoid
+          // generating a dispatch table that branches into the wrong class.
+          if (candidateClasses.size === 1) {
             for (const [instId, info] of this.allInlineInstances) {
               if (candidateClasses.has(info.className)) {
                 dispInstances.push([instId, info]);

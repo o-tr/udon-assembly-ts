@@ -1557,9 +1557,13 @@ export function visitCallExpression(
     }
 
     // Iterator .next() on DataList: translate to get_Item(0) returning DataToken.
-    // Handles the JS pattern `map.keys().next().value` → DataList[0] + unwrap.
+    // Only supports the single-shot `map.keys().next().value` idiom — repeated
+    // .next() calls will always return the first element. Calling .next() on an
+    // empty DataList will crash the Udon VM (no empty-guard emitted; callers
+    // should ensure the collection is non-empty before using this pattern).
     if (
       propAccess.property === "next" &&
+      evaluatedArgs.length === 0 &&
       (objectType instanceof DataListTypeSymbol ||
         objectType.name === ExternTypes.dataList.name ||
         objectType.udonType === UdonType.DataList)
