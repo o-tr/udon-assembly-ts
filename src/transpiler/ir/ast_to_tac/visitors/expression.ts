@@ -1655,9 +1655,13 @@ export function visitPropertyAccessExpression(
               // The dispatch was populated by heuristic fallback (AST type or
               // property scan on an erased type). The runtime value may not be
               // an inline handle, so fall back to a generic PropertyGetInstruction.
+              // Write to a separate ObjectType slot to avoid type mismatch with
+              // dispResult's inline field type, then merge via CopyInstruction.
+              const missResult = this.newTemp(ObjectType);
               this.instructions.push(
-                new PropertyGetInstruction(dispResult, object, node.property),
+                new PropertyGetInstruction(missResult, object, node.property),
               );
+              this.instructions.push(new CopyInstruction(dispResult, missResult));
             }
             // For non-erased D3 dispatch the miss is unreachable: every object
             // of the matched type was constructed via a tracked constructor,
