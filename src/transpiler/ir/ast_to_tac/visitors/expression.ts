@@ -1612,9 +1612,14 @@ export function visitPropertyAccessExpression(
             }
           }
           if (untrackedPropType) {
+            // When dispatch was populated by erased-type fallback, widen
+            // dispResult to ObjectType so all write paths (inline property
+            // copies AND the miss-path PropertyGetInstruction) share the
+            // same heap slot type. For non-erased dispatch, use the concrete
+            // inline field type since the miss path is unreachable.
             const dispResult = createVariable(
               `__uninst_prop_${this.tempCounter++}`,
-              untrackedPropType,
+              usedErasedFallback ? ObjectType : untrackedPropType,
               { isLocal: true },
             );
             const hdlVar = this.newTemp(PrimitiveTypes.int32);
@@ -1652,16 +1657,12 @@ export function visitPropertyAccessExpression(
             }
             // Miss path: if no handle matched in the dispatch table.
             if (usedErasedFallback) {
-              // The dispatch was populated by heuristic fallback (AST type or
-              // property scan on an erased type). The runtime value may not be
-              // an inline handle, so fall back to a generic PropertyGetInstruction.
-              // Write to a separate ObjectType slot to avoid type mismatch with
-              // dispResult's inline field type, then merge via CopyInstruction.
-              const missResult = this.newTemp(ObjectType);
+              // The runtime value may not be an inline handle, so fall back
+              // to a generic PropertyGetInstruction. dispResult is already
+              // ObjectType, so the write is type-consistent.
               this.instructions.push(
-                new PropertyGetInstruction(missResult, object, node.property),
+                new PropertyGetInstruction(dispResult, object, node.property),
               );
-              this.instructions.push(new CopyInstruction(dispResult, missResult));
             }
             // For non-erased D3 dispatch the miss is unreachable: every object
             // of the matched type was constructed via a tracked constructor,
