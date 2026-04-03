@@ -1559,13 +1559,18 @@ export function visitPropertyAccessExpression(
             }
           }
         }
-        // Property-based fallback: when type is fully erased to "object" and
-        // no instances matched by type name, scan inline instances for classes
-        // that expose the accessed property. Only fires for ObjectType operands
-        // (not DataDictionary — a real DataDictionary is not an inline handle).
+        // Property-based fallback: when the operand type is erased and no
+        // instances matched by type name, scan inline instances for classes
+        // that expose the accessed property. Fires for both ObjectType
+        // (name "object") and ExternTypes.dataDictionary (name "DataDictionary",
+        // because TypeMapper maps TS "object" to dataDictionary).
         // Limited to finding exactly one candidate class to avoid false matches
         // when multiple unrelated classes share the same property name.
-        if (dispInstances.length === 0 && untrackedTypeName === "object") {
+        if (
+          dispInstances.length === 0 &&
+          (untrackedTypeName === "object" ||
+            untrackedTypeName === "DataDictionary")
+        ) {
           const candidateClasses = new Set<string>();
           for (const [, info] of this.allInlineInstances) {
             if (candidateClasses.has(info.className)) continue;
