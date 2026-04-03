@@ -211,7 +211,7 @@ export class TypeMapper {
       case "string":
         return PrimitiveTypes.string;
       case "object":
-        return ObjectType;
+        return ExternTypes.dataDictionary;
       case "void":
         return PrimitiveTypes.void;
       case "int":

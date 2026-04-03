@@ -157,7 +157,6 @@ export class ASTToTACConverter {
   vifaceCounter = 0;
   useStringBuilder = true;
   stringBuilderThreshold = 6;
-  warnedDataListNext = false;
   symbolTable: SymbolTable;
   currentReturnVar: string | undefined;
   currentClassName: string | undefined;
