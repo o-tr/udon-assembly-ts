@@ -928,11 +928,24 @@ export function visitCallExpression(
       : isSetCollectionType(resolvedType)
         ? resolvedType
         : null;
-    const mapType = isMapCollectionType(objectType)
-      ? objectType
-      : isMapCollectionType(resolvedType)
-        ? resolvedType
-        : null;
+    // Prefer resolvedType when it carries richer generic info (keyType/valueType)
+    // than objectType. This covers ExternTypeSymbol (no valueType at all) and
+    // CollectionTypeSymbol with erased generics (valueType === undefined).
+    let mapType: TypeSymbol | null = null;
+    if (isMapCollectionType(objectType)) {
+      const objectLacksGenerics =
+        !(objectType instanceof CollectionTypeSymbol) ||
+        objectType.valueType === undefined ||
+        objectType.valueType === ObjectType;
+      mapType =
+        objectLacksGenerics &&
+        resolvedType instanceof CollectionTypeSymbol &&
+        isMapCollectionType(resolvedType)
+          ? resolvedType
+          : objectType;
+    } else if (isMapCollectionType(resolvedType)) {
+      mapType = resolvedType;
+    }
     if (setType) {
       const setResult = visitSetMethodCall(
         this,
@@ -1547,6 +1560,29 @@ export function visitCallExpression(
         }
       }
     }
+
+    // Iterator .next() on DataList: translate to get_Item(0) returning DataToken.
+    // Only supports the single-shot `map.keys().next().value` idiom — repeated
+    // .next() calls will always return the first element.
+    // The returned DataToken is unwrapped by the `.value` handler in
+    // visitPropertyAccessExpression. For primitive-typed keys (int, float),
+    // .Reference returns null — only string/reference-type keys are supported.
+    if (
+      propAccess.property === "next" &&
+      evaluatedArgs.length === 0 &&
+      (objectType instanceof DataListTypeSymbol ||
+        objectType.name === ExternTypes.dataList.name ||
+        objectType.udonType === UdonType.DataList)
+    ) {
+      const tokenResult = this.newTemp(ExternTypes.dataToken);
+      this.instructions.push(
+        new MethodCallInstruction(tokenResult, object, "get_Item", [
+          createConstant(0, PrimitiveTypes.int32),
+        ]),
+      );
+      return tokenResult;
+    }
+
     if (
       propAccess.property === "RequestSerialization" &&
       evaluatedArgs.length === 0

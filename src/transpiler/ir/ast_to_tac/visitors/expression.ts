@@ -60,6 +60,7 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
@@ -669,6 +670,24 @@ export function visitConditionalExpression(
 
   this.instructions.push(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
+  // Upgrade result type if the false branch provides a more specific
+  // non-primitive reference type. Only upgrade for types that benefit from
+  // inline dispatch (ArrayTypeSymbol, InterfaceTypeSymbol, CollectionTypeSymbol).
+  // Primitive types (int, float, bool, string) must not override ObjectType
+  // because the true branch may hold an incompatible boxed value.
+  if (result.kind === TACOperandKind.Temporary) {
+    const falseType = this.getOperandType(falseVal);
+    if (
+      (result as TemporaryOperand).type === ObjectType &&
+      falseType !== ObjectType &&
+      (falseType instanceof ArrayTypeSymbol ||
+        falseType instanceof InterfaceTypeSymbol ||
+        falseType instanceof CollectionTypeSymbol ||
+        falseType instanceof DataListTypeSymbol)
+    ) {
+      (result as TemporaryOperand).type = falseType;
+    }
+  }
   this.instructions.push(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
@@ -691,6 +710,21 @@ export function visitNullCoalescingExpression(
   this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
+  // Upgrade result type if the right operand provides a more specific
+  // non-primitive reference type. Same guard as visitConditionalExpression.
+  if (result.kind === TACOperandKind.Temporary) {
+    const rightType = this.getOperandType(right);
+    if (
+      (result as TemporaryOperand).type === ObjectType &&
+      rightType !== ObjectType &&
+      (rightType instanceof ArrayTypeSymbol ||
+        rightType instanceof InterfaceTypeSymbol ||
+        rightType instanceof CollectionTypeSymbol ||
+        rightType instanceof DataListTypeSymbol)
+    ) {
+      (result as TemporaryOperand).type = rightType;
+    }
+  }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
   this.instructions.push(new CopyInstruction(result, right));
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
@@ -1241,7 +1275,7 @@ export function visitArrayAccessExpression(
       elementType = ObjectType;
     }
   }
-  const resolvedElementType = elementType ?? PrimitiveTypes.single;
+  const resolvedElementType = elementType ?? ObjectType;
   const result = this.newTemp(resolvedElementType);
   this.instructions.push(new ArrayAccessInstruction(result, array, index));
   return result;
@@ -1494,6 +1528,76 @@ export function visitPropertyAccessExpression(
             dispInstances.push([instId, info]);
           }
         }
+        // Track whether dispInstances were populated by a fallback heuristic
+        // (AST type or property-based). When true, a miss path must emit a
+        // PropertyGetInstruction instead of returning a zeroed heap default,
+        // because the runtime value may not be an inline handle at all.
+        let usedErasedFallback = false;
+        // AST type fallback: when operand type is erased (ObjectType,
+        // CollectionTypeSymbol, etc.) and no instances matched, try resolving
+        // the base type from the AST and retry with that name.
+        if (dispInstances.length === 0) {
+          const astBaseType = resolveTypeFromNode(this, node.object);
+          const astTypeName = astBaseType?.name;
+          if (astTypeName && astTypeName !== untrackedTypeName) {
+            if (!this.implementorNamesCache.has(astTypeName)) {
+              this.implementorNamesCache.set(
+                astTypeName,
+                this.classRegistry
+                  ? new Set(
+                      this.classRegistry
+                        .getImplementorsOfInterface(astTypeName)
+                        .map((i) => i.name),
+                    )
+                  : null,
+              );
+            }
+            const astImplementorNames =
+              this.implementorNamesCache.get(astTypeName) ?? null;
+            for (const [instId, info] of this.allInlineInstances) {
+              if (
+                info.className === astTypeName ||
+                astImplementorNames?.has(info.className)
+              ) {
+                dispInstances.push([instId, info]);
+              }
+            }
+            if (dispInstances.length > 0) usedErasedFallback = true;
+          }
+        }
+        // Property-based fallback: when the operand type is erased and no
+        // instances matched by type name, scan inline instances for classes
+        // that expose the accessed property. Fires for both ObjectType
+        // (name "object") and ExternTypes.dataDictionary (name "DataDictionary",
+        // because TypeMapper maps TS "object" to dataDictionary).
+        // Limited to finding exactly one candidate class to avoid false matches
+        // when multiple unrelated classes share the same property name.
+        if (
+          dispInstances.length === 0 &&
+          (untrackedTypeName === "object" ||
+            untrackedTypeName === "DataDictionary")
+        ) {
+          const candidateClasses = new Set<string>();
+          for (const [, info] of this.allInlineInstances) {
+            if (candidateClasses.has(info.className)) continue;
+            // Use resolveClassProperty (class-definition lookup) instead of
+            // mapInlineProperty (heap-variable lookup) so the check does not
+            // depend on a specific instance's prefix.
+            if (resolveClassProperty(this, info.className, node.property)) {
+              candidateClasses.add(info.className);
+            }
+          }
+          // Only use this fallback when exactly one class matches to avoid
+          // generating a dispatch table that branches into the wrong class.
+          if (candidateClasses.size === 1) {
+            for (const [instId, info] of this.allInlineInstances) {
+              if (candidateClasses.has(info.className)) {
+                dispInstances.push([instId, info]);
+              }
+            }
+            if (dispInstances.length > 0) usedErasedFallback = true;
+          }
+        }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
           for (const [, info] of dispInstances) {
@@ -1508,9 +1612,14 @@ export function visitPropertyAccessExpression(
             }
           }
           if (untrackedPropType) {
+            // When dispatch was populated by erased-type fallback, widen
+            // dispResult to ObjectType so all write paths (inline property
+            // copies AND the miss-path PropertyGetInstruction) share the
+            // same heap slot type. For non-erased dispatch, use the concrete
+            // inline field type since the miss path is unreachable.
             const dispResult = createVariable(
               `__uninst_prop_${this.tempCounter++}`,
-              untrackedPropType,
+              usedErasedFallback ? ObjectType : untrackedPropType,
               { isLocal: true },
             );
             const hdlVar = this.newTemp(PrimitiveTypes.int32);
@@ -1546,10 +1655,22 @@ export function visitPropertyAccessExpression(
               this.instructions.push(new UnconditionalJumpInstruction(dispEnd));
               this.instructions.push(new LabelInstruction(dispNext));
             }
-            // If no handle matched, dispResult retains its Udon heap default
-            // (zero/null). This fallthrough is unreachable for valid data: every
-            // object of this type was constructed via one of the tracked
-            // constructors, so its runtime handle always matches one branch above.
+            // Miss path: if no handle matched in the dispatch table.
+            if (usedErasedFallback) {
+              // The runtime value may not be an inline handle, so fall back
+              // to a generic PropertyGetInstruction. dispResult is already
+              // ObjectType, so the write is type-consistent. Note: the EXTERN
+              // generated here uses the erased object type as owner, which
+              // produces the same (potentially invalid) signature as the code
+              // path without D3 dispatch. This is not a regression — it
+              // preserves the original behavior for non-inline objects.
+              this.instructions.push(
+                new PropertyGetInstruction(dispResult, object, node.property),
+              );
+            }
+            // For non-erased D3 dispatch the miss is unreachable: every object
+            // of the matched type was constructed via a tracked constructor,
+            // so its runtime handle always matches one branch above.
             this.instructions.push(new LabelInstruction(dispEnd));
             return dispResult;
           }
@@ -1558,6 +1679,45 @@ export function visitPropertyAccessExpression(
     }
 
     const objectType = this.getOperandType(object);
+
+    // Early return for .length on arrays — always int32.
+    if (objectType instanceof ArrayTypeSymbol && node.property === "length") {
+      const result = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, node.property),
+      );
+      return result;
+    }
+
+    // DataList .length → .Count mapping with int32 return type.
+    if (
+      (objectType instanceof DataListTypeSymbol ||
+        objectType.name === ExternTypes.dataList.name ||
+        objectType.udonType === UdonType.DataList) &&
+      node.property === "length"
+    ) {
+      const result = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, "Count"),
+      );
+      return result;
+    }
+
+    // Iterator result .value on DataToken: unwrap via .Reference property.
+    // Handles the tail of the `map.keys().next().value` pattern.
+    // Note: .Reference returns null for primitive-keyed maps (int, float);
+    // only string/reference-type keys are supported by this pattern.
+    if (
+      objectType.name === ExternTypes.dataToken.name &&
+      node.property === "value"
+    ) {
+      const result = this.newTemp(ObjectType);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, "Reference"),
+      );
+      return result;
+    }
+
     const resolvedBaseType = resolveTypeFromNode(this, node.object);
     const isSet =
       isSetCollectionType(objectType) || isSetCollectionType(resolvedBaseType);

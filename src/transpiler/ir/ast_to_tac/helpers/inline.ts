@@ -128,6 +128,11 @@ export function saveAndBindInlineParams(
       if (argInfo) {
         converter.inlineInstanceMap.set(param.name, argInfo);
       } else if (arg.kind === TACOperandKind.Variable) {
+        // Only Variable args can provide a valid prefix — the variable name
+        // points to existing heap variables (e.g. inst_0__field). Temporary
+        // args have no stable heap location, so inserting a tracking entry
+        // with param.name as prefix would point to non-existent field
+        // variables and silently produce wrong property resolution.
         const argVar = arg as VariableOperand;
         const argType = converter.getOperandType(argVar);
         const isTypeAlias =
