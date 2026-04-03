@@ -999,7 +999,8 @@ export function visitCallExpression(
       if (arrType instanceof ArrayTypeSymbol) {
         elemType = arrType.elementType;
       }
-      if (!elemType) {
+      // Also try AST-based resolution when operand type has erased element type
+      if (!elemType || elemType === ObjectType) {
         const resolved = resolveTypeFromNode(this, propAccess.object);
         if (resolved instanceof ArrayTypeSymbol) {
           elemType = resolved.elementType;
@@ -1362,7 +1363,15 @@ export function visitCallExpression(
         );
         return VOID_RETURN;
       }
-      if (propAccess.property === "push" && evaluatedArgs.length >= 1) {
+      if (propAccess.property === "push") {
+        if (evaluatedArgs.length === 0) {
+          // push() with no args: no mutation, return current count
+          const countResult = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new PropertyGetInstruction(countResult, object, "Count"),
+          );
+          return countResult;
+        }
         // DataList.push(value) → DataList.Add(wrapDataToken(value)) for each arg
         for (const arg of evaluatedArgs) {
           const token = this.wrapDataToken(arg);
@@ -1689,17 +1698,41 @@ export function visitCallExpression(
           //   array = newArr
           //   return removed
           if (evaluatedArgs.length < 2) {
-            // splice with 0 or 1 args — just delegate (unlikely in practice)
-            const result = this.newTemp(arrayReturn);
+            if (evaluatedArgs.length === 0) {
+              // splice() with no args: return empty array (no mutation)
+              const emptySize = createConstant(0, PrimitiveTypes.int32);
+              const emptyResult = this.newTemp(arrayReturn);
+              const elemName =
+                objectType instanceof ArrayTypeSymbol
+                  ? objectType.elementType.name
+                  : "object";
+              const emptyArrayUdonType = isKnownExternElementType(elemName)
+                ? toUdonTypeNameWithArray(
+                    `${mapTypeScriptToCSharp(elemName)}[]`,
+                  )
+                : "SystemObjectArray";
+              const emptyCtorSig = `${emptyArrayUdonType}.__ctor__SystemInt32__${emptyArrayUdonType}`;
+              this.instructions.push(
+                new CallInstruction(emptyResult, emptyCtorSig, [emptySize]),
+              );
+              return emptyResult;
+            }
+            // splice(start) = splice(start, length - start)
+            const arrLen = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
-              new MethodCallInstruction(
-                result,
-                object,
-                "splice",
-                evaluatedArgs,
+              new PropertyGetInstruction(arrLen, object, "length"),
+            );
+            const deleteCount = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                deleteCount,
+                arrLen,
+                "-",
+                evaluatedArgs[0],
               ),
             );
-            return result;
+            evaluatedArgs.push(deleteCount);
+            // Fall through to the normal 2-arg splice below
           }
           const start = evaluatedArgs[0];
           const deleteCount = evaluatedArgs[1];

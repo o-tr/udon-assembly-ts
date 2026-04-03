@@ -70,7 +70,6 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
-  emitStaticPropertyInitializers,
   operandTrackingKey,
   resolveClassNode,
   resolveClassProperty,
@@ -1413,12 +1412,12 @@ export function visitPropertyAccessExpression(
     if (node.object.kind === ASTNodeKind.Identifier) {
       const objectName = (node.object as IdentifierNode).name;
       if (
+        !this.symbolTable.lookup(objectName) && // not shadowed by a local
         resolveClassNode(this, objectName) &&
         !this.udonBehaviourClasses.has(objectName)
       ) {
         const mapped = this.mapStaticProperty(objectName, node.property);
         if (mapped) {
-          emitStaticPropertyInitializers(this, objectName);
           return mapped;
         }
       }
@@ -2059,12 +2058,21 @@ export function visitOptionalChainingExpression(
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(notNullLabel));
-  // Route through visitPropertyAccessExpression to get full inline tracking
-  // and D3 dispatch support. Construct a synthetic PropertyAccessExpressionNode
-  // with the same object and property so that AST-based type resolution works.
+  // Create a named variable to hold objTemp so visitPropertyAccessExpression
+  // can look it up by name and get proper inline tracking.
+  const optBaseType = this.getOperandType(objTemp);
+  const optBaseName = `__opt_base_${this.tempCounter++}`;
+  const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
+  this.symbolTable.addSymbol(optBaseName, optBaseType);
+  this.instructions.push(new CopyInstruction(optBase, objTemp));
+  // Propagate inline instance tracking from objTemp to optBase
+  this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
   const propResult = this.visitPropertyAccessExpression({
     kind: ASTNodeKind.PropertyAccessExpression,
-    object: node.object,
+    object: {
+      kind: ASTNodeKind.Identifier,
+      name: optBaseName,
+    } as IdentifierNode,
     property: node.property,
   } as PropertyAccessExpressionNode);
   this.emitCopyWithTracking(result, propResult);

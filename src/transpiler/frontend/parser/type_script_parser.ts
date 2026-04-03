@@ -82,6 +82,7 @@ export class TypeScriptParser {
   enumRegistry: EnumRegistry;
   genericTypeParamStack: Array<Set<string>> = [];
   destructureCounter = 0;
+  anonTypeCounter = 0;
   private readonly importCache: Map<string, string[]> = new Map();
 
   constructor(errorCollector?: ErrorCollector) {

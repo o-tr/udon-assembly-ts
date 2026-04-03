@@ -75,13 +75,13 @@ export function mapTypeWithGenerics(
       if (ts.isPropertySignature(member) && member.name) {
         const propName = member.name.getText();
         const propType = member.type
-          ? this.mapTypeWithGenerics(member.type.getText())
+          ? this.mapTypeWithGenerics(member.type.getText(), member.type)
           : ObjectType;
         propertyMap.set(propName, propType);
       }
     }
     if (propertyMap.size > 0) {
-      const name = `__anon_${trimmed.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 40)}`;
+      const name = `__anon_${++this.anonTypeCounter}`;
       return new InterfaceTypeSymbol(name, new Map(), propertyMap);
     }
     return ExternTypes.dataDictionary;

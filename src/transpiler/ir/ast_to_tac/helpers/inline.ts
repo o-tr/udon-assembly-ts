@@ -299,8 +299,33 @@ export function emitStaticPropertyInitializers(
   for (const prop of classNode.properties) {
     if (!prop.initializer || !prop.isStatic) continue;
     const propVarName = `${classNode.name}__${prop.name}`;
-    const propVar = createVariable(propVarName, prop.type);
+    let resolvedPropType = prop.type;
+    if (
+      prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
+      !(resolvedPropType instanceof InterfaceTypeSymbol) &&
+      prop.originalTypeName
+    ) {
+      const lateResolved = converter.typeMapper.mapTypeScriptType(
+        prop.originalTypeName,
+      );
+      if (
+        lateResolved instanceof InterfaceTypeSymbol &&
+        lateResolved.properties.size > 0
+      ) {
+        resolvedPropType = lateResolved;
+      }
+    }
+    const propVar = createVariable(propVarName, resolvedPropType);
+    const prevExpected = converter.currentExpectedType;
+    if (
+      prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
+      resolvedPropType instanceof InterfaceTypeSymbol &&
+      resolvedPropType.properties.size > 0
+    ) {
+      converter.currentExpectedType = resolvedPropType;
+    }
     const value = converter.visitExpression(prop.initializer);
+    converter.currentExpectedType = prevExpected;
     converter.instructions.push(new AssignmentInstruction(propVar, value));
     converter.maybeTrackInlineInstanceAssignment(propVar, value);
   }
@@ -853,6 +878,18 @@ export function emitEntryPointPropertyInit(
 ): void {
   // Emit static property initializers for the entry-point class
   emitStaticPropertyInitializers(this, classNode.name);
+  // Eagerly emit static initializers for all known inline classes to
+  // avoid placement inside conditional branches on first lazy access.
+  if (this.classRegistry) {
+    for (const cls of this.classRegistry.getAllClasses()) {
+      if (
+        !this.udonBehaviourClasses.has(cls.name) &&
+        !this.entryPointClasses.has(cls.name)
+      ) {
+        emitStaticPropertyInitializers(this, cls.name);
+      }
+    }
+  }
   const inheritanceChain = buildInheritanceChain(this, classNode);
   const previousInitializerState = this.currentInlineInitializerState;
   this.currentInlineInitializerState = {

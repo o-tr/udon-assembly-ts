@@ -39,11 +39,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import {
-  emitStaticPropertyInitializers,
-  resolveClassNode,
-  resolveClassProperty,
-} from "./inline.js";
+import { resolveClassNode, resolveClassProperty } from "./inline.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
@@ -150,12 +146,12 @@ export function assignToTarget(
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const objectName = (propAccess.object as IdentifierNode).name;
       if (
+        !this.symbolTable.lookup(objectName) && // not shadowed by a local
         resolveClassNode(this, objectName) &&
         !this.udonBehaviourClasses.has(objectName)
       ) {
         const mapped = this.mapStaticProperty(objectName, propAccess.property);
         if (mapped) {
-          emitStaticPropertyInitializers(this, objectName);
           this.emitCopyWithTracking(mapped, value);
           return value;
         }

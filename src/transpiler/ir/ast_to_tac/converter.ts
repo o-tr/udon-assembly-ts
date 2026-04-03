@@ -348,6 +348,7 @@ export class ASTToTACConverter {
     this.vifaceCounter = 0;
     this.classMap = new Map();
     this.entryPointClasses = new Set();
+    this.emittedStaticClasses = new Set();
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
