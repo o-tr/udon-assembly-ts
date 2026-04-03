@@ -1706,9 +1706,7 @@ export function visitCallExpression(
                 ? objectType.elementType.name
                 : "object";
             const emptyArrayUdonType = isKnownExternElementType(elemName)
-              ? toUdonTypeNameWithArray(
-                  `${mapTypeScriptToCSharp(elemName)}[]`,
-                )
+              ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
               : "SystemObjectArray";
             const emptyCtorSig = `${emptyArrayUdonType}.__ctor__SystemInt32__${emptyArrayUdonType}`;
             this.instructions.push(
