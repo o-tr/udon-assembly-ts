@@ -1581,7 +1581,7 @@ export function visitCallExpression(
           this.instructions.push(
             new BinaryOpInstruction(eqVar, elem, "==", searchValue),
           );
-          const nextLabel = this.newLabel("includes_next");
+          const nextLabel = this.newLabel("includes_no_match");
           this.instructions.push(
             new ConditionalJumpInstruction(eqVar, nextLabel),
           );
@@ -1697,27 +1697,15 @@ export function visitCallExpression(
           //   newArr = left.concat(mid?).concat(right)
           //   array = newArr
           //   return removed
-          if (evaluatedArgs.length === 0) {
-            // splice() with no args: return empty array (no mutation)
-            const emptySize = createConstant(0, PrimitiveTypes.int32);
-            const emptyResult = this.newTemp(arrayReturn);
-            const elemName =
-              objectType instanceof ArrayTypeSymbol
-                ? objectType.elementType.name
-                : "object";
-            const emptyArrayUdonType = isKnownExternElementType(elemName)
-              ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
-              : "SystemObjectArray";
-            const emptyCtorSig = `${emptyArrayUdonType}.__ctor__SystemInt32__${emptyArrayUdonType}`;
-            this.instructions.push(
-              new CallInstruction(emptyResult, emptyCtorSig, [emptySize]),
-            );
-            return emptyResult;
-          }
-          // Build a local args list: for splice(start), compute
-          // deleteCount = length - start; for splice(start, n, ...) use as-is.
+          // Build a local args list. Per JS spec:
+          //   splice()      = splice(0, length) — remove all elements
+          //   splice(start) = splice(start, length - start) — remove from start
           let spliceArgs: TACOperand[];
           if (evaluatedArgs.length < 2) {
+            const spliceStart =
+              evaluatedArgs.length === 0
+                ? createConstant(0, PrimitiveTypes.int32)
+                : evaluatedArgs[0];
             const arrLen = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
               new PropertyGetInstruction(arrLen, object, "length"),
@@ -1728,10 +1716,10 @@ export function visitCallExpression(
                 computedDeleteCount,
                 arrLen,
                 "-",
-                evaluatedArgs[0],
+                spliceStart,
               ),
             );
-            spliceArgs = [evaluatedArgs[0], computedDeleteCount];
+            spliceArgs = [spliceStart, computedDeleteCount];
           } else {
             spliceArgs = evaluatedArgs;
           }
