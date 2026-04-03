@@ -242,6 +242,70 @@ export function resolveClassProperty(
   return undefined;
 }
 
+export function resolveStaticClassProperty(
+  converter: ASTToTACConverter,
+  className: string,
+  property: string,
+):
+  | {
+      prop: PropertyDeclarationNode;
+      declaringClassName: string;
+    }
+  | undefined {
+  let current = resolveClassNode(converter, className);
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.name)) break;
+    visited.add(current.name);
+    const prop = current.properties.find(
+      (candidate) => candidate.name === property && candidate.isStatic,
+    );
+    if (prop) {
+      return { prop, declaringClassName: current.name };
+    }
+    if (!current.baseClass) break;
+    current = resolveClassNode(converter, current.baseClass);
+  }
+  return undefined;
+}
+
+export function mapStaticProperty(
+  this: ASTToTACConverter,
+  className: string,
+  property: string,
+): VariableOperand | undefined {
+  const resolved = resolveStaticClassProperty(this, className, property);
+  if (resolved) {
+    return createVariable(
+      `${resolved.declaringClassName}__${property}`,
+      resolved.prop.type,
+    );
+  }
+  return undefined;
+}
+
+export function emitStaticPropertyInitializers(
+  converter: ASTToTACConverter,
+  className: string,
+): void {
+  if (converter.emittedStaticClasses.has(className)) return;
+  const classNode = resolveClassNode(converter, className);
+  if (!classNode) return;
+  converter.emittedStaticClasses.add(className);
+  // Also emit for base classes first
+  if (classNode.baseClass) {
+    emitStaticPropertyInitializers(converter, classNode.baseClass);
+  }
+  for (const prop of classNode.properties) {
+    if (!prop.initializer || !prop.isStatic) continue;
+    const propVarName = `${classNode.name}__${prop.name}`;
+    const propVar = createVariable(propVarName, prop.type);
+    const value = converter.visitExpression(prop.initializer);
+    converter.instructions.push(new AssignmentInstruction(propVar, value));
+    converter.maybeTrackInlineInstanceAssignment(propVar, value);
+  }
+}
+
 function emitInlinePropertyInitializersForClass(
   converter: ASTToTACConverter,
   classNode: ClassDeclarationNode,
@@ -421,6 +485,9 @@ export function visitInlineConstructor(
     this.instructions.push(new CallInstruction(fallback, className, args));
     return fallback;
   }
+
+  // Emit static property initializers once per class
+  emitStaticPropertyInitializers(this, className);
 
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
@@ -784,6 +851,8 @@ export function emitEntryPointPropertyInit(
   this: ASTToTACConverter,
   classNode: ClassDeclarationNode,
 ): void {
+  // Emit static property initializers for the entry-point class
+  emitStaticPropertyInitializers(this, classNode.name);
   const inheritanceChain = buildInheritanceChain(this, classNode);
   const previousInitializerState = this.currentInlineInitializerState;
   this.currentInlineInitializerState = {

@@ -987,6 +987,43 @@ export function visitCallExpression(
       }
     }
 
+    // For array.push() with object literal arguments, propagate the array's
+    // element type so object literals are recognized as typed inline instances.
+    if (
+      !args &&
+      propAccess.property === "push" &&
+      rawArgs.some((a) => a.kind === ASTNodeKind.ObjectLiteralExpression)
+    ) {
+      const arrType = this.getOperandType(object);
+      let elemType: TypeSymbol | undefined;
+      if (arrType instanceof ArrayTypeSymbol) {
+        elemType = arrType.elementType;
+      }
+      if (!elemType) {
+        const resolved = resolveTypeFromNode(this, propAccess.object);
+        if (resolved instanceof ArrayTypeSymbol) {
+          elemType = resolved.elementType;
+        }
+      }
+      if (
+        elemType instanceof InterfaceTypeSymbol &&
+        elemType.properties.size > 0
+      ) {
+        args = rawArgs.map((arg) => {
+          if (arg.kind === ASTNodeKind.ObjectLiteralExpression) {
+            const prev = this.currentExpectedType;
+            this.currentExpectedType = elemType;
+            try {
+              return this.visitExpression(arg);
+            } finally {
+              this.currentExpectedType = prev;
+            }
+          }
+          return this.visitExpression(arg);
+        });
+      }
+    }
+
     const evaluatedArgs = getArgs();
 
     if (
@@ -1313,13 +1350,31 @@ export function visitCallExpression(
 
       return VOID_RETURN;
     }
-    if (objectType.name === ExternTypes.dataList.name) {
+    if (
+      objectType.name === ExternTypes.dataList.name ||
+      objectType instanceof DataListTypeSymbol ||
+      objectType.udonType === UdonType.DataList
+    ) {
       if (propAccess.property === "Add" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
         this.instructions.push(
           new MethodCallInstruction(undefined, object, "Add", [token]),
         );
         return VOID_RETURN;
+      }
+      if (propAccess.property === "push" && evaluatedArgs.length >= 1) {
+        // DataList.push(value) → DataList.Add(wrapDataToken(value)) for each arg
+        for (const arg of evaluatedArgs) {
+          const token = this.wrapDataToken(arg);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, object, "Add", [token]),
+          );
+        }
+        const countResult = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(
+          new PropertyGetInstruction(countResult, object, "Count"),
+        );
+        return countResult;
       }
       if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
@@ -1470,15 +1525,80 @@ export function visitCallExpression(
           return result;
         }
         case "includes": {
+          if (evaluatedArgs.length < 1) {
+            return createConstant(false, PrimitiveTypes.boolean);
+          }
+          const searchValue = evaluatedArgs[0];
           const result = this.newTemp(PrimitiveTypes.boolean);
           this.instructions.push(
-            new MethodCallInstruction(
+            new AssignmentInstruction(
               result,
-              object,
-              "includes",
-              evaluatedArgs,
+              createConstant(false, PrimitiveTypes.boolean),
             ),
           );
+          const indexVar = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new AssignmentInstruction(
+              indexVar,
+              createConstant(0, PrimitiveTypes.int32),
+            ),
+          );
+          const lenVar = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new PropertyGetInstruction(lenVar, object, "length"),
+          );
+          const loopStart = this.newLabel("includes_start");
+          const loopEnd = this.newLabel("includes_end");
+          this.instructions.push(new LabelInstruction(loopStart));
+          // if !(i < len) goto end
+          const condVar = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(condVar, indexVar, "<", lenVar),
+          );
+          this.instructions.push(
+            new ConditionalJumpInstruction(condVar, loopEnd),
+          );
+          // elem = array[i]
+          const elemType =
+            objectType instanceof ArrayTypeSymbol
+              ? objectType.elementType
+              : ObjectType;
+          const elem = this.newTemp(elemType);
+          this.instructions.push(
+            new ArrayAccessInstruction(elem, object, indexVar),
+          );
+          // if (elem == value) { result = true; goto end }
+          const eqVar = this.newTemp(PrimitiveTypes.boolean);
+          this.instructions.push(
+            new BinaryOpInstruction(eqVar, elem, "==", searchValue),
+          );
+          const nextLabel = this.newLabel("includes_next");
+          this.instructions.push(
+            new ConditionalJumpInstruction(eqVar, nextLabel),
+          );
+          this.instructions.push(
+            new AssignmentInstruction(
+              result,
+              createConstant(true, PrimitiveTypes.boolean),
+            ),
+          );
+          this.instructions.push(new UnconditionalJumpInstruction(loopEnd));
+          this.instructions.push(new LabelInstruction(nextLabel));
+          // i = i + 1
+          const nextIndex = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new BinaryOpInstruction(
+              nextIndex,
+              indexVar,
+              "+",
+              createConstant(1, PrimitiveTypes.int32),
+            ),
+          );
+          this.instructions.push(
+            new AssignmentInstruction(indexVar, nextIndex),
+          );
+          this.instructions.push(new UnconditionalJumpInstruction(loopStart));
+          this.instructions.push(new LabelInstruction(loopEnd));
           return result;
         }
         case "join": {
@@ -1557,6 +1677,115 @@ export function visitCallExpression(
             new PropertyGetInstruction(newLen, newArr, "length"),
           );
           return newLen;
+        }
+        case "splice": {
+          // splice(start, deleteCount, ...items) → remove and optionally insert
+          // Udon arrays are fixed-size, so we build a new array:
+          //   left  = array.slice(0, start)
+          //   removed = array.slice(start, start + deleteCount)
+          //   right = array.slice(start + deleteCount)
+          //   [if items] insertArr = new T[items.length]; fill; mid = insertArr
+          //   newArr = left.concat(mid?).concat(right)
+          //   array = newArr
+          //   return removed
+          if (evaluatedArgs.length < 2) {
+            // splice with 0 or 1 args — just delegate (unlikely in practice)
+            const result = this.newTemp(arrayReturn);
+            this.instructions.push(
+              new MethodCallInstruction(
+                result,
+                object,
+                "splice",
+                evaluatedArgs,
+              ),
+            );
+            return result;
+          }
+          const start = evaluatedArgs[0];
+          const deleteCount = evaluatedArgs[1];
+          const insertItems = evaluatedArgs.slice(2);
+
+          // endIdx = start + deleteCount
+          const endIdx = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new BinaryOpInstruction(endIdx, start, "+", deleteCount),
+          );
+
+          const zero = createConstant(0, PrimitiveTypes.int32);
+
+          // left = array.slice(0, start)
+          const leftPart = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(leftPart, object, "slice", [zero, start]),
+          );
+
+          // removed = array.slice(start, endIdx)
+          const removed = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(removed, object, "slice", [
+              start,
+              endIdx,
+            ]),
+          );
+
+          // right = array.slice(endIdx)
+          const rightPart = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(rightPart, object, "slice", [endIdx]),
+          );
+
+          let combined = leftPart;
+
+          // If there are items to insert, build an insert array
+          if (insertItems.length > 0) {
+            const elemName =
+              objectType instanceof ArrayTypeSymbol
+                ? objectType.elementType.name
+                : "object";
+            const insertArrayUdonType = isKnownExternElementType(elemName)
+              ? toUdonTypeNameWithArray(
+                  `${mapTypeScriptToCSharp(elemName)}[]`,
+                )
+              : "SystemObjectArray";
+            const insertCtorSig = `${insertArrayUdonType}.__ctor__SystemInt32__${insertArrayUdonType}`;
+            const insertSize = createConstant(
+              insertItems.length,
+              PrimitiveTypes.int32,
+            );
+            const insertArr = this.newTemp(arrayReturn);
+            this.instructions.push(
+              new CallInstruction(insertArr, insertCtorSig, [insertSize]),
+            );
+            for (let i = 0; i < insertItems.length; i++) {
+              this.instructions.push(
+                new ArrayAssignmentInstruction(
+                  insertArr,
+                  createConstant(i, PrimitiveTypes.int32),
+                  insertItems[i],
+                ),
+              );
+            }
+            const withInsert = this.newTemp(arrayReturn);
+            this.instructions.push(
+              new MethodCallInstruction(withInsert, leftPart, "concat", [
+                insertArr,
+              ]),
+            );
+            combined = withInsert;
+          }
+
+          // newArr = combined.concat(right)
+          const newArr = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(newArr, combined, "concat", [rightPart]),
+          );
+
+          // Write back
+          if (object.kind === TACOperandKind.Variable) {
+            this.instructions.push(new CopyInstruction(object, newArr));
+          }
+
+          return removed;
         }
       }
     }

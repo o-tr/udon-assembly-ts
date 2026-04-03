@@ -68,6 +68,22 @@ export function mapTypeWithGenerics(
   }
 
   if (node && ts.isTypeLiteralNode(node)) {
+    // Build an InterfaceTypeSymbol for anonymous type literals so object
+    // literal values receive inline heap variables instead of DataDictionary.
+    const propertyMap = new Map<string, TypeSymbol>();
+    for (const member of node.members) {
+      if (ts.isPropertySignature(member) && member.name) {
+        const propName = member.name.getText();
+        const propType = member.type
+          ? this.mapTypeWithGenerics(member.type.getText())
+          : ObjectType;
+        propertyMap.set(propName, propType);
+      }
+    }
+    if (propertyMap.size > 0) {
+      const name = `__anon_${trimmed.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 40)}`;
+      return new InterfaceTypeSymbol(name, new Map(), propertyMap);
+    }
     return ExternTypes.dataDictionary;
   }
 

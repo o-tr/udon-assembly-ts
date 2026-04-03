@@ -24,6 +24,7 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   CastInstruction,
+  CopyInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
@@ -38,7 +39,11 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { resolveClassProperty } from "./inline.js";
+import {
+  emitStaticPropertyInitializers,
+  resolveClassProperty,
+  resolveClassNode,
+} from "./inline.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
@@ -141,6 +146,21 @@ export function assignToTarget(
         return value;
       }
     }
+    // Static property write on inline classes: ClassName.staticField = value
+    if (propAccess.object.kind === ASTNodeKind.Identifier) {
+      const objectName = (propAccess.object as IdentifierNode).name;
+      if (
+        resolveClassNode(this, objectName) &&
+        !this.udonBehaviourClasses.has(objectName)
+      ) {
+        const mapped = this.mapStaticProperty(objectName, propAccess.property);
+        if (mapped) {
+          emitStaticPropertyInitializers(this, objectName);
+          this.emitCopyWithTracking(mapped, value);
+          return value;
+        }
+      }
+    }
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const instanceInfo = this.resolveInlineInstance(
         (propAccess.object as IdentifierNode).name,
@@ -192,6 +212,25 @@ export function assignToTarget(
           return value;
         }
       }
+    }
+    // Array length setter: array.length = n → array = array.slice(0, n)
+    const objectType = this.getOperandType(object);
+    if (
+      propAccess.property === "length" &&
+      objectType instanceof ArrayTypeSymbol &&
+      object.kind === TACOperandKind.Variable
+    ) {
+      const sliced = this.newTemp(objectType);
+      this.instructions.push(
+        new MethodCallInstruction(sliced, object, "slice", [
+          createConstant(0, PrimitiveTypes.int32),
+          value,
+        ]),
+      );
+      this.instructions.push(
+        new CopyInstruction(object as VariableOperand, sliced),
+      );
+      return value;
     }
     this.instructions.push(
       new PropertySetInstruction(object, propAccess.property, value),
