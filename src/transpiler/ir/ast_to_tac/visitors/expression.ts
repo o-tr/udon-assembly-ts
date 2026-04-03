@@ -1528,6 +1528,11 @@ export function visitPropertyAccessExpression(
             dispInstances.push([instId, info]);
           }
         }
+        // Track whether dispInstances were populated by a fallback heuristic
+        // (AST type or property-based). When true, a miss path must emit a
+        // PropertyGetInstruction instead of returning a zeroed heap default,
+        // because the runtime value may not be an inline handle at all.
+        let usedErasedFallback = false;
         // AST type fallback: when operand type is erased (ObjectType,
         // CollectionTypeSymbol, etc.) and no instances matched, try resolving
         // the base type from the AST and retry with that name.
@@ -1557,6 +1562,7 @@ export function visitPropertyAccessExpression(
                 dispInstances.push([instId, info]);
               }
             }
+            if (dispInstances.length > 0) usedErasedFallback = true;
           }
         }
         // Property-based fallback: when the operand type is erased and no
@@ -1589,6 +1595,7 @@ export function visitPropertyAccessExpression(
                 dispInstances.push([instId, info]);
               }
             }
+            if (dispInstances.length > 0) usedErasedFallback = true;
           }
         }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
@@ -1643,10 +1650,18 @@ export function visitPropertyAccessExpression(
               this.instructions.push(new UnconditionalJumpInstruction(dispEnd));
               this.instructions.push(new LabelInstruction(dispNext));
             }
-            // If no handle matched, dispResult retains its Udon heap default
-            // (zero/null). This fallthrough is unreachable for valid data: every
-            // object of this type was constructed via one of the tracked
-            // constructors, so its runtime handle always matches one branch above.
+            // Miss path: if no handle matched in the dispatch table.
+            if (usedErasedFallback) {
+              // The dispatch was populated by heuristic fallback (AST type or
+              // property scan on an erased type). The runtime value may not be
+              // an inline handle, so fall back to a generic PropertyGetInstruction.
+              this.instructions.push(
+                new PropertyGetInstruction(dispResult, object, node.property),
+              );
+            }
+            // For non-erased D3 dispatch the miss is unreachable: every object
+            // of the matched type was constructed via a tracked constructor,
+            // so its runtime handle always matches one branch above.
             this.instructions.push(new LabelInstruction(dispEnd));
             return dispResult;
           }

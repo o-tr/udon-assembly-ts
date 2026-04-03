@@ -928,12 +928,17 @@ export function visitCallExpression(
       : isSetCollectionType(resolvedType)
         ? resolvedType
         : null;
-    // Prefer resolvedType when it's a CollectionTypeSymbol (carries valueType)
-    // but objectType is a plain ExternTypeSymbol (no valueType info).
+    // Prefer resolvedType when it carries richer generic info (keyType/valueType)
+    // than objectType. This covers ExternTypeSymbol (no valueType at all) and
+    // CollectionTypeSymbol with erased generics (valueType === undefined).
     let mapType: TypeSymbol | null = null;
     if (isMapCollectionType(objectType)) {
+      const objectLacksGenerics =
+        !(objectType instanceof CollectionTypeSymbol) ||
+        (objectType.valueType === undefined &&
+          objectType.keyType === undefined);
       mapType =
-        !(objectType instanceof CollectionTypeSymbol) &&
+        objectLacksGenerics &&
         resolvedType instanceof CollectionTypeSymbol &&
         isMapCollectionType(resolvedType)
           ? resolvedType
