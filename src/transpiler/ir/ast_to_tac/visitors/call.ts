@@ -935,7 +935,8 @@ export function visitCallExpression(
     if (isMapCollectionType(objectType)) {
       const objectLacksGenerics =
         !(objectType instanceof CollectionTypeSymbol) ||
-        objectType.valueType === undefined;
+        objectType.valueType === undefined ||
+        objectType.valueType === ObjectType;
       mapType =
         objectLacksGenerics &&
         resolvedType instanceof CollectionTypeSymbol &&

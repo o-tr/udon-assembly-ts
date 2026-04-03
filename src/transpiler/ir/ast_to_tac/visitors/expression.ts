@@ -1659,7 +1659,11 @@ export function visitPropertyAccessExpression(
             if (usedErasedFallback) {
               // The runtime value may not be an inline handle, so fall back
               // to a generic PropertyGetInstruction. dispResult is already
-              // ObjectType, so the write is type-consistent.
+              // ObjectType, so the write is type-consistent. Note: the EXTERN
+              // generated here uses the erased object type as owner, which
+              // produces the same (potentially invalid) signature as the code
+              // path without D3 dispatch. This is not a regression — it
+              // preserves the original behavior for non-inline objects.
               this.instructions.push(
                 new PropertyGetInstruction(dispResult, object, node.property),
               );
