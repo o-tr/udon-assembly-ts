@@ -301,8 +301,6 @@ function evaluateArgsWithExpectedTypes(
   });
 }
 
-let warnedDataListNext = false;
-
 export function visitCallExpression(
   this: ASTToTACConverter,
   node: CallExpressionNode,
@@ -1571,9 +1569,9 @@ export function visitCallExpression(
         objectType.name === ExternTypes.dataList.name ||
         objectType.udonType === UdonType.DataList)
     ) {
-      // Warn once: empty DataList will crash the Udon VM at runtime.
-      if (!warnedDataListNext) {
-        warnedDataListNext = true;
+      // Warn once per compilation unit: empty DataList crashes the Udon VM.
+      if (!this.warnedDataListNext) {
+        this.warnedDataListNext = true;
         console.warn(
           "transpiler: DataList.next() translates to get_Item(0); " +
             "ensure the collection is non-empty before calling .next()",
