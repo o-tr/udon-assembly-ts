@@ -301,6 +301,8 @@ function evaluateArgsWithExpectedTypes(
   });
 }
 
+let warnedDataListNext = false;
+
 export function visitCallExpression(
   this: ASTToTACConverter,
   node: CallExpressionNode,
@@ -1569,11 +1571,14 @@ export function visitCallExpression(
         objectType.name === ExternTypes.dataList.name ||
         objectType.udonType === UdonType.DataList)
     ) {
-      // Warn: empty DataList will crash the Udon VM at runtime.
-      console.warn(
-        "transpiler: DataList.next() translates to get_Item(0); " +
-          "ensure the collection is non-empty before calling .next()",
-      );
+      // Warn once: empty DataList will crash the Udon VM at runtime.
+      if (!warnedDataListNext) {
+        warnedDataListNext = true;
+        console.warn(
+          "transpiler: DataList.next() translates to get_Item(0); " +
+            "ensure the collection is non-empty before calling .next()",
+        );
+      }
       const tokenResult = this.newTemp(ExternTypes.dataToken);
       this.instructions.push(
         new MethodCallInstruction(tokenResult, object, "get_Item", [
