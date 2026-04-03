@@ -1743,9 +1743,7 @@ export function visitCallExpression(
                 ? objectType.elementType.name
                 : "object";
             const insertArrayUdonType = isKnownExternElementType(elemName)
-              ? toUdonTypeNameWithArray(
-                  `${mapTypeScriptToCSharp(elemName)}[]`,
-                )
+              ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
               : "SystemObjectArray";
             const insertCtorSig = `${insertArrayUdonType}.__ctor__SystemInt32__${insertArrayUdonType}`;
             const insertSize = createConstant(

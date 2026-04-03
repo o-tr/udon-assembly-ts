@@ -41,8 +41,8 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import {
   emitStaticPropertyInitializers,
-  resolveClassProperty,
   resolveClassNode,
+  resolveClassProperty,
 } from "./inline.js";
 
 export function assignToTarget(
