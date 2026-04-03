@@ -1569,12 +1569,10 @@ export function visitPropertyAccessExpression(
           const candidateClasses = new Set<string>();
           for (const [, info] of this.allInlineInstances) {
             if (candidateClasses.has(info.className)) continue;
-            const pv = this.mapInlineProperty(
-              info.className,
-              info.prefix,
-              node.property,
-            );
-            if (pv) {
+            // Use resolveClassProperty (class-definition lookup) instead of
+            // mapInlineProperty (heap-variable lookup) so the check does not
+            // depend on a specific instance's prefix.
+            if (resolveClassProperty(this, info.className, node.property)) {
               candidateClasses.add(info.className);
             }
           }
@@ -1678,6 +1676,8 @@ export function visitPropertyAccessExpression(
 
     // Iterator result .value on DataToken: unwrap via Reference property.
     // Handles the tail of the `map.keys().next().value` pattern.
+    // Returns ObjectType because the DataToken doesn't carry element type info;
+    // any further property access on this result will face full type erasure.
     if (
       objectType.name === ExternTypes.dataToken.name &&
       node.property === "value"
