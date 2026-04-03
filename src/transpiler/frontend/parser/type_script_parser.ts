@@ -97,6 +97,7 @@ export class TypeScriptParser {
    */
   parse(sourceCode: string, filePath = "temp.ts"): ProgramNode {
     this.symbolTable = new SymbolTable();
+    this.anonTypeCounter = 0;
     const sourceFile = ts.createSourceFile(
       filePath,
       sourceCode,

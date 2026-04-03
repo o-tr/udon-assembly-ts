@@ -1697,46 +1697,49 @@ export function visitCallExpression(
           //   newArr = left.concat(mid?).concat(right)
           //   array = newArr
           //   return removed
+          if (evaluatedArgs.length === 0) {
+            // splice() with no args: return empty array (no mutation)
+            const emptySize = createConstant(0, PrimitiveTypes.int32);
+            const emptyResult = this.newTemp(arrayReturn);
+            const elemName =
+              objectType instanceof ArrayTypeSymbol
+                ? objectType.elementType.name
+                : "object";
+            const emptyArrayUdonType = isKnownExternElementType(elemName)
+              ? toUdonTypeNameWithArray(
+                  `${mapTypeScriptToCSharp(elemName)}[]`,
+                )
+              : "SystemObjectArray";
+            const emptyCtorSig = `${emptyArrayUdonType}.__ctor__SystemInt32__${emptyArrayUdonType}`;
+            this.instructions.push(
+              new CallInstruction(emptyResult, emptyCtorSig, [emptySize]),
+            );
+            return emptyResult;
+          }
+          // Build a local args list: for splice(start), compute
+          // deleteCount = length - start; for splice(start, n, ...) use as-is.
+          let spliceArgs: TACOperand[];
           if (evaluatedArgs.length < 2) {
-            if (evaluatedArgs.length === 0) {
-              // splice() with no args: return empty array (no mutation)
-              const emptySize = createConstant(0, PrimitiveTypes.int32);
-              const emptyResult = this.newTemp(arrayReturn);
-              const elemName =
-                objectType instanceof ArrayTypeSymbol
-                  ? objectType.elementType.name
-                  : "object";
-              const emptyArrayUdonType = isKnownExternElementType(elemName)
-                ? toUdonTypeNameWithArray(
-                    `${mapTypeScriptToCSharp(elemName)}[]`,
-                  )
-                : "SystemObjectArray";
-              const emptyCtorSig = `${emptyArrayUdonType}.__ctor__SystemInt32__${emptyArrayUdonType}`;
-              this.instructions.push(
-                new CallInstruction(emptyResult, emptyCtorSig, [emptySize]),
-              );
-              return emptyResult;
-            }
-            // splice(start) = splice(start, length - start)
             const arrLen = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
               new PropertyGetInstruction(arrLen, object, "length"),
             );
-            const deleteCount = this.newTemp(PrimitiveTypes.int32);
+            const computedDeleteCount = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
               new BinaryOpInstruction(
-                deleteCount,
+                computedDeleteCount,
                 arrLen,
                 "-",
                 evaluatedArgs[0],
               ),
             );
-            evaluatedArgs.push(deleteCount);
-            // Fall through to the normal 2-arg splice below
+            spliceArgs = [evaluatedArgs[0], computedDeleteCount];
+          } else {
+            spliceArgs = evaluatedArgs;
           }
-          const start = evaluatedArgs[0];
-          const deleteCount = evaluatedArgs[1];
-          const insertItems = evaluatedArgs.slice(2);
+          const start = spliceArgs[0];
+          const deleteCount = spliceArgs[1];
+          const insertItems = spliceArgs.slice(2);
 
           // endIdx = start + deleteCount
           const endIdx = this.newTemp(PrimitiveTypes.int32);

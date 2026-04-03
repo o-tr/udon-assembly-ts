@@ -276,9 +276,27 @@ export function mapStaticProperty(
 ): VariableOperand | undefined {
   const resolved = resolveStaticClassProperty(this, className, property);
   if (resolved) {
+    // Late-resolve originalTypeName to match emitStaticPropertyInitializers,
+    // ensuring reads and writes use the same resolved type for the heap slot.
+    let propType = resolved.prop.type;
+    if (
+      resolved.prop.initializer?.kind === ASTNodeKind.ObjectLiteralExpression &&
+      !(propType instanceof InterfaceTypeSymbol) &&
+      resolved.prop.originalTypeName
+    ) {
+      const lateResolved = this.typeMapper.mapTypeScriptType(
+        resolved.prop.originalTypeName,
+      );
+      if (
+        lateResolved instanceof InterfaceTypeSymbol &&
+        lateResolved.properties.size > 0
+      ) {
+        propType = lateResolved;
+      }
+    }
     return createVariable(
       `${resolved.declaringClassName}__${property}`,
-      resolved.prop.type,
+      propType,
     );
   }
   return undefined;

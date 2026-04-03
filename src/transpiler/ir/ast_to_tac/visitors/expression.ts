@@ -2059,10 +2059,12 @@ export function visitOptionalChainingExpression(
 
   this.instructions.push(new LabelInstruction(notNullLabel));
   // Create a named variable to hold objTemp so visitPropertyAccessExpression
-  // can look it up by name and get proper inline tracking.
+  // can look it up by name and get proper inline tracking. Use a temporary
+  // scope to avoid leaking the symbol into the enclosing scope.
   const optBaseType = this.getOperandType(objTemp);
   const optBaseName = `__opt_base_${this.tempCounter++}`;
   const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
+  this.symbolTable.enterScope();
   this.symbolTable.addSymbol(optBaseName, optBaseType);
   this.instructions.push(new CopyInstruction(optBase, objTemp));
   // Propagate inline instance tracking from objTemp to optBase
@@ -2075,6 +2077,7 @@ export function visitOptionalChainingExpression(
     } as IdentifierNode,
     property: node.property,
   } as PropertyAccessExpressionNode);
+  this.symbolTable.exitScope();
   this.emitCopyWithTracking(result, propResult);
   this.instructions.push(new LabelInstruction(endLabel));
 
