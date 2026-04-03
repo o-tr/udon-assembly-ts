@@ -1558,9 +1558,10 @@ export function visitCallExpression(
 
     // Iterator .next() on DataList: translate to get_Item(0) returning DataToken.
     // Only supports the single-shot `map.keys().next().value` idiom — repeated
-    // .next() calls will always return the first element. Calling .next() on an
-    // empty DataList will crash the Udon VM (no empty-guard emitted; callers
-    // should ensure the collection is non-empty before using this pattern).
+    // .next() calls will always return the first element.
+    // The returned DataToken is unwrapped by the `.value` handler in
+    // visitPropertyAccessExpression. For primitive-typed keys (int, float),
+    // .Reference returns null — only string/reference-type keys are supported.
     if (
       propAccess.property === "next" &&
       evaluatedArgs.length === 0 &&
@@ -1568,6 +1569,11 @@ export function visitCallExpression(
         objectType.name === ExternTypes.dataList.name ||
         objectType.udonType === UdonType.DataList)
     ) {
+      // Warn: empty DataList will crash the Udon VM at runtime.
+      console.warn(
+        "transpiler: DataList.next() translates to get_Item(0); " +
+          "ensure the collection is non-empty before calling .next()",
+      );
       const tokenResult = this.newTemp(ExternTypes.dataToken);
       this.instructions.push(
         new MethodCallInstruction(tokenResult, object, "get_Item", [

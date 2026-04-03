@@ -1674,10 +1674,10 @@ export function visitPropertyAccessExpression(
       return result;
     }
 
-    // Iterator result .value on DataToken: unwrap via Reference property.
+    // Iterator result .value on DataToken: unwrap via .Reference property.
     // Handles the tail of the `map.keys().next().value` pattern.
-    // Returns ObjectType because the DataToken doesn't carry element type info;
-    // any further property access on this result will face full type erasure.
+    // Note: .Reference returns null for primitive-keyed maps (int, float);
+    // only string/reference-type keys are supported by this pattern.
     if (
       objectType.name === ExternTypes.dataToken.name &&
       node.property === "value"
