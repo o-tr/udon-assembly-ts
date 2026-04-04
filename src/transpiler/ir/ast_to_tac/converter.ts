@@ -60,6 +60,8 @@ import {
   emitCallSitePush,
   emitCopyWithTracking,
   emitEntryPointPropertyInit,
+  emitInlineRecursivePop,
+  emitInlineRecursivePush,
   emitReturnSiteDispatch,
   mapInlineProperty,
   mapStaticProperty,
@@ -175,6 +177,29 @@ export class ASTToTACConverter {
         nextSelfCallResultIndex?: number;
         dispatchLabel: TACOperand;
         overflowLabel: TACOperand;
+      }
+    | undefined;
+  /**
+   * Recursion context for inline static methods (e.g.
+   * HandDecompositionHelpers.checkMelds). Uses the same JUMP-based
+   * call/return pattern as @RecursiveMethod but is set up inside
+   * visitInlineStaticMethodCall rather than the entry-point method emitter.
+   */
+  currentInlineRecursiveContext:
+    | {
+        className: string;
+        methodName: string;
+        locals: Array<{ name: string; type: TypeSymbol }>;
+        depthVar: string;
+        spVar: string;
+        stackVars: Array<{ name: string; type: TypeSymbol }>;
+        returnSites: Array<{ index: number; labelName: string }>;
+        nextReturnSiteIndex: number;
+        nextSelfCallResultIndex: number;
+        entryLabel: TACOperand;
+        dispatchLabel: TACOperand;
+        overflowLabel: TACOperand;
+        returnVar: VariableOperand;
       }
     | undefined;
   /**
@@ -379,6 +404,7 @@ export class ASTToTACConverter {
     this.currentMethodName = undefined;
     this.currentInlineContext = undefined;
     this.currentRecursiveContext = undefined;
+    this.currentInlineRecursiveContext = undefined;
     this.currentThisOverride = null;
     this.propertyAccessDepth = 0;
     this.currentMethodLayout = null;
@@ -729,6 +755,8 @@ export class ASTToTACConverter {
   collectRecursiveLocals = collectRecursiveLocals;
   emitCallSitePush = emitCallSitePush;
   emitCallSitePop = emitCallSitePop;
+  emitInlineRecursivePush = emitInlineRecursivePush;
+  emitInlineRecursivePop = emitInlineRecursivePop;
   emitReturnSiteDispatch = emitReturnSiteDispatch;
 
   emitTryInstructionsWithChecks = emitTryInstructionsWithChecks;

@@ -539,6 +539,7 @@ export function convertInstruction(
       const objectTypeName = this.getOperandTsTypeName(getInst.object);
       const returnType = this.getOperandTypeName(getInst.dest);
       const tsReturnType = this.getOperandTsTypeName(getInst.dest);
+
       const externSig =
         resolveExternSignature(
           objectTypeName,

@@ -133,10 +133,7 @@ export function getOperandTsTypeName(
       ) {
         return "object[]";
       }
-      if (
-        !(typeSymbol instanceof ArrayTypeSymbol) &&
-        !isKnownExternElementType(typeSymbol.name ?? "")
-      ) {
+      if (!isKnownExternElementType(typeSymbol.name ?? "")) {
         return "object";
       }
       return typeSymbol.name ?? "object";

@@ -7,7 +7,7 @@ describe("typed array spread → .concat() optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  it("two typed arrays become concat", () => {
+  it("two typed arrays become loop-based concat", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -22,11 +22,12 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // The spread should use concat instead of a DataList loop
-    expect(result.tac).toContain("concat");
+    // The spread should use loop-based concat (ObjectArray ctor + array copy)
+    // instead of a non-existent Udon concat EXTERN
+    expect(result.tac).toContain("concat_a_start");
   });
 
-  it("three typed arrays become concat chain", () => {
+  it("three typed arrays become two concat loops", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -42,9 +43,9 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Should have two concat calls in chain
-    const concatCount = (result.tac.match(/concat/g) || []).length;
-    expect(concatCount).toBe(2);
+    // Should have at least two loop-based concat operations
+    const concatStartCount = (result.tac.match(/concat_a_start/g) || []).length;
+    expect(concatStartCount).toBeGreaterThanOrEqual(2);
   });
 
   it("mixed spread and literal falls back to DataList loop", () => {

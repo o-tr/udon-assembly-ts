@@ -1,3 +1,4 @@
+import { emitArrayConcat } from "../helpers/assignment.js";
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import {
@@ -1492,8 +1493,17 @@ export function visitCallExpression(
           ? objectType
           : new ArrayTypeSymbol(ObjectType);
       switch (propAccess.property) {
+        case "concat": {
+          // Udon VM does not have a native Array.concat extern.
+          // Implement as loop-based copy.
+          if (evaluatedArgs.length !== 1) {
+            throw new Error(
+              "Array.concat() with != 1 argument is not supported",
+            );
+          }
+          return emitArrayConcat(this, object, evaluatedArgs[0]);
+        }
         case "slice":
-        case "concat":
         case "filter":
         case "reverse":
         case "sort": {
@@ -1666,10 +1676,7 @@ export function visitCallExpression(
           }
 
           // 3. Concat original array with wrapper
-          const newArr = this.newTemp(arrayReturn);
-          this.instructions.push(
-            new MethodCallInstruction(newArr, object, "concat", [wrapper]),
-          );
+          const newArr = emitArrayConcat(this, object, wrapper);
 
           // 4. Write back new array reference to original variable.
           // Only Variable operands (locals, inline class fields) can be
@@ -1792,20 +1799,11 @@ export function visitCallExpression(
                 ),
               );
             }
-            const withInsert = this.newTemp(arrayReturn);
-            this.instructions.push(
-              new MethodCallInstruction(withInsert, leftPart, "concat", [
-                insertArr,
-              ]),
-            );
-            combined = withInsert;
+            combined = emitArrayConcat(this, leftPart, insertArr);
           }
 
           // newArr = combined.concat(right)
-          const newArr = this.newTemp(arrayReturn);
-          this.instructions.push(
-            new MethodCallInstruction(newArr, combined, "concat", [rightPart]),
-          );
+          const newArr = emitArrayConcat(this, combined, rightPart);
 
           // Write back new array reference to original variable.
           // Only Variable operands (locals, inline class fields) can be

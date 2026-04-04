@@ -473,7 +473,7 @@ export function visitForOfStatement(
 
   const isDestructured = Array.isArray(node.variable);
   const isObjectDestructured = !!node.destructureProperties?.length;
-  let elementType = isDestructured
+  const rawElementType = isDestructured
     ? ExternTypes.dataList
     : isObjectDestructured
       ? ObjectType
@@ -482,6 +482,22 @@ export function visitForOfStatement(
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
           : ObjectType));
+  // When the element type is erased to ObjectType, prefer the AST-inferred
+  // type or the declared variable type. This preserves inline class types
+  // (e.g., Meld from Hand.melds) so that property access generates correct
+  // D3 dispatch instead of invalid EXTERNs.
+  let elementType = rawElementType;
+  if (
+    elementType === ObjectType &&
+    !isDestructured &&
+    !isObjectDestructured
+  ) {
+    elementType =
+      inferredElementType ??
+      (node.variableType
+        ? this.typeMapper.mapTypeScriptType(node.variableType)
+        : ObjectType);
+  }
 
   // If we're iterating an untyped `DataList` (matched by name/udonType), the
   // elements we get are raw `DataToken`s — force the loop variable to be a
@@ -1084,6 +1100,38 @@ export function visitReturnStatement(
     value = node.value ? this.visitExpression(node.value) : undefined;
   } finally {
     this.currentExpectedType = prevExpectedType;
+  }
+
+  // Inline recursive static method: when the top inlineContext belongs to
+  // the recursive method (same returnVar), handle as recursive return —
+  // decrement depth and jump to the dispatch table. If this is a deeper
+  // inline method (non-recursive) called within the recursive body, the
+  // returnVar won't match and we fall through to the normal inline return.
+  if (
+    inlineContext &&
+    this.currentInlineRecursiveContext &&
+    inlineContext.returnVar === this.currentInlineRecursiveContext.returnVar
+  ) {
+    emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
+    if (value) {
+      this.instructions.push(
+        new CopyInstruction(this.currentInlineRecursiveContext.returnVar, value),
+      );
+    }
+    const { dispatchLabel, depthVar } = this.currentInlineRecursiveContext;
+    const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+    const depthTemp = this.newTemp(PrimitiveTypes.int32);
+    this.instructions.push(
+      new BinaryOpInstruction(
+        depthTemp,
+        depthVarOp,
+        "-",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+    );
+    this.emitCopyWithTracking(depthVarOp, depthTemp);
+    this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
+    return;
   }
 
   if (
