@@ -487,11 +487,7 @@ export function visitForOfStatement(
   // (e.g., Meld from Hand.melds) so that property access generates correct
   // D3 dispatch instead of invalid EXTERNs.
   let elementType = rawElementType;
-  if (
-    elementType === ObjectType &&
-    !isDestructured &&
-    !isObjectDestructured
-  ) {
+  if (elementType === ObjectType && !isDestructured && !isObjectDestructured) {
     elementType =
       inferredElementType ??
       (node.variableType
@@ -1115,7 +1111,10 @@ export function visitReturnStatement(
     emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
     if (value) {
       this.instructions.push(
-        new CopyInstruction(this.currentInlineRecursiveContext.returnVar, value),
+        new CopyInstruction(
+          this.currentInlineRecursiveContext.returnVar,
+          value,
+        ),
       );
     }
     const { dispatchLabel, depthVar } = this.currentInlineRecursiveContext;

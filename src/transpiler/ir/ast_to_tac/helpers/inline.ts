@@ -685,7 +685,11 @@ export function visitInlineStaticMethodCall(
   }
 
   // --- Check for self-recursion ---
-  const selfCallCount = countStaticSelfCalls(className, methodName, method.body);
+  const selfCallCount = countStaticSelfCalls(
+    className,
+    methodName,
+    method.body,
+  );
   if (selfCallCount > 0) {
     return emitInlineRecursiveStaticMethod(
       this,
@@ -814,11 +818,9 @@ function emitInlineRecursiveStaticMethod(
     type: ExternTypes.dataList as TypeSymbol,
   }));
 
-  const result = createVariable(
-    `${prefix}_retVal`,
-    returnType,
-    { isLocal: true },
-  );
+  const result = createVariable(`${prefix}_retVal`, returnType, {
+    isLocal: true,
+  });
   const entryLabel = converter.newLabel("inline_rec_entry");
   const dispatchLabel = converter.newLabel("inline_rec_dispatch");
   const overflowLabel = converter.newLabel("inline_rec_overflow");
@@ -883,14 +885,10 @@ function emitInlineRecursiveStaticMethod(
         [],
         "DataList",
       );
-      converter.instructions.push(
-        new CallInstruction(stackVar, externSig, []),
-      );
+      converter.instructions.push(new CallInstruction(stackVar, externSig, []));
       for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
         converter.instructions.push(
-          new MethodCallInstruction(undefined, stackVar, "Add", [
-            defaultToken,
-          ]),
+          new MethodCallInstruction(undefined, stackVar, "Add", [defaultToken]),
         );
       }
     }
@@ -1122,9 +1120,7 @@ function emitInlineRecursiveSelfCall(
   }
 
   // 4. Set return site index
-  const returnLabel = converter.newLabel(
-    "inline_rec_return",
-  ) as LabelOperand;
+  const returnLabel = converter.newLabel("inline_rec_return") as LabelOperand;
   const returnSiteIdx = ctx.nextReturnSiteIndex++;
   ctx.returnSites.push({
     index: returnSiteIdx,
@@ -1144,15 +1140,15 @@ function emitInlineRecursiveSelfCall(
   );
 
   // 5. JUMP to method entry
-  converter.instructions.push(
-    new UnconditionalJumpInstruction(ctx.entryLabel),
-  );
+  converter.instructions.push(new UnconditionalJumpInstruction(ctx.entryLabel));
 
   // 6. Return label (dispatch brings us back here)
   converter.instructions.push(new LabelInstruction(returnLabel));
 
   // 7. Read return value into temp BEFORE pop
-  const capturedTemp = converter.newTemp(converter.getOperandType(ctx.returnVar));
+  const capturedTemp = converter.newTemp(
+    converter.getOperandType(ctx.returnVar),
+  );
   converter.emitCopyWithTracking(capturedTemp, ctx.returnVar);
 
   // 8. Pop all locals from stack (restore caller's state)
@@ -2191,8 +2187,7 @@ export function countStaticSelfCalls(
       case ASTNodeKind.CallExpression: {
         const callNode = node as CallExpressionNode;
         if (callNode.callee.kind === ASTNodeKind.PropertyAccessExpression) {
-          const propAccess =
-            callNode.callee as PropertyAccessExpressionNode;
+          const propAccess = callNode.callee as PropertyAccessExpressionNode;
           if (
             propAccess.object.kind === ASTNodeKind.Identifier &&
             (propAccess.object as IdentifierNode).name === className &&
@@ -2334,9 +2329,7 @@ export function countStaticSelfCalls(
  * Push all locals onto per-local DataList stacks for inline recursive context.
  * Same logic as emitCallSitePush but uses currentInlineRecursiveContext.
  */
-export function emitInlineRecursivePush(
-  this: ASTToTACConverter,
-): void {
+export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   const context = this.currentInlineRecursiveContext;
   if (!context) return;
 
@@ -2391,9 +2384,7 @@ export function emitInlineRecursivePush(
  * Pop all locals from per-local DataList stacks for inline recursive context.
  * Same logic as emitCallSitePop but uses currentInlineRecursiveContext.
  */
-export function emitInlineRecursivePop(
-  this: ASTToTACConverter,
-): void {
+export function emitInlineRecursivePop(this: ASTToTACConverter): void {
   const context = this.currentInlineRecursiveContext;
   if (!context) return;
 

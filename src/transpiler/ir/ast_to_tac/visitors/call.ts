@@ -1,4 +1,3 @@
-import { emitArrayConcat } from "../helpers/assignment.js";
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import {
@@ -58,6 +57,7 @@ import {
 } from "../../tac_operand.js";
 import type { UdonBehaviourMethodLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { emitArrayConcat } from "../helpers/assignment.js";
 import {
   emitMapEntriesList,
   emitMapKeysList,

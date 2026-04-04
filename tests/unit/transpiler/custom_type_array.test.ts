@@ -100,7 +100,12 @@ describe("custom type array operations", () => {
 
     // Array .length should use a valid Udon extern
     expect(
-      externs.some((sig) => sig.includes("get_Length__SystemInt32") || sig.includes("get_length__SystemInt32") || sig.includes("get_Count__SystemInt32")),
+      externs.some(
+        (sig) =>
+          sig.includes("get_Length__SystemInt32") ||
+          sig.includes("get_length__SystemInt32") ||
+          sig.includes("get_Count__SystemInt32"),
+      ),
     ).toBe(true);
   });
 
@@ -129,7 +134,12 @@ describe("custom type array operations", () => {
 
     // Array .length should use a valid Udon extern
     expect(
-      externs.some((sig) => sig.includes("get_Length__SystemInt32") || sig.includes("get_length__SystemInt32") || sig.includes("get_Count__SystemInt32")),
+      externs.some(
+        (sig) =>
+          sig.includes("get_Length__SystemInt32") ||
+          sig.includes("get_length__SystemInt32") ||
+          sig.includes("get_Count__SystemInt32"),
+      ),
     ).toBe(true);
   });
 
@@ -169,7 +179,12 @@ describe("custom type array operations", () => {
     expect(externs.some((sig) => sig.includes("MeldAliasArray"))).toBe(false);
     // Known type alias array should use a valid length extern
     expect(
-      externs.some((sig) => sig.includes("get_Length__SystemInt32") || sig.includes("get_length__SystemInt32") || sig.includes("get_Count__SystemInt32")),
+      externs.some(
+        (sig) =>
+          sig.includes("get_Length__SystemInt32") ||
+          sig.includes("get_length__SystemInt32") ||
+          sig.includes("get_Count__SystemInt32"),
+      ),
     ).toBe(true);
   });
 });
