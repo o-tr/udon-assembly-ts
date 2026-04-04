@@ -81,6 +81,11 @@ export function mapTypeWithGenerics(
       }
     }
     if (propertyMap.size > 0) {
+      // Each occurrence gets a unique name (per-occurrence, not structural).
+      // Structurally identical type literals in different positions produce
+      // distinct InterfaceTypeSymbols. This is acceptable because call-site
+      // type propagation (currentExpectedType) is the primary mechanism for
+      // matching object literals to their target types.
       const name = `__anon_${++this.anonTypeCounter}`;
       return new InterfaceTypeSymbol(name, new Map(), propertyMap);
     }
