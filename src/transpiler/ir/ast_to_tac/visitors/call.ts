@@ -1750,10 +1750,17 @@ export function visitCallExpression(
             ]),
           );
 
-          // right = array.slice(endIdx)
+          // right = array.slice(endIdx, length)
+          const spliceLen = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new PropertyGetInstruction(spliceLen, object, "length"),
+          );
           const rightPart = this.newTemp(arrayReturn);
           this.instructions.push(
-            new MethodCallInstruction(rightPart, object, "slice", [endIdx]),
+            new MethodCallInstruction(rightPart, object, "slice", [
+              endIdx,
+              spliceLen,
+            ]),
           );
 
           let combined = leftPart;
