@@ -137,6 +137,11 @@ function widenNumericOperands(
   return { left: newLeft, right: newRight };
 }
 
+const BITWISE_FLOAT_TYPES: ReadonlySet<UdonType> = new Set([
+  UdonType.Single,
+  UdonType.Double,
+]);
+
 /**
  * Narrow floating-point operands to Int32 for bitwise operators (|, &, ^).
  * Udon VM has no bitwise ops on Single/Double; applying them generates
@@ -151,18 +156,14 @@ function narrowToInt32ForBitwise(
 ): { left: TACOperand; right: TACOperand } {
   const leftType = converter.getOperandType(left);
   const rightType = converter.getOperandType(right);
-  const FLOAT_TYPES: ReadonlySet<UdonType> = new Set([
-    UdonType.Single,
-    UdonType.Double,
-  ]);
   let newLeft = left;
   let newRight = right;
-  if (FLOAT_TYPES.has(leftType.udonType)) {
+  if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
     const cast = converter.newTemp(PrimitiveTypes.int32);
     converter.instructions.push(new CastInstruction(cast, left));
     newLeft = cast;
   }
-  if (FLOAT_TYPES.has(rightType.udonType)) {
+  if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
     const cast = converter.newTemp(PrimitiveTypes.int32);
     converter.instructions.push(new CastInstruction(cast, right));
     newRight = cast;

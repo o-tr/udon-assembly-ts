@@ -902,7 +902,8 @@ export function emitEntryPointPropertyInit(
     for (const cls of this.classRegistry.getAllClasses()) {
       if (
         !this.udonBehaviourClasses.has(cls.name) &&
-        !this.entryPointClasses.has(cls.name)
+        !this.entryPointClasses.has(cls.name) &&
+        cls.node.properties.some((p) => p.isStatic && p.initializer)
       ) {
         emitStaticPropertyInitializers(this, cls.name);
       }
