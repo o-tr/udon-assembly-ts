@@ -98,7 +98,7 @@ describe("custom type array operations", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Array .length should use a valid Udon extern
+    // Array .length should use a valid Udon extern (DataList.Count or typed length)
     expect(
       externs.some(
         (sig) =>
@@ -107,6 +107,8 @@ describe("custom type array operations", () => {
           sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
+    // Should NOT produce invalid unresolvable externs
+    expect(externs.some((sig) => sig.includes("__get_length__SystemObject"))).toBe(false);
   });
 
   it("generates valid length extern for Unity type arrays (Vector3[], Transform[])", () => {
@@ -141,6 +143,7 @@ describe("custom type array operations", () => {
           sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
+    expect(externs.some((sig) => sig.includes("__get_length__SystemObject"))).toBe(false);
   });
 
   it("handles type alias arrays correctly", () => {

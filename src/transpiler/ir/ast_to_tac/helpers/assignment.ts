@@ -358,11 +358,32 @@ export function emitArrayConcat(
   b: TACOperand,
 ): TACOperand {
   const dataListType = ExternTypes.dataList;
-  // Cast both operands to DataList
-  const aList = converter.newTemp(dataListType);
-  converter.instructions.push(new CopyInstruction(aList, a));
-  const bList = converter.newTemp(dataListType);
-  converter.instructions.push(new CopyInstruction(bList, b));
+  // Cast both operands to DataList. In this transpiler, all user-facing
+  // arrays are represented as DataList at runtime, so the COPY merely
+  // reinterprets the heap type for the EXTERN resolver. If an operand is
+  // already DataList-typed, skip the redundant copy.
+  const aType = converter.getOperandType(a);
+  let aList: TACOperand;
+  if (
+    aType instanceof DataListTypeSymbol ||
+    aType.name === dataListType.name
+  ) {
+    aList = a;
+  } else {
+    aList = converter.newTemp(dataListType);
+    converter.instructions.push(new CopyInstruction(aList, a));
+  }
+  const bType = converter.getOperandType(b);
+  let bList: TACOperand;
+  if (
+    bType instanceof DataListTypeSymbol ||
+    bType.name === dataListType.name
+  ) {
+    bList = b;
+  } else {
+    bList = converter.newTemp(dataListType);
+    converter.instructions.push(new CopyInstruction(bList, b));
+  }
   // Create new DataList for result
   const ctorExtern = converter.requireExternSignature(
     "DataList",

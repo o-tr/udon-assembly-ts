@@ -1749,6 +1749,17 @@ export function visitPropertyAccessExpression(
               this.instructions.push(
                 new CallInstruction(undefined, logExtern, [errMsg]),
               );
+              // Write an explicit default so dispResult is never truly
+              // uninitialized.  For reference types this is null (ObjectType
+              // default), for int32 it is 0, etc.  The Udon heap already
+              // zero-initialises, but an explicit COPY from a typed constant
+              // makes intent clear and avoids any subtle type-mismatch.
+              this.instructions.push(
+                new CopyInstruction(
+                  dispResult,
+                  createConstant(null, untrackedPropType),
+                ),
+              );
             }
             // For non-erased D3 dispatch the miss is unreachable: every object
             // of the matched type was constructed via a tracked constructor,

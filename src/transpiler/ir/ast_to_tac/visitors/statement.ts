@@ -473,26 +473,26 @@ export function visitForOfStatement(
 
   const isDestructured = Array.isArray(node.variable);
   const isObjectDestructured = !!node.destructureProperties?.length;
-  const rawElementType = isDestructured
-    ? ExternTypes.dataList
-    : isObjectDestructured
-      ? ObjectType
-      : (this.getArrayElementType(iterableOperand) ??
+  // Determine element type with fallback chain. When getArrayElementType
+  // returns ObjectType (erased), prefer the AST-inferred element type or
+  // the declared variable type so inline class types (e.g. Meld) are
+  // preserved for D3 dispatch.
+  let elementType: TypeSymbol;
+  if (isDestructured) {
+    elementType = ExternTypes.dataList;
+  } else if (isObjectDestructured) {
+    elementType = ObjectType;
+  } else {
+    const operandElemType = this.getArrayElementType(iterableOperand);
+    if (operandElemType && operandElemType !== ObjectType) {
+      elementType = operandElemType;
+    } else {
+      elementType =
         inferredElementType ??
         (node.variableType
           ? this.typeMapper.mapTypeScriptType(node.variableType)
-          : ObjectType));
-  // When the element type is erased to ObjectType, prefer the AST-inferred
-  // type or the declared variable type. This preserves inline class types
-  // (e.g., Meld from Hand.melds) so that property access generates correct
-  // D3 dispatch instead of invalid EXTERNs.
-  let elementType = rawElementType;
-  if (elementType === ObjectType && !isDestructured && !isObjectDestructured) {
-    elementType =
-      inferredElementType ??
-      (node.variableType
-        ? this.typeMapper.mapTypeScriptType(node.variableType)
-        : ObjectType);
+          : ObjectType);
+    }
   }
 
   // If we're iterating an untyped `DataList` (matched by name/udonType), the

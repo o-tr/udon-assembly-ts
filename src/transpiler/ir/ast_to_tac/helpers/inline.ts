@@ -812,30 +812,37 @@ function emitInlineRecursiveStaticMethod(
       type: returnType,
     });
   }
+  // Add synthesized try/catch error flag/value variables so they survive
+  // across recursive self-call boundaries (same pattern as @RecursiveMethod).
+  const tryCatchCount = countTryCatchBlocks(method.body);
+  for (let i = 0; i < tryCatchCount; i++) {
+    const tryId = converter.tryCounter + i;
+    locals.push({ name: `__error_flag_${tryId}`, type: PrimitiveTypes.boolean });
+    locals.push({ name: `__error_value_${tryId}`, type: ObjectType });
+  }
 
   const stackVars = locals.map((local) => ({
     name: `${prefix}_stack_${local.name}`,
     type: ExternTypes.dataList as TypeSymbol,
   }));
 
-  const result = createVariable(`${prefix}_retVal`, returnType, {
-    isLocal: true,
-  });
+  const result = createVariable(
+    `${prefix}_retVal_${converter.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
   const entryLabel = converter.newLabel("inline_rec_entry");
   const dispatchLabel = converter.newLabel("inline_rec_dispatch");
   const overflowLabel = converter.newLabel("inline_rec_overflow");
   const doneLabel = converter.newLabel("inline_rec_done");
 
-  // --- Initial call: set up params, then jump to entry ---
-  // (The entry label is placed after prologue so repeated calls skip
-  // allocation. The initial call must also set up parameters.)
-  for (let i = 0; i < method.parameters.length; i++) {
-    const param = method.parameters[i];
-    const paramVar = createVariable(param.name, param.type, { isLocal: true });
-    if (args[i]) {
-      converter.instructions.push(new CopyInstruction(paramVar, args[i]));
-    }
-  }
+  // --- Initial call: set up params with inline tracking ---
+  converter.symbolTable.enterScope();
+  const savedInitialParams = saveAndBindInlineParams(
+    converter,
+    method.parameters,
+    args,
+  );
   // Set initial return site index to 0 (sentinel: initial caller)
   const returnSiteIdxVar = createVariable(
     returnSiteIdxVarName,
@@ -974,17 +981,8 @@ function emitInlineRecursiveStaticMethod(
   const savedInlineRecCtx = converter.currentInlineRecursiveContext;
   converter.currentInlineRecursiveContext = ctx;
 
-  // Standard inline method setup
-  converter.symbolTable.enterScope();
-  // Note: params are already set up (for initial call, by CopyInstruction
-  // above; for recursive calls, by emitInlineRecursiveSelfCall).
-  // We still need to register them in the symbol table.
-  for (const param of method.parameters) {
-    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-      converter.symbolTable.addSymbol(param.name, param.type, true, false);
-    }
-  }
-
+  // Standard inline method setup — scope + params already set up via
+  // saveAndBindInlineParams in the initial-call path above.
   const savedParamExportMap = converter.currentParamExportMap;
   const savedParamExportReverseMap = converter.currentParamExportReverseMap;
   const savedMethodLayout = converter.currentMethodLayout;
@@ -1024,6 +1022,7 @@ function emitInlineRecursiveStaticMethod(
     converter.currentInlineConstructorClassName = savedInlineCtorClass;
     converter.currentThisOverride = savedThisOverride;
     converter.currentInlineBaseClass = savedBaseClass;
+    restoreInlineParams(converter, savedInitialParams);
     converter.symbolTable.exitScope();
     converter.currentInlineRecursiveContext = savedInlineRecCtx;
   }
@@ -2315,6 +2314,38 @@ export function countStaticSelfCalls(
         const accNode = node as ArrayAccessExpressionNode;
         visitNode(accNode.array);
         visitNode(accNode.index);
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        const asNode = node as AsExpressionNode;
+        visitNode(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const tmplNode = node as TemplateExpressionNode;
+        for (const part of tmplNode.parts) {
+          if (part.kind === "expression") visitNode(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) visitNode(prop.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        visitNode(delNode.target);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        visitNode(optNode.object);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        visitNode(updNode.operand);
         break;
       }
       default:

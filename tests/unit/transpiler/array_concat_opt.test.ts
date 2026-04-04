@@ -22,9 +22,11 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // The spread should use loop-based concat (ObjectArray ctor + array copy)
-    // instead of a non-existent Udon concat EXTERN
-    expect(result.tac).toContain("concat_a_start");
+    // The spread should use loop-based concat via DataList iteration.
+    // Verify loop labels are present and old EXTERN concat is absent.
+    const concatLoops = (result.tac.match(/concat_a_start/g) || []).length;
+    expect(concatLoops).toBeGreaterThanOrEqual(1);
+    expect(result.tac).not.toContain("MethodCall concat");
   });
 
   it("three typed arrays become two concat loops", () => {
@@ -43,9 +45,10 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Should have at least two loop-based concat operations
+    // Should have at least two loop-based concat operations and no EXTERN concat
     const concatStartCount = (result.tac.match(/concat_a_start/g) || []).length;
     expect(concatStartCount).toBeGreaterThanOrEqual(2);
+    expect(result.tac).not.toContain("MethodCall concat");
   });
 
   it("mixed spread and literal falls back to DataList loop", () => {

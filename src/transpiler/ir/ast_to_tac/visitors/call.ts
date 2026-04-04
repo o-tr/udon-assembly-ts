@@ -1495,13 +1495,27 @@ export function visitCallExpression(
       switch (propAccess.property) {
         case "concat": {
           // Udon VM does not have a native Array.concat extern.
-          // Implement as loop-based copy.
-          if (evaluatedArgs.length !== 1) {
-            throw new Error(
-              "Array.concat() with != 1 argument is not supported",
+          // Implement as loop-based copy via DataList.
+          if (evaluatedArgs.length === 0) {
+            // arr.concat() → shallow copy via concat with empty DataList
+            const emptyList = this.newTemp(ExternTypes.dataList);
+            const ctorExtern = this.requireExternSignature(
+              "DataList",
+              "ctor",
+              "method",
+              [],
+              "DataList",
             );
+            this.instructions.push(
+              new CallInstruction(emptyList, ctorExtern, []),
+            );
+            return emitArrayConcat(this, object, emptyList);
           }
-          return emitArrayConcat(this, object, evaluatedArgs[0]);
+          let result = object;
+          for (const arg of evaluatedArgs) {
+            result = emitArrayConcat(this, result, arg);
+          }
+          return result;
         }
         case "slice":
         case "filter":
