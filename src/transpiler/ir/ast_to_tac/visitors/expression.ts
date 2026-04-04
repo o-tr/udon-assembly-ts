@@ -71,6 +71,7 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   operandTrackingKey,
+  resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
@@ -132,6 +133,40 @@ function widenNumericOperands(
     const w = converter.newTemp(promoted);
     converter.instructions.push(new CastInstruction(w, right));
     newRight = w;
+  }
+  return { left: newLeft, right: newRight };
+}
+
+const BITWISE_FLOAT_TYPES: ReadonlySet<UdonType> = new Set([
+  UdonType.Single,
+  UdonType.Double,
+]);
+
+/**
+ * Narrow floating-point operands to Int32 for bitwise operators (|, &, ^).
+ * Udon VM has no bitwise ops on Single/Double; applying them generates
+ * invalid EXTERNs like SystemSingle.__op_LogicalOr__. Other integer types
+ * (Int16, UInt32, etc.) are left unchanged — they either have native
+ * bitwise support or will fail at codegen with a clear extern-not-found error.
+ */
+function narrowToInt32ForBitwise(
+  converter: ASTToTACConverter,
+  left: TACOperand,
+  right: TACOperand,
+): { left: TACOperand; right: TACOperand } {
+  const leftType = converter.getOperandType(left);
+  const rightType = converter.getOperandType(right);
+  let newLeft = left;
+  let newRight = right;
+  if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
+    const cast = converter.newTemp(PrimitiveTypes.int32);
+    converter.instructions.push(new CastInstruction(cast, left));
+    newLeft = cast;
+  }
+  if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+    const cast = converter.newTemp(PrimitiveTypes.int32);
+    converter.instructions.push(new CastInstruction(cast, right));
+    newRight = cast;
   }
   return { left: newLeft, right: newRight };
 }
@@ -381,7 +416,11 @@ export function visitBinaryExpression(
     const baseOp = compoundOps[node.operator];
     // compoundOps does not contain <<= or >>=, so no shift guard needed.
     // C# compound assignment: x op= y ≡ x = (T)(x op y), where T = typeof(x).
-    const w = widenNumericOperands(this, leftOriginal, rightOriginal);
+    const isBitwiseCompound =
+      baseOp === "&" || baseOp === "|" || baseOp === "^";
+    const w = isBitwiseCompound
+      ? narrowToInt32ForBitwise(this, leftOriginal, rightOriginal)
+      : widenNumericOperands(this, leftOriginal, rightOriginal);
     const opResult = this.newTemp(this.getOperandType(w.left));
     this.instructions.push(
       new BinaryOpInstruction(opResult, w.left, baseOp, w.right),
@@ -566,10 +605,17 @@ export function visitBinaryExpression(
     }
   }
 
+  const isBitwise =
+    node.operator === "|" || node.operator === "&" || node.operator === "^";
   const isShift = node.operator === "<<" || node.operator === ">>";
 
-  // Widen narrower operand when both are numeric and types differ (skip shifts).
-  if (!isShift) {
+  if (isBitwise) {
+    // Narrow to Int32 for bitwise ops — Udon VM has no float bitwise EXTERNs.
+    const n = narrowToInt32ForBitwise(this, left, right);
+    left = n.left;
+    right = n.right;
+  } else if (!isShift) {
+    // Widen narrower operand when both are numeric and types differ (skip shifts).
     const w = widenNumericOperands(this, left, right);
     left = w.left;
     right = w.right;
@@ -1369,6 +1415,21 @@ export function visitPropertyAccessExpression(
       }
     }
 
+    // Static property access on inline classes: ClassName.staticField
+    if (node.object.kind === ASTNodeKind.Identifier) {
+      const objectName = (node.object as IdentifierNode).name;
+      if (
+        !this.symbolTable.lookup(objectName) && // not shadowed by a local
+        resolveClassNode(this, objectName) &&
+        !this.udonBehaviourClasses.has(objectName)
+      ) {
+        const mapped = this.mapStaticProperty(objectName, node.property);
+        if (mapped) {
+          return mapped;
+        }
+      }
+    }
+
     if (node.object.kind === ASTNodeKind.Identifier) {
       const objectName = (node.object as IdentifierNode).name;
       const externSig = this.resolveStaticExtern(
@@ -1588,7 +1649,8 @@ export function visitPropertyAccessExpression(
             }
           }
           // Only use this fallback when exactly one class matches to avoid
-          // generating a dispatch table that branches into the wrong class.
+          // generating excessively large dispatch tables when multiple
+          // unrelated classes share the same property name.
           if (candidateClasses.size === 1) {
             for (const [instId, info] of this.allInlineInstances) {
               if (candidateClasses.has(info.className)) {
@@ -2003,9 +2065,31 @@ export function visitOptionalChainingExpression(
   this.instructions.push(new UnconditionalJumpInstruction(endLabel));
 
   this.instructions.push(new LabelInstruction(notNullLabel));
-  this.instructions.push(
-    new PropertyGetInstruction(result, objTemp, node.property),
-  );
+  // Create a named variable to hold objTemp so visitPropertyAccessExpression
+  // can look it up by name and get proper inline tracking. Use a temporary
+  // scope to avoid leaking the symbol into the enclosing scope.
+  const optBaseType = this.getOperandType(objTemp);
+  const optBaseName = `__opt_base_${this.tempCounter++}`;
+  const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
+  this.symbolTable.enterScope();
+  let propResult: TACOperand;
+  try {
+    this.symbolTable.addSymbol(optBaseName, optBaseType);
+    this.instructions.push(new CopyInstruction(optBase, objTemp));
+    // Propagate inline instance tracking from objTemp to optBase
+    this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
+    propResult = this.visitPropertyAccessExpression({
+      kind: ASTNodeKind.PropertyAccessExpression,
+      object: {
+        kind: ASTNodeKind.Identifier,
+        name: optBaseName,
+      } as IdentifierNode,
+      property: node.property,
+    } as PropertyAccessExpressionNode);
+  } finally {
+    this.symbolTable.exitScope();
+  }
+  this.emitCopyWithTracking(result, propResult);
   this.instructions.push(new LabelInstruction(endLabel));
 
   return result;

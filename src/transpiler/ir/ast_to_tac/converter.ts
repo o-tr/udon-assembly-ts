@@ -62,6 +62,7 @@ import {
   emitEntryPointPropertyInit,
   emitReturnSiteDispatch,
   mapInlineProperty,
+  mapStaticProperty,
   maybeTrackInlineInstanceAssignment,
   resolveInlineInstance,
   tryResolveUnitySelfReference,
@@ -209,6 +210,8 @@ export class ASTToTACConverter {
   enumRegistry: EnumRegistry;
   classMap: Map<string, ClassDeclarationNode> = new Map();
   entryPointClasses: Set<string> = new Set();
+  /** Tracks which classes have had their static property initializers emitted */
+  emittedStaticClasses: Set<string> = new Set();
   inlineInstanceMap: Map<string, { prefix: string; className: string }> =
     new Map();
   inlineMethodStack: Set<string> = new Set();
@@ -345,6 +348,7 @@ export class ASTToTACConverter {
     this.vifaceCounter = 0;
     this.classMap = new Map();
     this.entryPointClasses = new Set();
+    this.emittedStaticClasses = new Set();
     this.inlineInstanceMap = new Map();
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
@@ -719,6 +723,7 @@ export class ASTToTACConverter {
   emitCopyWithTracking = emitCopyWithTracking;
   emitEntryPointPropertyInit = emitEntryPointPropertyInit;
   mapInlineProperty = mapInlineProperty;
+  mapStaticProperty = mapStaticProperty;
   resolveInlineInstance = resolveInlineInstance;
   tryResolveUnitySelfReference = tryResolveUnitySelfReference;
   collectRecursiveLocals = collectRecursiveLocals;

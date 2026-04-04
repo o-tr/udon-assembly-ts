@@ -68,6 +68,27 @@ export function mapTypeWithGenerics(
   }
 
   if (node && ts.isTypeLiteralNode(node)) {
+    // Build an InterfaceTypeSymbol for anonymous type literals so object
+    // literal values receive inline heap variables instead of DataDictionary.
+    const propertyMap = new Map<string, TypeSymbol>();
+    for (const member of node.members) {
+      if (ts.isPropertySignature(member) && member.name) {
+        const propName = member.name.getText();
+        const propType = member.type
+          ? this.mapTypeWithGenerics(member.type.getText(), member.type)
+          : ObjectType;
+        propertyMap.set(propName, propType);
+      }
+    }
+    if (propertyMap.size > 0) {
+      // Each occurrence gets a unique name (per-occurrence, not structural).
+      // Structurally identical type literals in different positions produce
+      // distinct InterfaceTypeSymbols. This is acceptable because call-site
+      // type propagation (currentExpectedType) is the primary mechanism for
+      // matching object literals to their target types.
+      const name = `__anon_${++this.anonTypeCounter}`;
+      return new InterfaceTypeSymbol(name, new Map(), propertyMap);
+    }
     return ExternTypes.dataDictionary;
   }
 
