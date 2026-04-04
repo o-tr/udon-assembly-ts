@@ -138,9 +138,11 @@ function widenNumericOperands(
 }
 
 /**
- * Narrow both operands to Int32 for bitwise operators (|, &, ^).
- * Udon VM only has bitwise ops on integer types; applying them to float
- * generates invalid EXTERNs like SystemSingle.__op_LogicalOr__.
+ * Narrow floating-point operands to Int32 for bitwise operators (|, &, ^).
+ * Udon VM has no bitwise ops on Single/Double; applying them generates
+ * invalid EXTERNs like SystemSingle.__op_LogicalOr__. Other integer types
+ * (Int16, UInt32, etc.) are left unchanged — they either have native
+ * bitwise support or will fail at codegen with a clear extern-not-found error.
  */
 function narrowToInt32ForBitwise(
   converter: ASTToTACConverter,
@@ -149,14 +151,18 @@ function narrowToInt32ForBitwise(
 ): { left: TACOperand; right: TACOperand } {
   const leftType = converter.getOperandType(left);
   const rightType = converter.getOperandType(right);
+  const FLOAT_TYPES: ReadonlySet<UdonType> = new Set([
+    UdonType.Single,
+    UdonType.Double,
+  ]);
   let newLeft = left;
   let newRight = right;
-  if (leftType.udonType !== UdonType.Int32) {
+  if (FLOAT_TYPES.has(leftType.udonType)) {
     const cast = converter.newTemp(PrimitiveTypes.int32);
     converter.instructions.push(new CastInstruction(cast, left));
     newLeft = cast;
   }
-  if (rightType.udonType !== UdonType.Int32) {
+  if (FLOAT_TYPES.has(rightType.udonType)) {
     const cast = converter.newTemp(PrimitiveTypes.int32);
     converter.instructions.push(new CastInstruction(cast, right));
     newRight = cast;
@@ -2065,19 +2071,23 @@ export function visitOptionalChainingExpression(
   const optBaseName = `__opt_base_${this.tempCounter++}`;
   const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
   this.symbolTable.enterScope();
-  this.symbolTable.addSymbol(optBaseName, optBaseType);
-  this.instructions.push(new CopyInstruction(optBase, objTemp));
-  // Propagate inline instance tracking from objTemp to optBase
-  this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
-  const propResult = this.visitPropertyAccessExpression({
-    kind: ASTNodeKind.PropertyAccessExpression,
-    object: {
-      kind: ASTNodeKind.Identifier,
-      name: optBaseName,
-    } as IdentifierNode,
-    property: node.property,
-  } as PropertyAccessExpressionNode);
-  this.symbolTable.exitScope();
+  let propResult: TACOperand;
+  try {
+    this.symbolTable.addSymbol(optBaseName, optBaseType);
+    this.instructions.push(new CopyInstruction(optBase, objTemp));
+    // Propagate inline instance tracking from objTemp to optBase
+    this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
+    propResult = this.visitPropertyAccessExpression({
+      kind: ASTNodeKind.PropertyAccessExpression,
+      object: {
+        kind: ASTNodeKind.Identifier,
+        name: optBaseName,
+      } as IdentifierNode,
+      property: node.property,
+    } as PropertyAccessExpressionNode);
+  } finally {
+    this.symbolTable.exitScope();
+  }
   this.emitCopyWithTracking(result, propResult);
   this.instructions.push(new LabelInstruction(endLabel));
 

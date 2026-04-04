@@ -1800,7 +1800,11 @@ export function visitCallExpression(
             new MethodCallInstruction(newArr, combined, "concat", [rightPart]),
           );
 
-          // Write back
+          // Write back new array reference to original variable.
+          // Only Variable operands (locals, inline class fields) can be
+          // updated persistently. Temporary operands originate from
+          // PropertyGet and writing to them would not propagate back to
+          // the source property.
           if (object.kind === TACOperandKind.Variable) {
             this.instructions.push(new CopyInstruction(object, newArr));
           }
