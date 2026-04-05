@@ -1152,7 +1152,7 @@ function emitInlineRecursiveSelfCall(
     const paramVar = createVariable(param.name, param.type, {
       isLocal: true,
     });
-    if (args[i]) {
+    if (args[i] !== undefined) {
       converter.emitCopyWithTracking(paramVar, args[i]);
     }
   }
