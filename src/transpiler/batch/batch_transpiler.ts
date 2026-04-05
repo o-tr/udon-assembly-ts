@@ -248,6 +248,51 @@ export class BatchTranspiler {
         ? new MethodUsageAnalyzer(registry).analyze()
         : null;
 
+    const udonBehaviourClasses = new Set(
+      registry
+        .getAllClasses()
+        .filter((cls) =>
+          cls.decorators.some(
+            (decorator) => decorator.name === "UdonBehaviour",
+          ),
+        )
+        .map((cls) => cls.name),
+    );
+    const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
+    const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
+      (iface) => ({
+        name: iface.name,
+        methods: iface.methods.map((m) => ({
+          name: m.name,
+          parameters: m.parameters.map((p) => ({
+            name: p.name,
+            type: typeMapper.mapTypeScriptType(p.type),
+          })),
+          returnType: typeMapper.mapTypeScriptType(m.returnType),
+        })),
+      }),
+    );
+    const classImplements = registry.getClassImplementsMap();
+    const udonBehaviourLayouts = buildUdonBehaviourLayouts(
+      registry.getAllClasses().map((cls) => ({
+        name: cls.name,
+        isUdonBehaviour: cls.decorators.some(
+          (decorator) => decorator.name === "UdonBehaviour",
+        ),
+        methods: cls.methods.map((method) => ({
+          name: method.name,
+          parameters: method.parameters.map((param) => ({
+            name: param.name,
+            type: typeMapper.mapTypeScriptType(param.type),
+          })),
+          returnType: typeMapper.mapTypeScriptType(method.returnType),
+          isPublic: method.isPublic,
+        })),
+      })),
+      interfaceLikes,
+      classImplements,
+    );
+
     const rawExt = options.outputExtension ?? "tasm";
     const normalized = rawExt.trim().toLowerCase();
     const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
@@ -343,50 +388,6 @@ export class BatchTranspiler {
           methodUsage,
         ),
         topLevelConstNodes,
-      );
-      const udonBehaviourClasses = new Set(
-        registry
-          .getAllClasses()
-          .filter((cls) =>
-            cls.decorators.some(
-              (decorator) => decorator.name === "UdonBehaviour",
-            ),
-          )
-          .map((cls) => cls.name),
-      );
-      const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
-      const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
-        (iface) => ({
-          name: iface.name,
-          methods: iface.methods.map((m) => ({
-            name: m.name,
-            parameters: m.parameters.map((p) => ({
-              name: p.name,
-              type: typeMapper.mapTypeScriptType(p.type),
-            })),
-            returnType: typeMapper.mapTypeScriptType(m.returnType),
-          })),
-        }),
-      );
-      const classImplements = registry.getClassImplementsMap();
-      const udonBehaviourLayouts = buildUdonBehaviourLayouts(
-        registry.getAllClasses().map((cls) => ({
-          name: cls.name,
-          isUdonBehaviour: cls.decorators.some(
-            (decorator) => decorator.name === "UdonBehaviour",
-          ),
-          methods: cls.methods.map((method) => ({
-            name: method.name,
-            parameters: method.parameters.map((param) => ({
-              name: param.name,
-              type: typeMapper.mapTypeScriptType(param.type),
-            })),
-            returnType: typeMapper.mapTypeScriptType(method.returnType),
-            isPublic: method.isPublic,
-          })),
-        })),
-        interfaceLikes,
-        classImplements,
       );
       const tacConverter = new ASTToTACConverter(
         symbolTable,
