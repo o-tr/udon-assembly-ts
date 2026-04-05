@@ -56,14 +56,17 @@ export class TACToUdonConverter {
   externAddressBySignature: Map<string, number> = new Map();
   nextExternId = 0;
   entryClassName: string | null = null;
-  inlineClassNames: Set<string> = new Set();
+  inlineClassNames: ReadonlySet<string> = new Set();
 
   /**
    * Convert TAC to Udon instructions
    */
   convert(
     tacInstructions: TACInstruction[],
-    options?: { entryClassName?: string; inlineClassNames?: Set<string> },
+    options?: {
+      entryClassName?: string;
+      inlineClassNames?: ReadonlySet<string>;
+    },
   ): UdonInstruction[] {
     this.instructions = [];
     this.variableAddresses.clear();

@@ -287,7 +287,7 @@ export class ASTToTACConverter {
    *  If incremental compilation ever calls register() during convertImpl(),
    *  this cache must be cleared. */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
-  udonBehaviourClasses: Set<string>;
+  udonBehaviourClasses: ReadonlySet<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
   currentParamExportMap: Map<string, string> = new Map();
@@ -318,7 +318,7 @@ export class ASTToTACConverter {
   constructor(
     symbolTable: SymbolTable,
     enumRegistry?: EnumRegistry,
-    udonBehaviourClasses?: Set<string>,
+    udonBehaviourClasses?: ReadonlySet<string>,
     udonBehaviourLayouts?: UdonBehaviourLayouts,
     classRegistry?: ClassRegistry,
     options?: {

@@ -239,7 +239,7 @@ export class TypeScriptToUdonTranspiler {
     registry: ClassRegistry,
     entryClassName: string | null,
   ): {
-    inlineClassNames: Set<string>;
+    inlineClassNames: ReadonlySet<string>;
     callAnalyzer: CallAnalyzer | null;
   } {
     if (!entryClassName)

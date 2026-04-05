@@ -41,11 +41,13 @@ import {
 } from "./types.js";
 
 export interface CallAnalysisResult {
-  inlineClasses: Set<string>;
-  calledUdonBehaviours: Set<string>;
+  inlineClasses: ReadonlySet<string>;
+  calledUdonBehaviours: ReadonlySet<string>;
 }
 
 export class CallAnalyzer {
+  private cache = new Map<string, CallAnalysisResult>();
+
   constructor(private registry: ClassRegistry) {}
 
   analyze(entryPointClassName: string): CallAnalysisResult {
@@ -53,6 +55,9 @@ export class CallAnalyzer {
   }
 
   analyzeClass(className: string): CallAnalysisResult {
+    const cached = this.cache.get(className);
+    if (cached) return cached;
+
     const inlineClasses = new Set<string>();
     const calledUdonBehaviours = new Set<string>();
 
@@ -81,7 +86,9 @@ export class CallAnalyzer {
       );
     }
 
-    return { inlineClasses, calledUdonBehaviours };
+    const result = { inlineClasses, calledUdonBehaviours };
+    this.cache.set(className, result);
+    return result;
   }
 
   private visitMethod(
