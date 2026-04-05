@@ -983,7 +983,9 @@ function emitInlineRecursiveStaticMethod(
     spVar,
     stackVars,
     returnSites: [],
-    // Start at 1: index 0 is sentinel for initial (non-recursive) caller
+    // Start at 1: index 0 is reserved as sentinel for the initial
+    // (non-recursive) caller. The dispatch table only contains sites
+    // 1, 2, … and falls through to doneLabel for index 0.
     nextReturnSiteIndex: 1,
     nextSelfCallResultIndex: 0,
     entryLabel,
@@ -2480,7 +2482,10 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
   const afterPopLabel = this.newLabel("inline_rec_after_pop");
   this.instructions.push(new ConditionalJumpInstruction(spOk, underflowLabel));
 
-  // Restore each local from stack[SP]
+  // Restore each local from stack[SP].
+  // Plain CopyInstruction (not emitCopyWithTracking): unwrapDataToken
+  // returns a fresh temp with no tracking info. inlineInstanceMap is
+  // restored separately in step 8b of emitInlineRecursiveSelfCall.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
