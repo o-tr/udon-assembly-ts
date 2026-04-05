@@ -23,8 +23,7 @@ describe("typed array spread → .concat() optimization", () => {
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
     // Spread uses native Array.Copy, not DataList loop or EXTERN concat
-    expect(result.tac).toContain("SystemArray");
-    expect(result.tac).toContain("Copy");
+    expect(result.tac).toMatch(/SystemArray.*Copy/);
     expect(result.tac).not.toContain("MethodCall concat");
   });
 

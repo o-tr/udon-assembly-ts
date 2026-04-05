@@ -1526,21 +1526,23 @@ export function visitCallExpression(
             if (isArray) {
               result = emitArrayConcat(this, result, arg);
             } else {
-              // Wrap scalar in a single-element DataList
-              const wrapper = this.newTemp(ExternTypes.dataList);
-              const wrapCtorExtern = this.requireExternSignature(
-                "DataList",
-                "ctor",
-                "method",
-                [],
-                "DataList",
+              // Wrap scalar in a single-element native Object[1] array.
+              // Using native array + ArrayAssignment avoids DataToken
+              // .Reference issues with primitive scalars (int/float).
+              const wrapperCtorSig =
+                "SystemObjectArray.__ctor__SystemInt32__SystemObjectArray";
+              const wrapper = this.newTemp(new ArrayTypeSymbol(ObjectType));
+              this.instructions.push(
+                new CallInstruction(wrapper, wrapperCtorSig, [
+                  createConstant(1, PrimitiveTypes.int32),
+                ]),
               );
               this.instructions.push(
-                new CallInstruction(wrapper, wrapCtorExtern, []),
-              );
-              const token = this.wrapDataToken(arg);
-              this.instructions.push(
-                new MethodCallInstruction(undefined, wrapper, "Add", [token]),
+                new ArrayAssignmentInstruction(
+                  wrapper,
+                  createConstant(0, PrimitiveTypes.int32),
+                  arg,
+                ),
               );
               result = emitArrayConcat(this, result, wrapper);
             }
