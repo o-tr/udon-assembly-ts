@@ -815,9 +815,14 @@ function emitInlineRecursiveStaticMethod(
   }
   // Add synthesized try/catch error flag/value variables so they survive
   // across recursive self-call boundaries (same pattern as @RecursiveMethod).
+  // Capture the starting tryCounter now; body traversal will consume these
+  // IDs sequentially. No reservation (tryCounter +=) is needed here because
+  // visitBlockStatement will advance tryCounter as it encounters each
+  // try/catch — the IDs will match by construction.
   const tryCatchCount = countTryCatchBlocks(method.body);
+  const startTryId = converter.tryCounter;
   for (let i = 0; i < tryCatchCount; i++) {
-    const tryId = converter.tryCounter + i;
+    const tryId = startTryId + i;
     locals.push({
       name: `__error_flag_${tryId}`,
       type: PrimitiveTypes.boolean,
@@ -1094,6 +1099,11 @@ function emitInlineRecursiveSelfCall(
   ctx: NonNullable<typeof converter.currentInlineRecursiveContext>,
   args: TACOperand[],
 ): TACOperand {
+  // 0. Save inlineInstanceMap state so the caller's tracking is restored
+  //    after the recursive call (push/pop only covers runtime locals, not
+  //    the compile-time inline tracking map).
+  const savedInstanceMap = new Map(converter.inlineInstanceMap);
+
   // 1. Push all locals to stack (save caller's current state)
   emitInlineRecursivePush.call(converter);
 
@@ -1161,6 +1171,12 @@ function emitInlineRecursiveSelfCall(
 
   // 8. Pop all locals from stack (restore caller's state)
   emitInlineRecursivePop.call(converter);
+
+  // 8b. Restore compile-time inlineInstanceMap to caller's state
+  converter.inlineInstanceMap.clear();
+  for (const [k, v] of savedInstanceMap) {
+    converter.inlineInstanceMap.set(k, v);
+  }
 
   // 9. Copy captured result into a named selfCallResult variable
   //    that is part of the push/pop set (survives sibling calls)
