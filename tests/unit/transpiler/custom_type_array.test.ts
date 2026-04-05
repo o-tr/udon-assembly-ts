@@ -234,11 +234,11 @@ describe("custom type array operations", () => {
       ),
     ).toBe(true);
     // Base class SystemArray.__Get__/__Set__ should NOT appear
-    expect(
-      externs.some((sig) => sig.includes("SystemArray.__Get__")),
-    ).toBe(false);
-    expect(
-      externs.some((sig) => sig.includes("SystemArray.__Set__")),
-    ).toBe(false);
+    expect(externs.some((sig) => sig.includes("SystemArray.__Get__"))).toBe(
+      false,
+    );
+    expect(externs.some((sig) => sig.includes("SystemArray.__Set__"))).toBe(
+      false,
+    );
   });
 });

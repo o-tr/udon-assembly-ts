@@ -35,6 +35,22 @@ import {
 } from "../udon_instruction.js";
 import type { TACToUdonConverter } from "./converter.js";
 
+/**
+ * Derive the concrete typed-array name and its element type name from an
+ * operand type string.  The Udon VM registers per-type externs (e.g.
+ * `SystemObjectArray.__Get__`) — the base `SystemArray` variants are not
+ * implemented.  Falls back to `SystemObjectArray` / `SystemObject` when
+ * the input is not a recognised `*Array` type.
+ */
+function resolveTypedArrayNames(
+  operandTypeName: string,
+): [arrayType: string, elementType: string] {
+  if (operandTypeName.endsWith("Array") && operandTypeName !== "SystemArray") {
+    return [operandTypeName, operandTypeName.slice(0, -"Array".length)];
+  }
+  return ["SystemObjectArray", "SystemObject"];
+}
+
 export function convertInstruction(
   this: TACToUdonConverter,
   inst: TACInstruction,
@@ -603,11 +619,10 @@ export function convertInstruction(
 
       // Udon VM requires type-specific array Get signatures, e.g.
       // SystemObjectArray.__Get__SystemInt32__SystemObject (not SystemArray.__Get__).
-      const arrayUdonType = this.getOperandTypeName(arrayInst.array);
-      const elementUdonType = arrayUdonType.endsWith("Array")
-        ? arrayUdonType.slice(0, -"Array".length)
-        : "SystemObject";
-      const externSig = `${arrayUdonType}.__Get__SystemInt32__${elementUdonType}`;
+      const [arrayType, elementType] = resolveTypedArrayNames(
+        this.getOperandTypeName(arrayInst.array),
+      );
+      const externSig = `${arrayType}.__Get__SystemInt32__${elementType}`;
       this.externSignatures.add(externSig);
 
       // Push return address before EXTERN (Udon VM calling convention)
@@ -628,11 +643,10 @@ export function convertInstruction(
 
       // Udon VM requires type-specific array Set signatures, e.g.
       // SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid.
-      const arrayUdonTypeSet = this.getOperandTypeName(arrayInst.array);
-      const elementUdonTypeSet = arrayUdonTypeSet.endsWith("Array")
-        ? arrayUdonTypeSet.slice(0, -"Array".length)
-        : "SystemObject";
-      const externSig = `${arrayUdonTypeSet}.__Set__SystemInt32_${elementUdonTypeSet}__SystemVoid`;
+      const [arrayType, elementType] = resolveTypedArrayNames(
+        this.getOperandTypeName(arrayInst.array),
+      );
+      const externSig = `${arrayType}.__Set__SystemInt32_${elementType}__SystemVoid`;
       this.externSignatures.add(externSig);
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),
