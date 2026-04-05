@@ -1692,6 +1692,14 @@ export function visitPropertyAccessExpression(
               // will hit the miss path and receive the zero-init default.
               const firstCandidate = candidateClasses.values().next()
                 .value as string;
+              // WARNING: mixed-class collections with this property will
+              // silently return zero-init defaults for non-first-candidate
+              // instances. Log at transpile time to aid debugging.
+              console.warn(
+                `transpiler: D3 dispatch narrowing failed for property "${node.property}" — ` +
+                  `${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), ` +
+                  `using "${firstCandidate}" only.`,
+              );
               for (const [instId, info] of this.allInlineInstances) {
                 if (info.className === firstCandidate) {
                   dispInstances.push([instId, info]);

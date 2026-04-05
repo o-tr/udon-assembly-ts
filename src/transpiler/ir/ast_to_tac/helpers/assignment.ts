@@ -351,6 +351,11 @@ export function getArrayElementType(
  * Udon VM does not support native Array.concat or SystemObjectArray operations.
  * Creates a new DataList, iterates both source arrays (via DataList access
  * patterns), and adds each element as a DataToken.
+ *
+ * INVARIANT: Both operands must be DataList-representable at runtime.
+ * All user-facing arrays in this transpiler are stored as DataList on the
+ * Udon heap. Passing a native typed array (e.g. float[], Transform[]) will
+ * produce invalid EXTERNs at runtime.
  */
 export function emitArrayConcat(
   converter: ASTToTACConverter,
