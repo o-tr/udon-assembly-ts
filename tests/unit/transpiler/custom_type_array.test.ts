@@ -194,4 +194,51 @@ describe("custom type array operations", () => {
       ),
     ).toBe(true);
   });
+
+  it("emits typed SystemObjectArray Get/Set for custom type array indexing", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Tile {
+        code: number = 0;
+      }
+      class Demo {
+        Start(): void {
+          const tiles: Tile[] = [];
+          let t = tiles[0];
+          tiles[1] = t;
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const udonConverter = new TACToUdonConverter();
+    udonConverter.convert(tac);
+    const externs = udonConverter.getExternSignatures();
+
+    // Custom type array indexing should use SystemObjectArray (not SystemArray)
+    expect(
+      externs.some((sig) =>
+        sig.includes("SystemObjectArray.__Get__SystemInt32__SystemObject"),
+      ),
+    ).toBe(true);
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    // Base class SystemArray.__Get__/__Set__ should NOT appear
+    expect(
+      externs.some((sig) => sig.includes("SystemArray.__Get__")),
+    ).toBe(false);
+    expect(
+      externs.some((sig) => sig.includes("SystemArray.__Set__")),
+    ).toBe(false);
+  });
 });

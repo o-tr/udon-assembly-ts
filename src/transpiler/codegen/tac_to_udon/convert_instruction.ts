@@ -600,16 +600,14 @@ export function convertInstruction(
       const arrayInst = inst as TACArrayAccessInstruction;
       this.pushOperand(arrayInst.array);
       this.pushOperand(arrayInst.index);
-      const externSig = resolveExternSignature(
-        "SystemArray",
-        "Get",
-        "method",
-        ["int"],
-        "object",
-      );
-      if (!externSig) {
-        throw new Error("Missing extern signature for SystemArray.Get");
-      }
+
+      // Udon VM requires type-specific array Get signatures, e.g.
+      // SystemObjectArray.__Get__SystemInt32__SystemObject (not SystemArray.__Get__).
+      const arrayUdonType = this.getOperandTypeName(arrayInst.array);
+      const elementUdonType = arrayUdonType.endsWith("Array")
+        ? arrayUdonType.slice(0, -"Array".length)
+        : "SystemObject";
+      const externSig = `${arrayUdonType}.__Get__SystemInt32__${elementUdonType}`;
       this.externSignatures.add(externSig);
 
       // Push return address before EXTERN (Udon VM calling convention)
@@ -627,16 +625,14 @@ export function convertInstruction(
       this.pushOperand(arrayInst.array);
       this.pushOperand(arrayInst.index);
       this.pushOperand(arrayInst.value);
-      const externSig = resolveExternSignature(
-        "SystemArray",
-        "Set",
-        "method",
-        ["int", "object"],
-        "void",
-      );
-      if (!externSig) {
-        throw new Error("Missing extern signature for SystemArray.Set");
-      }
+
+      // Udon VM requires type-specific array Set signatures, e.g.
+      // SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid.
+      const arrayUdonTypeSet = this.getOperandTypeName(arrayInst.array);
+      const elementUdonTypeSet = arrayUdonTypeSet.endsWith("Array")
+        ? arrayUdonTypeSet.slice(0, -"Array".length)
+        : "SystemObject";
+      const externSig = `${arrayUdonTypeSet}.__Set__SystemInt32_${elementUdonTypeSet}__SystemVoid`;
       this.externSignatures.add(externSig);
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),

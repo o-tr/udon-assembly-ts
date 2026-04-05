@@ -171,13 +171,16 @@ describe("Udon Code Generation", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
+    // Type-specific array Get signature (not base SystemArray)
     expect(
-      externs.some(
-        (sig) =>
-          sig.includes("SystemArray.__Get__SystemInt32") ||
-          sig.includes("SingleArray.__Get__SystemInt32"),
+      externs.some((sig) =>
+        sig.includes("SystemSingleArray.__Get__SystemInt32__SystemSingle"),
       ),
     ).toBe(true);
+    // Base class SystemArray.__Get__ should NOT appear
+    expect(
+      externs.some((sig) => sig.includes("SystemArray.__Get__SystemInt32")),
+    ).toBe(false);
   });
 
   it("should map extern constructor signatures", () => {
