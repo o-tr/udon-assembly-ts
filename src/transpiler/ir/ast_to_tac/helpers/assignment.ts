@@ -403,6 +403,7 @@ export function emitArrayConcat(
   converter.instructions.push(new LabelInstruction(loopAStart));
   const condA = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(new BinaryOpInstruction(condA, idxA, "<", lenA));
+  // JUMP_IF_FALSE: exit loop when idxA >= lenA
   converter.instructions.push(new ConditionalJumpInstruction(condA, loopAEnd));
   const elemA = converter.newTemp(ExternTypes.dataToken);
   converter.instructions.push(
@@ -433,6 +434,7 @@ export function emitArrayConcat(
   converter.instructions.push(new LabelInstruction(loopBStart));
   const condB = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(new BinaryOpInstruction(condB, idxB, "<", lenB));
+  // JUMP_IF_FALSE: exit loop when idxB >= lenB
   converter.instructions.push(new ConditionalJumpInstruction(condB, loopBEnd));
   const elemB = converter.newTemp(ExternTypes.dataToken);
   converter.instructions.push(

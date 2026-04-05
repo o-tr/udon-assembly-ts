@@ -2386,6 +2386,11 @@ export function countStaticSelfCalls(
         visitNode(updNode.operand);
         break;
       }
+      // NameofExpression and TypeofExpression are compile-time constructs
+      // that never contain self-calls — skip without recursing.
+      case ASTNodeKind.NameofExpression:
+      case ASTNodeKind.TypeofExpression:
+        break;
       default:
         break;
     }

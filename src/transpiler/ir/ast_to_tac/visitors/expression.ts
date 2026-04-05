@@ -1684,10 +1684,12 @@ export function visitPropertyAccessExpression(
               }
               if (dispInstances.length > 0) usedErasedFallback = true;
             } else {
-              // Narrowing failed — force safe path. Use the first
-              // candidate to produce a dispatch table rather than
-              // falling through to a raw PropertyGetInstruction that
-              // would generate an invalid EXTERN.
+              // Narrowing failed — force safe path. Pick the first
+              // candidate (by allInlineInstances insertion order) to
+              // produce a dispatch table rather than falling through
+              // to a raw PropertyGetInstruction that would generate an
+              // invalid EXTERN. Instances of other candidate classes
+              // will hit the miss path and receive the zero-init default.
               const firstCandidate = candidateClasses.values().next()
                 .value as string;
               for (const [instId, info] of this.allInlineInstances) {
