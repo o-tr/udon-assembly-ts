@@ -57,6 +57,7 @@ import {
 } from "../../tac_operand.js";
 import type { UdonBehaviourMethodLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { emitArrayConcat } from "../helpers/assignment.js";
 import {
   emitMapEntriesList,
   emitMapKeysList,
@@ -1492,8 +1493,68 @@ export function visitCallExpression(
           ? objectType
           : new ArrayTypeSymbol(ObjectType);
       switch (propAccess.property) {
+        case "concat": {
+          // Udon VM does not have a native Array.concat extern.
+          // Implement as loop-based copy via DataList.
+          if (evaluatedArgs.length === 0) {
+            // arr.concat() → shallow copy via concat with empty DataList
+            const emptyList = this.newTemp(ExternTypes.dataList);
+            const ctorExtern = this.requireExternSignature(
+              "DataList",
+              "ctor",
+              "method",
+              [],
+              "DataList",
+            );
+            this.instructions.push(
+              new CallInstruction(emptyList, ctorExtern, []),
+            );
+            return emitArrayConcat(this, object, emptyList);
+          }
+          let result = object;
+          for (const arg of evaluatedArgs) {
+            // JS concat flattens arrays but wraps scalars. Check if the
+            // argument is an array/DataList; if not, wrap it in a
+            // single-element DataList before concatenating.
+            const argType = this.getOperandType(arg);
+            const isArray =
+              argType instanceof ArrayTypeSymbol ||
+              argType instanceof DataListTypeSymbol ||
+              argType.name === ExternTypes.dataList.name ||
+              argType.udonType === UdonType.Array ||
+              argType.udonType === UdonType.DataList;
+            if (isArray) {
+              result = emitArrayConcat(this, result, arg);
+            } else {
+              // Wrap scalar in a single-element native Object[1] array.
+              // Using native array + ArrayAssignment avoids DataToken
+              // .Reference issues with primitive scalars (int/float).
+              const wrapperCtorSig = this.requireExternSignature(
+                "ObjectArray",
+                "ctor",
+                "method",
+                ["int"],
+                "ObjectArray",
+              );
+              const wrapper = this.newTemp(new ArrayTypeSymbol(ObjectType));
+              this.instructions.push(
+                new CallInstruction(wrapper, wrapperCtorSig, [
+                  createConstant(1, PrimitiveTypes.int32),
+                ]),
+              );
+              this.instructions.push(
+                new ArrayAssignmentInstruction(
+                  wrapper,
+                  createConstant(0, PrimitiveTypes.int32),
+                  arg,
+                ),
+              );
+              result = emitArrayConcat(this, result, wrapper);
+            }
+          }
+          return result;
+        }
         case "slice":
-        case "concat":
         case "filter":
         case "reverse":
         case "sort": {
@@ -1666,10 +1727,7 @@ export function visitCallExpression(
           }
 
           // 3. Concat original array with wrapper
-          const newArr = this.newTemp(arrayReturn);
-          this.instructions.push(
-            new MethodCallInstruction(newArr, object, "concat", [wrapper]),
-          );
+          const newArr = emitArrayConcat(this, object, wrapper);
 
           // 4. Write back new array reference to original variable.
           // Only Variable operands (locals, inline class fields) can be
@@ -1792,20 +1850,11 @@ export function visitCallExpression(
                 ),
               );
             }
-            const withInsert = this.newTemp(arrayReturn);
-            this.instructions.push(
-              new MethodCallInstruction(withInsert, leftPart, "concat", [
-                insertArr,
-              ]),
-            );
-            combined = withInsert;
+            combined = emitArrayConcat(this, leftPart, insertArr);
           }
 
           // newArr = combined.concat(right)
-          const newArr = this.newTemp(arrayReturn);
-          this.instructions.push(
-            new MethodCallInstruction(newArr, combined, "concat", [rightPart]),
-          );
+          const newArr = emitArrayConcat(this, combined, rightPart);
 
           // Write back new array reference to original variable.
           // Only Variable operands (locals, inline class fields) can be

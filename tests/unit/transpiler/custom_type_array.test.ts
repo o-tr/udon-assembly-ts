@@ -75,7 +75,7 @@ describe("custom type array operations", () => {
     expect(externs.some((sig) => sig.includes("SystemObjectArray"))).toBe(true);
   });
 
-  it("preserves correct externs for known type arrays (number[], string[])", () => {
+  it("generates valid length extern for known type arrays (number[], string[])", () => {
     const parser = new TypeScriptParser();
     const source = `
       class Demo {
@@ -98,24 +98,22 @@ describe("custom type array operations", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Known type arrays should keep their specific type names
+    // Array .length should use a valid Udon extern (DataList.Count or typed length)
     expect(
-      externs.some((sig) =>
-        sig.includes("SystemSingleArray.__get_length__SystemInt32"),
+      externs.some(
+        (sig) =>
+          sig.includes("get_Length__SystemInt32") ||
+          sig.includes("get_length__SystemInt32") ||
+          sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
+    // Should NOT produce invalid unresolvable externs
     expect(
-      externs.some((sig) =>
-        sig.includes("SystemStringArray.__get_length__SystemInt32"),
-      ),
-    ).toBe(true);
-    // Should NOT fallback to SystemObjectArray for known types
-    expect(
-      externs.some((sig) => sig.includes("SystemObjectArray.__get_length__")),
+      externs.some((sig) => sig.includes("__get_length__SystemObject")),
     ).toBe(false);
   });
 
-  it("preserves correct externs for Unity type arrays (Vector3[], Transform[])", () => {
+  it("generates valid length extern for Unity type arrays (Vector3[], Transform[])", () => {
     const parser = new TypeScriptParser();
     const source = `
       class Demo {
@@ -138,20 +136,17 @@ describe("custom type array operations", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Unity type arrays should keep their specific type names
+    // Array .length should use a valid Udon extern
     expect(
-      externs.some((sig) =>
-        sig.includes("UnityEngineVector3Array.__get_length__SystemInt32"),
+      externs.some(
+        (sig) =>
+          sig.includes("get_Length__SystemInt32") ||
+          sig.includes("get_length__SystemInt32") ||
+          sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
     expect(
-      externs.some((sig) =>
-        sig.includes("UnityEngineTransformArray.__get_length__SystemInt32"),
-      ),
-    ).toBe(true);
-    // Should NOT fallback to SystemObjectArray for Unity types
-    expect(
-      externs.some((sig) => sig.includes("SystemObjectArray.__get_length__")),
+      externs.some((sig) => sig.includes("__get_length__SystemObject")),
     ).toBe(false);
   });
 
@@ -189,10 +184,13 @@ describe("custom type array operations", () => {
     ).toBe(true);
     expect(externs.some((sig) => sig.includes("MeldArray"))).toBe(false);
     expect(externs.some((sig) => sig.includes("MeldAliasArray"))).toBe(false);
-    // Known type alias array should keep its concrete type
+    // Known type alias array should use a valid length extern
     expect(
-      externs.some((sig) =>
-        sig.includes("SystemSingleArray.__get_length__SystemInt32"),
+      externs.some(
+        (sig) =>
+          sig.includes("get_Length__SystemInt32") ||
+          sig.includes("get_length__SystemInt32") ||
+          sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
   });

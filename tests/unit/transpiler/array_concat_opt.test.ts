@@ -7,7 +7,7 @@ describe("typed array spread → .concat() optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  it("two typed arrays become concat", () => {
+  it("two typed arrays use Array.Copy concat", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -22,11 +22,12 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // The spread should use concat instead of a DataList loop
-    expect(result.tac).toContain("concat");
+    // Spread uses native Array.Copy, not DataList loop or EXTERN concat
+    expect(result.tac).toMatch(/SystemArray.*Copy/);
+    expect(result.tac).not.toContain("MethodCall concat");
   });
 
-  it("three typed arrays become concat chain", () => {
+  it("three typed arrays produce two Array.Copy concats", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -42,9 +43,11 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Should have two concat calls in chain
-    const concatCount = (result.tac.match(/concat/g) || []).length;
-    expect(concatCount).toBe(2);
+    // Two Array.Copy concat operations (a+b, then result+c)
+    // Each concat emits 2 Copy calls, so at least 4 total
+    const copyCallCount = (result.tac.match(/SystemArray.*Copy/g) || []).length;
+    expect(copyCallCount).toBeGreaterThanOrEqual(4);
+    expect(result.tac).not.toContain("MethodCall concat");
   });
 
   it("mixed spread and literal falls back to DataList loop", () => {
@@ -61,8 +64,9 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Mixed spread+literal should NOT use concat optimization
-    expect(result.tac).not.toContain("concat");
+    // Mixed spread+literal should use DataList fallback, not Array.Copy concat
+    expect(result.tac).not.toContain("SystemArray");
+    expect(result.tac).toContain("Add");
   });
 
   it("single spread falls back to DataList loop", () => {
@@ -79,7 +83,8 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Single spread (elements.length < 2) should not use concat
-    expect(result.tac).not.toContain("concat");
+    // Single spread should use DataList fallback, not Array.Copy concat
+    expect(result.tac).not.toContain("SystemArray");
+    expect(result.tac).toContain("Add");
   });
 });

@@ -21,13 +21,17 @@ import {
 } from "../../../frontend/types.js";
 import {
   ArrayAssignmentInstruction,
+  AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
   CastInstruction,
+  ConditionalJumpInstruction,
   CopyInstruction,
+  LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
+  UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
@@ -340,6 +344,165 @@ export function getArrayElementType(
     }
   }
   return null;
+}
+
+/**
+ * Coerce an operand to a native SystemObjectArray. If the operand is
+ * already an ArrayTypeSymbol, a simple COPY reinterprets the heap type.
+ * If it is a DataList, emit a loop that reads each element via
+ * DataList.get_Item, unwraps the DataToken, and writes to a fresh
+ * native array via ArrayAssignmentInstruction.
+ * Returns [arrayOperand, lengthOperand].
+ */
+function coerceToNativeArray(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+  objArrayType: ArrayTypeSymbol,
+): [TACOperand, TACOperand] {
+  const opType = converter.getOperandType(operand);
+  const isDataList =
+    opType instanceof DataListTypeSymbol ||
+    opType.name === ExternTypes.dataList.name ||
+    opType.udonType === UdonType.DataList;
+
+  if (!isDataList) {
+    // Native array — cast and get length
+    const arr = converter.newTemp(objArrayType);
+    converter.instructions.push(new CopyInstruction(arr, operand));
+    const lengthExtern = converter.requireExternSignature(
+      "SystemArray",
+      "Length",
+      "getter",
+      [],
+      "int",
+    );
+    const len = converter.newTemp(PrimitiveTypes.int32);
+    converter.instructions.push(new CallInstruction(len, lengthExtern, [arr]));
+    return [arr, len];
+  }
+
+  // DataList — get Count, create native array, copy elements via loop.
+  // Skip redundant COPY if operand is already DataList-typed.
+  let list: TACOperand;
+  if (opType instanceof DataListTypeSymbol) {
+    list = operand;
+  } else {
+    list = converter.newTemp(ExternTypes.dataList);
+    converter.instructions.push(new CopyInstruction(list, operand));
+  }
+  const len = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(new PropertyGetInstruction(len, list, "Count"));
+  const ctorExtern = converter.requireExternSignature(
+    "ObjectArray",
+    "ctor",
+    "method",
+    ["int"],
+    "ObjectArray",
+  );
+  const arr = converter.newTemp(objArrayType);
+  converter.instructions.push(new CallInstruction(arr, ctorExtern, [len]));
+
+  // for (i = 0; i < len; i++) arr[i] = list.get_Item(i).Reference
+  const idx = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
+  );
+  const loopStart = converter.newLabel("dl2arr_start");
+  const loopEnd = converter.newLabel("dl2arr_end");
+  converter.instructions.push(new LabelInstruction(loopStart));
+  const cond = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(new BinaryOpInstruction(cond, idx, "<", len));
+  // JUMP_IF_FALSE: exit when idx >= len
+  converter.instructions.push(new ConditionalJumpInstruction(cond, loopEnd));
+  const token = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(token, list, "get_Item", [idx]),
+  );
+  const elem = converter.unwrapDataToken(token, ObjectType);
+  converter.instructions.push(new ArrayAssignmentInstruction(arr, idx, elem));
+  const next = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      next,
+      idx,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.instructions.push(new CopyInstruction(idx, next));
+  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
+  converter.instructions.push(new LabelInstruction(loopEnd));
+
+  return [arr, len];
+}
+
+/**
+ * Emit instructions for array concatenation using native Array.Copy.
+ * Accepts both native arrays and DataList operands (auto-coerced).
+ * Creates a new SystemObjectArray of size a.length + b.length, then
+ * copies elements from both sources using SystemArray.Copy.
+ */
+export function emitArrayConcat(
+  converter: ASTToTACConverter,
+  a: TACOperand,
+  b: TACOperand,
+): TACOperand {
+  const objArrayType = new ArrayTypeSymbol(ObjectType);
+
+  // Coerce both operands to native SystemObjectArray (handles DataList)
+  const [aArr, lenA] = coerceToNativeArray(converter, a, objArrayType);
+  const [bArr, lenB] = coerceToNativeArray(converter, b, objArrayType);
+
+  // totalLen = lenA + lenB
+  const totalLen = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new BinaryOpInstruction(totalLen, lenA, "+", lenB),
+  );
+
+  // result = new Object[totalLen]
+  const ctorExtern = converter.requireExternSignature(
+    "ObjectArray",
+    "ctor",
+    "method",
+    ["int"],
+    "ObjectArray",
+  );
+  const result = converter.newTemp(objArrayType);
+  converter.instructions.push(
+    new CallInstruction(result, ctorExtern, [totalLen]),
+  );
+
+  // Array.Copy(a, 0, result, 0, lenA)
+  const copyExtern = converter.requireExternSignature(
+    "SystemArray",
+    "Copy",
+    "method",
+    ["object", "int", "object", "int", "int"],
+    "void",
+  );
+  const zero = createConstant(0, PrimitiveTypes.int32);
+  converter.instructions.push(
+    new CallInstruction(undefined, copyExtern, [
+      aArr,
+      zero,
+      result,
+      zero,
+      lenA,
+    ]),
+  );
+
+  // Array.Copy(b, 0, result, lenA, lenB)
+  converter.instructions.push(
+    new CallInstruction(undefined, copyExtern, [
+      bArr,
+      zero,
+      result,
+      lenA,
+      lenB,
+    ]),
+  );
+
+  return result;
 }
 
 export function wrapDataToken(

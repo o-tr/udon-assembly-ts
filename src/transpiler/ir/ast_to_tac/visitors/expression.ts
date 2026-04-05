@@ -64,6 +64,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { emitArrayConcat } from "../helpers/assignment.js";
 import {
   isMapCollectionType,
   isSetCollectionType,
@@ -929,15 +930,11 @@ export function visitArrayLiteralExpression(
         const operands = node.elements.map((e) =>
           this.visitExpression(e.value),
         );
+        // Udon VM does not have a native Array.concat extern.
+        // Implement concat as: allocate new array, copy elements from each.
         let result = operands[0];
         for (let i = 1; i < operands.length; i++) {
-          const newResult = this.newTemp(baseType);
-          this.instructions.push(
-            new MethodCallInstruction(newResult, result, "concat", [
-              operands[i],
-            ]),
-          );
-          result = newResult;
+          result = emitArrayConcat(this, result, operands[i]);
         }
         return result;
       }
@@ -1631,8 +1628,6 @@ export function visitPropertyAccessExpression(
         // that expose the accessed property. Fires for both ObjectType
         // (name "object") and ExternTypes.dataDictionary (name "DataDictionary",
         // because TypeMapper maps TS "object" to dataDictionary).
-        // Limited to finding exactly one candidate class to avoid false matches
-        // when multiple unrelated classes share the same property name.
         if (
           dispInstances.length === 0 &&
           (untrackedTypeName === "object" ||
@@ -1648,16 +1643,70 @@ export function visitPropertyAccessExpression(
               candidateClasses.add(info.className);
             }
           }
-          // Only use this fallback when exactly one class matches to avoid
-          // generating excessively large dispatch tables when multiple
-          // unrelated classes share the same property name.
           if (candidateClasses.size === 1) {
+            // Exactly one class matches — use it directly.
             for (const [instId, info] of this.allInlineInstances) {
               if (candidateClasses.has(info.className)) {
                 dispInstances.push([instId, info]);
               }
             }
             if (dispInstances.length > 0) usedErasedFallback = true;
+          } else if (candidateClasses.size > 1) {
+            // Multiple classes share this property name. Try to narrow using
+            // the AST type of the object node (e.g. the declared element type
+            // of a for-of loop variable, or an interface implementor).
+            const astType = resolveTypeFromNode(this, node.object);
+            const astName = astType?.name;
+            let narrowedClass: string | undefined;
+            if (astName) {
+              if (candidateClasses.has(astName)) {
+                narrowedClass = astName;
+              } else {
+                // AST type may be an interface — check implementors
+                const implNames = this.classRegistry
+                  ? this.classRegistry
+                      .getImplementorsOfInterface(astName)
+                      .map((i) => i.name)
+                  : [];
+                for (const impl of implNames) {
+                  if (candidateClasses.has(impl)) {
+                    narrowedClass = impl;
+                    break;
+                  }
+                }
+              }
+            }
+            if (narrowedClass) {
+              for (const [instId, info] of this.allInlineInstances) {
+                if (info.className === narrowedClass) {
+                  dispInstances.push([instId, info]);
+                }
+              }
+              if (dispInstances.length > 0) usedErasedFallback = true;
+            } else {
+              // Narrowing failed — force safe path. Pick the first
+              // candidate (by allInlineInstances insertion order) to
+              // produce a dispatch table rather than falling through
+              // to a raw PropertyGetInstruction that would generate an
+              // invalid EXTERN. Instances of other candidate classes
+              // will hit the miss path and receive the zero-init default.
+              const firstCandidate = candidateClasses.values().next()
+                .value as string;
+              // WARNING: mixed-class collections with this property will
+              // silently return zero-init defaults for non-first-candidate
+              // instances. Log at transpile time to aid debugging.
+              console.warn(
+                `transpiler: D3 dispatch narrowing failed for property "${node.property}" — ` +
+                  `${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), ` +
+                  `using "${firstCandidate}" only.`,
+              );
+              for (const [instId, info] of this.allInlineInstances) {
+                if (info.className === firstCandidate) {
+                  dispInstances.push([instId, info]);
+                }
+              }
+              if (dispInstances.length > 0) usedErasedFallback = true;
+            }
           }
         }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
@@ -1674,14 +1723,13 @@ export function visitPropertyAccessExpression(
             }
           }
           if (untrackedPropType) {
-            // When dispatch was populated by erased-type fallback, widen
-            // dispResult to ObjectType so all write paths (inline property
-            // copies AND the miss-path PropertyGetInstruction) share the
-            // same heap slot type. For non-erased dispatch, use the concrete
-            // inline field type since the miss path is unreachable.
+            // Use the concrete inline field type for the dispatch result.
+            // The miss path no longer emits a PropertyGetInstruction (it
+            // uses Debug.LogError instead), so there is no need to widen
+            // to ObjectType for heap-slot compatibility.
             const dispResult = createVariable(
               `__uninst_prop_${this.tempCounter++}`,
-              usedErasedFallback ? ObjectType : untrackedPropType,
+              untrackedPropType,
               { isLocal: true },
             );
             const hdlVar = this.newTemp(PrimitiveTypes.int32);
@@ -1719,16 +1767,32 @@ export function visitPropertyAccessExpression(
             }
             // Miss path: if no handle matched in the dispatch table.
             if (usedErasedFallback) {
-              // The runtime value may not be an inline handle, so fall back
-              // to a generic PropertyGetInstruction. dispResult is already
-              // ObjectType, so the write is type-consistent. Note: the EXTERN
-              // generated here uses the erased object type as owner, which
-              // produces the same (potentially invalid) signature as the code
-              // path without D3 dispatch. This is not a regression — it
-              // preserves the original behavior for non-inline objects.
-              this.instructions.push(
-                new PropertyGetInstruction(dispResult, object, node.property),
+              // Do NOT emit PropertyGetInstruction here. The erased owner
+              // type produces invalid EXTERN signatures (e.g.
+              // DataDictionary.__get_isOpen__SystemObject) that the Udon VM
+              // rejects at load time. The miss path is unreachable when all
+              // instances of the target class are tracked via
+              // allInlineInstances. Emit a diagnostic log so that reaching
+              // this path at runtime (which would indicate a transpiler bug)
+              // is visible in the VRChat console.
+              const logExtern = this.requireExternSignature(
+                "Debug",
+                "LogError",
+                "method",
+                ["object"],
+                "void",
               );
+              const errMsg = createConstant(
+                `[udon-assembly-ts] D3 dispatch miss: ${node.property} on untracked instance`,
+                PrimitiveTypes.string,
+              );
+              this.instructions.push(
+                new CallInstruction(undefined, logExtern, [errMsg]),
+              );
+              // dispResult retains its Udon heap zero-initialised default
+              // (null for references, 0 for int32, false for bool).
+              // No explicit COPY needed — emitting one with a null literal
+              // would risk a type mismatch for value types.
             }
             // For non-erased D3 dispatch the miss is unreachable: every object
             // of the matched type was constructed via a tracked constructor,
@@ -1833,6 +1897,7 @@ export function visitPropertyAccessExpression(
       }
     }
     const result = this.newTemp(resultType ?? ObjectType);
+
     this.instructions.push(
       new PropertyGetInstruction(result, object, node.property),
     );

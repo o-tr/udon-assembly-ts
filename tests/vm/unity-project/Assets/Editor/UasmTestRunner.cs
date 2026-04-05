@@ -169,6 +169,7 @@ public static class UasmTestRunner
             }
         };
 
+        IUdonVM vm = null;
         try
         {
             // Read .uasm file
@@ -213,7 +214,7 @@ public static class UasmTestRunner
             }
 
             // Construct VM (fresh instance per test)
-            IUdonVM vm = UdonEditorManager.Instance.ConstructUdonVM();
+            vm = UdonEditorManager.Instance.ConstructUdonVM();
             if (vm == null)
             {
                 result.error = "ConstructUdonVM() returned null";
@@ -301,7 +302,9 @@ public static class UasmTestRunner
                 result.capturedLogs = capturedLogs.ToArray();
                 return result;
             }
-            result.error = $"{e.GetType().Name}: {e.Message}\n{e.StackTrace}{errorSuffix}";
+            var innerMsg = e.InnerException != null ? $"\n  Inner: {e.InnerException.GetType().Name}: {e.InnerException.Message}" : "";
+            var pcInfo = vm != null ? $"\n  PC: 0x{vm.GetProgramCounter():X8}" : "";
+            result.error = $"{e.GetType().Name}: {e.Message}{innerMsg}{pcInfo}\n{e.StackTrace}{errorSuffix}";
             result.capturedLogs = capturedLogs.ToArray();
         }
 

@@ -26,8 +26,10 @@ import {
   type ConditionalExpressionNode,
   type DeleteExpressionNode,
   type DoWhileStatementNode,
+  type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
+  type IdentifierNode,
   type IfStatementNode,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
@@ -59,6 +61,7 @@ import {
   createConstant,
   createLabel,
   createVariable,
+  type LabelOperand,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
@@ -649,9 +652,22 @@ export function visitInlineStaticMethodCall(
   args: TACOperand[],
 ): TACOperand | null {
   const inlineKey = `${className}.${methodName}`;
+
+  // --- Recursive re-entry: emit JUMP-based self-call ---
   if (this.inlineMethodStack.has(inlineKey)) {
+    const ctx = this.currentInlineRecursiveContext;
+    if (ctx && ctx.className === className && ctx.methodName === methodName) {
+      return emitInlineRecursiveSelfCall(this, ctx, args);
+    }
+    // No matching recursive context — this can happen for non-recursive
+    // methods that are already being inlined (mutual recursion, or a
+    // method calling itself without countStaticSelfCalls detecting it).
+    console.warn(
+      `transpiler: recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+    );
     return null;
   }
+
   const classNode = resolveClassNode(this, className);
   if (!classNode) return null;
   const method = classNode.methods.find(
@@ -674,6 +690,27 @@ export function visitInlineStaticMethodCall(
       returnType = lateResolved;
     }
   }
+
+  // --- Check for self-recursion ---
+  const selfCallCount = countStaticSelfCalls(
+    className,
+    methodName,
+    method.body,
+  );
+  if (selfCallCount > 0) {
+    return emitInlineRecursiveStaticMethod(
+      this,
+      className,
+      methodName,
+      method,
+      returnType,
+      args,
+      selfCallCount,
+      inlineKey,
+    );
+  }
+
+  // --- Non-recursive path (unchanged) ---
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
     returnType,
@@ -743,6 +780,436 @@ export function visitInlineStaticMethodCall(
 
   this.instructions.push(new LabelInstruction(returnLabel));
   return result;
+}
+
+/**
+ * Emit the full body of a recursive inline static method with JUMP-based
+ * call/return infrastructure. Called once per unique recursive static method
+ * (on first invocation). Uses the same pattern as @RecursiveMethod:
+ * DataList stacks for locals, depth counter, SP, return-site dispatch table.
+ */
+function emitInlineRecursiveStaticMethod(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: {
+    parameters: Array<{ name: string; type: TypeSymbol }>;
+    body: BlockStatementNode;
+    returnType: TypeSymbol;
+    originalReturnTypeName?: string;
+  },
+  returnType: TypeSymbol,
+  args: TACOperand[],
+  selfCallCount: number,
+  inlineKey: string,
+): TACOperand {
+  const prefix = `__inlineRec_${className}_${methodName}`;
+  const depthVar = `${prefix}_depth`;
+  const spVar = `${prefix}_sp`;
+  const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+
+  // Collect locals (parameters + declared variables)
+  const locals = collectRecursiveLocals.call(converter, method);
+  // Add return site index
+  locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
+  // Add self-call result variables
+  for (let i = 0; i < selfCallCount; i++) {
+    locals.push({
+      name: `${prefix}_selfCallResult_${i}`,
+      type: returnType,
+    });
+  }
+  // Add synthesized try/catch error flag/value variables so they survive
+  // across recursive self-call boundaries (same pattern as @RecursiveMethod).
+  // Capture the starting tryCounter now; body traversal will consume these
+  // IDs sequentially. No reservation (tryCounter +=) is needed here because
+  // visitBlockStatement will advance tryCounter as it encounters each
+  // try/catch — the IDs will match by construction.
+  const tryCatchCount = countTryCatchBlocks(method.body);
+  const startTryId = converter.tryCounter;
+  for (let i = 0; i < tryCatchCount; i++) {
+    const tryId = startTryId + i;
+    locals.push({
+      name: `__error_flag_${tryId}`,
+      type: PrimitiveTypes.boolean,
+    });
+    locals.push({ name: `__error_value_${tryId}`, type: ObjectType });
+  }
+
+  const stackVars = locals.map((local) => ({
+    name: `${prefix}_stack_${local.name}`,
+    type: ExternTypes.dataList as TypeSymbol,
+  }));
+
+  const result = createVariable(
+    `${prefix}_retVal_${converter.tempCounter++}`,
+    returnType,
+    { isLocal: true },
+  );
+  const entryLabel = converter.newLabel("inline_rec_entry");
+  const dispatchLabel = converter.newLabel("inline_rec_dispatch");
+  const overflowLabel = converter.newLabel("inline_rec_overflow");
+  const doneLabel = converter.newLabel("inline_rec_done");
+
+  // --- Initial call: set up params with inline tracking ---
+  converter.symbolTable.enterScope();
+  const savedInitialParams = saveAndBindInlineParams(
+    converter,
+    method.parameters,
+    args,
+  );
+  // Set initial return site index to 0 (sentinel: initial caller)
+  const returnSiteIdxVar = createVariable(
+    returnSiteIdxVarName,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  converter.instructions.push(
+    new AssignmentInstruction(
+      returnSiteIdxVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+
+  // --- Prologue: stack allocation (once) ---
+  const stackInitFlagName = `${prefix}_stackInit`;
+  const stackInitFlag = createVariable(
+    stackInitFlagName,
+    PrimitiveTypes.boolean,
+  );
+  const notInitialized = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      notInitialized,
+      stackInitFlag,
+      "==",
+      createConstant(false, PrimitiveTypes.boolean),
+    ),
+  );
+  const skipAllocLabel = converter.newLabel("inline_rec_skip_alloc");
+  converter.instructions.push(
+    new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
+  );
+  {
+    converter.emitCopyWithTracking(
+      stackInitFlag,
+      createConstant(true, PrimitiveTypes.boolean),
+    );
+    const defaultToken = converter.wrapDataToken(
+      createConstant(0, PrimitiveTypes.single),
+    );
+    for (const stackVarInfo of stackVars) {
+      const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+      const externSig = converter.requireExternSignature(
+        "DataList",
+        "ctor",
+        "method",
+        [],
+        "DataList",
+      );
+      converter.instructions.push(new CallInstruction(stackVar, externSig, []));
+      for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
+        converter.instructions.push(
+          new MethodCallInstruction(undefined, stackVar, "Add", [defaultToken]),
+        );
+      }
+    }
+  }
+  converter.instructions.push(new LabelInstruction(skipAllocLabel));
+
+  // Reset SP when at top level
+  {
+    const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+    const depthAtTopLevel = converter.newTemp(PrimitiveTypes.boolean);
+    converter.instructions.push(
+      new BinaryOpInstruction(
+        depthAtTopLevel,
+        depthVarOp,
+        "<=",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+    );
+    const skipSpResetLabel = converter.newLabel("inline_rec_skip_sp_reset");
+    converter.instructions.push(
+      new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
+    );
+    const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+    converter.emitCopyWithTracking(
+      spVarOp,
+      createConstant(-1, PrimitiveTypes.int32),
+    );
+    converter.emitCopyWithTracking(
+      depthVarOp,
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    converter.instructions.push(new LabelInstruction(skipSpResetLabel));
+  }
+
+  // Overflow handler
+  {
+    const afterOverflowLabel = converter.newLabel("inline_rec_after_overflow");
+    converter.instructions.push(
+      new UnconditionalJumpInstruction(afterOverflowLabel),
+    );
+    converter.instructions.push(new LabelInstruction(overflowLabel));
+    const logErrorExtern = converter.requireExternSignature(
+      "Debug",
+      "LogError",
+      "method",
+      ["object"],
+      "void",
+    );
+    const overflowMsg = createConstant(
+      `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${className}.${methodName}.`,
+      PrimitiveTypes.string,
+    );
+    converter.instructions.push(
+      new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+    );
+    // Reset depth and SP so subsequent invocations can re-enter cleanly.
+    converter.emitCopyWithTracking(
+      createVariable(depthVar, PrimitiveTypes.int32),
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    // SP = -1 (empty-stack sentinel, consistent with top-level entry reset)
+    converter.emitCopyWithTracking(
+      createVariable(spVar, PrimitiveTypes.int32),
+      createConstant(-1, PrimitiveTypes.int32),
+    );
+    // Jump to done (return default value) instead of ReturnInstruction
+    // because we're inside an inlined method, not a top-level method.
+    converter.instructions.push(new UnconditionalJumpInstruction(doneLabel));
+    converter.instructions.push(new LabelInstruction(afterOverflowLabel));
+  }
+
+  // --- Entry label (JUMP target for recursive calls) ---
+  converter.instructions.push(new LabelInstruction(entryLabel));
+
+  // Set up inline recursive context
+  const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
+    className,
+    methodName,
+    locals,
+    depthVar,
+    spVar,
+    stackVars,
+    returnSites: [],
+    // Start at 1: index 0 is reserved as sentinel for the initial
+    // (non-recursive) caller. The dispatch table only contains sites
+    // 1, 2, … and falls through to doneLabel for index 0.
+    nextReturnSiteIndex: 1,
+    nextSelfCallResultIndex: 0,
+    entryLabel,
+    dispatchLabel,
+    overflowLabel,
+    returnVar: result,
+  };
+
+  const savedInlineRecCtx = converter.currentInlineRecursiveContext;
+  converter.currentInlineRecursiveContext = ctx;
+
+  // Standard inline method setup — scope + params already set up via
+  // saveAndBindInlineParams in the initial-call path above.
+  const savedParamExportMap = converter.currentParamExportMap;
+  const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+  const savedMethodLayout = converter.currentMethodLayout;
+  const savedInlineContext = converter.currentInlineContext;
+  const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+  const savedThisOverride = converter.currentThisOverride;
+  const savedBaseClass = converter.currentInlineBaseClass;
+  converter.currentParamExportMap = new Map();
+  converter.currentParamExportReverseMap = new Map();
+  converter.currentMethodLayout = null;
+  converter.currentInlineContext = undefined;
+  converter.currentInlineConstructorClassName = undefined;
+  converter.currentThisOverride = null;
+  converter.currentInlineBaseClass = undefined;
+
+  converter.inlineMethodStack.add(inlineKey);
+  converter.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel: dispatchLabel, // returns jump to dispatch, not a simple label
+    returnTrackingInvalidated: false,
+    loopDepth: converter.loopContextStack.length,
+    returnInstancePrefix: undefined,
+  });
+  converter.methodBodyConstructorIndex.set(method.body, 0);
+  converter.inlinedBodyStack.push(method.body);
+
+  try {
+    converter.visitBlockStatement(method.body);
+  } finally {
+    converter.inlinedBodyStack.pop();
+    converter.inlineReturnStack.pop();
+    converter.inlineMethodStack.delete(inlineKey);
+    converter.currentParamExportMap = savedParamExportMap;
+    converter.currentParamExportReverseMap = savedParamExportReverseMap;
+    converter.currentMethodLayout = savedMethodLayout;
+    converter.currentInlineContext = savedInlineContext;
+    converter.currentInlineConstructorClassName = savedInlineCtorClass;
+    converter.currentThisOverride = savedThisOverride;
+    converter.currentInlineBaseClass = savedBaseClass;
+    restoreInlineParams(converter, savedInitialParams);
+    converter.symbolTable.exitScope();
+    converter.currentInlineRecursiveContext = savedInlineRecCtx;
+  }
+
+  // Fallthrough at end of body: decrement depth and jump to dispatch
+  {
+    const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+    const depthTmp = converter.newTemp(PrimitiveTypes.int32);
+    converter.instructions.push(
+      new BinaryOpInstruction(
+        depthTmp,
+        depthVarOp,
+        "-",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emitCopyWithTracking(depthVarOp, depthTmp);
+    converter.instructions.push(
+      new UnconditionalJumpInstruction(dispatchLabel),
+    );
+  }
+
+  // --- Return site dispatch table ---
+  converter.instructions.push(new LabelInstruction(dispatchLabel));
+  {
+    const returnSiteIdxVarOp = createVariable(
+      returnSiteIdxVarName,
+      PrimitiveTypes.int32,
+      { isLocal: true },
+    );
+    for (const site of ctx.returnSites) {
+      const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
+      converter.instructions.push(
+        new BinaryOpInstruction(
+          cmpResult,
+          returnSiteIdxVarOp,
+          "!=",
+          createConstant(site.index, PrimitiveTypes.int32),
+        ),
+      );
+      const siteLabel = createLabel(site.labelName);
+      converter.instructions.push(
+        new ConditionalJumpInstruction(cmpResult, siteLabel),
+      );
+    }
+    // Fallback: index 0 (initial caller) — jump to done
+    converter.instructions.push(new UnconditionalJumpInstruction(doneLabel));
+  }
+
+  converter.instructions.push(new LabelInstruction(doneLabel));
+  return result;
+}
+
+/**
+ * Emit a JUMP-based self-call for a recursive inline static method.
+ * Called when the recursion guard fires inside visitInlineStaticMethodCall.
+ */
+function emitInlineRecursiveSelfCall(
+  converter: ASTToTACConverter,
+  ctx: NonNullable<typeof converter.currentInlineRecursiveContext>,
+  args: TACOperand[],
+): TACOperand {
+  // 0. Save inlineInstanceMap state so the caller's tracking is restored
+  //    after the recursive call (push/pop only covers runtime locals, not
+  //    the compile-time inline tracking map).
+  const savedInstanceMap = new Map(converter.inlineInstanceMap);
+
+  // 1. Push all locals to stack (save caller's current state)
+  emitInlineRecursivePush.call(converter);
+
+  // 2. Increment depth
+  const depthVarOp = createVariable(ctx.depthVar, PrimitiveTypes.int32);
+  const depthInc = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      depthInc,
+      depthVarOp,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.emitCopyWithTracking(depthVarOp, depthInc);
+
+  // 3. Set parameters for the callee (find param names from the method)
+  const classNode = resolveClassNode(converter, ctx.className);
+  if (!classNode) {
+    throw new Error(
+      `emitInlineRecursiveSelfCall: class '${ctx.className}' not found`,
+    );
+  }
+  const method = classNode.methods.find(
+    (m) => m.name === ctx.methodName && m.isStatic,
+  );
+  if (!method) {
+    throw new Error(
+      `emitInlineRecursiveSelfCall: static method '${ctx.className}.${ctx.methodName}' not found`,
+    );
+  }
+  for (let i = 0; i < method.parameters.length; i++) {
+    const param = method.parameters[i];
+    const paramVar = createVariable(param.name, param.type, {
+      isLocal: true,
+    });
+    if (args[i] !== undefined) {
+      converter.emitCopyWithTracking(paramVar, args[i]);
+    }
+  }
+
+  // 4. Set return site index
+  const returnLabel = converter.newLabel("inline_rec_return") as LabelOperand;
+  const returnSiteIdx = ctx.nextReturnSiteIndex++;
+  ctx.returnSites.push({
+    index: returnSiteIdx,
+    labelName: returnLabel.name,
+  });
+  const prefix = `__inlineRec_${ctx.className}_${ctx.methodName}`;
+  const returnSiteIdxVar = createVariable(
+    `${prefix}_returnSiteIdx`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  converter.instructions.push(
+    new AssignmentInstruction(
+      returnSiteIdxVar,
+      createConstant(returnSiteIdx, PrimitiveTypes.int32),
+    ),
+  );
+
+  // 5. JUMP to method entry
+  converter.instructions.push(new UnconditionalJumpInstruction(ctx.entryLabel));
+
+  // 6. Return label (dispatch brings us back here)
+  converter.instructions.push(new LabelInstruction(returnLabel));
+
+  // 7. Read return value into temp BEFORE pop
+  const capturedTemp = converter.newTemp(
+    converter.getOperandType(ctx.returnVar),
+  );
+  converter.emitCopyWithTracking(capturedTemp, ctx.returnVar);
+
+  // 8. Pop all locals from stack (restore caller's state)
+  emitInlineRecursivePop.call(converter);
+
+  // 8b. Restore compile-time inlineInstanceMap to caller's state
+  converter.inlineInstanceMap.clear();
+  for (const [k, v] of savedInstanceMap) {
+    converter.inlineInstanceMap.set(k, v);
+  }
+
+  // 9. Copy captured result into a named selfCallResult variable
+  //    that is part of the push/pop set (survives sibling calls)
+  const selfCallIdx = ctx.nextSelfCallResultIndex;
+  ctx.nextSelfCallResultIndex = selfCallIdx + 1;
+  const selfCallResultVar = createVariable(
+    `${prefix}_selfCallResult_${selfCallIdx}`,
+    converter.getOperandType(ctx.returnVar),
+    { isLocal: true },
+  );
+  converter.emitCopyWithTracking(selfCallResultVar, capturedTemp);
+  return selfCallResultVar;
 }
 
 /**
@@ -1747,6 +2214,337 @@ export function countSelfCalls(
   };
   visitNode(body);
   return count;
+}
+
+/**
+ * Count the number of static self-calls in an inline class method body.
+ * Matches `ClassName.methodName(...)` patterns (as opposed to countSelfCalls
+ * which matches `this.methodName(...)`).
+ */
+export function countStaticSelfCalls(
+  className: string,
+  methodName: string,
+  body: BlockStatementNode,
+): number {
+  let count = 0;
+  const visitNode = (node: ASTNode): void => {
+    switch (node.kind) {
+      case ASTNodeKind.CallExpression: {
+        const callNode = node as CallExpressionNode;
+        if (callNode.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propAccess = callNode.callee as PropertyAccessExpressionNode;
+          if (
+            propAccess.object.kind === ASTNodeKind.Identifier &&
+            (propAccess.object as IdentifierNode).name === className &&
+            propAccess.property === methodName
+          ) {
+            count++;
+          }
+        }
+        visitNode(callNode.callee);
+        for (const arg of callNode.arguments) visitNode(arg);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        visitNode(exprStmt.expression);
+        break;
+      }
+      case ASTNodeKind.BlockStatement: {
+        const block = node as BlockStatementNode;
+        for (const stmt of block.statements) visitNode(stmt);
+        break;
+      }
+      case ASTNodeKind.IfStatement: {
+        const ifNode = node as IfStatementNode;
+        visitNode(ifNode.condition);
+        visitNode(ifNode.thenBranch);
+        if (ifNode.elseBranch) visitNode(ifNode.elseBranch);
+        break;
+      }
+      case ASTNodeKind.WhileStatement: {
+        const whileNode = node as WhileStatementNode;
+        visitNode(whileNode.condition);
+        visitNode(whileNode.body);
+        break;
+      }
+      case ASTNodeKind.ForStatement: {
+        const forNode = node as ForStatementNode;
+        if (forNode.initializer) visitNode(forNode.initializer);
+        if (forNode.condition) visitNode(forNode.condition);
+        if (forNode.incrementor) visitNode(forNode.incrementor);
+        visitNode(forNode.body);
+        break;
+      }
+      case ASTNodeKind.ForOfStatement: {
+        const forOfNode = node as ForOfStatementNode;
+        visitNode(forOfNode.iterable);
+        visitNode(forOfNode.body);
+        break;
+      }
+      case ASTNodeKind.DoWhileStatement: {
+        const doNode = node as DoWhileStatementNode;
+        visitNode(doNode.body);
+        visitNode(doNode.condition);
+        break;
+      }
+      case ASTNodeKind.SwitchStatement: {
+        const switchNode = node as SwitchStatementNode;
+        visitNode(switchNode.expression);
+        for (const clause of switchNode.cases) {
+          if (clause.expression) visitNode(clause.expression);
+          for (const stmt of clause.statements) visitNode(stmt);
+        }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        visitNode(tryNode.tryBody);
+        if (tryNode.catchBody) visitNode(tryNode.catchBody);
+        if (tryNode.finallyBody) visitNode(tryNode.finallyBody);
+        break;
+      }
+      case ASTNodeKind.ReturnStatement: {
+        const retNode = node as ReturnStatementNode;
+        if (retNode.value) visitNode(retNode.value);
+        break;
+      }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        visitNode(throwNode.expression);
+        break;
+      }
+      case ASTNodeKind.BinaryExpression: {
+        const binNode = node as BinaryExpressionNode;
+        visitNode(binNode.left);
+        visitNode(binNode.right);
+        break;
+      }
+      case ASTNodeKind.UnaryExpression: {
+        const unNode = node as UnaryExpressionNode;
+        visitNode(unNode.operand);
+        break;
+      }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        visitNode(condNode.condition);
+        visitNode(condNode.whenTrue);
+        visitNode(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const nullCoalesce = node as NullCoalescingExpressionNode;
+        visitNode(nullCoalesce.left);
+        visitNode(nullCoalesce.right);
+        break;
+      }
+      case ASTNodeKind.AssignmentExpression: {
+        const assignNode = node as AssignmentExpressionNode;
+        visitNode(assignNode.target);
+        visitNode(assignNode.value);
+        break;
+      }
+      case ASTNodeKind.VariableDeclaration: {
+        const varNode = node as VariableDeclarationNode;
+        if (varNode.initializer) visitNode(varNode.initializer);
+        break;
+      }
+      case ASTNodeKind.PropertyAccessExpression: {
+        const propNode = node as PropertyAccessExpressionNode;
+        visitNode(propNode.object);
+        break;
+      }
+      case ASTNodeKind.FunctionExpression:
+        break;
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const elem of arrNode.elements) visitNode(elem.value);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accNode = node as ArrayAccessExpressionNode;
+        visitNode(accNode.array);
+        visitNode(accNode.index);
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        const asNode = node as AsExpressionNode;
+        visitNode(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const tmplNode = node as TemplateExpressionNode;
+        for (const part of tmplNode.parts) {
+          if (part.kind === "expression") visitNode(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) visitNode(prop.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        visitNode(delNode.target);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        visitNode(optNode.object);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        visitNode(updNode.operand);
+        break;
+      }
+      // NameofExpression and TypeofExpression are compile-time constructs
+      // that never contain self-calls — skip without recursing.
+      case ASTNodeKind.NameofExpression:
+      case ASTNodeKind.TypeofExpression:
+        break;
+      default:
+        break;
+    }
+  };
+  visitNode(body);
+  return count;
+}
+
+/**
+ * Push all locals onto per-local DataList stacks for inline recursive context.
+ * Same logic as emitCallSitePush but uses currentInlineRecursiveContext.
+ */
+export function emitInlineRecursivePush(this: ASTToTACConverter): void {
+  const context = this.currentInlineRecursiveContext;
+  if (!context) return;
+
+  const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
+
+  // Guard: abort if depth has reached MAX_RECURSION_STACK_DEPTH.
+  // ConditionalJumpInstruction is "ifFalse goto": we check (depth < MAX)
+  // and jump to overflow when false (i.e., depth >= MAX).
+  const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
+  const depthOk = this.newTemp(PrimitiveTypes.boolean);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      depthOk,
+      depthVar,
+      "<",
+      createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
+    ),
+  );
+  this.instructions.push(
+    new ConditionalJumpInstruction(depthOk, context.overflowLabel),
+  );
+
+  // SP++
+  const spTemp = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spTemp,
+      spVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  this.emitCopyWithTracking(spVar, spTemp);
+
+  // Save each local at stack[SP]
+  for (let index = 0; index < context.locals.length; index++) {
+    const local = context.locals[index];
+    const stackVarInfo = context.stackVars[index];
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+    const localVar = createVariable(local.name, local.type, {
+      isLocal: true,
+    });
+    const token = this.wrapDataToken(localVar);
+    this.instructions.push(
+      new MethodCallInstruction(undefined, stackVar, "set_Item", [
+        spVar,
+        token,
+      ]),
+    );
+  }
+}
+
+/**
+ * Pop all locals from per-local DataList stacks for inline recursive context.
+ * Same logic as emitCallSitePop but uses currentInlineRecursiveContext.
+ */
+export function emitInlineRecursivePop(this: ASTToTACConverter): void {
+  const context = this.currentInlineRecursiveContext;
+  if (!context) return;
+
+  const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
+
+  // Guard: SP must be >= 0 before pop.
+  const spOk = this.newTemp(PrimitiveTypes.boolean);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spOk,
+      spVar,
+      ">=",
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  const underflowLabel = this.newLabel("inline_rec_pop_underflow");
+  const afterPopLabel = this.newLabel("inline_rec_after_pop");
+  this.instructions.push(new ConditionalJumpInstruction(spOk, underflowLabel));
+
+  // Restore each local from stack[SP].
+  // Plain CopyInstruction (not emitCopyWithTracking): unwrapDataToken
+  // returns a fresh temp with no tracking info. inlineInstanceMap is
+  // restored separately in step 8b of emitInlineRecursiveSelfCall.
+  for (let index = 0; index < context.locals.length; index++) {
+    const local = context.locals[index];
+    const stackVarInfo = context.stackVars[index];
+    const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
+    const token = this.newTemp(ExternTypes.dataToken);
+    this.instructions.push(
+      new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
+    );
+    const unwrapped = this.unwrapDataToken(token, local.type);
+    this.instructions.push(
+      new CopyInstruction(
+        createVariable(local.name, local.type, { isLocal: true }),
+        unwrapped,
+      ),
+    );
+  }
+
+  // SP--
+  const spTemp = this.newTemp(PrimitiveTypes.int32);
+  this.instructions.push(
+    new BinaryOpInstruction(
+      spTemp,
+      spVar,
+      "-",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  this.emitCopyWithTracking(spVar, spTemp);
+  this.instructions.push(new UnconditionalJumpInstruction(afterPopLabel));
+
+  // Underflow handler
+  this.instructions.push(new LabelInstruction(underflowLabel));
+  const logErrorExtern = this.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const underflowMsg = createConstant(
+    "[udon-assembly-ts] Inline recursive stack underflow.",
+    PrimitiveTypes.string,
+  );
+  this.instructions.push(
+    new CallInstruction(undefined, logErrorExtern, [underflowMsg]),
+  );
+
+  this.instructions.push(new LabelInstruction(afterPopLabel));
 }
 
 /**

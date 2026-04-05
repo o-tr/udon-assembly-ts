@@ -133,13 +133,14 @@ export function getOperandTsTypeName(
       ) {
         return "object[]";
       }
-      if (
-        !(typeSymbol instanceof ArrayTypeSymbol) &&
-        !isKnownExternElementType(typeSymbol.name ?? "")
-      ) {
-        return "object";
+      const tsName = typeSymbol.name ?? "";
+      // Defensive: strip trailing [] if a non-ArrayTypeSymbol somehow
+      // carries an array-like name (e.g. from a type alias).
+      const baseName = tsName.endsWith("[]") ? tsName.slice(0, -2) : tsName;
+      if (!isKnownExternElementType(baseName)) {
+        return baseName !== tsName ? "object[]" : "object";
       }
-      return typeSymbol.name ?? "object";
+      return tsName;
     }
     default:
       return "object";
