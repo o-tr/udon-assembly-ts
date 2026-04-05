@@ -26,6 +26,7 @@ import {
   type ConditionalExpressionNode,
   type DeleteExpressionNode,
   type DoWhileStatementNode,
+  type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
   type IdentifierNode,
@@ -953,6 +954,11 @@ function emitInlineRecursiveStaticMethod(
     );
     converter.instructions.push(
       new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+    );
+    // Reset depth to 0 so subsequent invocations can re-enter cleanly.
+    converter.emitCopyWithTracking(
+      createVariable(depthVar, PrimitiveTypes.int32),
+      createConstant(0, PrimitiveTypes.int32),
     );
     // Jump to done (return default value) instead of ReturnInstruction
     // because we're inside an inlined method, not a top-level method.
@@ -2200,6 +2206,11 @@ export function countStaticSelfCalls(
         }
         visitNode(callNode.callee);
         for (const arg of callNode.arguments) visitNode(arg);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        visitNode(exprStmt.expression);
         break;
       }
       case ASTNodeKind.BlockStatement: {

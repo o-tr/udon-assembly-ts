@@ -1520,7 +1520,9 @@ export function visitCallExpression(
             const isArray =
               argType instanceof ArrayTypeSymbol ||
               argType instanceof DataListTypeSymbol ||
-              argType.name === ExternTypes.dataList.name;
+              argType.name === ExternTypes.dataList.name ||
+              argType.udonType === UdonType.Array ||
+              argType.udonType === UdonType.DataList;
             if (isArray) {
               result = emitArrayConcat(this, result, arg);
             } else {
