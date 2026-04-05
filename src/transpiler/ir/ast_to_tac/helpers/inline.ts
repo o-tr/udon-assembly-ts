@@ -971,9 +971,10 @@ function emitInlineRecursiveStaticMethod(
       createVariable(depthVar, PrimitiveTypes.int32),
       createConstant(0, PrimitiveTypes.int32),
     );
+    // SP = -1 (empty-stack sentinel, consistent with top-level entry reset)
     converter.emitCopyWithTracking(
       createVariable(spVar, PrimitiveTypes.int32),
-      createConstant(0, PrimitiveTypes.int32),
+      createConstant(-1, PrimitiveTypes.int32),
     );
     // Jump to done (return default value) instead of ReturnInstruction
     // because we're inside an inlined method, not a top-level method.
