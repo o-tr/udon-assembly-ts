@@ -347,119 +347,83 @@ export function getArrayElementType(
 }
 
 /**
- * Emit instructions for array concatenation using DataList operations.
- * Udon VM does not support native Array.concat or SystemObjectArray operations.
- * Creates a new DataList, iterates both source arrays (via DataList access
- * patterns), and adds each element as a DataToken.
- *
- * INVARIANT: Both operands must be DataList-representable at runtime.
- * All user-facing arrays in this transpiler are stored as DataList on the
- * Udon heap. Passing a native typed array (e.g. float[], Transform[]) will
- * produce invalid EXTERNs at runtime.
+ * Emit instructions for array concatenation using native Array.Copy.
+ * Creates a new SystemObjectArray of size a.length + b.length, then
+ * copies elements from both sources using SystemArray.Copy.
  */
 export function emitArrayConcat(
   converter: ASTToTACConverter,
   a: TACOperand,
   b: TACOperand,
 ): TACOperand {
-  const dataListType = ExternTypes.dataList;
-  // Cast both operands to DataList. In this transpiler, all user-facing
-  // arrays are represented as DataList at runtime, so the COPY merely
-  // reinterprets the heap type for the EXTERN resolver. If an operand is
-  // already DataList-typed, skip the redundant copy.
-  const aType = converter.getOperandType(a);
-  let aList: TACOperand;
-  if (aType instanceof DataListTypeSymbol || aType.name === dataListType.name) {
-    aList = a;
-  } else {
-    aList = converter.newTemp(dataListType);
-    converter.instructions.push(new CopyInstruction(aList, a));
-  }
-  const bType = converter.getOperandType(b);
-  let bList: TACOperand;
-  if (bType instanceof DataListTypeSymbol || bType.name === dataListType.name) {
-    bList = b;
-  } else {
-    bList = converter.newTemp(dataListType);
-    converter.instructions.push(new CopyInstruction(bList, b));
-  }
-  // Create new DataList for result
+  const objArrayType = new ArrayTypeSymbol(ObjectType);
+
+  // Cast both operands to SystemObjectArray for ctor/Copy EXTERNs
+  const aArr = converter.newTemp(objArrayType);
+  converter.instructions.push(new CopyInstruction(aArr, a));
+  const bArr = converter.newTemp(objArrayType);
+  converter.instructions.push(new CopyInstruction(bArr, b));
+
+  // Get lengths via SystemArray.get_Length
+  const lengthExtern = converter.requireExternSignature(
+    "SystemArray",
+    "Length",
+    "getter",
+    [],
+    "int",
+  );
+  const lenA = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new CallInstruction(lenA, lengthExtern, [aArr]),
+  );
+  const lenB = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new CallInstruction(lenB, lengthExtern, [bArr]),
+  );
+
+  // totalLen = lenA + lenB
+  const totalLen = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new BinaryOpInstruction(totalLen, lenA, "+", lenB),
+  );
+
+  // result = new Object[totalLen]
   const ctorExtern = converter.requireExternSignature(
-    "DataList",
+    "ObjectArray",
     "ctor",
     "method",
-    [],
-    "DataList",
+    ["int"],
+    "ObjectArray",
   );
-  const result = converter.newTemp(dataListType);
-  converter.instructions.push(new CallInstruction(result, ctorExtern, []));
-  // Get counts
-  const lenA = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new PropertyGetInstruction(lenA, aList, "Count"));
-  const lenB = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new PropertyGetInstruction(lenB, bList, "Count"));
-  // Copy a elements: for (i = 0; i < lenA; i++) result.Add(a.get_Item(i))
-  const idxA = converter.newTemp(PrimitiveTypes.int32);
+  const result = converter.newTemp(objArrayType);
   converter.instructions.push(
-    new AssignmentInstruction(idxA, createConstant(0, PrimitiveTypes.int32)),
+    new CallInstruction(result, ctorExtern, [totalLen]),
   );
-  const loopAStart = converter.newLabel("concat_a_start");
-  const loopAEnd = converter.newLabel("concat_a_end");
-  converter.instructions.push(new LabelInstruction(loopAStart));
-  const condA = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(new BinaryOpInstruction(condA, idxA, "<", lenA));
-  // JUMP_IF_FALSE: exit loop when idxA >= lenA
-  converter.instructions.push(new ConditionalJumpInstruction(condA, loopAEnd));
-  const elemA = converter.newTemp(ExternTypes.dataToken);
+
+  // Array.Copy(a, 0, result, 0, lenA)
+  const copyExtern = converter.requireExternSignature(
+    "SystemArray",
+    "Copy",
+    "method",
+    ["object", "int", "object", "int", "int"],
+    "void",
+  );
+  const zero = createConstant(0, PrimitiveTypes.int32);
   converter.instructions.push(
-    new MethodCallInstruction(elemA, aList, "get_Item", [idxA]),
+    new CallInstruction(undefined, copyExtern, [aArr, zero, result, zero, lenA]),
   );
+
+  // Array.Copy(b, 0, result, lenA, lenB)
   converter.instructions.push(
-    new MethodCallInstruction(undefined, result, "Add", [elemA]),
+    new CallInstruction(undefined, copyExtern, [
+      bArr,
+      zero,
+      result,
+      lenA,
+      lenB,
+    ]),
   );
-  const nextA = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new BinaryOpInstruction(
-      nextA,
-      idxA,
-      "+",
-      createConstant(1, PrimitiveTypes.int32),
-    ),
-  );
-  converter.emitCopyWithTracking(idxA, nextA);
-  converter.instructions.push(new UnconditionalJumpInstruction(loopAStart));
-  converter.instructions.push(new LabelInstruction(loopAEnd));
-  // Copy b elements
-  const idxB = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new AssignmentInstruction(idxB, createConstant(0, PrimitiveTypes.int32)),
-  );
-  const loopBStart = converter.newLabel("concat_b_start");
-  const loopBEnd = converter.newLabel("concat_b_end");
-  converter.instructions.push(new LabelInstruction(loopBStart));
-  const condB = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(new BinaryOpInstruction(condB, idxB, "<", lenB));
-  // JUMP_IF_FALSE: exit loop when idxB >= lenB
-  converter.instructions.push(new ConditionalJumpInstruction(condB, loopBEnd));
-  const elemB = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
-    new MethodCallInstruction(elemB, bList, "get_Item", [idxB]),
-  );
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, result, "Add", [elemB]),
-  );
-  const nextB = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new BinaryOpInstruction(
-      nextB,
-      idxB,
-      "+",
-      createConstant(1, PrimitiveTypes.int32),
-    ),
-  );
-  converter.emitCopyWithTracking(idxB, nextB);
-  converter.instructions.push(new UnconditionalJumpInstruction(loopBStart));
-  converter.instructions.push(new LabelInstruction(loopBEnd));
+
   return result;
 }
 

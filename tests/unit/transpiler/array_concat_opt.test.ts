@@ -7,7 +7,7 @@ describe("typed array spread → .concat() optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  it("two typed arrays become loop-based concat", () => {
+  it("two typed arrays use Array.Copy concat", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -22,14 +22,13 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // The spread should use loop-based concat via DataList iteration.
-    // Verify loop labels are present and old EXTERN concat is absent.
-    const concatLoops = (result.tac.match(/concat_a_start/g) || []).length;
-    expect(concatLoops).toBeGreaterThanOrEqual(1);
+    // Spread uses native Array.Copy, not DataList loop or EXTERN concat
+    expect(result.tac).toContain("SystemArray");
+    expect(result.tac).toContain("Copy");
     expect(result.tac).not.toContain("MethodCall concat");
   });
 
-  it("three typed arrays become two concat loops", () => {
+  it("three typed arrays produce two Array.Copy concats", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -45,9 +44,10 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Should have at least two loop-based concat operations and no EXTERN concat
-    const concatStartCount = (result.tac.match(/concat_a_start/g) || []).length;
-    expect(concatStartCount).toBeGreaterThanOrEqual(2);
+    // Two Array.Copy concat operations (a+b, then result+c)
+    // Each concat emits 2 Copy calls, so at least 4 total
+    const copyCallCount = (result.tac.match(/SystemArray.*Copy/g) || []).length;
+    expect(copyCallCount).toBeGreaterThanOrEqual(4);
     expect(result.tac).not.toContain("MethodCall concat");
   });
 
