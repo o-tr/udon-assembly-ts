@@ -2410,6 +2410,8 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   const spVar = createVariable(context.spVar, PrimitiveTypes.int32);
 
   // Guard: abort if depth has reached MAX_RECURSION_STACK_DEPTH.
+  // ConditionalJumpInstruction is "ifFalse goto": we check (depth < MAX)
+  // and jump to overflow when false (i.e., depth >= MAX).
   const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
   const depthOk = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
