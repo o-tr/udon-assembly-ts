@@ -1654,14 +1654,44 @@ export function visitPropertyAccessExpression(
           } else if (candidateClasses.size > 1) {
             // Multiple classes share this property name. Try to narrow using
             // the AST type of the object node (e.g. the declared element type
-            // of a for-of loop variable). This avoids emitting an invalid
-            // EXTERN when the property name is ambiguous but the AST type
-            // is specific enough to pick the right class.
+            // of a for-of loop variable, or an interface implementor).
             const astType = resolveTypeFromNode(this, node.object);
             const astName = astType?.name;
-            if (astName && candidateClasses.has(astName)) {
+            let narrowedClass: string | undefined;
+            if (astName) {
+              if (candidateClasses.has(astName)) {
+                narrowedClass = astName;
+              } else {
+                // AST type may be an interface — check implementors
+                const implNames = this.classRegistry
+                  ? this.classRegistry
+                      .getImplementorsOfInterface(astName)
+                      .map((i) => i.name)
+                  : [];
+                for (const impl of implNames) {
+                  if (candidateClasses.has(impl)) {
+                    narrowedClass = impl;
+                    break;
+                  }
+                }
+              }
+            }
+            if (narrowedClass) {
               for (const [instId, info] of this.allInlineInstances) {
-                if (info.className === astName) {
+                if (info.className === narrowedClass) {
+                  dispInstances.push([instId, info]);
+                }
+              }
+              if (dispInstances.length > 0) usedErasedFallback = true;
+            } else {
+              // Narrowing failed — force safe path. Use the first
+              // candidate to produce a dispatch table rather than
+              // falling through to a raw PropertyGetInstruction that
+              // would generate an invalid EXTERN.
+              const firstCandidate = candidateClasses.values().next()
+                .value as string;
+              for (const [instId, info] of this.allInlineInstances) {
+                if (info.className === firstCandidate) {
                   dispInstances.push([instId, info]);
                 }
               }
@@ -1749,17 +1779,10 @@ export function visitPropertyAccessExpression(
               this.instructions.push(
                 new CallInstruction(undefined, logExtern, [errMsg]),
               );
-              // Write an explicit default so dispResult is never truly
-              // uninitialized.  For reference types this is null (ObjectType
-              // default), for int32 it is 0, etc.  The Udon heap already
-              // zero-initialises, but an explicit COPY from a typed constant
-              // makes intent clear and avoids any subtle type-mismatch.
-              this.instructions.push(
-                new CopyInstruction(
-                  dispResult,
-                  createConstant(null, untrackedPropType),
-                ),
-              );
+              // dispResult retains its Udon heap zero-initialised default
+              // (null for references, 0 for int32, false for bool).
+              // No explicit COPY needed — emitting one with a null literal
+              // would risk a type mismatch for value types.
             }
             // For non-erased D3 dispatch the miss is unreachable: every object
             // of the matched type was constructed via a tracked constructor,

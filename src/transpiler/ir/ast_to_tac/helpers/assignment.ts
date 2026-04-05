@@ -364,10 +364,7 @@ export function emitArrayConcat(
   // already DataList-typed, skip the redundant copy.
   const aType = converter.getOperandType(a);
   let aList: TACOperand;
-  if (
-    aType instanceof DataListTypeSymbol ||
-    aType.name === dataListType.name
-  ) {
+  if (aType instanceof DataListTypeSymbol || aType.name === dataListType.name) {
     aList = a;
   } else {
     aList = converter.newTemp(dataListType);
@@ -375,10 +372,7 @@ export function emitArrayConcat(
   }
   const bType = converter.getOperandType(b);
   let bList: TACOperand;
-  if (
-    bType instanceof DataListTypeSymbol ||
-    bType.name === dataListType.name
-  ) {
+  if (bType instanceof DataListTypeSymbol || bType.name === dataListType.name) {
     bList = b;
   } else {
     bList = converter.newTemp(dataListType);

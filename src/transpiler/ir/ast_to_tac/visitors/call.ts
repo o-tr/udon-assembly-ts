@@ -1513,7 +1513,35 @@ export function visitCallExpression(
           }
           let result = object;
           for (const arg of evaluatedArgs) {
-            result = emitArrayConcat(this, result, arg);
+            // JS concat flattens arrays but wraps scalars. Check if the
+            // argument is an array/DataList; if not, wrap it in a
+            // single-element DataList before concatenating.
+            const argType = this.getOperandType(arg);
+            const isArray =
+              argType instanceof ArrayTypeSymbol ||
+              argType instanceof DataListTypeSymbol ||
+              argType.name === ExternTypes.dataList.name;
+            if (isArray) {
+              result = emitArrayConcat(this, result, arg);
+            } else {
+              // Wrap scalar in a single-element DataList
+              const wrapper = this.newTemp(ExternTypes.dataList);
+              const wrapCtorExtern = this.requireExternSignature(
+                "DataList",
+                "ctor",
+                "method",
+                [],
+                "DataList",
+              );
+              this.instructions.push(
+                new CallInstruction(wrapper, wrapCtorExtern, []),
+              );
+              const token = this.wrapDataToken(arg);
+              this.instructions.push(
+                new MethodCallInstruction(undefined, wrapper, "Add", [token]),
+              );
+              result = emitArrayConcat(this, result, wrapper);
+            }
           }
           return result;
         }

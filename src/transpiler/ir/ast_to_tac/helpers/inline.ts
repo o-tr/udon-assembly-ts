@@ -817,7 +817,10 @@ function emitInlineRecursiveStaticMethod(
   const tryCatchCount = countTryCatchBlocks(method.body);
   for (let i = 0; i < tryCatchCount; i++) {
     const tryId = converter.tryCounter + i;
-    locals.push({ name: `__error_flag_${tryId}`, type: PrimitiveTypes.boolean });
+    locals.push({
+      name: `__error_flag_${tryId}`,
+      type: PrimitiveTypes.boolean,
+    });
     locals.push({ name: `__error_value_${tryId}`, type: ObjectType });
   }
 

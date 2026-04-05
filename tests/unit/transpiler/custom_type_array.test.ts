@@ -108,7 +108,9 @@ describe("custom type array operations", () => {
       ),
     ).toBe(true);
     // Should NOT produce invalid unresolvable externs
-    expect(externs.some((sig) => sig.includes("__get_length__SystemObject"))).toBe(false);
+    expect(
+      externs.some((sig) => sig.includes("__get_length__SystemObject")),
+    ).toBe(false);
   });
 
   it("generates valid length extern for Unity type arrays (Vector3[], Transform[])", () => {
@@ -143,7 +145,9 @@ describe("custom type array operations", () => {
           sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
-    expect(externs.some((sig) => sig.includes("__get_length__SystemObject"))).toBe(false);
+    expect(
+      externs.some((sig) => sig.includes("__get_length__SystemObject")),
+    ).toBe(false);
   });
 
   it("handles type alias arrays correctly", () => {

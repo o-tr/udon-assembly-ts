@@ -29,10 +29,6 @@ export class TypeMapper {
     return this.typeAliases.get(name);
   }
 
-  getAllAliases(): IterableIterator<TypeSymbol> {
-    return this.typeAliases.values();
-  }
-
   registerTypeAlias(name: string, symbol: TypeSymbol): void {
     this.typeAliases.set(name, symbol);
     this.typeCache.clear();
