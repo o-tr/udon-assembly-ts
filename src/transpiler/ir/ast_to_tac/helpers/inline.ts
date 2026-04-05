@@ -659,6 +659,12 @@ export function visitInlineStaticMethodCall(
     if (ctx && ctx.className === className && ctx.methodName === methodName) {
       return emitInlineRecursiveSelfCall(this, ctx, args);
     }
+    // No matching recursive context — this can happen for non-recursive
+    // methods that are already being inlined (mutual recursion, or a
+    // method calling itself without countStaticSelfCalls detecting it).
+    console.warn(
+      `transpiler: recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+    );
     return null;
   }
 
