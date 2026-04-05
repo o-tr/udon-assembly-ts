@@ -1122,18 +1122,26 @@ function emitInlineRecursiveSelfCall(
 
   // 3. Set parameters for the callee (find param names from the method)
   const classNode = resolveClassNode(converter, ctx.className);
-  const method = classNode?.methods.find(
+  if (!classNode) {
+    throw new Error(
+      `emitInlineRecursiveSelfCall: class '${ctx.className}' not found`,
+    );
+  }
+  const method = classNode.methods.find(
     (m) => m.name === ctx.methodName && m.isStatic,
   );
-  if (method) {
-    for (let i = 0; i < method.parameters.length; i++) {
-      const param = method.parameters[i];
-      const paramVar = createVariable(param.name, param.type, {
-        isLocal: true,
-      });
-      if (args[i]) {
-        converter.emitCopyWithTracking(paramVar, args[i]);
-      }
+  if (!method) {
+    throw new Error(
+      `emitInlineRecursiveSelfCall: static method '${ctx.className}.${ctx.methodName}' not found`,
+    );
+  }
+  for (let i = 0; i < method.parameters.length; i++) {
+    const param = method.parameters[i];
+    const paramVar = createVariable(param.name, param.type, {
+      isLocal: true,
+    });
+    if (args[i]) {
+      converter.emitCopyWithTracking(paramVar, args[i]);
     }
   }
 
