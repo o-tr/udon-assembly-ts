@@ -966,9 +966,13 @@ function emitInlineRecursiveStaticMethod(
     converter.instructions.push(
       new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
     );
-    // Reset depth to 0 so subsequent invocations can re-enter cleanly.
+    // Reset depth and SP so subsequent invocations can re-enter cleanly.
     converter.emitCopyWithTracking(
       createVariable(depthVar, PrimitiveTypes.int32),
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    converter.emitCopyWithTracking(
+      createVariable(spVar, PrimitiveTypes.int32),
       createConstant(0, PrimitiveTypes.int32),
     );
     // Jump to done (return default value) instead of ReturnInstruction

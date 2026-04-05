@@ -1529,8 +1529,13 @@ export function visitCallExpression(
               // Wrap scalar in a single-element native Object[1] array.
               // Using native array + ArrayAssignment avoids DataToken
               // .Reference issues with primitive scalars (int/float).
-              const wrapperCtorSig =
-                "SystemObjectArray.__ctor__SystemInt32__SystemObjectArray";
+              const wrapperCtorSig = this.requireExternSignature(
+                "ObjectArray",
+                "ctor",
+                "method",
+                ["int"],
+                "ObjectArray",
+              );
               const wrapper = this.newTemp(new ArrayTypeSymbol(ObjectType));
               this.instructions.push(
                 new CallInstruction(wrapper, wrapperCtorSig, [
