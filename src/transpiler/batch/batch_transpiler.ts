@@ -28,7 +28,7 @@ import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "../frontend/parser/index.js";
 import { SymbolTable } from "../frontend/symbol_table.js";
-import { TypeMapper } from "../frontend/type_mapper.js";
+import type { TypeMapper } from "../frontend/type_mapper.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -84,7 +84,7 @@ export class BatchTranspiler {
     const errorCollector = new ErrorCollector();
     const parser = new TypeScriptParser(errorCollector);
     const registry = new ClassRegistry();
-    const typeMapper = new TypeMapper(parser.getEnumRegistry());
+    const typeMapper = parser.typeMapper;
     const cachePath = path.join(options.sourceDir, ".transpiler-cache.json");
     const cache = this.loadCache(cachePath);
 
@@ -241,6 +241,11 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
+    if (entryFilesToCompile.size === 0) {
+      this.saveCache(cachePath, cacheFiles);
+      return { outputs: [] };
+    }
+
     const outputs: BatchFileResult[] = [];
     const callAnalyzer = new CallAnalyzer(registry);
     const methodUsage =
@@ -248,9 +253,9 @@ export class BatchTranspiler {
         ? new MethodUsageAnalyzer(registry).analyze()
         : null;
 
+    const allClasses = registry.getAllClasses();
     const udonBehaviourClasses = new Set(
-      registry
-        .getAllClasses()
+      allClasses
         .filter((cls) =>
           cls.decorators.some(
             (decorator) => decorator.name === "UdonBehaviour",
@@ -274,11 +279,9 @@ export class BatchTranspiler {
     );
     const classImplements = registry.getClassImplementsMap();
     const udonBehaviourLayouts = buildUdonBehaviourLayouts(
-      registry.getAllClasses().map((cls) => ({
+      allClasses.map((cls) => ({
         name: cls.name,
-        isUdonBehaviour: cls.decorators.some(
-          (decorator) => decorator.name === "UdonBehaviour",
-        ),
+        isUdonBehaviour: udonBehaviourClasses.has(cls.name),
         methods: cls.methods.map((method) => ({
           name: method.name,
           parameters: method.parameters.map((param) => ({
@@ -397,7 +400,7 @@ export class BatchTranspiler {
         registry,
         {
           useStringBuilder: options.useStringBuilder,
-          typeMapper: parser.typeMapper,
+          typeMapper,
         },
       );
       let tacInstructions = tacConverter.convert(methodProgram);
@@ -573,7 +576,7 @@ export class BatchTranspiler {
     parser: TypeScriptParser,
     typeMapper: TypeMapper,
     udonBehaviourLayouts: ReturnType<typeof buildUdonBehaviourLayouts>,
-    udonBehaviourClasses: Set<string>,
+    udonBehaviourClasses: ReadonlySet<string>,
     optimize?: boolean,
     reflect?: boolean,
     useStringBuilder?: boolean,
@@ -617,7 +620,7 @@ export class BatchTranspiler {
     parser: TypeScriptParser,
     typeMapper: TypeMapper,
     udonBehaviourLayouts: ReturnType<typeof buildUdonBehaviourLayouts>,
-    udonBehaviourClasses: Set<string>,
+    udonBehaviourClasses: ReadonlySet<string>,
     optimize?: boolean,
     reflect?: boolean,
     useStringBuilder?: boolean,
@@ -691,7 +694,7 @@ export class BatchTranspiler {
       udonBehaviourClasses,
       udonBehaviourLayouts,
       registry,
-      { useStringBuilder, typeMapper: parser.typeMapper },
+      { useStringBuilder, typeMapper },
     );
     let tacInstructions = tacConverter.convert(methodProgram);
 

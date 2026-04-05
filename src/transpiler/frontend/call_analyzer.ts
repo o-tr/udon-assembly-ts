@@ -41,8 +41,8 @@ import {
 } from "./types.js";
 
 export interface CallAnalysisResult {
-  inlineClasses: Set<string>;
-  calledUdonBehaviours: Set<string>;
+  inlineClasses: ReadonlySet<string>;
+  calledUdonBehaviours: ReadonlySet<string>;
 }
 
 export class CallAnalyzer {
