@@ -65,8 +65,9 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Mixed spread+literal should NOT use concat optimization
-    expect(result.tac).not.toContain("concat");
+    // Mixed spread+literal should use DataList fallback, not Array.Copy concat
+    expect(result.tac).not.toContain("SystemArray");
+    expect(result.tac).toContain("Add");
   });
 
   it("single spread falls back to DataList loop", () => {
@@ -83,7 +84,8 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Single spread (elements.length < 2) should not use concat
-    expect(result.tac).not.toContain("concat");
+    // Single spread should use DataList fallback, not Array.Copy concat
+    expect(result.tac).not.toContain("SystemArray");
+    expect(result.tac).toContain("Add");
   });
 });

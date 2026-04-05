@@ -349,8 +349,9 @@ export function getArrayElementType(
 /**
  * Coerce an operand to a native SystemObjectArray. If the operand is
  * already an ArrayTypeSymbol, a simple COPY reinterprets the heap type.
- * If it is a DataList, emit a loop that copies elements into a fresh
- * native array via SystemArray.Get on DataList-extracted DataTokens.
+ * If it is a DataList, emit a loop that reads each element via
+ * DataList.get_Item, unwraps the DataToken, and writes to a fresh
+ * native array via ArrayAssignmentInstruction.
  * Returns [arrayOperand, lengthOperand].
  */
 function coerceToNativeArray(
@@ -380,9 +381,15 @@ function coerceToNativeArray(
     return [arr, len];
   }
 
-  // DataList — get Count, create native array, copy elements via loop
-  const list = converter.newTemp(ExternTypes.dataList);
-  converter.instructions.push(new CopyInstruction(list, operand));
+  // DataList — get Count, create native array, copy elements via loop.
+  // Skip redundant COPY if operand is already DataList-typed.
+  let list: TACOperand;
+  if (opType instanceof DataListTypeSymbol) {
+    list = operand;
+  } else {
+    list = converter.newTemp(ExternTypes.dataList);
+    converter.instructions.push(new CopyInstruction(list, operand));
+  }
   const len = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(new PropertyGetInstruction(len, list, "Count"));
   const ctorExtern = converter.requireExternSignature(
