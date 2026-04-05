@@ -35,6 +35,22 @@ import {
 } from "../udon_instruction.js";
 import type { TACToUdonConverter } from "./converter.js";
 
+/**
+ * Derive the concrete typed-array name and its element type name from an
+ * operand type string.  The Udon VM registers per-type externs (e.g.
+ * `SystemObjectArray.__Get__`) — the base `SystemArray` variants are not
+ * implemented.  Falls back to `SystemObjectArray` / `SystemObject` when
+ * the input is not a recognised `*Array` type.
+ */
+function resolveTypedArrayNames(
+  operandTypeName: string,
+): [arrayType: string, elementType: string] {
+  if (operandTypeName.endsWith("Array") && operandTypeName !== "SystemArray") {
+    return [operandTypeName, operandTypeName.slice(0, -"Array".length)];
+  }
+  return ["SystemObjectArray", "SystemObject"];
+}
+
 export function convertInstruction(
   this: TACToUdonConverter,
   inst: TACInstruction,
@@ -600,16 +616,13 @@ export function convertInstruction(
       const arrayInst = inst as TACArrayAccessInstruction;
       this.pushOperand(arrayInst.array);
       this.pushOperand(arrayInst.index);
-      const externSig = resolveExternSignature(
-        "SystemArray",
-        "Get",
-        "method",
-        ["int"],
-        "object",
+
+      // Udon VM requires type-specific array Get signatures, e.g.
+      // SystemObjectArray.__Get__SystemInt32__SystemObject (not SystemArray.__Get__).
+      const [arrayType, elementType] = resolveTypedArrayNames(
+        this.getOperandTypeName(arrayInst.array),
       );
-      if (!externSig) {
-        throw new Error("Missing extern signature for SystemArray.Get");
-      }
+      const externSig = `${arrayType}.__Get__SystemInt32__${elementType}`;
       this.externSignatures.add(externSig);
 
       // Push return address before EXTERN (Udon VM calling convention)
@@ -627,16 +640,13 @@ export function convertInstruction(
       this.pushOperand(arrayInst.array);
       this.pushOperand(arrayInst.index);
       this.pushOperand(arrayInst.value);
-      const externSig = resolveExternSignature(
-        "SystemArray",
-        "Set",
-        "method",
-        ["int", "object"],
-        "void",
+
+      // Udon VM requires type-specific array Set signatures, e.g.
+      // SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid.
+      const [arrayType, elementType] = resolveTypedArrayNames(
+        this.getOperandTypeName(arrayInst.array),
       );
-      if (!externSig) {
-        throw new Error("Missing extern signature for SystemArray.Set");
-      }
+      const externSig = `${arrayType}.__Set__SystemInt32_${elementType}__SystemVoid`;
       this.externSignatures.add(externSig);
       this.instructions.push(
         new ExternInstruction(this.getExternSymbol(externSig), true),
