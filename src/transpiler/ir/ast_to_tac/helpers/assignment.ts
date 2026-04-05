@@ -347,11 +347,6 @@ export function getArrayElementType(
 }
 
 /**
- * Emit instructions for array concatenation using native Array.Copy.
- * Creates a new SystemObjectArray of size a.length + b.length, then
- * copies elements from both sources using SystemArray.Copy.
- */
-/**
  * Coerce an operand to a native SystemObjectArray. If the operand is
  * already an ArrayTypeSymbol, a simple COPY reinterprets the heap type.
  * If it is a DataList, emit a loop that copies elements into a fresh
@@ -389,9 +384,7 @@ function coerceToNativeArray(
   const list = converter.newTemp(ExternTypes.dataList);
   converter.instructions.push(new CopyInstruction(list, operand));
   const len = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new PropertyGetInstruction(len, list, "Count"),
-  );
+  converter.instructions.push(new PropertyGetInstruction(len, list, "Count"));
   const ctorExtern = converter.requireExternSignature(
     "ObjectArray",
     "ctor",
@@ -419,9 +412,7 @@ function coerceToNativeArray(
     new MethodCallInstruction(token, list, "get_Item", [idx]),
   );
   const elem = converter.unwrapDataToken(token, ObjectType);
-  converter.instructions.push(
-    new ArrayAssignmentInstruction(arr, idx, elem),
-  );
+  converter.instructions.push(new ArrayAssignmentInstruction(arr, idx, elem));
   const next = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(
     new BinaryOpInstruction(
@@ -438,6 +429,12 @@ function coerceToNativeArray(
   return [arr, len];
 }
 
+/**
+ * Emit instructions for array concatenation using native Array.Copy.
+ * Accepts both native arrays and DataList operands (auto-coerced).
+ * Creates a new SystemObjectArray of size a.length + b.length, then
+ * copies elements from both sources using SystemArray.Copy.
+ */
 export function emitArrayConcat(
   converter: ASTToTACConverter,
   a: TACOperand,
