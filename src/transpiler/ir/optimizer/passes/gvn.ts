@@ -18,8 +18,8 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import { MAX_FIXPOINT_ITERATIONS } from "../pass_types.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
+import { MAX_FIXPOINT_ITERATIONS } from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
   forEachUsedOperand,
