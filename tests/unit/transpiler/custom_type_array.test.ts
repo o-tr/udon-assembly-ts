@@ -39,7 +39,7 @@ describe("custom type array operations", () => {
 
     // Should use SystemObjectArray, NOT TileArray
     expect(
-      externs.some((sig) => sig.includes("SystemObjectArray.__get_length__")),
+      externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
     ).toBe(true);
     expect(externs.some((sig) => sig.includes("TileArray"))).toBe(false);
   });
@@ -180,7 +180,7 @@ describe("custom type array operations", () => {
 
     // Custom class alias array should fallback to SystemObjectArray
     expect(
-      externs.some((sig) => sig.includes("SystemObjectArray.__get_length__")),
+      externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
     ).toBe(true);
     expect(externs.some((sig) => sig.includes("MeldArray"))).toBe(false);
     expect(externs.some((sig) => sig.includes("MeldAliasArray"))).toBe(false);

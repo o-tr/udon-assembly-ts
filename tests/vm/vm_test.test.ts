@@ -109,8 +109,8 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
             `Generated UASM for "${SYSTEM_OBJECT_ARRAY_CORE_CASE}" is missing required extern signatures: ${missing.join(", ")}`,
           );
         }
-        const disallowed = SYSTEM_OBJECT_ARRAY_DISALLOWED_EXTERNS.filter((sig) =>
-          result.uasm.includes(sig),
+        const disallowed = SYSTEM_OBJECT_ARRAY_DISALLOWED_EXTERNS.filter(
+          (sig) => result.uasm.includes(sig),
         );
         if (disallowed.length > 0) {
           throw new Error(
