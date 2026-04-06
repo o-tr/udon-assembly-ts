@@ -347,6 +347,29 @@ export function getArrayElementType(
   return null;
 }
 
+type AliasLikeSymbol = { initialValue?: unknown };
+
+function isAliasChainBackedByArrayLiteral(
+  startName: string,
+  lookupSymbol: (name: string) => AliasLikeSymbol | undefined,
+  firstSymbol?: AliasLikeSymbol,
+): boolean {
+  const visited = new Set<string>();
+  let current = startName;
+  let currentSymbol = firstSymbol;
+  while (true) {
+    if (visited.has(current)) return false;
+    visited.add(current);
+    const symbol = currentSymbol ?? lookupSymbol(current);
+    const initialValue = symbol?.initialValue as ASTNode | undefined;
+    if (!initialValue) return false;
+    if (initialValue.kind === ASTNodeKind.ArrayLiteralExpression) return true;
+    if (initialValue.kind !== ASTNodeKind.Identifier) return false;
+    current = (initialValue as IdentifierNode).name;
+    currentSymbol = undefined;
+  }
+}
+
 /**
  * Coerce an operand to a native SystemObjectArray. If the operand is
  * already an ArrayTypeSymbol, a simple COPY reinterprets the heap type.
@@ -361,25 +384,6 @@ function coerceToNativeArray(
   objArrayType: ArrayTypeSymbol,
 ): [TACOperand, TACOperand] {
   const opType = converter.getOperandType(operand);
-  const isAliasChainBackedByArrayLiteral = (
-    startName: string,
-    firstSymbol?: { initialValue?: unknown },
-  ): boolean => {
-    const visited = new Set<string>();
-    let current = startName;
-    let currentSymbol = firstSymbol;
-    while (true) {
-      if (visited.has(current)) return false;
-      visited.add(current);
-      const symbol = currentSymbol ?? converter.symbolTable.lookup(current);
-      const initialValue = symbol?.initialValue as ASTNode | undefined;
-      if (!initialValue) return false;
-      if (initialValue.kind === ASTNodeKind.ArrayLiteralExpression) return true;
-      if (initialValue.kind !== ASTNodeKind.Identifier) return false;
-      current = (initialValue as IdentifierNode).name;
-      currentSymbol = undefined;
-    }
-  };
   const isDeclaredDataList =
     opType instanceof DataListTypeSymbol ||
     opType.name === ExternTypes.dataList.name ||
@@ -393,7 +397,11 @@ function coerceToNativeArray(
       // Safety: this heuristic is only reliable for const aliases because
       // let/var can be reassigned after declaration.
       if (!symbol?.isConstant) return false;
-      return isAliasChainBackedByArrayLiteral(startName, symbol);
+      return isAliasChainBackedByArrayLiteral(
+        startName,
+        (name) => converter.symbolTable.lookup(name),
+        symbol,
+      );
     })();
   const isDataList = isDeclaredDataList || isArrayLiteralBackedDataList;
 

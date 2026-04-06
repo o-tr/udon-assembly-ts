@@ -20,20 +20,6 @@ const UNITY_EDITOR_PATH: string = process.env.UNITY_EDITOR_PATH ?? "";
 const UNITY_PROJECT_PATH = path.resolve(import.meta.dirname, "unity-project");
 
 const shouldRun = !!UNITY_EDITOR_PATH;
-const SYSTEM_OBJECT_ARRAY_CORE_CASE = "system_object_array_extern_core";
-const SYSTEM_OBJECT_ARRAY_CORE_EXTERNS = [
-  "SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid",
-  "SystemObjectArray.__ctor__SystemInt32__SystemObjectArray",
-  "SystemArray.__Copy__SystemArray_SystemInt64_SystemArray_SystemInt64_SystemInt64__SystemVoid",
-  "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
-] as const;
-const SYSTEM_OBJECT_ARRAY_DISALLOWED_EXTERNS = [
-  "SystemArray.__get_Length__SystemInt32",
-  "SystemObjectArray.__get_length__SystemInt32",
-  "ObjectArray.__ctor__SystemInt32__ObjectArray",
-  "SystemObjectArray.__Copy__SystemObjectArray_SystemInt32_SystemObjectArray_SystemInt32_SystemInt32__SystemVoid",
-  "SystemArray.__Copy__SystemObject_SystemInt32_SystemObject_SystemInt32_SystemInt32__SystemVoid",
-] as const;
 
 interface TestResultEntry {
   name: string;
@@ -100,21 +86,23 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       const uasmPath = path.join(inputDir, uasmFileName);
       writeFileSync(uasmPath, result.uasm, "utf-8");
 
-      if (testCase.name === SYSTEM_OBJECT_ARRAY_CORE_CASE) {
-        const missing = SYSTEM_OBJECT_ARRAY_CORE_EXTERNS.filter(
+      if (testCase.requiredExterns && testCase.requiredExterns.length > 0) {
+        const missing = testCase.requiredExterns.filter(
           (sig) => !result.uasm.includes(sig),
         );
         if (missing.length > 0) {
           throw new Error(
-            `Generated UASM for "${SYSTEM_OBJECT_ARRAY_CORE_CASE}" is missing required extern signatures: ${missing.join(", ")}`,
+            `Generated UASM for "${testCase.name}" is missing required extern signatures: ${missing.join(", ")}`,
           );
         }
-        const disallowed = SYSTEM_OBJECT_ARRAY_DISALLOWED_EXTERNS.filter(
-          (sig) => result.uasm.includes(sig),
+      }
+      if (testCase.disallowedExterns && testCase.disallowedExterns.length > 0) {
+        const disallowed = testCase.disallowedExterns.filter((sig) =>
+          result.uasm.includes(sig),
         );
         if (disallowed.length > 0) {
           throw new Error(
-            `Generated UASM for "${SYSTEM_OBJECT_ARRAY_CORE_CASE}" contains disallowed extern signatures: ${disallowed.join(", ")}`,
+            `Generated UASM for "${testCase.name}" contains disallowed extern signatures: ${disallowed.join(", ")}`,
           );
         }
       }
