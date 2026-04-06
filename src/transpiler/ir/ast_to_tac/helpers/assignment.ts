@@ -361,18 +361,23 @@ function coerceToNativeArray(
   objArrayType: ArrayTypeSymbol,
 ): [TACOperand, TACOperand] {
   const opType = converter.getOperandType(operand);
-  const isAliasChainBackedByArrayLiteral = (startName: string): boolean => {
+  const isAliasChainBackedByArrayLiteral = (
+    startName: string,
+    firstSymbol?: { initialValue?: unknown },
+  ): boolean => {
     const visited = new Set<string>();
     let current = startName;
+    let currentSymbol = firstSymbol;
     while (true) {
       if (visited.has(current)) return false;
       visited.add(current);
-      const symbol = converter.symbolTable.lookup(current);
+      const symbol = currentSymbol ?? converter.symbolTable.lookup(current);
       const initialValue = symbol?.initialValue as ASTNode | undefined;
       if (!initialValue) return false;
       if (initialValue.kind === ASTNodeKind.ArrayLiteralExpression) return true;
       if (initialValue.kind !== ASTNodeKind.Identifier) return false;
       current = (initialValue as IdentifierNode).name;
+      currentSymbol = undefined;
     }
   };
   const isDeclaredDataList =
@@ -383,15 +388,12 @@ function coerceToNativeArray(
     operand.kind === TACOperandKind.Variable &&
     opType instanceof ArrayTypeSymbol &&
     (() => {
-      const symbol = converter.symbolTable.lookup(
-        (operand as VariableOperand).name,
-      );
+      const startName = (operand as VariableOperand).name;
+      const symbol = converter.symbolTable.lookup(startName);
       // Safety: this heuristic is only reliable for const aliases because
       // let/var can be reassigned after declaration.
       if (!symbol?.isConstant) return false;
-      return isAliasChainBackedByArrayLiteral(
-        (operand as VariableOperand).name,
-      );
+      return isAliasChainBackedByArrayLiteral(startName, symbol);
     })();
   const isDataList = isDeclaredDataList || isArrayLiteralBackedDataList;
 

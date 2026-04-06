@@ -75,13 +75,19 @@ export function resolveExternSignature(
 ): string | null {
   const normalizedTypeName = normalizeTypeName(typeName);
   const rawTypeName = typeName.trim();
+  // In Udon/.NET array extern owners, accessor casing is canonical "Length".
+  // We keep this broad enough for SystemObjectArray/SystemInt32Array/etc,
+  // while avoiding arbitrary user-defined "*Array" class names.
+  const isUdonArrayLikeOwner =
+    normalizedTypeName === "Array" ||
+    normalizedTypeName === "SystemArray" ||
+    (normalizedTypeName.startsWith("System") &&
+      normalizedTypeName.endsWith("Array")) ||
+    rawTypeName.endsWith("[]");
   const normalizedMemberName =
     (accessType === "getter" || accessType === "setter") &&
     memberName === "length" &&
-    (normalizedTypeName === "Array" ||
-      normalizedTypeName === "SystemArray" ||
-      normalizedTypeName.endsWith("Array") ||
-      rawTypeName.endsWith("[]"))
+    isUdonArrayLikeOwner
       ? "Length"
       : memberName;
   const hasParamTypes = paramTypes !== undefined;
