@@ -30,6 +30,24 @@ const NUMERIC_TYPES = new Set<string>([
   "System.Double",
 ]);
 
+const KNOWN_UDON_SYSTEM_ARRAY_OWNERS = new Set<string>([
+  "SystemObjectArray",
+  "SystemBooleanArray",
+  "SystemByteArray",
+  "SystemSByteArray",
+  "SystemCharArray",
+  "SystemInt16Array",
+  "SystemUInt16Array",
+  "SystemInt32Array",
+  "SystemUInt32Array",
+  "SystemInt64Array",
+  "SystemUInt64Array",
+  "SystemSingleArray",
+  "SystemDoubleArray",
+  "SystemDecimalArray",
+  "SystemStringArray",
+]);
+
 function scoreParamMatch(candidate: string, actual: string): number | null {
   if (candidate === actual) return 2;
   if (isGenericPlaceholder(candidate)) return 1;
@@ -75,19 +93,23 @@ export function resolveExternSignature(
 ): string | null {
   const normalizedTypeName = normalizeTypeName(typeName);
   const rawTypeName = typeName.trim();
-  // In Udon/.NET array extern owners, accessor casing is canonical "Length".
-  // We keep this broad enough for SystemObjectArray/SystemInt32Array/etc,
-  // while avoiding arbitrary user-defined "*Array" class names.
+  const isLengthAccessor =
+    (accessType === "getter" || accessType === "setter") &&
+    memberName === "length";
+  // Prefer metadata-backed normalization for "length" -> "Length". Keep a
+  // small allowlist for known Udon System*Array owners when metadata is absent.
+  const hasCanonicalLengthMember =
+    isLengthAccessor &&
+    typeMetadataRegistry.getMemberOverloads(normalizedTypeName, "Length").length >
+      0;
   const isUdonArrayLikeOwner =
     normalizedTypeName === "Array" ||
     normalizedTypeName === "SystemArray" ||
-    (normalizedTypeName.startsWith("System") &&
-      normalizedTypeName.endsWith("Array")) ||
-    rawTypeName.endsWith("[]");
+    rawTypeName.endsWith("[]") ||
+    KNOWN_UDON_SYSTEM_ARRAY_OWNERS.has(normalizedTypeName) ||
+    hasCanonicalLengthMember;
   const normalizedMemberName =
-    (accessType === "getter" || accessType === "setter") &&
-    memberName === "length" &&
-    isUdonArrayLikeOwner
+    isLengthAccessor && isUdonArrayLikeOwner
       ? "Length"
       : memberName;
   const hasParamTypes = paramTypes !== undefined;
