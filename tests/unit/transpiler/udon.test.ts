@@ -171,13 +171,18 @@ describe("Udon Code Generation", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Type-specific array Get signature (not base SystemArray)
+    // Arrays now use DataList get_Item + DataToken unwrap instead of typed array Get
     expect(
       externs.some((sig) =>
-        sig.includes("SystemSingleArray.__Get__SystemInt32__SystemSingle"),
+        sig.includes(
+          "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+        ),
       ),
     ).toBe(true);
-    // Base class SystemArray.__Get__ should NOT appear
+    // Old SystemArray/SystemSingleArray Get should NOT appear
+    expect(
+      externs.some((sig) => sig.includes("SystemSingleArray.__Get__")),
+    ).toBe(false);
     expect(
       externs.some((sig) => sig.includes("SystemArray.__Get__SystemInt32")),
     ).toBe(false);

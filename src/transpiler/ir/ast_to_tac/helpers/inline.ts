@@ -31,6 +31,7 @@ import {
   type ForStatementNode,
   type IdentifierNode,
   type IfStatementNode,
+  isNumericUdonType,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
@@ -50,6 +51,7 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
@@ -119,12 +121,24 @@ export function saveAndBindInlineParams(
     converter.inlineInstanceMap.delete(param.name);
     const arg = args[i];
     if (arg) {
-      // Plain CopyInstruction — the argInfo/type-based tracking logic
-      // below is the authoritative source for parameter tracking.
+      // Coerce argument type if both are numeric but different.
+      // Without this, a COPY from Single (float) to Int32 would do a
+      // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
+      let argToUse = arg;
+      const argType = converter.getOperandType(arg);
+      if (
+        argType.udonType !== param.type.udonType &&
+        isNumericUdonType(argType.udonType) &&
+        isNumericUdonType(param.type.udonType)
+      ) {
+        const coercedArg = converter.newTemp(param.type);
+        converter.instructions.push(new CastInstruction(coercedArg, arg));
+        argToUse = coercedArg;
+      }
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
-          arg,
+          argToUse,
         ),
       );
       const argInfo = argInlineInfos[i];
@@ -619,6 +633,28 @@ export function visitInlineConstructor(
       try {
         if (!classNode.baseClass) {
           emitDeferredInlineInitializers(this, classNode.name);
+        }
+        // Emit implicit assignments for TypeScript parameter properties
+        // (e.g., `constructor(public value: UdonInt)` auto-assigns
+        // `this.value = value`). These are NOT in the constructor body.
+        for (const param of classNode.constructor.parameters) {
+          const isParamProperty = classNode.properties.some(
+            (prop) => prop.name === param.name && !prop.isStatic,
+          );
+          if (isParamProperty) {
+            const fieldVar = this.mapInlineProperty(
+              className,
+              instancePrefix,
+              param.name,
+            );
+            if (fieldVar) {
+              const paramType = this.typeMapper.mapTypeScriptType(param.type);
+              const paramVar = createVariable(param.name, paramType, {
+                isParameter: true,
+              });
+              this.emitCopyWithTracking(fieldVar, paramVar);
+            }
+          }
         }
         this.visitStatement(classNode.constructor.body);
         if (classNode.baseClass) {

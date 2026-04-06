@@ -2,6 +2,7 @@ import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -40,8 +41,6 @@ import {
   type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -77,6 +76,24 @@ import {
   resolveConcreteClassName,
 } from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
+
+/**
+ * Check if a type represents an inline class instance stored as an Int32 handle.
+ * Inline class instances are NOT UdonBehaviour types and have entries in the
+ * classMap or interfaceClassIdMap.
+ */
+function _isInlineHandleType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  return (
+    (type instanceof ClassTypeSymbol &&
+      converter.classMap.has(type.name) &&
+      !converter.udonBehaviourClasses.has(type.name)) ||
+    (type instanceof InterfaceTypeSymbol &&
+      converter.interfaceClassIdMap.has(type.name))
+  );
+}
 
 /**
  * Try to map an inline property, falling back to concrete class resolution
@@ -1123,12 +1140,9 @@ export function visitArrayLiteralExpression(
           createConstant(0, PrimitiveTypes.int32),
         ),
       );
+      // All arrays (both DataList and ArrayTypeSymbol) use Count at runtime.
       this.instructions.push(
-        new PropertyGetInstruction(
-          lengthVar,
-          spreadValue,
-          isDataList ? "Count" : "length",
-        ),
+        new PropertyGetInstruction(lengthVar, spreadValue, "Count"),
       );
 
       const loopStart = this.newLabel("array_spread_start");
@@ -1142,26 +1156,15 @@ export function visitArrayLiteralExpression(
       );
       this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
 
-      const elementType = isDataList
-        ? spreadType instanceof DataListTypeSymbol
-          ? spreadType.elementType
-          : ObjectType
-        : spreadType instanceof ArrayTypeSymbol
-          ? spreadType.elementType
-          : (this.getArrayElementType(spreadValue) ?? ObjectType);
-      const itemTemp = this.newTemp(elementType);
-      if (isDataList) {
-        this.instructions.push(
-          new MethodCallInstruction(itemTemp, spreadValue, "get_Item", [
-            indexVar,
-          ]),
-        );
-      } else {
-        this.instructions.push(
-          new ArrayAccessInstruction(itemTemp, spreadValue, indexVar),
-        );
-      }
-      const token = this.wrapDataToken(itemTemp);
+      // All arrays use DataList.get_Item at runtime → returns DataToken.
+      const itemToken = this.newTemp(ExternTypes.dataToken);
+      this.instructions.push(
+        new MethodCallInstruction(itemToken, spreadValue, "get_Item", [
+          indexVar,
+        ]),
+      );
+      // DataList.Add expects DataToken — pass directly, no wrap/unwrap needed.
+      const token = itemToken;
       this.instructions.push(
         new MethodCallInstruction(undefined, listResult, "Add", [token]),
       );
@@ -1302,6 +1305,8 @@ export function visitArrayAccessExpression(
     return tokenResult;
   }
 
+  // Native SystemArray EXTERNs (Get/Set) are not supported by Udon VM.
+  // Treat ArrayTypeSymbol the same as DataList: get_Item + unwrapDataToken.
   let elementType = this.getArrayElementType(array);
   if (!elementType) {
     const resolvedArrayType = resolveTypeFromNode(this, node.array);
@@ -1319,9 +1324,19 @@ export function visitArrayAccessExpression(
     }
   }
   const resolvedElementType = elementType ?? ObjectType;
-  const result = this.newTemp(resolvedElementType);
-  this.instructions.push(new ArrayAccessInstruction(result, array, index));
-  return result;
+  // Coerce index to Int32 for DataList.get_Item
+  let coercedIndex = index;
+  const idxType = this.getOperandType(index);
+  if (needsInt32IndexCoercion(idxType.udonType)) {
+    const intIndex = this.newTemp(PrimitiveTypes.int32);
+    this.instructions.push(new CastInstruction(intIndex, index));
+    coercedIndex = intIndex;
+  }
+  const tokenResult = this.newTemp(ExternTypes.dataToken);
+  this.instructions.push(
+    new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+  );
+  return this.unwrapDataToken(tokenResult, resolvedElementType);
 }
 
 export function visitPropertyAccessExpression(
@@ -1807,10 +1822,11 @@ export function visitPropertyAccessExpression(
     const objectType = this.getOperandType(object);
 
     // Early return for .length on arrays — always int32.
+    // Arrays are backed by DataList, so use "Count" property.
     if (objectType instanceof ArrayTypeSymbol && node.property === "length") {
       const result = this.newTemp(PrimitiveTypes.int32);
       this.instructions.push(
-        new PropertyGetInstruction(result, object, node.property),
+        new PropertyGetInstruction(result, object, "Count"),
       );
       return result;
     }
@@ -2063,9 +2079,21 @@ export function visitDeleteExpression(
       );
       return result;
     }
+    // delete arr[i] → set_Item(i, DataToken(null))
     const nullValue = createConstant(null, ObjectType);
+    let coercedIndex = index;
+    const idxType = this.getOperandType(index);
+    if (needsInt32IndexCoercion(idxType.udonType)) {
+      const intIndex = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CastInstruction(intIndex, index));
+      coercedIndex = intIndex;
+    }
+    const token = this.wrapDataToken(nullValue);
     this.instructions.push(
-      new ArrayAssignmentInstruction(array, index, nullValue),
+      new MethodCallInstruction(undefined, array, "set_Item", [
+        coercedIndex,
+        token,
+      ]),
     );
     return createConstant(true, PrimitiveTypes.boolean);
   }

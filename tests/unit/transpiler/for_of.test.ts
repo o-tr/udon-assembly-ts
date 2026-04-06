@@ -24,14 +24,15 @@ describe("for...of", () => {
     );
     const tac = converter.convert(ast);
 
-    const hasArrayAccess = tac.some(
-      (inst) => inst.kind === TACInstructionKind.ArrayAccess,
+    // for...of now uses DataList get_Item (MethodCall) instead of ArrayAccess
+    const hasMethodCall = tac.some(
+      (inst) => inst.kind === TACInstructionKind.MethodCall,
     );
     const hasLabels = tac.some(
       (inst) => inst.kind === TACInstructionKind.Label,
     );
 
-    expect(hasArrayAccess).toBe(true);
+    expect(hasMethodCall).toBe(true);
     expect(hasLabels).toBe(true);
   });
 

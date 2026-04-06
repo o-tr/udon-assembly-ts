@@ -25,10 +25,11 @@ describe("array concat extern signatures", () => {
     const uasm = result.uasm;
 
     const required = [
-      "SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid",
-      "SystemObjectArray.__ctor__SystemInt32__SystemObjectArray",
-      "SystemArray.__Copy__SystemArray_SystemInt64_SystemArray_SystemInt64_SystemInt64__SystemVoid",
+      "VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList",
+      "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
       "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+      "VRCSDK3DataDataList.__get_Count__SystemInt32",
+      "VRCSDK3DataDataToken.__ctor__",
     ];
     for (const sig of required) {
       expect(uasm).toContain(sig);
@@ -37,9 +38,11 @@ describe("array concat extern signatures", () => {
     const disallowed = [
       "SystemArray.__get_Length__SystemInt32",
       "SystemObjectArray.__get_length__SystemInt32",
+      "SystemObjectArray.__Get__",
+      "SystemObjectArray.__Set__",
+      "SystemObjectArray.__ctor__",
+      "SystemArray.__Copy__",
       "ObjectArray.__ctor__SystemInt32__ObjectArray",
-      "SystemObjectArray.__Copy__SystemObjectArray_SystemInt32_SystemObjectArray_SystemInt32_SystemInt32__SystemVoid",
-      "SystemArray.__Copy__SystemObject_SystemInt32_SystemObject_SystemInt32_SystemInt32__SystemVoid",
     ];
     for (const sig of disallowed) {
       expect(uasm).not.toContain(sig);

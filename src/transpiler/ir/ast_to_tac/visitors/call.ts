@@ -1,10 +1,6 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
-import {
-  isKnownExternElementType,
-  mapTypeScriptToCSharp,
-  toUdonTypeNameWithArray,
-} from "../../../codegen/udon_type_resolver.js";
+import { mapTypeScriptToCSharp } from "../../../codegen/udon_type_resolver.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -32,8 +28,6 @@ import {
   UdonType,
 } from "../../../frontend/types.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -1212,11 +1206,9 @@ export function visitCallExpression(
       propAccess.object.kind === ASTNodeKind.Identifier
     ) {
       const lengthResult = this.newTemp(PrimitiveTypes.int32);
-      const arrayType = this.getOperandType(object);
-      const lengthProp =
-        arrayType.name === ExternTypes.dataList.name ? "Count" : "Length";
+      // All arrays are backed by DataList — always use Count.
       this.instructions.push(
-        new PropertyGetInstruction(lengthResult, object, lengthProp),
+        new PropertyGetInstruction(lengthResult, object, "Count"),
       );
       return lengthResult;
     }
@@ -1441,7 +1433,7 @@ export function visitCallExpression(
       const adjustNegIndex = (arg: TACOperand): TACOperand => {
         const lenTemp = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(
-          new PropertyGetInstruction(lenTemp, object, "length"),
+          new PropertyGetInstruction(lenTemp, object, "Count"),
         );
         const adjusted = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(
@@ -1526,28 +1518,23 @@ export function visitCallExpression(
             if (isArray) {
               result = emitArrayConcat(this, result, arg);
             } else {
-              // Wrap scalar in a single-element native Object[1] array.
-              // Using native array + ArrayAssignment avoids DataToken
-              // .Reference issues with primitive scalars (int/float).
+              // Wrap scalar in a single-element DataList.
               const wrapperCtorSig = this.requireExternSignature(
-                "object[]",
+                "DataList",
                 "ctor",
                 "method",
-                ["int"],
-                "object[]",
+                [],
+                "DataList",
               );
-              const wrapper = this.newTemp(new ArrayTypeSymbol(ObjectType));
-              this.instructions.push(
-                new CallInstruction(wrapper, wrapperCtorSig, [
-                  createConstant(1, PrimitiveTypes.int32),
-                ]),
+              const wrapper = this.newTemp(
+                new DataListTypeSymbol(this.getOperandType(arg)),
               );
               this.instructions.push(
-                new ArrayAssignmentInstruction(
-                  wrapper,
-                  createConstant(0, PrimitiveTypes.int32),
-                  arg,
-                ),
+                new CallInstruction(wrapper, wrapperCtorSig, []),
+              );
+              const token = this.wrapDataToken(arg);
+              this.instructions.push(
+                new MethodCallInstruction(undefined, wrapper, "Add", [token]),
               );
               result = emitArrayConcat(this, result, wrapper);
             }
@@ -1615,7 +1602,7 @@ export function visitCallExpression(
           );
           const lenVar = this.newTemp(PrimitiveTypes.int32);
           this.instructions.push(
-            new PropertyGetInstruction(lenVar, object, "length"),
+            new PropertyGetInstruction(lenVar, object, "Count"),
           );
           const loopStart = this.newLabel("includes_start");
           const loopEnd = this.newLabel("includes_end");
@@ -1628,15 +1615,18 @@ export function visitCallExpression(
           this.instructions.push(
             new ConditionalJumpInstruction(condVar, loopEnd),
           );
-          // elem = array[i]
+          // elem = DataList.get_Item(i) → unwrap
           const elemType =
             objectType instanceof ArrayTypeSymbol
               ? objectType.elementType
               : ObjectType;
-          const elem = this.newTemp(elemType);
+          const tokenTemp = this.newTemp(ExternTypes.dataToken);
           this.instructions.push(
-            new ArrayAccessInstruction(elem, object, indexVar),
+            new MethodCallInstruction(tokenTemp, object, "get_Item", [
+              indexVar,
+            ]),
           );
+          const elem = this.unwrapDataToken(tokenTemp, elemType);
           // if (elem == value) { result = true; goto end }
           const eqVar = this.newTemp(PrimitiveTypes.boolean);
           this.instructions.push(
@@ -1683,65 +1673,23 @@ export function visitCallExpression(
           if (evaluatedArgs.length === 0) {
             const curLen = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
-              new PropertyGetInstruction(curLen, object, "length"),
+              new PropertyGetInstruction(curLen, object, "Count"),
             );
             return curLen;
           }
 
-          // Udon arrays are fixed-size. Implement push as:
-          //   wrapper = new T[N]
-          //   wrapper[0] = arg0; wrapper[1] = arg1; ...
-          //   newArr = array.concat(wrapper)
-          //   array = newArr  (reference replacement)
-          //   return newArr.length
-
-          // Determine the Udon array type for the constructor EXTERN
-          const elemName =
-            objectType instanceof ArrayTypeSymbol
-              ? objectType.elementType.name
-              : "object";
-          const arrayUdonType = isKnownExternElementType(elemName)
-            ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
-            : "SystemObjectArray";
-          const ctorSig = `${arrayUdonType}.__ctor__SystemInt32__${arrayUdonType}`;
-
-          // 1. Create wrapper array of size N
-          const wrapperSize = createConstant(
-            evaluatedArgs.length,
-            PrimitiveTypes.int32,
-          );
-          const wrapper = this.newTemp(arrayReturn);
-          this.instructions.push(
-            new CallInstruction(wrapper, ctorSig, [wrapperSize]),
-          );
-
-          // 2. Set each element in the wrapper
-          for (let i = 0; i < evaluatedArgs.length; i++) {
+          // All arrays are backed by DataList. push = DataList.Add per arg.
+          for (const arg of evaluatedArgs) {
+            const token = this.wrapDataToken(arg);
             this.instructions.push(
-              new ArrayAssignmentInstruction(
-                wrapper,
-                createConstant(i, PrimitiveTypes.int32),
-                evaluatedArgs[i],
-              ),
+              new MethodCallInstruction(undefined, object, "Add", [token]),
             );
           }
 
-          // 3. Concat original array with wrapper
-          const newArr = emitArrayConcat(this, object, wrapper);
-
-          // 4. Write back new array reference to original variable.
-          // Only Variable operands (locals, inline class fields) can be
-          // updated persistently. Temporary operands originate from
-          // PropertyGet and writing to them would not propagate back to
-          // the source property.
-          if (object.kind === TACOperandKind.Variable) {
-            this.instructions.push(new CopyInstruction(object, newArr));
-          }
-
-          // 5. Return new length (push returns the new array length)
+          // Return new length (push returns the new array length)
           const newLen = this.newTemp(PrimitiveTypes.int32);
           this.instructions.push(
-            new PropertyGetInstruction(newLen, newArr, "length"),
+            new PropertyGetInstruction(newLen, object, "Count"),
           );
           return newLen;
         }
@@ -1766,7 +1714,7 @@ export function visitCallExpression(
                 : evaluatedArgs[0];
             const arrLen = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
-              new PropertyGetInstruction(arrLen, object, "length"),
+              new PropertyGetInstruction(arrLen, object, "Count"),
             );
             const computedDeleteCount = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
@@ -1811,7 +1759,7 @@ export function visitCallExpression(
           // right = array.slice(endIdx, length)
           const spliceLen = this.newTemp(PrimitiveTypes.int32);
           this.instructions.push(
-            new PropertyGetInstruction(spliceLen, object, "length"),
+            new PropertyGetInstruction(spliceLen, object, "Count"),
           );
           const rightPart = this.newTemp(arrayReturn);
           this.instructions.push(
@@ -1823,34 +1771,32 @@ export function visitCallExpression(
 
           let combined = leftPart;
 
-          // If there are items to insert, build an insert array
+          // If there are items to insert, build an insert DataList
           if (insertItems.length > 0) {
-            const elemName =
+            const elemType =
               objectType instanceof ArrayTypeSymbol
-                ? objectType.elementType.name
-                : "object";
-            const insertArrayUdonType = isKnownExternElementType(elemName)
-              ? toUdonTypeNameWithArray(`${mapTypeScriptToCSharp(elemName)}[]`)
-              : "SystemObjectArray";
-            const insertCtorSig = `${insertArrayUdonType}.__ctor__SystemInt32__${insertArrayUdonType}`;
-            const insertSize = createConstant(
-              insertItems.length,
-              PrimitiveTypes.int32,
+                ? objectType.elementType
+                : ObjectType;
+            const insertList = this.newTemp(new DataListTypeSymbol(elemType));
+            const insertCtorSig = this.requireExternSignature(
+              "DataList",
+              "ctor",
+              "method",
+              [],
+              "DataList",
             );
-            const insertArr = this.newTemp(arrayReturn);
             this.instructions.push(
-              new CallInstruction(insertArr, insertCtorSig, [insertSize]),
+              new CallInstruction(insertList, insertCtorSig, []),
             );
-            for (let i = 0; i < insertItems.length; i++) {
+            for (const item of insertItems) {
+              const token = this.wrapDataToken(item);
               this.instructions.push(
-                new ArrayAssignmentInstruction(
-                  insertArr,
-                  createConstant(i, PrimitiveTypes.int32),
-                  insertItems[i],
-                ),
+                new MethodCallInstruction(undefined, insertList, "Add", [
+                  token,
+                ]),
               );
             }
-            combined = emitArrayConcat(this, leftPart, insertArr);
+            combined = emitArrayConcat(this, leftPart, insertList);
           }
 
           // newArr = combined.concat(right)
@@ -2614,7 +2560,7 @@ function emitSetPopulateFromIterable(
   let elementType = resolveSetElementType(setType);
 
   let listOperand = iterableOperand;
-  let isDataList = false;
+  let _isDataList = false;
 
   const isArrayType =
     operandType instanceof ArrayTypeSymbol ||
@@ -2652,9 +2598,9 @@ function emitSetPopulateFromIterable(
     // Array iterable, keep listOperand as-is.
   } else if (isDictionaryType) {
     listOperand = emitSetKeysList(converter, iterableOperand, elementType);
-    isDataList = true;
+    _isDataList = true;
   } else if (isDataListType) {
-    isDataList = true;
+    _isDataList = true;
   } else {
     throw new Error(
       "Set constructor expects an Array, DataList, or Set iterable.",
@@ -2669,12 +2615,9 @@ function emitSetPopulateFromIterable(
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
+  // All arrays are backed by DataList — always use Count.
   converter.instructions.push(
-    new PropertyGetInstruction(
-      lengthVar,
-      listOperand,
-      isDataList ? "Count" : "length",
-    ),
+    new PropertyGetInstruction(lengthVar, listOperand, "Count"),
   );
 
   const loopStart = converter.newLabel("set_ctor_start");
@@ -2690,19 +2633,11 @@ function emitSetPopulateFromIterable(
     new ConditionalJumpInstruction(condTemp, loopEnd),
   );
 
-  let keyToken: TACOperand;
-  if (isDataList) {
-    keyToken = converter.newTemp(ExternTypes.dataToken);
-    converter.instructions.push(
-      new MethodCallInstruction(keyToken, listOperand, "get_Item", [indexVar]),
-    );
-  } else {
-    const elementValue = converter.newTemp(elementType);
-    converter.instructions.push(
-      new ArrayAccessInstruction(elementValue, listOperand, indexVar),
-    );
-    keyToken = converter.wrapDataToken(elementValue);
-  }
+  // All iterables use DataList.get_Item → DataToken.
+  const keyToken = converter.newTemp(ExternTypes.dataToken);
+  converter.instructions.push(
+    new MethodCallInstruction(keyToken, listOperand, "get_Item", [indexVar]),
+  );
 
   const valueToken = converter.wrapDataToken(
     createConstant(true, PrimitiveTypes.boolean),
@@ -2773,11 +2708,11 @@ function emitMapPopulateFromIterable(
   const resolvedIterableType = resolveTypeFromNode(converter, iterableNode);
   const operandType = converter.getOperandType(iterableOperand);
   const keyType = resolveMapKeyType(mapType);
-  const valueType = resolveMapValueType(mapType);
+  const _valueType = resolveMapValueType(mapType);
 
   let listOperand = iterableOperand;
-  let isDataList = false;
-  let pairElementType: TypeSymbol | null = null;
+  let _isDataList = false;
+  let _pairElementType: TypeSymbol | null = null;
 
   const isArrayType =
     operandType instanceof ArrayTypeSymbol ||
@@ -2806,22 +2741,22 @@ function emitMapPopulateFromIterable(
     !isSetCollectionType(resolvedIterableType);
 
   if (operandType instanceof ArrayTypeSymbol) {
-    pairElementType = operandType.elementType;
+    _pairElementType = operandType.elementType;
   } else if (resolvedIterableType instanceof ArrayTypeSymbol) {
-    pairElementType = resolvedIterableType.elementType;
+    _pairElementType = resolvedIterableType.elementType;
   } else if (operandType instanceof DataListTypeSymbol) {
-    pairElementType = operandType.elementType;
+    _pairElementType = operandType.elementType;
   } else if (resolvedIterableType instanceof DataListTypeSymbol) {
-    pairElementType = resolvedIterableType.elementType;
+    _pairElementType = resolvedIterableType.elementType;
   }
 
   if (isDictionaryType) {
     listOperand = emitMapKeysList(converter, iterableOperand, keyType);
-    isDataList = true;
+    _isDataList = true;
   } else if (isArrayType) {
     // Array iterable of [key, value] pairs, keep listOperand as-is.
   } else if (isDataListType) {
-    isDataList = true;
+    _isDataList = true;
   } else {
     throw new Error(
       "Map constructor expects an Array, DataList, or Map iterable.",
@@ -2836,12 +2771,9 @@ function emitMapPopulateFromIterable(
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
+  // All arrays are backed by DataList — always use Count.
   converter.instructions.push(
-    new PropertyGetInstruction(
-      lengthVar,
-      listOperand,
-      isDataList ? "Count" : "length",
-    ),
+    new PropertyGetInstruction(lengthVar, listOperand, "Count"),
   );
 
   const loopStart = converter.newLabel("map_ctor_start");
@@ -2875,7 +2807,9 @@ function emitMapPopulateFromIterable(
     );
     keyToken = dictKeyToken;
     valueToken = dictValueToken;
-  } else if (isDataList) {
+  } else {
+    // Both DataList and ArrayTypeSymbol are backed by DataList at runtime.
+    // Elements are [key, value] pairs stored as nested DataLists.
     const pairToken = converter.newTemp(ExternTypes.dataToken);
     converter.instructions.push(
       new MethodCallInstruction(pairToken, listOperand, "get_Item", [indexVar]),
@@ -2895,55 +2829,6 @@ function emitMapPopulateFromIterable(
     );
     keyToken = pairKeyToken;
     valueToken = pairValueToken;
-  } else {
-    const pairValue = converter.newTemp(pairElementType ?? ObjectType);
-    converter.instructions.push(
-      new ArrayAccessInstruction(pairValue, listOperand, indexVar),
-    );
-    const pairValueType =
-      pairElementType ?? converter.getOperandType(pairValue);
-    if (pairValueType instanceof ArrayTypeSymbol) {
-      const keyValue = converter.newTemp(keyType);
-      const valueValue = converter.newTemp(valueType);
-      converter.instructions.push(
-        new ArrayAccessInstruction(
-          keyValue,
-          pairValue,
-          createConstant(0, PrimitiveTypes.int32),
-        ),
-      );
-      converter.instructions.push(
-        new ArrayAccessInstruction(
-          valueValue,
-          pairValue,
-          createConstant(1, PrimitiveTypes.int32),
-        ),
-      );
-      keyToken = converter.wrapDataToken(keyValue);
-      valueToken = converter.wrapDataToken(valueValue);
-    } else if (
-      pairValueType instanceof DataListTypeSymbol ||
-      pairValueType.name === ExternTypes.dataList.name
-    ) {
-      const pairKeyToken = converter.newTemp(ExternTypes.dataToken);
-      const pairValueToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(pairKeyToken, pairValue, "get_Item", [
-          createConstant(0, PrimitiveTypes.int32),
-        ]),
-      );
-      converter.instructions.push(
-        new MethodCallInstruction(pairValueToken, pairValue, "get_Item", [
-          createConstant(1, PrimitiveTypes.int32),
-        ]),
-      );
-      keyToken = pairKeyToken;
-      valueToken = pairValueToken;
-    } else {
-      throw new Error(
-        "Map constructor expects iterable of [key, value] pairs.",
-      );
-    }
   }
 
   converter.instructions.push(
@@ -3697,10 +3582,9 @@ export function visitArrayStaticCall(
           ),
         );
 
-        // Use Count for DataList, Length for native Array
-        const lengthProp = !isArraySource ? "Count" : "Length";
+        // All arrays are backed by DataList — always use Count.
         this.instructions.push(
-          new PropertyGetInstruction(lengthVar, source, lengthProp),
+          new PropertyGetInstruction(lengthVar, source, "Count"),
         );
 
         const loopStart = this.newLabel("array_from_start");
@@ -3716,28 +3600,14 @@ export function visitArrayStaticCall(
           new ConditionalJumpInstruction(condTemp, loopEnd),
         );
 
-        if (!isArraySource) {
-          const itemToken = this.newTemp(ExternTypes.dataToken);
-          this.instructions.push(
-            new MethodCallInstruction(itemToken, source, "get_Item", [
-              indexVar,
-            ]),
-          );
-          this.instructions.push(
-            new MethodCallInstruction(undefined, listResult, "Add", [
-              itemToken,
-            ]),
-          );
-        } else {
-          const elementValue = this.newTemp(elementType);
-          this.instructions.push(
-            new ArrayAccessInstruction(elementValue, source, indexVar),
-          );
-          const token = this.wrapDataToken(elementValue);
-          this.instructions.push(
-            new MethodCallInstruction(undefined, listResult, "Add", [token]),
-          );
-        }
+        // All sources use DataList.get_Item → DataToken → Add.
+        const itemToken = this.newTemp(ExternTypes.dataToken);
+        this.instructions.push(
+          new MethodCallInstruction(itemToken, source, "get_Item", [indexVar]),
+        );
+        this.instructions.push(
+          new MethodCallInstruction(undefined, listResult, "Add", [itemToken]),
+        );
 
         this.instructions.push(new LabelInstruction(loopContinue));
         this.instructions.push(

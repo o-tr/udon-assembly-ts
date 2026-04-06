@@ -12,8 +12,6 @@ import {
 } from "../../ir/tac_operand.js";
 import { PushInstruction } from "../udon_instruction.js";
 import {
-  isKnownExternElementType,
-  mapTypeScriptToCSharp,
   toUdonTypeNameWithArray,
   udonTypeToCSharp,
 } from "../udon_type_resolver.js";
@@ -86,14 +84,10 @@ export function getOperandTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
+      // All TypeScript arrays are backed by DataList at runtime.
+      // Native SystemArray EXTERNs (Get/Set) are not supported by Udon VM.
       if (typeSymbol instanceof ArrayTypeSymbol) {
-        if (!isKnownExternElementType(typeSymbol.elementType.name)) {
-          return "SystemObjectArray";
-        }
-        const elementCSharp = mapTypeScriptToCSharp(
-          typeSymbol.elementType.name,
-        );
-        return toUdonTypeNameWithArray(`${elementCSharp}[]`);
+        return "VRCSDK3DataDataList";
       }
       return toUdonTypeNameWithArray(udonTypeToCSharp(typeSymbol.udonType));
     }

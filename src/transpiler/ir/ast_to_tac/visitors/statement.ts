@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
@@ -31,7 +32,6 @@ import {
 } from "../../../frontend/types.js";
 import { getVrcEventDefinition } from "../../../vrc/event_registry.js";
 import {
-  ArrayAccessInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -65,6 +65,19 @@ import {
 } from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
+
+function _isInlineHandleType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  return (
+    (type instanceof ClassTypeSymbol &&
+      converter.classMap.has(type.name) &&
+      !converter.udonBehaviourClasses.has(type.name)) ||
+    (type instanceof InterfaceTypeSymbol &&
+      converter.interfaceClassIdMap.has(type.name))
+  );
+}
 
 function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
   for (let i = converter.loopContextStack.length - 1; i >= 0; i -= 1) {
@@ -464,8 +477,11 @@ export function visitForOfStatement(
   // element type. When matching ExternTypes.dataList or UdonType.DataList by
   // name, elements come from DataList.get_Item as raw DataToken and must stay
   // unwrapped.
+  // All arrays are backed by DataList at runtime (native SystemArray
+  // EXTERNs are not supported by Udon VM).
   const isDataList =
     iterableType instanceof DataListTypeSymbol ||
+    iterableType instanceof ArrayTypeSymbol ||
     iterableType.name === ExternTypes.dataList.name ||
     iterableType.udonType === UdonType.DataList;
   const indexVar = this.newTemp(PrimitiveTypes.int32);
@@ -498,8 +514,13 @@ export function visitForOfStatement(
   // If we're iterating an untyped `DataList` (matched by name/udonType), the
   // elements we get are raw `DataToken`s — force the loop variable to be a
   // `DataToken` so copies are well-typed. Only unwrap to concrete element
-  // types when we have a `DataListTypeSymbol` carrying elementType info.
-  if (isDataList && !(iterableType instanceof DataListTypeSymbol)) {
+  // types when we have a `DataListTypeSymbol` or `ArrayTypeSymbol` carrying
+  // elementType info.
+  if (
+    isDataList &&
+    !(iterableType instanceof DataListTypeSymbol) &&
+    !(iterableType instanceof ArrayTypeSymbol)
+  ) {
     elementType = ExternTypes.dataToken;
   }
 
@@ -520,12 +541,9 @@ export function visitForOfStatement(
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
+  // All arrays use DataList Count at runtime.
   this.instructions.push(
-    new PropertyGetInstruction(
-      lengthVar,
-      iterableOperand,
-      isDataList ? "Count" : "length",
-    ),
+    new PropertyGetInstruction(lengthVar, iterableOperand, "Count"),
   );
 
   const loopStart = this.newLabel("forof_start");
@@ -539,30 +557,29 @@ export function visitForOfStatement(
   );
   this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
 
-  if (isDataList) {
+  {
     const tokenValue = this.newTemp(ExternTypes.dataToken);
     this.instructions.push(
       new MethodCallInstruction(tokenValue, iterableOperand, "get_Item", [
         indexVar,
       ]),
     );
-    const resolvedValue =
-      iterableType instanceof DataListTypeSymbol &&
-      elementType.name !== ExternTypes.dataToken.name
-        ? this.unwrapDataToken(tokenValue, elementType)
-        : tokenValue;
+    const hasTypedElements =
+      (iterableType instanceof DataListTypeSymbol ||
+        iterableType instanceof ArrayTypeSymbol) &&
+      elementType.name !== ExternTypes.dataToken.name;
+    const resolvedValue = hasTypedElements
+      ? this.unwrapDataToken(tokenValue, elementType)
+      : tokenValue;
     this.emitCopyWithTracking(elementVar, resolvedValue, true);
-  } else {
-    this.instructions.push(
-      new ArrayAccessInstruction(elementVar, iterableOperand, indexVar),
-    );
   }
   if (isDestructured) {
     const names = node.variable as string[];
     // Elements from DataList.get_Item are DataTokens, not generic Objects.
     // Using DataToken type ensures property accesses (e.g., .String, .Float)
     // resolve to the correct extern signatures.
-    const destructuredType = isDataList ? ExternTypes.dataToken : ObjectType;
+    // All arrays use DataList.get_Item which returns DataToken.
+    const destructuredType = ExternTypes.dataToken;
     for (let i = 0; i < names.length; i += 1) {
       const name = names[i];
       if (!this.symbolTable.hasInCurrentScope(name)) {
