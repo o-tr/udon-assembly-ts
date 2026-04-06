@@ -18,8 +18,11 @@ import type {
 } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import type { CFGPassOptions, PassResult } from "../pass_types.js";
-import { MAX_FIXPOINT_ITERATIONS } from "../pass_types.js";
+import {
+  type CFGPassOptions,
+  MAX_FIXPOINT_ITERATIONS,
+  type PassResult,
+} from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
   forEachUsedOperand,
@@ -55,7 +58,10 @@ export const globalValueNumbering = (
   let changed = true;
   let fixpointIter = 0;
   while (changed) {
-    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) break;
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) {
+      changed = false;
+      break;
+    }
     changed = false;
     for (const block of cfg.blocks) {
       const predMaps = block.preds.map((id) => outMaps.get(id) ?? new Map());
