@@ -1,6 +1,4 @@
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -239,14 +237,9 @@ const cloneInstruction = (inst: TACInstruction): TACInstruction => {
       const s = inst as PropertySetInstruction;
       return new PropertySetInstruction(s.object, s.property, s.value);
     }
-    case TACInstructionKind.ArrayAccess: {
-      const a = inst as ArrayAccessInstruction;
-      return new ArrayAccessInstruction(a.dest, a.array, a.index);
-    }
-    case TACInstructionKind.ArrayAssignment: {
-      const a = inst as ArrayAssignmentInstruction;
-      return new ArrayAssignmentInstruction(a.array, a.index, a.value);
-    }
+    case TACInstructionKind.ArrayAccess:
+    case TACInstructionKind.ArrayAssignment:
+      return inst;
     case TACInstructionKind.Return: {
       const r = inst as ReturnInstruction;
       return new ReturnInstruction(r.value);

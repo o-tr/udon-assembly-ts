@@ -64,29 +64,9 @@ export function assignToTarget(
       );
       return value;
     }
-    if (
-      arrayType instanceof DataListTypeSymbol ||
-      arrayType.name === ExternTypes.dataList.name
-    ) {
-      // Coerce index to Int32 for DataList.set_Item (expects SystemInt32)
-      let coercedIndex = index;
-      const indexType = this.getOperandType(index);
-      if (needsInt32IndexCoercion(indexType.udonType)) {
-        const intIndex = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CastInstruction(intIndex, index));
-        coercedIndex = intIndex;
-      }
-      const token = this.wrapDataToken(value);
-      this.instructions.push(
-        new MethodCallInstruction(undefined, array, "set_Item", [
-          coercedIndex,
-          token,
-        ]),
-      );
-      return value;
-    }
-    // Native SystemArray Set is not supported by Udon VM.
-    // Use DataList set_Item + DataToken wrapping instead.
+    // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
+    // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
+    // is handled above and does not need DataToken wrapping.
     let coercedIndex = index;
     const idxType = this.getOperandType(index);
     if (needsInt32IndexCoercion(idxType.udonType)) {
@@ -235,7 +215,8 @@ export function assignToTarget(
     const objectType = this.getOperandType(object);
     if (
       propAccess.property === "length" &&
-      objectType instanceof ArrayTypeSymbol &&
+      (objectType instanceof ArrayTypeSymbol ||
+        objectType instanceof DataListTypeSymbol) &&
       object.kind === TACOperandKind.Variable
     ) {
       const sliced = this.newTemp(objectType);
