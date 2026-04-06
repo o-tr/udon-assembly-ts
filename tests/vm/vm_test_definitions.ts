@@ -231,6 +231,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "system_object_array_extern_core",
     sourceFile: "system_object_array_extern_core.ts",
+    expectedLogs: ["concat_ok", "scalar_ok"],
   },
   // --- For-of destructuring & break/continue ---
   {

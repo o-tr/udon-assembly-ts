@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -360,23 +361,28 @@ function coerceToNativeArray(
   objArrayType: ArrayTypeSymbol,
 ): [TACOperand, TACOperand] {
   const opType = converter.getOperandType(operand);
+  const isAliasChainBackedByArrayLiteral = (startName: string): boolean => {
+    const visited = new Set<string>();
+    let current = startName;
+    while (true) {
+      if (visited.has(current)) return false;
+      visited.add(current);
+      const symbol = converter.symbolTable.lookup(current);
+      const initialValue = symbol?.initialValue as ASTNode | undefined;
+      if (!initialValue) return false;
+      if (initialValue.kind === ASTNodeKind.ArrayLiteralExpression) return true;
+      if (initialValue.kind !== ASTNodeKind.Identifier) return false;
+      current = (initialValue as IdentifierNode).name;
+    }
+  };
   const isDeclaredDataList =
     opType instanceof DataListTypeSymbol ||
     opType.name === ExternTypes.dataList.name ||
     opType.udonType === UdonType.DataList;
   const isArrayLiteralBackedDataList =
-    (operand.kind === TACOperandKind.Variable ||
-      operand.kind === TACOperandKind.Temporary) &&
+    operand.kind === TACOperandKind.Variable &&
     opType instanceof ArrayTypeSymbol &&
-    (() => {
-      const varName =
-        operand.kind === TACOperandKind.Variable
-          ? (operand as VariableOperand).name
-          : (operand as TemporaryOperand).id;
-      const symbol = converter.symbolTable.lookup(String(varName));
-      const initialValue = symbol?.initialValue as ASTNode | undefined;
-      return initialValue?.kind === ASTNodeKind.ArrayLiteralExpression;
-    })();
+    isAliasChainBackedByArrayLiteral((operand as VariableOperand).name);
   const isDataList = isDeclaredDataList || isArrayLiteralBackedDataList;
 
   if (!isDataList) {
@@ -426,20 +432,28 @@ function coerceToNativeArray(
   converter.instructions.push(
     new MethodCallInstruction(token, list, "get_Item", [idx]),
   );
-  const unwrapTargetType =
-    opType instanceof ArrayTypeSymbol ? opType.elementType : ObjectType;
+  const unwrapTargetType = (() => {
+    if (opType instanceof DataListTypeSymbol) return opType.elementType;
+    if (opType instanceof ArrayTypeSymbol) return opType.elementType;
+    return ObjectType;
+  })();
+  const isInlineHandleType =
+    (unwrapTargetType instanceof ClassTypeSymbol &&
+      converter.classMap.has(unwrapTargetType.name) &&
+      !converter.udonBehaviourClasses.has(unwrapTargetType.name)) ||
+    (unwrapTargetType instanceof InterfaceTypeSymbol &&
+      converter.interfaceClassIdMap.has(unwrapTargetType.name));
   // Inline class arrays are stored as int handles inside DataToken; using
   // .Reference can trigger unsupported externs on some UdonVM builds.
-  const elem =
-    unwrapTargetType.udonType === UdonType.Object
-      ? (() => {
-          const handle = converter.newTemp(PrimitiveTypes.int32);
-          converter.instructions.push(
-            new PropertyGetInstruction(handle, token, "Int"),
-          );
-          return handle;
-        })()
-      : converter.unwrapDataToken(token, unwrapTargetType);
+  const elem = isInlineHandleType
+    ? (() => {
+        const handle = converter.newTemp(PrimitiveTypes.int32);
+        converter.instructions.push(
+          new PropertyGetInstruction(handle, token, "Int"),
+        );
+        return handle;
+      })()
+    : converter.unwrapDataToken(token, unwrapTargetType);
   converter.instructions.push(new ArrayAssignmentInstruction(arr, idx, elem));
   const next = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(

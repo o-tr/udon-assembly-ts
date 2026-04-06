@@ -11,8 +11,9 @@ export class SystemObjectArrayExternCore extends UdonSharpBehaviour {
   Start(): void {
     const left: Box[] = [new Box(10), new Box(20)];
     const right: Box[] = [new Box(30)];
-    const merged = left.concat(right);
+    left.concat(right);
+    left.concat(new Box(40));
     Debug.Log("concat_ok");
-    Debug.Log(merged.length);
+    Debug.Log("scalar_ok");
   }
 }
