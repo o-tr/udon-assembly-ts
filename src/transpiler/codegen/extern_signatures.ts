@@ -30,6 +30,24 @@ const NUMERIC_TYPES = new Set<string>([
   "System.Double",
 ]);
 
+const KNOWN_UDON_SYSTEM_ARRAY_OWNERS = new Set<string>([
+  "SystemObjectArray",
+  "SystemBooleanArray",
+  "SystemByteArray",
+  "SystemSByteArray",
+  "SystemCharArray",
+  "SystemInt16Array",
+  "SystemUInt16Array",
+  "SystemInt32Array",
+  "SystemUInt32Array",
+  "SystemInt64Array",
+  "SystemUInt64Array",
+  "SystemSingleArray",
+  "SystemDoubleArray",
+  "SystemDecimalArray",
+  "SystemStringArray",
+]);
+
 function scoreParamMatch(candidate: string, actual: string): number | null {
   if (candidate === actual) return 2;
   if (isGenericPlaceholder(candidate)) return 1;
@@ -74,20 +92,41 @@ export function resolveExternSignature(
   returnType?: string,
 ): string | null {
   const normalizedTypeName = normalizeTypeName(typeName);
+  const rawTypeName = typeName.trim();
+  const isLengthAccessor =
+    (accessType === "getter" || accessType === "setter") &&
+    memberName === "length";
+  // Prefer metadata-backed normalization for "length" -> "Length". Keep a
+  // small allowlist for known Udon System*Array owners when metadata is absent.
+  const hasCanonicalLengthMember =
+    isLengthAccessor &&
+    typeMetadataRegistry.getMemberOverloads(normalizedTypeName, "Length")
+      .length > 0;
+  const isUdonArrayLikeOwner =
+    normalizedTypeName === "Array" ||
+    normalizedTypeName === "SystemArray" ||
+    rawTypeName.endsWith("[]") ||
+    KNOWN_UDON_SYSTEM_ARRAY_OWNERS.has(normalizedTypeName) ||
+    hasCanonicalLengthMember;
+  const normalizedMemberName =
+    isLengthAccessor && isUdonArrayLikeOwner ? "Length" : memberName;
   const hasParamTypes = paramTypes !== undefined;
   const metadata =
     hasParamTypes && paramTypes
       ? (() => {
           const overloads = typeMetadataRegistry.getMemberOverloads(
             normalizedTypeName,
-            memberName,
+            normalizedMemberName,
           );
           if (overloads.length === 0) return undefined;
           if (overloads.length === 1) return overloads[0];
           const mappedParams = paramTypes.map(mapTypeScriptToCSharp);
           return selectOverload(overloads, mappedParams);
         })()
-      : typeMetadataRegistry.getMemberMetadata(normalizedTypeName, memberName);
+      : typeMetadataRegistry.getMemberMetadata(
+          normalizedTypeName,
+          normalizedMemberName,
+        );
 
   if (metadata) {
     if (metadata.externSignature) {
@@ -129,10 +168,10 @@ export function resolveExternSignature(
     const csharpReturn = mapTypeScriptToCSharp(returnType);
     const methodName =
       accessType === "getter"
-        ? `get_${memberName}`
+        ? `get_${normalizedMemberName}`
         : accessType === "setter"
-          ? `set_${memberName}`
-          : memberName;
+          ? `set_${normalizedMemberName}`
+          : normalizedMemberName;
     return generateExternSignature(
       csharpOwner,
       methodName,

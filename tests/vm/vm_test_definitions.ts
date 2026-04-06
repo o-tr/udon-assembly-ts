@@ -17,7 +17,26 @@ export interface VmTestCase {
   expectError?: boolean;
   /** If true, enable TAC optimizer before code generation */
   optimize?: boolean;
+  /** Required extern signatures that must appear in generated UASM */
+  requiredExterns?: string[];
+  /** Forbidden extern signatures that must not appear in generated UASM */
+  disallowedExterns?: string[];
 }
+
+const SYSTEM_OBJECT_ARRAY_CORE_EXTERNS = [
+  "SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid",
+  "SystemObjectArray.__ctor__SystemInt32__SystemObjectArray",
+  "SystemArray.__Copy__SystemArray_SystemInt64_SystemArray_SystemInt64_SystemInt64__SystemVoid",
+  "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+];
+
+const SYSTEM_OBJECT_ARRAY_DISALLOWED_EXTERNS = [
+  "SystemArray.__get_Length__SystemInt32",
+  "SystemObjectArray.__get_length__SystemInt32",
+  "ObjectArray.__ctor__SystemInt32__ObjectArray",
+  "SystemObjectArray.__Copy__SystemObjectArray_SystemInt32_SystemObjectArray_SystemInt32_SystemInt32__SystemVoid",
+  "SystemArray.__Copy__SystemObject_SystemInt32_SystemObject_SystemInt32_SystemInt32__SystemVoid",
+];
 
 export const VM_TEST_CASES: VmTestCase[] = [
   { name: "simple_log", sourceFile: "simple_log.ts" },
@@ -227,6 +246,13 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "array_index_write_read",
     sourceFile: "array_index_write_read.ts",
+  },
+  {
+    name: "system_object_array_extern_core",
+    sourceFile: "system_object_array_extern_core.ts",
+    expectedLogs: ["concat_ok", "scalar_ok"],
+    requiredExterns: SYSTEM_OBJECT_ARRAY_CORE_EXTERNS,
+    disallowedExterns: SYSTEM_OBJECT_ARRAY_DISALLOWED_EXTERNS,
   },
   // --- For-of destructuring & break/continue ---
   {

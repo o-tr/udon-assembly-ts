@@ -976,6 +976,13 @@ exports[`JS Runtime Equivalence Tests > JS: switch_string 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: system_object_array_extern_core 1`] = `
+[
+  "concat_ok",
+  "scalar_ok",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: template_literal_basic 1`] = `
 [
   "Hello World",

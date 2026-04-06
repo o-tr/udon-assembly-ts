@@ -83,7 +83,29 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
         );
       }
       const uasmFileName = `${testCase.name}.uasm`;
-      writeFileSync(path.join(inputDir, uasmFileName), result.uasm, "utf-8");
+      const uasmPath = path.join(inputDir, uasmFileName);
+      writeFileSync(uasmPath, result.uasm, "utf-8");
+
+      if (testCase.requiredExterns && testCase.requiredExterns.length > 0) {
+        const missing = testCase.requiredExterns.filter(
+          (sig) => !result.uasm.includes(sig),
+        );
+        if (missing.length > 0) {
+          throw new Error(
+            `Generated UASM for "${testCase.name}" is missing required extern signatures: ${missing.join(", ")}`,
+          );
+        }
+      }
+      if (testCase.disallowedExterns && testCase.disallowedExterns.length > 0) {
+        const disallowed = testCase.disallowedExterns.filter((sig) =>
+          result.uasm.includes(sig),
+        );
+        if (disallowed.length > 0) {
+          throw new Error(
+            `Generated UASM for "${testCase.name}" contains disallowed extern signatures: ${disallowed.join(", ")}`,
+          );
+        }
+      }
 
       // Resolve expected logs once here and cache for use in it() callbacks.
       // For expectError cases we don't need expected logs from the JS runtime.
