@@ -24,6 +24,7 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import { MAX_FIXPOINT_ITERATIONS } from "../pass_types.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   countTempUses,
@@ -606,7 +607,12 @@ export const reuseTemporaries = (
   let changed = true;
   let fixpointIter = 0;
   while (changed) {
-    if (++fixpointIter > 1000) break;
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) {
+      console.warn(
+        "[optimizer] temp-reuse liveness fixpoint hit iteration limit",
+      );
+      break;
+    }
     changed = false;
     // Process blocks in reverse order for faster convergence
     for (let bi = cfg.blocks.length - 1; bi >= 0; bi--) {
@@ -833,7 +839,12 @@ export const reuseLocalVariables = (
   let changed = true;
   let fixpointIter = 0;
   while (changed) {
-    if (++fixpointIter > 1000) break;
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) {
+      console.warn(
+        "[optimizer] local-variable-reuse liveness fixpoint hit iteration limit",
+      );
+      break;
+    }
     changed = false;
     for (let bi = cfg.blocks.length - 1; bi >= 0; bi--) {
       const block = cfg.blocks[bi];

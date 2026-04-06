@@ -15,6 +15,7 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import { MAX_FIXPOINT_ITERATIONS } from "../pass_types.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import { isIdempotentMethod } from "../utils/idempotent_methods.js";
 import {
@@ -212,7 +213,7 @@ const computeAvailableMaps = (
   let changed = true;
   let fixpointIter = 0;
   while (changed) {
-    if (++fixpointIter > 1000) break;
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) break;
     changed = false;
     for (const block of cfg.blocks) {
       if (block.id === 0) {

@@ -3,6 +3,7 @@ import { TACInstructionKind } from "../../tac_instruction.js";
 import type { TACOperand, TemporaryOperand } from "../../tac_operand.js";
 import { TACOperandKind } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
+import { MAX_FIXPOINT_ITERATIONS } from "../pass_types.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
   forEachUsedOperand,
@@ -97,7 +98,12 @@ export const eliminateDeadStoresCFG = (
   let changed = true;
   let fixpointIter = 0;
   while (changed) {
-    if (++fixpointIter > 1000) break;
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) {
+      console.warn(
+        "[optimizer] dead-code liveness fixpoint hit iteration limit",
+      );
+      break;
+    }
     changed = false;
     for (const block of reversedBlocks) {
       outScratch.clear();
