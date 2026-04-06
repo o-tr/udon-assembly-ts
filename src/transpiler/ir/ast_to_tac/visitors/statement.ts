@@ -1,7 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
-  ClassTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
@@ -65,19 +64,6 @@ import {
 } from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
-
-function _isInlineHandleType(
-  converter: ASTToTACConverter,
-  type: TypeSymbol,
-): boolean {
-  return (
-    (type instanceof ClassTypeSymbol &&
-      converter.classMap.has(type.name) &&
-      !converter.udonBehaviourClasses.has(type.name)) ||
-    (type instanceof InterfaceTypeSymbol &&
-      converter.interfaceClassIdMap.has(type.name))
-  );
-}
 
 function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
   for (let i = converter.loopContextStack.length - 1; i >= 0; i -= 1) {

@@ -86,7 +86,10 @@ export function getOperandTypeName(
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
       // All TypeScript arrays are backed by DataList at runtime.
       // Native SystemArray EXTERNs (Get/Set) are not supported by Udon VM.
-      if (typeSymbol instanceof ArrayTypeSymbol) {
+      if (
+        typeSymbol instanceof ArrayTypeSymbol ||
+        (typeSymbol.name ?? "").endsWith("[]")
+      ) {
         return "VRCSDK3DataDataList";
       }
       return toUdonTypeNameWithArray(udonTypeToCSharp(typeSymbol.udonType));

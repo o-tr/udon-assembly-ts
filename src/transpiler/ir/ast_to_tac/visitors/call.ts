@@ -1206,9 +1206,12 @@ export function visitCallExpression(
       propAccess.object.kind === ASTNodeKind.Identifier
     ) {
       const lengthResult = this.newTemp(PrimitiveTypes.int32);
-      // All arrays are backed by DataList — always use Count.
+      const objectType = this.getOperandType(object);
+      // Strings use "Length"; arrays (backed by DataList) use "Count".
+      const lengthProp =
+        objectType === PrimitiveTypes.string ? "Length" : "Count";
       this.instructions.push(
-        new PropertyGetInstruction(lengthResult, object, "Count"),
+        new PropertyGetInstruction(lengthResult, object, lengthProp),
       );
       return lengthResult;
     }
@@ -1432,8 +1435,9 @@ export function visitCallExpression(
       // Adjust a negative constant index: length + index
       const adjustNegIndex = (arg: TACOperand): TACOperand => {
         const lenTemp = this.newTemp(PrimitiveTypes.int32);
+        // Strings use "Length", not "Count" (which is DataList-only).
         this.instructions.push(
-          new PropertyGetInstruction(lenTemp, object, "Count"),
+          new PropertyGetInstruction(lenTemp, object, "Length"),
         );
         const adjusted = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(
@@ -1541,7 +1545,57 @@ export function visitCallExpression(
           }
           return result;
         }
-        case "slice":
+        case "slice": {
+          // JS slice(start, end) → DataList.GetRange(start, end - start)
+          const result = this.newTemp(arrayReturn);
+          if (evaluatedArgs.length === 0) {
+            // slice() = copy entire list → GetRange(0, Count)
+            const len = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new PropertyGetInstruction(len, object, "Count"),
+            );
+            this.instructions.push(
+              new MethodCallInstruction(result, object, "GetRange", [
+                createConstant(0, PrimitiveTypes.int32),
+                len,
+              ]),
+            );
+          } else if (evaluatedArgs.length === 1) {
+            // slice(start) → GetRange(start, Count - start)
+            const len = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new PropertyGetInstruction(len, object, "Count"),
+            );
+            const count = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new BinaryOpInstruction(count, len, "-", evaluatedArgs[0]),
+            );
+            this.instructions.push(
+              new MethodCallInstruction(result, object, "GetRange", [
+                evaluatedArgs[0],
+                count,
+              ]),
+            );
+          } else {
+            // slice(start, end) → GetRange(start, end - start)
+            const count = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(
+              new BinaryOpInstruction(
+                count,
+                evaluatedArgs[1],
+                "-",
+                evaluatedArgs[0],
+              ),
+            );
+            this.instructions.push(
+              new MethodCallInstruction(result, object, "GetRange", [
+                evaluatedArgs[0],
+                count,
+              ]),
+            );
+          }
+          return result;
+        }
         case "filter":
         case "reverse":
         case "sort": {
@@ -1741,31 +1795,38 @@ export function visitCallExpression(
 
           const zero = createConstant(0, PrimitiveTypes.int32);
 
-          // left = array.slice(0, start)
+          // left = array.GetRange(0, start)
           const leftPart = this.newTemp(arrayReturn);
           this.instructions.push(
-            new MethodCallInstruction(leftPart, object, "slice", [zero, start]),
-          );
-
-          // removed = array.slice(start, endIdx)
-          const removed = this.newTemp(arrayReturn);
-          this.instructions.push(
-            new MethodCallInstruction(removed, object, "slice", [
+            new MethodCallInstruction(leftPart, object, "GetRange", [
+              zero,
               start,
-              endIdx,
             ]),
           );
 
-          // right = array.slice(endIdx, length)
+          // removed = array.GetRange(start, deleteCount)
+          const removed = this.newTemp(arrayReturn);
+          this.instructions.push(
+            new MethodCallInstruction(removed, object, "GetRange", [
+              start,
+              deleteCount,
+            ]),
+          );
+
+          // right = array.GetRange(endIdx, length - endIdx)
           const spliceLen = this.newTemp(PrimitiveTypes.int32);
           this.instructions.push(
             new PropertyGetInstruction(spliceLen, object, "Count"),
           );
+          const rightCount = this.newTemp(PrimitiveTypes.int32);
+          this.instructions.push(
+            new BinaryOpInstruction(rightCount, spliceLen, "-", endIdx),
+          );
           const rightPart = this.newTemp(arrayReturn);
           this.instructions.push(
-            new MethodCallInstruction(rightPart, object, "slice", [
+            new MethodCallInstruction(rightPart, object, "GetRange", [
               endIdx,
-              spliceLen,
+              rightCount,
             ]),
           );
 
@@ -2560,21 +2621,6 @@ function emitSetPopulateFromIterable(
   let elementType = resolveSetElementType(setType);
 
   let listOperand = iterableOperand;
-  let _isDataList = false;
-
-  const isArrayType =
-    operandType instanceof ArrayTypeSymbol ||
-    operandType.udonType === UdonType.Array ||
-    resolvedIterableType instanceof ArrayTypeSymbol ||
-    resolvedIterableType?.udonType === UdonType.Array;
-
-  const isDataListType =
-    operandType instanceof DataListTypeSymbol ||
-    operandType.name === ExternTypes.dataList.name ||
-    operandType.udonType === UdonType.DataList ||
-    resolvedIterableType instanceof DataListTypeSymbol ||
-    resolvedIterableType?.name === ExternTypes.dataList.name ||
-    resolvedIterableType?.udonType === UdonType.DataList;
 
   const isDictionaryType =
     (operandType === ExternTypes.dataDictionary ||
@@ -2586,6 +2632,18 @@ function emitSetPopulateFromIterable(
     !isMapCollectionType(operandType) &&
     !isMapCollectionType(resolvedIterableType);
 
+  const isArrayOrDataList =
+    operandType instanceof ArrayTypeSymbol ||
+    operandType.udonType === UdonType.Array ||
+    operandType instanceof DataListTypeSymbol ||
+    operandType.name === ExternTypes.dataList.name ||
+    operandType.udonType === UdonType.DataList ||
+    resolvedIterableType instanceof ArrayTypeSymbol ||
+    resolvedIterableType?.udonType === UdonType.Array ||
+    resolvedIterableType instanceof DataListTypeSymbol ||
+    resolvedIterableType?.name === ExternTypes.dataList.name ||
+    resolvedIterableType?.udonType === UdonType.DataList;
+
   if (elementType === ObjectType) {
     if (resolvedIterableType instanceof ArrayTypeSymbol) {
       elementType = resolvedIterableType.elementType;
@@ -2594,13 +2652,10 @@ function emitSetPopulateFromIterable(
     }
   }
 
-  if (isArrayType) {
-    // Array iterable, keep listOperand as-is.
-  } else if (isDictionaryType) {
+  if (isDictionaryType) {
     listOperand = emitSetKeysList(converter, iterableOperand, elementType);
-    _isDataList = true;
-  } else if (isDataListType) {
-    _isDataList = true;
+  } else if (isArrayOrDataList) {
+    // All arrays/DataList backed by DataList — keep listOperand as-is.
   } else {
     throw new Error(
       "Set constructor expects an Array, DataList, or Set iterable.",
@@ -2708,25 +2763,7 @@ function emitMapPopulateFromIterable(
   const resolvedIterableType = resolveTypeFromNode(converter, iterableNode);
   const operandType = converter.getOperandType(iterableOperand);
   const keyType = resolveMapKeyType(mapType);
-  const _valueType = resolveMapValueType(mapType);
-
   let listOperand = iterableOperand;
-  let _isDataList = false;
-  let _pairElementType: TypeSymbol | null = null;
-
-  const isArrayType =
-    operandType instanceof ArrayTypeSymbol ||
-    operandType.udonType === UdonType.Array ||
-    resolvedIterableType instanceof ArrayTypeSymbol ||
-    resolvedIterableType?.udonType === UdonType.Array;
-
-  const isDataListType =
-    operandType instanceof DataListTypeSymbol ||
-    operandType.name === ExternTypes.dataList.name ||
-    operandType.udonType === UdonType.DataList ||
-    resolvedIterableType instanceof DataListTypeSymbol ||
-    resolvedIterableType?.name === ExternTypes.dataList.name ||
-    resolvedIterableType?.udonType === UdonType.DataList;
 
   const isDictionaryType =
     (isMapCollectionType(operandType) ||
@@ -2740,23 +2777,22 @@ function emitMapPopulateFromIterable(
     !isSetCollectionType(operandType) &&
     !isSetCollectionType(resolvedIterableType);
 
-  if (operandType instanceof ArrayTypeSymbol) {
-    _pairElementType = operandType.elementType;
-  } else if (resolvedIterableType instanceof ArrayTypeSymbol) {
-    _pairElementType = resolvedIterableType.elementType;
-  } else if (operandType instanceof DataListTypeSymbol) {
-    _pairElementType = operandType.elementType;
-  } else if (resolvedIterableType instanceof DataListTypeSymbol) {
-    _pairElementType = resolvedIterableType.elementType;
-  }
+  const isArrayOrDataList =
+    operandType instanceof ArrayTypeSymbol ||
+    operandType.udonType === UdonType.Array ||
+    operandType instanceof DataListTypeSymbol ||
+    operandType.name === ExternTypes.dataList.name ||
+    operandType.udonType === UdonType.DataList ||
+    resolvedIterableType instanceof ArrayTypeSymbol ||
+    resolvedIterableType?.udonType === UdonType.Array ||
+    resolvedIterableType instanceof DataListTypeSymbol ||
+    resolvedIterableType?.name === ExternTypes.dataList.name ||
+    resolvedIterableType?.udonType === UdonType.DataList;
 
   if (isDictionaryType) {
     listOperand = emitMapKeysList(converter, iterableOperand, keyType);
-    _isDataList = true;
-  } else if (isArrayType) {
-    // Array iterable of [key, value] pairs, keep listOperand as-is.
-  } else if (isDataListType) {
-    _isDataList = true;
+  } else if (isArrayOrDataList) {
+    // All arrays/DataList backed by DataList — keep listOperand as-is.
   } else {
     throw new Error(
       "Map constructor expects an Array, DataList, or Map iterable.",

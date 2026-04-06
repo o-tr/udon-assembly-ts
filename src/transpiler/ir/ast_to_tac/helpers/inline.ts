@@ -1,5 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
+  ClassTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
   ObjectType,
@@ -78,6 +79,24 @@ export type InlineParamSave = Map<
 type InlineInitializerState = NonNullable<
   ASTToTACConverter["currentInlineInitializerState"]
 >;
+
+/**
+ * Check if a type represents an inline class instance stored as an Int32 handle.
+ * Inline class instances are NOT UdonBehaviour types and have entries in the
+ * classMap or interfaceClassIdMap.
+ */
+export function isInlineHandleType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  return (
+    (type instanceof ClassTypeSymbol &&
+      converter.classMap.has(type.name) &&
+      !converter.udonBehaviourClasses.has(type.name)) ||
+    (type instanceof InterfaceTypeSymbol &&
+      converter.interfaceClassIdMap.has(type.name))
+  );
+}
 
 /**
  * Resolve a class node by name, checking classMap first then classRegistry.
@@ -630,13 +649,11 @@ export function visitInlineConstructor(
         typedParams,
         args,
       );
-      try {
-        if (!classNode.baseClass) {
-          emitDeferredInlineInitializers(this, classNode.name);
-        }
-        // Emit implicit assignments for TypeScript parameter properties
-        // (e.g., `constructor(public value: UdonInt)` auto-assigns
-        // `this.value = value`). These are NOT in the constructor body.
+      // Helper: emit implicit assignments for TypeScript parameter properties
+      // (e.g., `constructor(public value: UdonInt)` auto-assigns
+      // `this.value = value`). Must run after super() and initializers.
+      const emitParamPropertyAssignments = () => {
+        if (!classNode.constructor) return;
         for (const param of classNode.constructor.parameters) {
           const isParamProperty = classNode.properties.some(
             (prop) => prop.name === param.name && !prop.isStatic,
@@ -656,8 +673,18 @@ export function visitInlineConstructor(
             }
           }
         }
+      };
+
+      try {
+        if (!classNode.baseClass) {
+          emitDeferredInlineInitializers(this, classNode.name);
+          // For base classes: param properties before body (body may read them)
+          emitParamPropertyAssignments();
+        }
         this.visitStatement(classNode.constructor.body);
         if (classNode.baseClass) {
+          // For derived classes: param properties after body (body contains super())
+          emitParamPropertyAssignments();
           emitDeferredInlineInitializers(this, classNode.name);
         }
       } finally {

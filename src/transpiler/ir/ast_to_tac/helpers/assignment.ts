@@ -1,7 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
-  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -43,7 +42,11 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { resolveClassNode, resolveClassProperty } from "./inline.js";
+import {
+  isInlineHandleType,
+  resolveClassNode,
+  resolveClassProperty,
+} from "./inline.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
@@ -228,7 +231,7 @@ export function assignToTarget(
         }
       }
     }
-    // Array length setter: array.length = n → array = array.slice(0, n)
+    // Array length setter: array.length = n → array = array.GetRange(0, n)
     const objectType = this.getOperandType(object);
     if (
       propAccess.property === "length" &&
@@ -237,7 +240,7 @@ export function assignToTarget(
     ) {
       const sliced = this.newTemp(objectType);
       this.instructions.push(
-        new MethodCallInstruction(sliced, object, "slice", [
+        new MethodCallInstruction(sliced, object, "GetRange", [
           createConstant(0, PrimitiveTypes.int32),
           value,
         ]),
@@ -486,13 +489,7 @@ export function wrapDataToken(
   }
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.
-  const isInlineHandle =
-    (valueType instanceof ClassTypeSymbol &&
-      this.classMap.has(valueType.name) &&
-      !this.udonBehaviourClasses.has(valueType.name)) ||
-    (valueType instanceof InterfaceTypeSymbol &&
-      this.interfaceClassIdMap.has(valueType.name));
-  if (isInlineHandle) {
+  if (isInlineHandleType(this, valueType)) {
     const handle = this.newTemp(PrimitiveTypes.int32);
     this.instructions.push(new CopyInstruction(handle, value));
     value = handle;
@@ -522,15 +519,8 @@ export function unwrapDataToken(
 
   // Inline class instances are stored as Int32 handles in DataToken.
   // Must unwrap via .Int, not .Reference, to avoid Udon VM errors.
-  const isInlineHandle =
-    (targetType instanceof ClassTypeSymbol &&
-      this.classMap.has(targetType.name) &&
-      !this.udonBehaviourClasses.has(targetType.name)) ||
-    (targetType instanceof InterfaceTypeSymbol &&
-      this.interfaceClassIdMap.has(targetType.name));
-
   let property = "Reference";
-  if (isInlineHandle) {
+  if (isInlineHandleType(this, targetType)) {
     property = "Int";
   } else {
     switch (targetType.udonType) {

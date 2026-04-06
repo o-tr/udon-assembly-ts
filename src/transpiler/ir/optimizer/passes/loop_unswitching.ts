@@ -405,6 +405,8 @@ const performUnswitch = (
         const ret = inst as ReturnInstruction;
         return new ReturnInstruction(ret.value, ret.returnVarName);
       }
+      // ArrayAccess/ArrayAssignment are no longer generated (DataList migration),
+      // but keep clone support in case legacy TAC is encountered.
       case TACInstructionKind.ArrayAccess: {
         const access = inst as ArrayAccessInstruction;
         return new ArrayAccessInstruction(

@@ -24,17 +24,19 @@ export interface VmTestCase {
 }
 
 // All arrays are now backed by DataList (SystemArray EXTERNs are not supported by Udon VM).
-const DATALIST_ARRAY_CORE_EXTERNS = [
+const datalistArrayCoreExterns = [
   "VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList",
   "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
   "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
   "VRCSDK3DataDataList.__get_Count__SystemInt32",
 ];
 
-const DATALIST_ARRAY_DISALLOWED_EXTERNS = [
+const datalistArrayDisallowedExterns = [
   "SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid",
   "SystemObjectArray.__Get__SystemInt32__SystemObject",
   "SystemObjectArray.__ctor__SystemInt32__SystemObjectArray",
+  "SystemArray.__Set__SystemInt32_SystemObject__SystemVoid",
+  "SystemArray.__Get__SystemInt32__SystemObject",
   "SystemArray.__Copy__SystemArray_SystemInt64_SystemArray_SystemInt64_SystemInt64__SystemVoid",
   "SystemArray.__get_Length__SystemInt32",
   "SystemObjectArray.__get_length__SystemInt32",
@@ -253,8 +255,8 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "system_object_array_extern_core",
     sourceFile: "system_object_array_extern_core.ts",
     expectedLogs: ["concat_ok", "scalar_ok"],
-    requiredExterns: DATALIST_ARRAY_CORE_EXTERNS,
-    disallowedExterns: DATALIST_ARRAY_DISALLOWED_EXTERNS,
+    requiredExterns: datalistArrayCoreExterns,
+    disallowedExterns: datalistArrayDisallowedExterns,
   },
   // --- For-of destructuring & break/continue ---
   {

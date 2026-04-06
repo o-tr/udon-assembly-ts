@@ -2,7 +2,6 @@ import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
-  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -76,24 +75,6 @@ import {
   resolveConcreteClassName,
 } from "../helpers/inline.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
-
-/**
- * Check if a type represents an inline class instance stored as an Int32 handle.
- * Inline class instances are NOT UdonBehaviour types and have entries in the
- * classMap or interfaceClassIdMap.
- */
-function _isInlineHandleType(
-  converter: ASTToTACConverter,
-  type: TypeSymbol,
-): boolean {
-  return (
-    (type instanceof ClassTypeSymbol &&
-      converter.classMap.has(type.name) &&
-      !converter.udonBehaviourClasses.has(type.name)) ||
-    (type instanceof InterfaceTypeSymbol &&
-      converter.interfaceClassIdMap.has(type.name))
-  );
-}
 
 /**
  * Try to map an inline property, falling back to concrete class resolution
