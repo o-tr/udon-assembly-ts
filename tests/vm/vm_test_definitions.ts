@@ -228,6 +228,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "array_index_write_read",
     sourceFile: "array_index_write_read.ts",
   },
+  {
+    name: "system_object_array_extern_core",
+    sourceFile: "system_object_array_extern_core.ts",
+  },
   // --- For-of destructuring & break/continue ---
   {
     name: "for_of_dict_destructure",

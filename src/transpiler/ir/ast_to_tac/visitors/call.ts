@@ -1530,11 +1530,11 @@ export function visitCallExpression(
               // Using native array + ArrayAssignment avoids DataToken
               // .Reference issues with primitive scalars (int/float).
               const wrapperCtorSig = this.requireExternSignature(
-                "ObjectArray",
+                "object[]",
                 "ctor",
                 "method",
                 ["int"],
-                "ObjectArray",
+                "object[]",
               );
               const wrapper = this.newTemp(new ArrayTypeSymbol(ObjectType));
               this.instructions.push(

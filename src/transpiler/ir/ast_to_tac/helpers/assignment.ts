@@ -360,24 +360,32 @@ function coerceToNativeArray(
   objArrayType: ArrayTypeSymbol,
 ): [TACOperand, TACOperand] {
   const opType = converter.getOperandType(operand);
-  const isDataList =
+  const isDeclaredDataList =
     opType instanceof DataListTypeSymbol ||
     opType.name === ExternTypes.dataList.name ||
     opType.udonType === UdonType.DataList;
+  const isArrayLiteralBackedDataList =
+    (operand.kind === TACOperandKind.Variable ||
+      operand.kind === TACOperandKind.Temporary) &&
+    opType instanceof ArrayTypeSymbol &&
+    (() => {
+      const varName =
+        operand.kind === TACOperandKind.Variable
+          ? (operand as VariableOperand).name
+          : (operand as TemporaryOperand).id;
+      const symbol = converter.symbolTable.lookup(String(varName));
+      const initialValue = symbol?.initialValue as ASTNode | undefined;
+      return initialValue?.kind === ASTNodeKind.ArrayLiteralExpression;
+    })();
+  const isDataList = isDeclaredDataList || isArrayLiteralBackedDataList;
 
   if (!isDataList) {
     // Native array — cast and get length
     const arr = converter.newTemp(objArrayType);
     converter.instructions.push(new CopyInstruction(arr, operand));
-    const lengthExtern = converter.requireExternSignature(
-      "SystemArray",
-      "Length",
-      "getter",
-      [],
-      "int",
-    );
     const len = converter.newTemp(PrimitiveTypes.int32);
-    converter.instructions.push(new CallInstruction(len, lengthExtern, [arr]));
+    // Udon extern is get_Length (capital L), not get_length.
+    converter.instructions.push(new PropertyGetInstruction(len, arr, "Length"));
     return [arr, len];
   }
 
@@ -393,11 +401,11 @@ function coerceToNativeArray(
   const len = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(new PropertyGetInstruction(len, list, "Count"));
   const ctorExtern = converter.requireExternSignature(
-    "ObjectArray",
+    "object[]",
     "ctor",
     "method",
     ["int"],
-    "ObjectArray",
+    "object[]",
   );
   const arr = converter.newTemp(objArrayType);
   converter.instructions.push(new CallInstruction(arr, ctorExtern, [len]));
@@ -418,7 +426,20 @@ function coerceToNativeArray(
   converter.instructions.push(
     new MethodCallInstruction(token, list, "get_Item", [idx]),
   );
-  const elem = converter.unwrapDataToken(token, ObjectType);
+  const unwrapTargetType =
+    opType instanceof ArrayTypeSymbol ? opType.elementType : ObjectType;
+  // Inline class arrays are stored as int handles inside DataToken; using
+  // .Reference can trigger unsupported externs on some UdonVM builds.
+  const elem =
+    unwrapTargetType.udonType === UdonType.Object
+      ? (() => {
+          const handle = converter.newTemp(PrimitiveTypes.int32);
+          converter.instructions.push(
+            new PropertyGetInstruction(handle, token, "Int"),
+          );
+          return handle;
+        })()
+      : converter.unwrapDataToken(token, unwrapTargetType);
   converter.instructions.push(new ArrayAssignmentInstruction(arr, idx, elem));
   const next = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(
@@ -461,44 +482,48 @@ export function emitArrayConcat(
 
   // result = new Object[totalLen]
   const ctorExtern = converter.requireExternSignature(
-    "ObjectArray",
+    "object[]",
     "ctor",
     "method",
     ["int"],
-    "ObjectArray",
+    "object[]",
   );
   const result = converter.newTemp(objArrayType);
   converter.instructions.push(
     new CallInstruction(result, ctorExtern, [totalLen]),
   );
 
-  // Array.Copy(a, 0, result, 0, lenA)
+  // SystemArray.Copy(a, 0L, result, 0L, lenA64)
   const copyExtern = converter.requireExternSignature(
     "SystemArray",
     "Copy",
     "method",
-    ["object", "int", "object", "int", "int"],
+    ["SystemArray", "long", "SystemArray", "long", "long"],
     "void",
   );
-  const zero = createConstant(0, PrimitiveTypes.int32);
+  const zero64 = createConstant(0n, PrimitiveTypes.int64);
+  const lenA64 = converter.newTemp(PrimitiveTypes.int64);
+  const lenB64 = converter.newTemp(PrimitiveTypes.int64);
+  converter.instructions.push(new CastInstruction(lenA64, lenA));
+  converter.instructions.push(new CastInstruction(lenB64, lenB));
   converter.instructions.push(
     new CallInstruction(undefined, copyExtern, [
       aArr,
-      zero,
+      zero64,
       result,
-      zero,
-      lenA,
+      zero64,
+      lenA64,
     ]),
   );
 
-  // Array.Copy(b, 0, result, lenA, lenB)
+  // SystemArray.Copy(b, 0L, result, lenA64, lenB64)
   converter.instructions.push(
     new CallInstruction(undefined, copyExtern, [
       bArr,
-      zero,
+      zero64,
       result,
-      lenA,
-      lenB,
+      lenA64,
+      lenB64,
     ]),
   );
 

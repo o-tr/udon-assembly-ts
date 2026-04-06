@@ -74,20 +74,33 @@ export function resolveExternSignature(
   returnType?: string,
 ): string | null {
   const normalizedTypeName = normalizeTypeName(typeName);
+  const rawTypeName = typeName.trim();
+  const normalizedMemberName =
+    (accessType === "getter" || accessType === "setter") &&
+    memberName === "length" &&
+    (normalizedTypeName === "Array" ||
+      normalizedTypeName === "SystemArray" ||
+      normalizedTypeName.endsWith("Array") ||
+      rawTypeName.endsWith("[]"))
+      ? "Length"
+      : memberName;
   const hasParamTypes = paramTypes !== undefined;
   const metadata =
     hasParamTypes && paramTypes
       ? (() => {
           const overloads = typeMetadataRegistry.getMemberOverloads(
             normalizedTypeName,
-            memberName,
+            normalizedMemberName,
           );
           if (overloads.length === 0) return undefined;
           if (overloads.length === 1) return overloads[0];
           const mappedParams = paramTypes.map(mapTypeScriptToCSharp);
           return selectOverload(overloads, mappedParams);
         })()
-      : typeMetadataRegistry.getMemberMetadata(normalizedTypeName, memberName);
+      : typeMetadataRegistry.getMemberMetadata(
+          normalizedTypeName,
+          normalizedMemberName,
+        );
 
   if (metadata) {
     if (metadata.externSignature) {
@@ -129,10 +142,10 @@ export function resolveExternSignature(
     const csharpReturn = mapTypeScriptToCSharp(returnType);
     const methodName =
       accessType === "getter"
-        ? `get_${memberName}`
+        ? `get_${normalizedMemberName}`
         : accessType === "setter"
-          ? `set_${memberName}`
-          : memberName;
+          ? `set_${normalizedMemberName}`
+          : normalizedMemberName;
     return generateExternSignature(
       csharpOwner,
       methodName,
