@@ -488,13 +488,13 @@ export class TACOptimizer {
       const beforeHash = computeFingerprint(optimized);
       const result = runAnalysisPasses(optimized, iteration <= 1, iteration);
       optimized = result.instructions;
+      if (!result.changed) {
+        break;
+      }
       if (
         optimized.length === beforeLen &&
         computeFingerprint(optimized) === beforeHash
       ) {
-        break;
-      }
-      if (!result.changed) {
         break;
       }
     }

@@ -95,7 +95,9 @@ export const eliminateDeadStoresCFG = (
   const outScratch = new Set<string>();
   const inScratch = new Set<string>();
   let changed = true;
+  let fixpointIter = 0;
   while (changed) {
+    if (++fixpointIter > 1000) break;
     changed = false;
     for (const block of reversedBlocks) {
       outScratch.clear();

@@ -52,7 +52,9 @@ export const globalValueNumbering = (
   }
 
   let changed = true;
+  let fixpointIter = 0;
   while (changed) {
+    if (++fixpointIter > 1000) break;
     changed = false;
     for (const block of cfg.blocks) {
       const predMaps = block.preds.map((id) => outMaps.get(id) ?? new Map());

@@ -210,7 +210,9 @@ const computeAvailableMaps = (
   }
 
   let changed = true;
+  let fixpointIter = 0;
   while (changed) {
+    if (++fixpointIter > 1000) break;
     changed = false;
     for (const block of cfg.blocks) {
       if (block.id === 0) {
