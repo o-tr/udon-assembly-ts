@@ -1,6 +1,16 @@
 import type { TACInstruction } from "../tac_instruction.js";
 import type { BasicBlock } from "./analysis/cfg.js";
 
+/**
+ * Safety limit for dataflow fixpoint loops.
+ * Normal convergence happens in 2-5 iterations; this prevents hangs on
+ * pathological inputs.  Early termination is conservatively safe for
+ * forward-flow passes (GVN/PRE — fewer optimisations) but may
+ * under-approximate liveness in backward passes (dead-code / temp-reuse),
+ * so those callers should emit a warning when the limit is hit.
+ */
+export const MAX_FIXPOINT_ITERATIONS = 1000;
+
 /** Return type for all optimization passes. */
 export type PassResult = {
   instructions: TACInstruction[];

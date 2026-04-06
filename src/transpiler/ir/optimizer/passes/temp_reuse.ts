@@ -24,7 +24,11 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
-import type { CFGPassOptions, PassResult } from "../pass_types.js";
+import {
+  type CFGPassOptions,
+  MAX_FIXPOINT_ITERATIONS,
+  type PassResult,
+} from "../pass_types.js";
 import {
   countTempUses,
   forEachUsedOperand,
@@ -38,6 +42,7 @@ import {
 } from "../utils/instructions.js";
 import { sameUdonType } from "../utils/operands.js";
 import { pureExternEvaluators } from "../utils/pure_extern.js";
+import { numberSetEqual, stringSetEqual } from "../utils/sets.js";
 import { getOperandType } from "./constant_folding.js";
 
 export const copyOnWriteTemporaries = (
@@ -600,60 +605,47 @@ export const reuseTemporaries = (
     liveOut.set(block.id, new Set());
   }
 
+  const outScratch = new Set<number>();
+  const inScratch = new Set<number>();
   let changed = true;
+  let fixpointIter = 0;
   while (changed) {
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) {
+      console.warn(
+        "[optimizer] temp-reuse liveness fixpoint hit iteration limit",
+      );
+      return { instructions, changed: false };
+    }
     changed = false;
     // Process blocks in reverse order for faster convergence
     for (let bi = cfg.blocks.length - 1; bi >= 0; bi--) {
       const block = cfg.blocks[bi];
 
       // liveOut[b] = ∪ liveIn[s] for s in succs[b]
-      const newLiveOut = new Set<number>();
+      outScratch.clear();
       for (const succId of block.succs) {
         const succLiveIn = liveIn.get(succId);
-        if (succLiveIn) {
-          for (const id of succLiveIn) {
-            newLiveOut.add(id);
-          }
-        }
+        if (succLiveIn) for (const id of succLiveIn) outScratch.add(id);
       }
 
       // liveIn[b] = use[b] ∪ (liveOut[b] - def[b])
       const def = blockDef.get(block.id) ?? new Set<number>();
       const use = blockUse.get(block.id) ?? new Set<number>();
-      const newLiveIn = new Set(use);
-      for (const id of newLiveOut) {
-        if (!def.has(id)) newLiveIn.add(id);
+      inScratch.clear();
+      for (const id of use) inScratch.add(id);
+      for (const id of outScratch) {
+        if (!def.has(id)) inScratch.add(id);
       }
 
-      const oldLiveIn = liveIn.get(block.id) ?? new Set<number>();
-      const oldLiveOut = liveOut.get(block.id) ?? new Set<number>();
-      let blockChanged = false;
-      if (
-        newLiveIn.size !== oldLiveIn.size ||
-        newLiveOut.size !== oldLiveOut.size
-      ) {
-        blockChanged = true;
-      } else {
-        for (const id of newLiveIn) {
-          if (!oldLiveIn.has(id)) {
-            blockChanged = true;
-            break;
-          }
-        }
-        if (!blockChanged) {
-          for (const id of newLiveOut) {
-            if (!oldLiveOut.has(id)) {
-              blockChanged = true;
-              break;
-            }
-          }
-        }
-      }
-      if (blockChanged) {
+      const prevOut = liveOut.get(block.id) ?? new Set<number>();
+      const prevIn = liveIn.get(block.id) ?? new Set<number>();
+      if (!numberSetEqual(prevOut, outScratch)) {
+        liveOut.set(block.id, new Set(outScratch));
         changed = true;
-        liveIn.set(block.id, newLiveIn);
-        liveOut.set(block.id, newLiveOut);
+      }
+      if (!numberSetEqual(prevIn, inScratch)) {
+        liveIn.set(block.id, new Set(inScratch));
+        changed = true;
       }
     }
   }
@@ -845,57 +837,44 @@ export const reuseLocalVariables = (
     liveOut.set(block.id, new Set());
   }
 
+  const outScratchStr = new Set<string>();
+  const inScratchStr = new Set<string>();
   let changed = true;
+  let fixpointIter = 0;
   while (changed) {
+    if (++fixpointIter > MAX_FIXPOINT_ITERATIONS) {
+      console.warn(
+        "[optimizer] local-variable-reuse liveness fixpoint hit iteration limit",
+      );
+      return { instructions, changed: false };
+    }
     changed = false;
     for (let bi = cfg.blocks.length - 1; bi >= 0; bi--) {
       const block = cfg.blocks[bi];
 
-      const newLiveOut = new Set<string>();
+      outScratchStr.clear();
       for (const succId of block.succs) {
         const succLiveIn = liveIn.get(succId);
-        if (succLiveIn) {
-          for (const name of succLiveIn) {
-            newLiveOut.add(name);
-          }
-        }
+        if (succLiveIn) for (const name of succLiveIn) outScratchStr.add(name);
       }
 
       const def = blockDef.get(block.id) ?? new Set<string>();
       const use = blockUse.get(block.id) ?? new Set<string>();
-      const newLiveIn = new Set(use);
-      for (const name of newLiveOut) {
-        if (!def.has(name)) newLiveIn.add(name);
+      inScratchStr.clear();
+      for (const name of use) inScratchStr.add(name);
+      for (const name of outScratchStr) {
+        if (!def.has(name)) inScratchStr.add(name);
       }
 
-      const oldLiveIn = liveIn.get(block.id) ?? new Set<string>();
-      const oldLiveOut = liveOut.get(block.id) ?? new Set<string>();
-      let blockChanged = false;
-      if (
-        newLiveIn.size !== oldLiveIn.size ||
-        newLiveOut.size !== oldLiveOut.size
-      ) {
-        blockChanged = true;
-      } else {
-        for (const name of newLiveIn) {
-          if (!oldLiveIn.has(name)) {
-            blockChanged = true;
-            break;
-          }
-        }
-        if (!blockChanged) {
-          for (const name of newLiveOut) {
-            if (!oldLiveOut.has(name)) {
-              blockChanged = true;
-              break;
-            }
-          }
-        }
-      }
-      if (blockChanged) {
+      const prevOut = liveOut.get(block.id) ?? new Set<string>();
+      const prevIn = liveIn.get(block.id) ?? new Set<string>();
+      if (!stringSetEqual(prevOut, outScratchStr)) {
+        liveOut.set(block.id, new Set(outScratchStr));
         changed = true;
-        liveIn.set(block.id, newLiveIn);
-        liveOut.set(block.id, newLiveOut);
+      }
+      if (!stringSetEqual(prevIn, inScratchStr)) {
+        liveIn.set(block.id, new Set(inScratchStr));
+        changed = true;
       }
     }
   }
