@@ -100,8 +100,8 @@ export function resolveExternSignature(
   // small allowlist for known Udon System*Array owners when metadata is absent.
   const hasCanonicalLengthMember =
     isLengthAccessor &&
-    typeMetadataRegistry.getMemberOverloads(normalizedTypeName, "Length").length >
-      0;
+    typeMetadataRegistry.getMemberOverloads(normalizedTypeName, "Length")
+      .length > 0;
   const isUdonArrayLikeOwner =
     normalizedTypeName === "Array" ||
     normalizedTypeName === "SystemArray" ||
@@ -109,9 +109,7 @@ export function resolveExternSignature(
     KNOWN_UDON_SYSTEM_ARRAY_OWNERS.has(normalizedTypeName) ||
     hasCanonicalLengthMember;
   const normalizedMemberName =
-    isLengthAccessor && isUdonArrayLikeOwner
-      ? "Length"
-      : memberName;
+    isLengthAccessor && isUdonArrayLikeOwner ? "Length" : memberName;
   const hasParamTypes = paramTypes !== undefined;
   const metadata =
     hasParamTypes && paramTypes
