@@ -103,7 +103,6 @@ describe("custom type array operations", () => {
       externs.some(
         (sig) =>
           sig.includes("get_Length__SystemInt32") ||
-          sig.includes("get_length__SystemInt32") ||
           sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
@@ -141,7 +140,6 @@ describe("custom type array operations", () => {
       externs.some(
         (sig) =>
           sig.includes("get_Length__SystemInt32") ||
-          sig.includes("get_length__SystemInt32") ||
           sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);
@@ -189,7 +187,6 @@ describe("custom type array operations", () => {
       externs.some(
         (sig) =>
           sig.includes("get_Length__SystemInt32") ||
-          sig.includes("get_length__SystemInt32") ||
           sig.includes("get_Count__SystemInt32"),
       ),
     ).toBe(true);

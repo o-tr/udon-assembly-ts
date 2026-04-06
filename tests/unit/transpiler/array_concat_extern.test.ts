@@ -4,10 +4,6 @@ import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 describe("array concat extern signatures", () => {
   it("emits required signatures and avoids deprecated ones", () => {
     const source = `
-      class Box {
-        v: number = 0;
-        constructor(v: number) { this.v = v; }
-      }
       class Demo {
         Start(): void {
           const left: Box[] = [new Box(10), new Box(20)];
@@ -16,10 +12,16 @@ describe("array concat extern signatures", () => {
           left.concat(new Box(40));
         }
       }
+      class Box {
+        v: number = 0;
+        constructor(v: number) { this.v = v; }
+      }
     `;
 
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
+    expect(result).toBeTruthy();
+    expect(result.uasm).toBeTruthy();
     const uasm = result.uasm;
 
     const required = [

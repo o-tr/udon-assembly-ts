@@ -382,7 +382,17 @@ function coerceToNativeArray(
   const isArrayLiteralBackedDataList =
     operand.kind === TACOperandKind.Variable &&
     opType instanceof ArrayTypeSymbol &&
-    isAliasChainBackedByArrayLiteral((operand as VariableOperand).name);
+    (() => {
+      const symbol = converter.symbolTable.lookup(
+        (operand as VariableOperand).name,
+      );
+      // Safety: this heuristic is only reliable for const aliases because
+      // let/var can be reassigned after declaration.
+      if (!symbol?.isConstant) return false;
+      return isAliasChainBackedByArrayLiteral(
+        (operand as VariableOperand).name,
+      );
+    })();
   const isDataList = isDeclaredDataList || isArrayLiteralBackedDataList;
 
   if (!isDataList) {
