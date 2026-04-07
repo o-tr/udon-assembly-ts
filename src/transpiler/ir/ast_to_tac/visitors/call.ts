@@ -303,6 +303,7 @@ function tryUntrackedInlineDispatch(
   object: TACOperand,
   objectType: TypeSymbol | null,
   propAccess: PropertyAccessExpressionNode,
+  rawArgs: ASTNode[],
   evaluatedArgs: TACOperand[],
 ): TACOperand | null {
   // Untracked receiver fallback:
@@ -336,16 +337,23 @@ function tryUntrackedInlineDispatch(
   const objectTypeFromNode = resolveTypeFromNode(converter, propAccess.object);
   addCandidateClassesFromType(objectType);
   addCandidateClassesFromType(objectTypeFromNode);
-
   const hasInterfaceTypedReceiver = [objectType, objectTypeFromNode].some(
     (type) => {
       const typeName = type?.name;
       return !!typeName && !!converter.classRegistry?.getInterface(typeName);
     },
   );
+  const isNonParameterVariableReceiver =
+    object.kind === TACOperandKind.Variable &&
+    !converter.symbolTable.lookup((object as VariableOperand).name)
+      ?.isParameter;
+  if (hasInterfaceTypedReceiver && isNonParameterVariableReceiver) {
+    // Keep local interface aliases on the regular call path so they don't
+    // eagerly lower to handle-dispatch blocks in post-loop alias-restore flows.
+    return null;
+  }
 
   if (
-    hasInterfaceTypedReceiver ||
     candidateClassNames.size === 0 ||
     converter.allInlineInstances.size === 0
   ) {
@@ -355,21 +363,31 @@ function tryUntrackedInlineDispatch(
   const candidateInstances = Array.from(converter.allInlineInstances).filter(
     ([, info]) => candidateClassNames.has(info.className),
   );
-  const resolveInlineMethodReturnType = (): TypeSymbol | null => {
+  const resolveInlineMethodSignature = (): {
+    className: string;
+    returnType: TypeSymbol;
+  } | null => {
     for (const className of candidateClassNames) {
       if (converter.classRegistry?.getClass(className)) {
         const method = converter.classRegistry
           .getMergedMethods(className)
           .find((candidate) => candidate.name === propAccess.property);
         if (method) {
-          return converter.typeMapper.mapTypeScriptType(method.returnType);
+          return {
+            className,
+            returnType: converter.typeMapper.mapTypeScriptType(
+              method.returnType,
+            ),
+          };
         }
       }
       const classNode = converter.classMap.get(className);
       const method = classNode?.methods.find(
         (candidate) => candidate.name === propAccess.property,
       );
-      if (method) return method.returnType;
+      if (method) {
+        return { className, returnType: method.returnType };
+      }
     }
     return null;
   };
@@ -381,7 +399,9 @@ function tryUntrackedInlineDispatch(
     return null;
   }
 
-  const untrackedReturnType = resolveInlineMethodReturnType();
+  const methodSignature = resolveInlineMethodSignature();
+  if (!methodSignature) return null;
+  const untrackedReturnType = methodSignature.returnType;
   const resolvedUntrackedReturnType = untrackedReturnType?.name
     ? (converter.typeMapper.getAlias(untrackedReturnType.name) ??
       untrackedReturnType)
@@ -402,6 +422,13 @@ function tryUntrackedInlineDispatch(
   const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
   const savedAllInlineInstances = new Map(converter.allInlineInstances);
   let dispatchFailed = false;
+  const typedArgs = evaluateArgsWithExpectedTypes(
+    converter,
+    methodSignature.className,
+    propAccess.property,
+    rawArgs,
+  );
+  const dispatchArgs = typedArgs ?? evaluatedArgs;
 
   const dispatchResult = isVoid
     ? undefined
@@ -430,7 +457,7 @@ function tryUntrackedInlineDispatch(
       info.className,
       info.prefix,
       propAccess.property,
-      evaluatedArgs,
+      dispatchArgs,
     );
     if (!inlineRes) {
       converter.instructions.length = savedInstructionCount;
@@ -2387,6 +2414,7 @@ export function visitCallExpression(
           object,
           objectType,
           propAccess,
+          rawArgs,
           evaluatedArgs,
         );
         if (untrackedDispatch != null) return untrackedDispatch;
