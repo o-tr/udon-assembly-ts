@@ -322,7 +322,7 @@ describe("custom type array operations", () => {
         ),
       ),
     ).toBe(true);
-    // Old SystemObjectArray/SystemArray Get/Set should NOT appear
+    // Policy expectation: generated TS arrays should not emit native array Get/Set.
     expect(
       externs.some((sig) => sig.includes("SystemObjectArray.__Get__")),
     ).toBe(false);

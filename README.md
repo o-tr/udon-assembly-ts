@@ -68,6 +68,10 @@ src/
 └── cli/                 # Batch transpiler CLI
 ```
 
+## Docs
+
+- [Native Array Spec](docs/native-array-spec.md)
+
 ## Testing
 
 ```bash

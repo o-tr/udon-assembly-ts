@@ -84,8 +84,8 @@ export function getOperandTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
-      // All TypeScript arrays are backed by DataList at runtime.
-      // Native SystemArray EXTERNs (Get/Set) are not supported by Udon VM.
+      // Current lowering policy represents TypeScript arrays as DataList in
+      // generated UASM, even though native typed arrays exist in Udon.
       if (
         typeSymbol instanceof ArrayTypeSymbol ||
         (typeSymbol.name ?? "").endsWith("[]")

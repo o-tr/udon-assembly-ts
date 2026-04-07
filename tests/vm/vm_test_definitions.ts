@@ -23,7 +23,8 @@ export interface VmTestCase {
   disallowedExterns?: string[];
 }
 
-// All arrays are now backed by DataList (SystemArray EXTERNs are not supported by Udon VM).
+// Current transpiler policy backs TypeScript arrays with DataList in generated UASM.
+// The disallowed list below enforces this policy (not a claim about VM capability).
 const datalistArrayCoreExterns = [
   "VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList",
   "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
@@ -39,7 +40,7 @@ const datalistArrayDisallowedExterns = [
   "SystemArray.__Get__SystemInt32__SystemObject",
   "SystemArray.__Copy__SystemArray_SystemInt64_SystemArray_SystemInt64_SystemInt64__SystemVoid",
   "SystemArray.__get_Length__SystemInt32",
-  "SystemObjectArray.__get_length__SystemInt32",
+  "SystemObjectArray.__get_Length__SystemInt32",
 ];
 
 export const VM_TEST_CASES: VmTestCase[] = [

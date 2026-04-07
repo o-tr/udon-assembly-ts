@@ -463,8 +463,8 @@ export function visitForOfStatement(
   // element type. When matching ExternTypes.dataList or UdonType.DataList by
   // name, elements come from DataList.get_Item as raw DataToken and must stay
   // unwrapped.
-  // All arrays are backed by DataList at runtime (native SystemArray
-  // EXTERNs are not supported by Udon VM).
+  // Current lowering policy treats TypeScript arrays as DataList-backed at
+  // runtime in generated UASM.
   const isDataList =
     iterableType instanceof DataListTypeSymbol ||
     iterableType instanceof ArrayTypeSymbol ||

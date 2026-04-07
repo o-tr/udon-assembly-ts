@@ -1286,8 +1286,8 @@ export function visitArrayAccessExpression(
     return tokenResult;
   }
 
-  // Native SystemArray EXTERNs (Get/Set) are not supported by Udon VM.
-  // Treat ArrayTypeSymbol the same as DataList: get_Item + unwrapDataToken.
+  // Current lowering policy routes ArrayTypeSymbol through DataList semantics:
+  // get_Item + DataToken unwrap instead of typed native array Get/Set.
   let elementType = this.getArrayElementType(array);
   if (!elementType) {
     const resolvedArrayType = resolveTypeFromNode(this, node.array);
