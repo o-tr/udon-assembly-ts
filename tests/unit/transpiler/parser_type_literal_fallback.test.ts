@@ -9,7 +9,9 @@ import {
 describe("parser type-literal text fallback", () => {
   it("maps string-only type literal text to InterfaceTypeSymbol", () => {
     const parser = new TypeScriptParser();
-    const mapped = parser.mapTypeWithGenerics("{ value: number; name: string }");
+    const mapped = parser.mapTypeWithGenerics(
+      "{ value: number; name: string }",
+    );
 
     expect(mapped).toBeInstanceOf(InterfaceTypeSymbol);
     const iface = mapped as InterfaceTypeSymbol;
@@ -33,10 +35,23 @@ describe("parser type-literal text fallback", () => {
     expect(outer.properties.get("ok")).toBe(PrimitiveTypes.boolean);
   });
 
+  it("falls back to DataDictionary for quoted keys with whitespace", () => {
+    const parser = new TypeScriptParser();
+    const mapped = parser.mapTypeWithGenerics('{ "display name": string }');
+
+    expect(mapped).toBe(ExternTypes.dataDictionary);
+  });
+
+  it("falls back to DataDictionary for quoted keys with parentheses", () => {
+    const parser = new TypeScriptParser();
+    const mapped = parser.mapTypeWithGenerics('{ "(special)": number }');
+
+    expect(mapped).toBe(ExternTypes.dataDictionary);
+  });
+
   it("falls back to DataDictionary for unsupported index signatures", () => {
     const parser = new TypeScriptParser();
     const mapped = parser.mapTypeWithGenerics("{ [key: string]: number }");
     expect(mapped).toBe(ExternTypes.dataDictionary);
   });
 });
-

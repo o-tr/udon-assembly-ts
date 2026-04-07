@@ -13,7 +13,7 @@ class LRUCache {
   }
 
   isDifferentSize(): boolean {
-    return this.cache.size != this.maxSize;
+    return this.cache.size !== this.maxSize;
   }
 
   isOverflow(): boolean {
@@ -30,4 +30,3 @@ export class LruNumericCompareRegression extends UdonSharpBehaviour {
     Debug.Log(c.isOverflow());
   }
 }
-

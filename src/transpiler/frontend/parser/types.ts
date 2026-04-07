@@ -11,168 +11,58 @@ import {
 } from "../type_symbols.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
 
-function splitTopLevelMembers(body: string): string[] {
-  const members: string[] = [];
-  let current = "";
-  let angleDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenDepth = 0;
-  let quote: '"' | "'" | "`" | null = null;
-  let escaped = false;
-
-  for (const ch of body) {
-    if (quote) {
-      current += ch;
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      current += ch;
-      continue;
-    }
-
-    if (ch === "<") angleDepth += 1;
-    else if (ch === ">") angleDepth = Math.max(0, angleDepth - 1);
-    else if (ch === "{") braceDepth += 1;
-    else if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
-    else if (ch === "[") bracketDepth += 1;
-    else if (ch === "]") bracketDepth = Math.max(0, bracketDepth - 1);
-    else if (ch === "(") parenDepth += 1;
-    else if (ch === ")") parenDepth = Math.max(0, parenDepth - 1);
-
-    const isTopLevelSeparator =
-      (ch === ";" || ch === ",") &&
-      angleDepth === 0 &&
-      braceDepth === 0 &&
-      bracketDepth === 0 &&
-      parenDepth === 0;
-    if (isTopLevelSeparator) {
-      const member = current.trim();
-      if (member) members.push(member);
-      current = "";
-      continue;
-    }
-
-    current += ch;
+function getTypeLiteralPropertyName(
+  name: ts.PropertyName,
+): { propName: string } | null {
+  if (ts.isIdentifier(name) || ts.isNumericLiteral(name)) {
+    return { propName: name.text };
   }
-
-  const tail = current.trim();
-  if (tail) members.push(tail);
-  return members;
+  if (ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) {
+    return { propName: name.text };
+  }
+  return null;
 }
 
-function findTopLevelColon(member: string): number {
-  let angleDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenDepth = 0;
-  let quote: '"' | "'" | "`" | null = null;
-  let escaped = false;
-
-  for (let i = 0; i < member.length; i += 1) {
-    const ch = member[i];
-    if (!ch) continue;
-
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (ch === quote) {
-        quote = null;
-      }
-      continue;
-    }
-
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      continue;
-    }
-
-    if (ch === "<") angleDepth += 1;
-    else if (ch === ">") angleDepth = Math.max(0, angleDepth - 1);
-    else if (ch === "{") braceDepth += 1;
-    else if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
-    else if (ch === "[") bracketDepth += 1;
-    else if (ch === "]") bracketDepth = Math.max(0, bracketDepth - 1);
-    else if (ch === "(") parenDepth += 1;
-    else if (ch === ")") parenDepth = Math.max(0, parenDepth - 1);
-    else if (
-      ch === ":" &&
-      angleDepth === 0 &&
-      braceDepth === 0 &&
-      bracketDepth === 0 &&
-      parenDepth === 0
-    ) {
-      return i;
-    }
-  }
-
-  return -1;
+function isInlineSafePropertyName(propName: string): boolean {
+  return /^[$A-Z_a-z][$\w]*$/.test(propName);
 }
 
 function parseTypeLiteralFromText(
   parser: TypeScriptParser,
   trimmedTypeText: string,
 ): InterfaceTypeSymbol | null {
-  const body = trimmedTypeText.slice(1, -1).trim();
-  if (!body) return null;
-
-  const members = splitTopLevelMembers(body);
-  if (members.length === 0) return null;
+  const sourceText = `type __TypeLiteralFallback = ${trimmedTypeText};`;
+  const sourceFile = ts.createSourceFile(
+    "__type_literal_fallback.ts",
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const typeAlias = sourceFile.statements.find(
+    (statement): statement is ts.TypeAliasDeclaration =>
+      ts.isTypeAliasDeclaration(statement),
+  );
+  if (!typeAlias || !ts.isTypeLiteralNode(typeAlias.type)) return null;
+  const typeLiteral = typeAlias.type;
+  if (typeLiteral.members.length === 0) return null;
 
   const propertyMap = new Map<string, TypeSymbol>();
-  for (const rawMember of members) {
-    const member = rawMember.trim();
-    if (!member) continue;
-    if (member.startsWith("[")) {
-      // Index signatures are handled as DataDictionary fallback.
-      return null;
-    }
-    if (member.includes("(")) {
-      // Method signatures are not safely handled by string fallback parser.
+  for (const member of typeLiteral.members) {
+    if (!ts.isPropertySignature(member) || !member.name) {
+      // Keep index signatures/method signatures/etc. on DataDictionary fallback.
       return null;
     }
 
-    const colonIndex = findTopLevelColon(member);
-    if (colonIndex < 0) return null;
+    const nameInfo = getTypeLiteralPropertyName(member.name);
+    if (!nameInfo) return null;
+    const { propName } = nameInfo;
+    if (!propName || !isInlineSafePropertyName(propName)) return null;
 
-    let propName = member.slice(0, colonIndex).trim();
-    const propTypeText = member.slice(colonIndex + 1).trim();
-    if (!propName || !propTypeText) return null;
-
-    if (propName.startsWith("readonly ")) {
-      propName = propName.slice("readonly ".length).trim();
-    }
-    if (propName.endsWith("?")) {
-      propName = propName.slice(0, -1).trim();
-    }
-    if (
-      (propName.startsWith('"') && propName.endsWith('"')) ||
-      (propName.startsWith("'") && propName.endsWith("'"))
-    ) {
-      propName = propName.slice(1, -1);
-    }
-    if (!propName || /\s/.test(propName)) return null;
-
-    propertyMap.set(propName, parser.mapTypeWithGenerics(propTypeText));
+    const propType = member.type
+      ? parser.mapTypeWithGenerics(member.type.getText(sourceFile), member.type)
+      : ObjectType;
+    propertyMap.set(propName, propType);
   }
 
   if (propertyMap.size === 0) return null;
@@ -240,16 +130,23 @@ export function mapTypeWithGenerics(
     // Build an InterfaceTypeSymbol for anonymous type literals so object
     // literal values receive inline heap variables instead of DataDictionary.
     const propertyMap = new Map<string, TypeSymbol>();
+    let hasUnsupportedMember = false;
     for (const member of node.members) {
-      if (ts.isPropertySignature(member) && member.name) {
-        const propName = member.name.getText();
-        const propType = member.type
-          ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-          : ObjectType;
-        propertyMap.set(propName, propType);
+      if (!ts.isPropertySignature(member) || !member.name) {
+        hasUnsupportedMember = true;
+        break;
       }
+      const nameInfo = getTypeLiteralPropertyName(member.name);
+      if (!nameInfo || !isInlineSafePropertyName(nameInfo.propName)) {
+        hasUnsupportedMember = true;
+        break;
+      }
+      const propType = member.type
+        ? this.mapTypeWithGenerics(member.type.getText(), member.type)
+        : ObjectType;
+      propertyMap.set(nameInfo.propName, propType);
     }
-    if (propertyMap.size > 0) {
+    if (!hasUnsupportedMember && propertyMap.size > 0) {
       // Each occurrence gets a unique name (per-occurrence, not structural).
       // Structurally identical type literals in different positions produce
       // distinct InterfaceTypeSymbols. This is acceptable because call-site

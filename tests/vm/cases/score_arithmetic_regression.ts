@@ -20,4 +20,3 @@ export class ScoreArithmeticRegression extends UdonSharpBehaviour {
     Debug.Log(s2.value);
   }
 }
-
