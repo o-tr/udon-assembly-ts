@@ -23,6 +23,7 @@ import {
   type IdentifierNode,
   isNumericUdonType,
   type LiteralNode,
+  needsInt32IndexCoercion,
   type OptionalChainingExpressionNode,
   type PropertyAccessExpressionNode,
   UdonType,
@@ -1548,6 +1549,15 @@ export function visitCallExpression(
         case "slice": {
           // JS slice(start, end) → DataList.GetRange(start, end - start)
           const result = this.newTemp(arrayReturn);
+          const coerceToInt32 = (operand: TACOperand): TACOperand => {
+            const operandType = this.getOperandType(operand);
+            if (!needsInt32IndexCoercion(operandType.udonType)) {
+              return operand;
+            }
+            const casted = this.newTemp(PrimitiveTypes.int32);
+            this.instructions.push(new CastInstruction(casted, operand));
+            return casted;
+          };
           if (evaluatedArgs.length === 0) {
             // slice() = copy entire list → GetRange(0, Count)
             const len = this.newTemp(PrimitiveTypes.int32);
@@ -1562,34 +1572,32 @@ export function visitCallExpression(
             );
           } else if (evaluatedArgs.length === 1) {
             // slice(start) → GetRange(start, Count - start)
+            const start = coerceToInt32(evaluatedArgs[0]);
             const len = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
               new PropertyGetInstruction(len, object, "Count"),
             );
             const count = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
-              new BinaryOpInstruction(count, len, "-", evaluatedArgs[0]),
+              new BinaryOpInstruction(count, len, "-", start),
             );
             this.instructions.push(
               new MethodCallInstruction(result, object, "GetRange", [
-                evaluatedArgs[0],
+                start,
                 count,
               ]),
             );
           } else {
             // slice(start, end) → GetRange(start, end - start)
+            const start = coerceToInt32(evaluatedArgs[0]);
+            const end = coerceToInt32(evaluatedArgs[1]);
             const count = this.newTemp(PrimitiveTypes.int32);
             this.instructions.push(
-              new BinaryOpInstruction(
-                count,
-                evaluatedArgs[1],
-                "-",
-                evaluatedArgs[0],
-              ),
+              new BinaryOpInstruction(count, end, "-", start),
             );
             this.instructions.push(
               new MethodCallInstruction(result, object, "GetRange", [
-                evaluatedArgs[0],
+                start,
                 count,
               ]),
             );

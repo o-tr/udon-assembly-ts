@@ -239,7 +239,9 @@ const cloneInstruction = (inst: TACInstruction): TACInstruction => {
     }
     case TACInstructionKind.ArrayAccess:
     case TACInstructionKind.ArrayAssignment:
-      return inst;
+      throw new Error(
+        "ArrayAccess/ArrayAssignment must not appear after DataList migration — all array ops use MethodCallInstruction.",
+      );
     case TACInstructionKind.Return: {
       const r = inst as ReturnInstruction;
       return new ReturnInstruction(r.value);

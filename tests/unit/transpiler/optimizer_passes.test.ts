@@ -461,6 +461,41 @@ describe("optimizer passes", () => {
     ).toBeGreaterThan(1);
   });
 
+  it("fails fast when unroll sees legacy array TAC instructions", () => {
+    const i = createVariable("i", PrimitiveTypes.int32);
+    const arr = createVariable("arr", ObjectType);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, ObjectType);
+    const lStart = createLabel("L_start");
+    const lEnd = createLabel("L_end");
+
+    const instructions = [
+      new AssignmentInstruction(i, createConstant(0, PrimitiveTypes.int32)),
+      new LabelInstruction(lStart),
+      new BinaryOpInstruction(
+        t0,
+        i,
+        "<",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new ConditionalJumpInstruction(t0, lEnd),
+      new ArrayAccessInstruction(t1, arr, i),
+      new BinaryOpInstruction(
+        i,
+        i,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+      new UnconditionalJumpInstruction(lStart),
+      new LabelInstruction(lEnd),
+      new ReturnInstruction(t1),
+    ];
+
+    expect(() => optimizeLoopStructures(instructions)).toThrow(
+      "ArrayAccess/ArrayAssignment must not appear after DataList migration",
+    );
+  });
+
   it("unrolls loops and keeps increments", () => {
     const i = createVariable("i", PrimitiveTypes.int32);
     const t0 = createTemporary(0, PrimitiveTypes.boolean);

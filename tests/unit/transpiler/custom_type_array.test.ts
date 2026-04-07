@@ -6,7 +6,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
+import {
+  type MethodCallInstruction,
+  TACInstructionKind,
+} from "../../../src/transpiler/ir/tac_instruction";
 
 describe("custom type array operations", () => {
   beforeAll(() => {
@@ -206,6 +211,75 @@ describe("custom type array operations", () => {
     expect(
       externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
     ).toBe(false);
+  });
+
+  it("coerces array.length assignment count to Int32 for GetRange", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          const nums: number[] = [1, 2, 3];
+          const f: UdonFloat = 1.5 as UdonFloat;
+          nums.length = f;
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const getRangeCalls = tac.filter(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        (inst as MethodCallInstruction).method === "GetRange",
+    ) as MethodCallInstruction[];
+    expect(getRangeCalls.length).toBeGreaterThan(0);
+    for (const call of getRangeCalls) {
+      const [start, count] = call.args;
+      expect("type" in start && start.type === PrimitiveTypes.int32).toBe(true);
+      expect("type" in count && count.type === PrimitiveTypes.int32).toBe(true);
+    }
+    expect(tac.some((inst) => inst.kind === TACInstructionKind.Cast)).toBe(
+      true,
+    );
+  });
+
+  it("coerces slice(start, end) arguments to Int32 for GetRange", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          const nums: number[] = [1, 2, 3];
+          const start: UdonFloat = 1.5 as UdonFloat;
+          const end: UdonFloat = 2.5 as UdonFloat;
+          const sliced = nums.slice(start, end);
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const getRangeCalls = tac.filter(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        (inst as MethodCallInstruction).method === "GetRange",
+    ) as MethodCallInstruction[];
+    expect(getRangeCalls.length).toBeGreaterThan(0);
+    for (const call of getRangeCalls) {
+      const [start, count] = call.args;
+      expect("type" in start && start.type === PrimitiveTypes.int32).toBe(true);
+      expect("type" in count && count.type === PrimitiveTypes.int32).toBe(true);
+    }
+    expect(tac.some((inst) => inst.kind === TACInstructionKind.Cast)).toBe(
+      true,
+    );
   });
 
   it("emits DataList get_Item/set_Item + DataToken for custom type array indexing", () => {

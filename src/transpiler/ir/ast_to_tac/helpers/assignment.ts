@@ -220,10 +220,17 @@ export function assignToTarget(
       object.kind === TACOperandKind.Variable
     ) {
       const sliced = this.newTemp(objectType);
+      let coercedValue = value;
+      const valueType = this.getOperandType(value);
+      if (needsInt32IndexCoercion(valueType.udonType)) {
+        const intValue = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(intValue, value));
+        coercedValue = intValue;
+      }
       this.instructions.push(
         new MethodCallInstruction(sliced, object, "GetRange", [
           createConstant(0, PrimitiveTypes.int32),
-          value,
+          coercedValue,
         ]),
       );
       this.instructions.push(
