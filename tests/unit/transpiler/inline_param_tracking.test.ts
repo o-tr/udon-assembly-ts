@@ -373,4 +373,92 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.uasm).not.toMatch(/Pt\.__get_/);
     expect(result.uasm).toMatch(/uninst_prop_next/);
   });
+
+  it("dispatches inline method call for temporary arg from Map.get", () => {
+    // Temporary operands (Map.get(...)!) may not carry inlineInstanceMap keys.
+    // The call should still inline via handle-based dispatch, not EXTERN.
+    const source = `
+      class Ctx {
+        value: number = 1;
+        inc(): number { return this.value + 1; }
+      }
+      class Helper {
+        static read(c: Ctx): number { return c.inc(); }
+      }
+      class Main {
+        private store: Map<string, Ctx> = new Map<string, Ctx>();
+        Start(): void {
+          this.store.set("k", new Ctx());
+          const v = Helper.read(this.store.get("k")!);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__inc__/);
+    expect(result.uasm).not.toMatch(/Ctx\.__inc__/);
+    expect(result.tac).toMatch(/__inst_Ctx_\d+_value/);
+  });
+
+  it("dispatches interface-typed untracked receiver from Map.get without extern fallback", () => {
+    const source = `
+      interface I {
+        inc(): number;
+      }
+      class Ctx implements I {
+        value: number = 1;
+        inc(): number { return this.value + 1; }
+      }
+      class Helper {
+        static read(c: I): number { return c.inc(); }
+      }
+      class Main {
+        private store: Map<string, I> = new Map<string, I>();
+        Start(): void {
+          this.store.set("k", new Ctx());
+          const v = Helper.read(this.store.get("k")!);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__inc__/);
+    expect(result.uasm).not.toMatch(/I\.__inc__/);
+    expect(result.tac).toContain("untracked_call_next");
+  });
+
+  it("re-lowers object literal args with interface parameter types in untracked dispatch", () => {
+    const source = `
+      interface I {
+        apply(v: { n: number }): number;
+      }
+      class Ctx implements I {
+        private latest: { n: number } = { n: 0 };
+        apply(v: { n: number }): number {
+          this.latest = v;
+          return this.latest.n;
+        }
+      }
+      class Helper {
+        static read(c: I): number {
+          return c.apply({ n: 7 });
+        }
+      }
+      class Main {
+        private store: Map<string, I> = new Map<string, I>();
+        Start(): void {
+          this.store.set("k", new Ctx());
+          const v = Helper.read(this.store.get("k")!);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__apply__/);
+    expect(result.uasm).not.toMatch(/I\.__apply__/);
+    expect(result.tac).toMatch(/__inst___anon_\d+_\d+_n = 7/);
+  });
 });

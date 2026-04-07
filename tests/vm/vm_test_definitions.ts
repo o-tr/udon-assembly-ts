@@ -232,6 +232,14 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "mixed_numeric_comparison",
     sourceFile: "mixed_numeric_comparison.ts",
   },
+  {
+    name: "score_arithmetic_regression",
+    sourceFile: "score_arithmetic_regression.ts",
+  },
+  {
+    name: "lru_numeric_compare_regression",
+    sourceFile: "lru_numeric_compare_regression.ts",
+  },
   { name: "numeric_cast_chain", sourceFile: "numeric_cast_chain.ts" },
   // --- Multi-part string concat ---
   {

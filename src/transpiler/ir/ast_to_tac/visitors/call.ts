@@ -72,6 +72,7 @@ import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
+const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 
 /**
  * Build a fallback IPC method layout from interface metadata when the
@@ -295,6 +296,211 @@ function evaluateArgsWithExpectedTypes(
     }
     return converter.visitExpression(arg);
   });
+}
+
+function tryUntrackedInlineDispatch(
+  converter: ASTToTACConverter,
+  object: TACOperand,
+  objectType: TypeSymbol | null,
+  propAccess: PropertyAccessExpressionNode,
+  rawArgs: ASTNode[],
+  evaluatedArgs: TACOperand[],
+): TACOperand | null {
+  // Untracked receiver fallback:
+  // Tracking can be lost across temporary/copy-heavy flows (e.g. Map.get(...)!).
+  // In that case, dispatch by runtime handle and inline the method body.
+  const candidateClassNames = new Set<string>();
+  const addCandidateClassesFromType = (
+    type: TypeSymbol | null | undefined,
+  ): void => {
+    if (!type) return;
+    const typeName = type.name;
+    if (!typeName) return;
+    if (
+      resolveClassNode(converter, typeName) &&
+      !converter.udonBehaviourClasses.has(typeName)
+    ) {
+      candidateClassNames.add(typeName);
+      return;
+    }
+    if (converter.classRegistry?.getInterface(typeName)) {
+      if (!isAllInlineInterface(converter, typeName)) return;
+      for (const impl of converter.classRegistry.getImplementorsOfInterface(
+        typeName,
+      )) {
+        if (!converter.udonBehaviourClasses.has(impl.name)) {
+          candidateClassNames.add(impl.name);
+        }
+      }
+    }
+  };
+  const objectTypeFromNode = resolveTypeFromNode(converter, propAccess.object);
+  addCandidateClassesFromType(objectType);
+  addCandidateClassesFromType(objectTypeFromNode);
+  const hasInterfaceTypedReceiver = [objectType, objectTypeFromNode].some(
+    (type) => {
+      const typeName = type?.name;
+      return !!typeName && !!converter.classRegistry?.getInterface(typeName);
+    },
+  );
+  const isNonParameterVariableReceiver =
+    object.kind === TACOperandKind.Variable &&
+    !converter.symbolTable.lookup((object as VariableOperand).name)
+      ?.isParameter;
+  if (hasInterfaceTypedReceiver && isNonParameterVariableReceiver) {
+    // Keep local interface aliases on the regular call path so they don't
+    // eagerly lower to handle-dispatch blocks in post-loop alias-restore flows.
+    return null;
+  }
+
+  if (
+    candidateClassNames.size === 0 ||
+    converter.allInlineInstances.size === 0
+  ) {
+    return null;
+  }
+
+  const candidateInstances = Array.from(converter.allInlineInstances).filter(
+    ([, info]) => candidateClassNames.has(info.className),
+  );
+  const resolveInlineMethodSignature = (): {
+    className: string;
+    returnType: TypeSymbol;
+  } | null => {
+    for (const className of candidateClassNames) {
+      if (converter.classRegistry?.getClass(className)) {
+        const method = converter.classRegistry
+          .getMergedMethods(className)
+          .find((candidate) => candidate.name === propAccess.property);
+        if (method) {
+          return {
+            className,
+            returnType: converter.typeMapper.mapTypeScriptType(
+              method.returnType,
+            ),
+          };
+        }
+      }
+      const classNode = converter.classMap.get(className);
+      const method = classNode?.methods.find(
+        (candidate) => candidate.name === propAccess.property,
+      );
+      if (method) {
+        return { className, returnType: method.returnType };
+      }
+    }
+    return null;
+  };
+
+  if (
+    candidateInstances.length === 0 ||
+    candidateInstances.length > MAX_UNTRACKED_DISPATCH_CANDIDATES
+  ) {
+    return null;
+  }
+
+  const methodSignature = resolveInlineMethodSignature();
+  if (!methodSignature) return null;
+  const untrackedReturnType = methodSignature.returnType;
+  const resolvedUntrackedReturnType = untrackedReturnType?.name
+    ? (converter.typeMapper.getAlias(untrackedReturnType.name) ??
+      untrackedReturnType)
+    : untrackedReturnType;
+  const isVoid =
+    resolvedUntrackedReturnType?.name === "SystemVoid" ||
+    resolvedUntrackedReturnType?.name === "void";
+  const isInlineLikeReturn =
+    resolvedUntrackedReturnType instanceof InterfaceTypeSymbol ||
+    (!!resolvedUntrackedReturnType?.name &&
+      !!resolveClassNode(converter, resolvedUntrackedReturnType.name) &&
+      !converter.udonBehaviourClasses.has(resolvedUntrackedReturnType.name));
+  if (!resolvedUntrackedReturnType || isInlineLikeReturn) return null;
+
+  const savedInstructionCount = converter.instructions.length;
+  const savedTempCounter = converter.tempCounter;
+  const savedLabelCounter = converter.labelCounter;
+  const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
+  const savedAllInlineInstances = new Map(converter.allInlineInstances);
+  let dispatchFailed = false;
+  const typedArgs = evaluateArgsWithExpectedTypes(
+    converter,
+    methodSignature.className,
+    propAccess.property,
+    rawArgs,
+  );
+  const dispatchArgs = typedArgs ?? evaluatedArgs;
+
+  const dispatchResult = isVoid
+    ? undefined
+    : converter.newTemp(resolvedUntrackedReturnType);
+  const handleVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(new CopyInstruction(handleVar, object));
+  const endLabel = converter.newLabel("untracked_call_end");
+
+  for (const [instanceId, info] of candidateInstances) {
+    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+    const nextLabel = converter.newLabel("untracked_call_next");
+    const cond = converter.newTemp(PrimitiveTypes.boolean);
+    converter.instructions.push(
+      new BinaryOpInstruction(
+        cond,
+        handleVar,
+        "==",
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
+    );
+    converter.instructions.push(
+      new ConditionalJumpInstruction(cond, nextLabel),
+    );
+
+    const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
+      info.className,
+      info.prefix,
+      propAccess.property,
+      dispatchArgs,
+    );
+    if (!inlineRes) {
+      converter.instructions.length = savedInstructionCount;
+      converter.tempCounter = savedTempCounter;
+      converter.labelCounter = savedLabelCounter;
+      converter.inlineInstanceMap = savedInlineInstanceMap;
+      converter.allInlineInstances = savedAllInlineInstances;
+      dispatchFailed = true;
+      break;
+    }
+
+    if (dispatchResult) {
+      converter.instructions.push(
+        new CopyInstruction(dispatchResult, inlineRes),
+      );
+    }
+    converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
+    converter.instructions.push(new LabelInstruction(nextLabel));
+    converter.inlineInstanceMap = branchMapSnapshot;
+  }
+
+  if (dispatchFailed) return null;
+
+  // Miss path: do NOT emit a generic MethodCallInstruction.
+  // For erased owners, that would generate invalid EXTERN signatures
+  // (e.g. SystemObject.__inc__) and fail VM load.
+  converter.inlineInstanceMap = savedInlineInstanceMap;
+  const logExtern = converter.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const missMsg = createConstant(
+    `[udon-assembly-ts] Untracked inline method dispatch miss: ${propAccess.property}`,
+    PrimitiveTypes.string,
+  );
+  converter.instructions.push(
+    new CallInstruction(undefined, logExtern, [missMsg]),
+  );
+  converter.instructions.push(new LabelInstruction(endLabel));
+  return dispatchResult ?? VOID_RETURN;
 }
 
 export function visitCallExpression(
@@ -1995,6 +2201,7 @@ export function visitCallExpression(
           const savedTempCounter = this.tempCounter;
           const savedLabelCounter = this.labelCounter;
           const savedInlineInstanceMap = new Map(this.inlineInstanceMap);
+          const savedAllInlineInstances = new Map(this.allInlineInstances);
           let dispatchFailed = false;
 
           const result = isVoid
@@ -2046,6 +2253,7 @@ export function visitCallExpression(
               this.tempCounter = savedTempCounter;
               this.labelCounter = savedLabelCounter;
               this.inlineInstanceMap = savedInlineInstanceMap;
+              this.allInlineInstances = savedAllInlineInstances;
               dispatchFailed = true;
               break;
             }
@@ -2200,6 +2408,16 @@ export function visitCallExpression(
           }
           // dispatchFailed: fall through to generic method call path
         }
+      } else {
+        const untrackedDispatch = tryUntrackedInlineDispatch(
+          this,
+          object,
+          objectType,
+          propAccess,
+          rawArgs,
+          evaluatedArgs,
+        );
+        if (untrackedDispatch != null) return untrackedDispatch;
       }
     }
     // Recursive self-method call: use JUMP-based mechanism
