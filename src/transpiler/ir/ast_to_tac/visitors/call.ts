@@ -1740,7 +1740,7 @@ export function visitCallExpression(
             return curLen;
           }
 
-          // All arrays are backed by DataList. push = DataList.Add per arg.
+          // Current lowering policy: TS arrays use DataList; push = Add(token).
           for (const arg of evaluatedArgs) {
             const token = this.wrapDataToken(arg);
             this.instructions.push(
@@ -2678,7 +2678,7 @@ function emitSetPopulateFromIterable(
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
-  // All arrays are backed by DataList — always use Count.
+  // Current lowering policy: TS arrays use DataList semantics, so use Count.
   converter.instructions.push(
     new PropertyGetInstruction(lengthVar, listOperand, "Count"),
   );
@@ -2815,7 +2815,7 @@ function emitMapPopulateFromIterable(
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
-  // All arrays are backed by DataList — always use Count.
+  // Current lowering policy: TS arrays use DataList semantics, so use Count.
   converter.instructions.push(
     new PropertyGetInstruction(lengthVar, listOperand, "Count"),
   );
@@ -3626,7 +3626,7 @@ export function visitArrayStaticCall(
           ),
         );
 
-        // All arrays are backed by DataList — always use Count.
+        // Current lowering policy: TS arrays use DataList semantics, so Count.
         this.instructions.push(
           new PropertyGetInstruction(lengthVar, source, "Count"),
         );
