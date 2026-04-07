@@ -11,6 +11,175 @@ import {
 } from "../type_symbols.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
 
+function splitTopLevelMembers(body: string): string[] {
+  const members: string[] = [];
+  let current = "";
+  let angleDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote: '"' | "'" | "`" | null = null;
+  let escaped = false;
+
+  for (const ch of body) {
+    if (quote) {
+      current += ch;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+
+    if (ch === "<") angleDepth += 1;
+    else if (ch === ">") angleDepth = Math.max(0, angleDepth - 1);
+    else if (ch === "{") braceDepth += 1;
+    else if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
+    else if (ch === "[") bracketDepth += 1;
+    else if (ch === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (ch === "(") parenDepth += 1;
+    else if (ch === ")") parenDepth = Math.max(0, parenDepth - 1);
+
+    const isTopLevelSeparator =
+      (ch === ";" || ch === ",") &&
+      angleDepth === 0 &&
+      braceDepth === 0 &&
+      bracketDepth === 0 &&
+      parenDepth === 0;
+    if (isTopLevelSeparator) {
+      const member = current.trim();
+      if (member) members.push(member);
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  const tail = current.trim();
+  if (tail) members.push(tail);
+  return members;
+}
+
+function findTopLevelColon(member: string): number {
+  let angleDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote: '"' | "'" | "`" | null = null;
+  let escaped = false;
+
+  for (let i = 0; i < member.length; i += 1) {
+    const ch = member[i];
+    if (!ch) continue;
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === "<") angleDepth += 1;
+    else if (ch === ">") angleDepth = Math.max(0, angleDepth - 1);
+    else if (ch === "{") braceDepth += 1;
+    else if (ch === "}") braceDepth = Math.max(0, braceDepth - 1);
+    else if (ch === "[") bracketDepth += 1;
+    else if (ch === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (ch === "(") parenDepth += 1;
+    else if (ch === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (
+      ch === ":" &&
+      angleDepth === 0 &&
+      braceDepth === 0 &&
+      bracketDepth === 0 &&
+      parenDepth === 0
+    ) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+function parseTypeLiteralFromText(
+  parser: TypeScriptParser,
+  trimmedTypeText: string,
+): InterfaceTypeSymbol | null {
+  const body = trimmedTypeText.slice(1, -1).trim();
+  if (!body) return null;
+
+  const members = splitTopLevelMembers(body);
+  if (members.length === 0) return null;
+
+  const propertyMap = new Map<string, TypeSymbol>();
+  for (const rawMember of members) {
+    const member = rawMember.trim();
+    if (!member) continue;
+    if (member.startsWith("[")) {
+      // Index signatures are handled as DataDictionary fallback.
+      return null;
+    }
+    if (member.includes("(")) {
+      // Method signatures are not safely handled by string fallback parser.
+      return null;
+    }
+
+    const colonIndex = findTopLevelColon(member);
+    if (colonIndex < 0) return null;
+
+    let propName = member.slice(0, colonIndex).trim();
+    const propTypeText = member.slice(colonIndex + 1).trim();
+    if (!propName || !propTypeText) return null;
+
+    if (propName.startsWith("readonly ")) {
+      propName = propName.slice("readonly ".length).trim();
+    }
+    if (propName.endsWith("?")) {
+      propName = propName.slice(0, -1).trim();
+    }
+    if (
+      (propName.startsWith('"') && propName.endsWith('"')) ||
+      (propName.startsWith("'") && propName.endsWith("'"))
+    ) {
+      propName = propName.slice(1, -1);
+    }
+    if (!propName || /\s/.test(propName)) return null;
+
+    propertyMap.set(propName, parser.mapTypeWithGenerics(propTypeText));
+  }
+
+  if (propertyMap.size === 0) return null;
+  const anonName = `__anon_${++parser.anonTypeCounter}`;
+  return new InterfaceTypeSymbol(anonName, new Map(), propertyMap);
+}
+
 export function mapTypeWithGenerics(
   this: TypeScriptParser,
   typeText: string,
@@ -99,6 +268,8 @@ export function mapTypeWithGenerics(
   }
 
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    const parsedTypeLiteral = parseTypeLiteralFromText(this, trimmed);
+    if (parsedTypeLiteral) return parsedTypeLiteral;
     return ExternTypes.dataDictionary;
   }
 

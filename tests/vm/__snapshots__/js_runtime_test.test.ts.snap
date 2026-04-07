@@ -556,6 +556,13 @@ exports[`JS Runtime Equivalence Tests > JS: loop_variable_scoping 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: lru_numeric_compare_regression 1`] = `
+[
+  "True",
+  "True",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: mathf_advanced 1`] = `
 [
   "3",
@@ -798,6 +805,13 @@ exports[`JS Runtime Equivalence Tests > JS: restricted_type_init 1`] = `
   "True",
   "False",
   "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: score_arithmetic_regression 1`] = `
+[
+  "25000",
+  "26000",
 ]
 `;
 

@@ -373,4 +373,31 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.uasm).not.toMatch(/Pt\.__get_/);
     expect(result.uasm).toMatch(/uninst_prop_next/);
   });
+
+  it("dispatches inline method call for temporary arg from Map.get", () => {
+    // Temporary operands (Map.get(...)!) may not carry inlineInstanceMap keys.
+    // The call should still inline via handle-based dispatch, not EXTERN.
+    const source = `
+      class Ctx {
+        value: number = 1;
+        inc(): number { return this.value + 1; }
+      }
+      class Helper {
+        static read(c: Ctx): number { return c.inc(); }
+      }
+      class Main {
+        private store: Map<string, Ctx> = new Map<string, Ctx>();
+        Start(): void {
+          this.store.set("k", new Ctx());
+          const v = Helper.read(this.store.get("k")!);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__inc__/);
+    expect(result.uasm).not.toMatch(/Ctx\.__inc__/);
+    expect(result.tac).toMatch(/__inst_Ctx_\d+_value/);
+  });
 });
