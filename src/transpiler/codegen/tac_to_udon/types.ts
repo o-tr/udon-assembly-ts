@@ -127,18 +127,16 @@ export function getOperandTsTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
+      // All TypeScript arrays are backed by DataList at runtime.
       if (
-        typeSymbol instanceof ArrayTypeSymbol &&
-        !isKnownExternElementType(typeSymbol.elementType.name)
+        typeSymbol instanceof ArrayTypeSymbol ||
+        (typeSymbol.name ?? "").endsWith("[]")
       ) {
-        return "object[]";
+        return "DataList";
       }
       const tsName = typeSymbol.name ?? "";
-      // Defensive: strip trailing [] if a non-ArrayTypeSymbol somehow
-      // carries an array-like name (e.g. from a type alias).
-      const baseName = tsName.endsWith("[]") ? tsName.slice(0, -2) : tsName;
-      if (!isKnownExternElementType(baseName)) {
-        return baseName !== tsName ? "object[]" : "object";
+      if (!isKnownExternElementType(tsName)) {
+        return "object";
       }
       return tsName;
     }

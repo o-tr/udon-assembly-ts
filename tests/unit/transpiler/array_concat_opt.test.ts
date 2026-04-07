@@ -7,7 +7,7 @@ describe("typed array spread → .concat() optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  it("two typed arrays use Array.Copy concat", () => {
+  it("two typed arrays use DataList loop concat", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -22,12 +22,14 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Spread uses native Array.Copy, not DataList loop or EXTERN concat
-    expect(result.tac).toMatch(/SystemArray.*Copy/);
-    expect(result.tac).not.toContain("MethodCall concat");
+    // Spread now uses DataList loop concat (get_Item + Add)
+    expect(result.tac).toContain("get_Item");
+    expect(result.tac).toContain("Add");
+    expect(result.tac).toContain("dlconcat_start");
+    expect(result.tac).not.toContain("SystemArray");
   });
 
-  it("three typed arrays produce two Array.Copy concats", () => {
+  it("three typed arrays produce three DataList loop concats", () => {
     const source = `
       import { UdonBehaviour } from "udon-assembly-ts/stubs/UdonBehaviour";
       class Test extends UdonBehaviour {
@@ -43,11 +45,10 @@ describe("typed array spread → .concat() optimization", () => {
     `;
     const transpiler = new TypeScriptToUdonTranspiler();
     const result = transpiler.transpile(source);
-    // Two Array.Copy concat operations (a+b, then result+c)
-    // Each concat emits 2 Copy calls, so at least 4 total
-    const copyCallCount = (result.tac.match(/SystemArray.*Copy/g) || []).length;
-    expect(copyCallCount).toBeGreaterThanOrEqual(4);
-    expect(result.tac).not.toContain("MethodCall concat");
+    // Three spread operands produce three DataList loop concat blocks
+    const loopCount = (result.tac.match(/dlconcat_start/g) || []).length;
+    expect(loopCount).toBeGreaterThanOrEqual(3);
+    expect(result.tac).not.toContain("SystemArray");
   });
 
   it("mixed spread and literal falls back to DataList loop", () => {

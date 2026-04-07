@@ -1,6 +1,6 @@
 /**
  * Tests that custom type arrays (e.g. Tile[], Meld[]) emit
- * SystemObjectArray externs instead of invalid TileArray / MeldArray externs.
+ * DataList externs instead of invalid TileArray / MeldArray externs.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
@@ -13,7 +13,7 @@ describe("custom type array operations", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  it("emits SystemObjectArray externs for custom type array .length", () => {
+  it("emits DataList Count extern for custom type array .length", () => {
     const parser = new TypeScriptParser();
     const source = `
       class Tile {
@@ -37,14 +37,19 @@ describe("custom type array operations", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Should use SystemObjectArray, NOT TileArray
+    // Arrays now use DataList.Count instead of SystemObjectArray.get_Length
     expect(
-      externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
+      externs.some((sig) =>
+        sig.includes("VRCSDK3DataDataList.__get_Count__SystemInt32"),
+      ),
     ).toBe(true);
     expect(externs.some((sig) => sig.includes("TileArray"))).toBe(false);
+    expect(
+      externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
+    ).toBe(false);
   });
 
-  it("emits SystemObjectArray externs for custom type array .push()", () => {
+  it("emits DataList Add + DataToken externs for custom type array .push()", () => {
     const parser = new TypeScriptParser();
     const source = `
       class Meld {
@@ -71,8 +76,22 @@ describe("custom type array operations", () => {
 
     // Should NOT have any MeldArray externs
     expect(externs.some((sig) => sig.includes("MeldArray"))).toBe(false);
-    // Should use SystemObjectArray for the push-equivalent operation
-    expect(externs.some((sig) => sig.includes("SystemObjectArray"))).toBe(true);
+    // Should NOT use SystemObjectArray (now uses DataList)
+    expect(externs.some((sig) => sig.includes("SystemObjectArray"))).toBe(
+      false,
+    );
+    // Should use DataList.Add for the push operation
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    // Should use DataToken constructor for wrapping
+    expect(
+      externs.some((sig) => sig.includes("VRCSDK3DataDataToken.__ctor__")),
+    ).toBe(true);
   });
 
   it("generates valid length extern for known type arrays (number[], string[])", () => {
@@ -176,23 +195,20 @@ describe("custom type array operations", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Custom class alias array should fallback to SystemObjectArray
+    // All arrays now use DataList.Count instead of SystemObjectArray.get_Length
     expect(
-      externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
+      externs.some((sig) =>
+        sig.includes("VRCSDK3DataDataList.__get_Count__SystemInt32"),
+      ),
     ).toBe(true);
     expect(externs.some((sig) => sig.includes("MeldArray"))).toBe(false);
     expect(externs.some((sig) => sig.includes("MeldAliasArray"))).toBe(false);
-    // Known type alias array should use a valid length extern
     expect(
-      externs.some(
-        (sig) =>
-          sig.includes("get_Length__SystemInt32") ||
-          sig.includes("get_Count__SystemInt32"),
-      ),
-    ).toBe(true);
+      externs.some((sig) => sig.includes("SystemObjectArray.__get_Length__")),
+    ).toBe(false);
   });
 
-  it("emits typed SystemObjectArray Get/Set for custom type array indexing", () => {
+  it("emits DataList get_Item/set_Item + DataToken for custom type array indexing", () => {
     const parser = new TypeScriptParser();
     const source = `
       class Tile {
@@ -217,20 +233,28 @@ describe("custom type array operations", () => {
     udonConverter.convert(tac);
     const externs = udonConverter.getExternSignatures();
 
-    // Custom type array indexing should use SystemObjectArray (not SystemArray)
+    // Custom type array indexing now uses DataList get_Item/set_Item + DataToken
     expect(
       externs.some((sig) =>
-        sig.includes("SystemObjectArray.__Get__SystemInt32__SystemObject"),
+        sig.includes(
+          "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+        ),
       ),
     ).toBe(true);
     expect(
       externs.some((sig) =>
         sig.includes(
-          "SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid",
+          "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
         ),
       ),
     ).toBe(true);
-    // Base class SystemArray.__Get__/__Set__ should NOT appear
+    // Old SystemObjectArray/SystemArray Get/Set should NOT appear
+    expect(
+      externs.some((sig) => sig.includes("SystemObjectArray.__Get__")),
+    ).toBe(false);
+    expect(
+      externs.some((sig) => sig.includes("SystemObjectArray.__Set__")),
+    ).toBe(false);
     expect(externs.some((sig) => sig.includes("SystemArray.__Get__"))).toBe(
       false,
     );

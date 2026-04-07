@@ -1,7 +1,5 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
-  ArrayAccessInstruction,
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -405,22 +403,11 @@ const performUnswitch = (
         const ret = inst as ReturnInstruction;
         return new ReturnInstruction(ret.value, ret.returnVarName);
       }
-      case TACInstructionKind.ArrayAccess: {
-        const access = inst as ArrayAccessInstruction;
-        return new ArrayAccessInstruction(
-          access.dest,
-          access.array,
-          access.index,
-        );
-      }
-      case TACInstructionKind.ArrayAssignment: {
-        const assign = inst as ArrayAssignmentInstruction;
-        return new ArrayAssignmentInstruction(
-          assign.array,
-          assign.index,
-          assign.value,
-        );
-      }
+      // ArrayAccess/ArrayAssignment are no longer generated (DataList migration).
+      // If encountered, pass through as-is — codegen will throw.
+      case TACInstructionKind.ArrayAccess:
+      case TACInstructionKind.ArrayAssignment:
+        return inst;
       case TACInstructionKind.Phi: {
         const phi = inst as PhiInstruction;
         return new PhiInstruction(

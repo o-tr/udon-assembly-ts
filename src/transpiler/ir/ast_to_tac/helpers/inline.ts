@@ -1,5 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
+  ClassTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
   ObjectType,
@@ -31,6 +32,7 @@ import {
   type ForStatementNode,
   type IdentifierNode,
   type IfStatementNode,
+  isNumericUdonType,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
@@ -50,6 +52,7 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
@@ -76,6 +79,24 @@ export type InlineParamSave = Map<
 type InlineInitializerState = NonNullable<
   ASTToTACConverter["currentInlineInitializerState"]
 >;
+
+/**
+ * Check if a type represents an inline class instance stored as an Int32 handle.
+ * Inline class instances are NOT UdonBehaviour types and have entries in the
+ * classMap or interfaceClassIdMap.
+ */
+export function isInlineHandleType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  return (
+    (type instanceof ClassTypeSymbol &&
+      converter.classMap.has(type.name) &&
+      !converter.udonBehaviourClasses.has(type.name)) ||
+    (type instanceof InterfaceTypeSymbol &&
+      converter.interfaceClassIdMap.has(type.name))
+  );
+}
 
 /**
  * Resolve a class node by name, checking classMap first then classRegistry.
@@ -119,12 +140,24 @@ export function saveAndBindInlineParams(
     converter.inlineInstanceMap.delete(param.name);
     const arg = args[i];
     if (arg) {
-      // Plain CopyInstruction — the argInfo/type-based tracking logic
-      // below is the authoritative source for parameter tracking.
+      // Coerce argument type if both are numeric but different.
+      // Without this, a COPY from Single (float) to Int32 would do a
+      // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
+      let argToUse = arg;
+      const argType = converter.getOperandType(arg);
+      if (
+        argType.udonType !== param.type.udonType &&
+        isNumericUdonType(argType.udonType) &&
+        isNumericUdonType(param.type.udonType)
+      ) {
+        const coercedArg = converter.newTemp(param.type);
+        converter.instructions.push(new CastInstruction(coercedArg, arg));
+        argToUse = coercedArg;
+      }
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
-          arg,
+          argToUse,
         ),
       );
       const argInfo = argInlineInfos[i];
@@ -616,12 +649,42 @@ export function visitInlineConstructor(
         typedParams,
         args,
       );
+      // Helper: emit implicit assignments for TypeScript parameter properties
+      // (e.g., `constructor(public value: UdonInt)` auto-assigns
+      // `this.value = value`). Must run after super() and initializers.
+      const emitParamPropertyAssignments = () => {
+        if (!classNode.constructor) return;
+        for (const param of classNode.constructor.parameters) {
+          const isParamProperty = classNode.properties.some(
+            (prop) => prop.name === param.name && !prop.isStatic,
+          );
+          if (isParamProperty) {
+            const fieldVar = this.mapInlineProperty(
+              className,
+              instancePrefix,
+              param.name,
+            );
+            if (fieldVar) {
+              const paramType = this.typeMapper.mapTypeScriptType(param.type);
+              const paramVar = createVariable(param.name, paramType, {
+                isParameter: true,
+              });
+              this.emitCopyWithTracking(fieldVar, paramVar);
+            }
+          }
+        }
+      };
+
       try {
         if (!classNode.baseClass) {
           emitDeferredInlineInitializers(this, classNode.name);
+          // For base classes: param properties before body (body may read them)
+          emitParamPropertyAssignments();
         }
         this.visitStatement(classNode.constructor.body);
         if (classNode.baseClass) {
+          // For derived classes: param properties after body (body contains super())
+          emitParamPropertyAssignments();
           emitDeferredInlineInitializers(this, classNode.name);
         }
       } finally {

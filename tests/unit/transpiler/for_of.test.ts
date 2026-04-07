@@ -5,10 +5,13 @@
 import { describe, expect, it } from "vitest";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
-import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction";
+import {
+  type MethodCallInstruction,
+  TACInstructionKind,
+} from "../../../src/transpiler/ir/tac_instruction";
 
 describe("for...of", () => {
-  it("should lower for...of into array access and loop control", () => {
+  it("should lower for...of into DataList get_Item and loop control", () => {
     const parser = new TypeScriptParser();
     const source = `
       const tiles: number[] = [1, 2, 3];
@@ -24,14 +27,17 @@ describe("for...of", () => {
     );
     const tac = converter.convert(ast);
 
-    const hasArrayAccess = tac.some(
-      (inst) => inst.kind === TACInstructionKind.ArrayAccess,
+    // for...of uses DataList get_Item (MethodCall) for element access
+    const hasGetItem = tac.some(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        (inst as MethodCallInstruction).method === "get_Item",
     );
     const hasLabels = tac.some(
       (inst) => inst.kind === TACInstructionKind.Label,
     );
 
-    expect(hasArrayAccess).toBe(true);
+    expect(hasGetItem).toBe(true);
     expect(hasLabels).toBe(true);
   });
 

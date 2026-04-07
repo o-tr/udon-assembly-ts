@@ -1,7 +1,6 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
-  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -21,7 +20,6 @@ import {
   type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
-  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -44,7 +42,11 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { resolveClassNode, resolveClassProperty } from "./inline.js";
+import {
+  isInlineHandleType,
+  resolveClassNode,
+  resolveClassProperty,
+} from "./inline.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
@@ -62,28 +64,23 @@ export function assignToTarget(
       );
       return value;
     }
-    if (
-      arrayType instanceof DataListTypeSymbol ||
-      arrayType.name === ExternTypes.dataList.name
-    ) {
-      // Coerce index to Int32 for DataList.set_Item (expects SystemInt32)
-      let coercedIndex = index;
-      const indexType = this.getOperandType(index);
-      if (needsInt32IndexCoercion(indexType.udonType)) {
-        const intIndex = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CastInstruction(intIndex, index));
-        coercedIndex = intIndex;
-      }
-      const token = this.wrapDataToken(value);
-      this.instructions.push(
-        new MethodCallInstruction(undefined, array, "set_Item", [
-          coercedIndex,
-          token,
-        ]),
-      );
-      return value;
+    // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
+    // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
+    // is handled above and does not need DataToken wrapping.
+    let coercedIndex = index;
+    const idxType = this.getOperandType(index);
+    if (needsInt32IndexCoercion(idxType.udonType)) {
+      const intIndex = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CastInstruction(intIndex, index));
+      coercedIndex = intIndex;
     }
-    this.instructions.push(new ArrayAssignmentInstruction(array, index, value));
+    const token = this.wrapDataToken(value);
+    this.instructions.push(
+      new MethodCallInstruction(undefined, array, "set_Item", [
+        coercedIndex,
+        token,
+      ]),
+    );
     return value;
   }
 
@@ -214,16 +211,17 @@ export function assignToTarget(
         }
       }
     }
-    // Array length setter: array.length = n → array = array.slice(0, n)
+    // Array length setter: array.length = n → array = array.GetRange(0, n)
     const objectType = this.getOperandType(object);
     if (
       propAccess.property === "length" &&
-      objectType instanceof ArrayTypeSymbol &&
+      (objectType instanceof ArrayTypeSymbol ||
+        objectType instanceof DataListTypeSymbol) &&
       object.kind === TACOperandKind.Variable
     ) {
       const sliced = this.newTemp(objectType);
       this.instructions.push(
-        new MethodCallInstruction(sliced, object, "slice", [
+        new MethodCallInstruction(sliced, object, "GetRange", [
           createConstant(0, PrimitiveTypes.int32),
           value,
         ]),
@@ -349,7 +347,7 @@ export function getArrayElementType(
 
 type AliasLikeSymbol = { initialValue?: unknown };
 
-function isAliasChainBackedByArrayLiteral(
+function _isAliasChainBackedByArrayLiteral(
   startName: string,
   lookupSymbol: (name: string) => AliasLikeSymbol | undefined,
   firstSymbol?: AliasLikeSymbol,
@@ -371,110 +369,39 @@ function isAliasChainBackedByArrayLiteral(
 }
 
 /**
- * Coerce an operand to a native SystemObjectArray. If the operand is
- * already an ArrayTypeSymbol, a simple COPY reinterprets the heap type.
- * If it is a DataList, emit a loop that reads each element via
- * DataList.get_Item, unwraps the DataToken, and writes to a fresh
- * native array via ArrayAssignmentInstruction.
- * Returns [arrayOperand, lengthOperand].
+ * Emit a DataList-based loop that copies elements from `source` into `dest`.
+ * `source` can be a DataList or ArrayTypeSymbol (both backed by DataList at runtime).
+ * Elements are copied as DataTokens (get_Item → Add) with no unwrap/rewrap.
  */
-function coerceToNativeArray(
+function emitCopyElementsLoop(
   converter: ASTToTACConverter,
-  operand: TACOperand,
-  objArrayType: ArrayTypeSymbol,
-): [TACOperand, TACOperand] {
-  const opType = converter.getOperandType(operand);
-  const isDeclaredDataList =
-    opType instanceof DataListTypeSymbol ||
-    opType.name === ExternTypes.dataList.name ||
-    opType.udonType === UdonType.DataList;
-  const isArrayLiteralBackedDataList =
-    operand.kind === TACOperandKind.Variable &&
-    opType instanceof ArrayTypeSymbol &&
-    (() => {
-      const startName = (operand as VariableOperand).name;
-      const symbol = converter.symbolTable.lookup(startName);
-      // Safety: this heuristic is only reliable for const aliases because
-      // let/var can be reassigned after declaration.
-      if (!symbol?.isConstant) return false;
-      return isAliasChainBackedByArrayLiteral(
-        startName,
-        (name) => converter.symbolTable.lookup(name),
-        symbol,
-      );
-    })();
-  const isDataList = isDeclaredDataList || isArrayLiteralBackedDataList;
-
-  if (!isDataList) {
-    // Native array — cast and get length
-    const arr = converter.newTemp(objArrayType);
-    converter.instructions.push(new CopyInstruction(arr, operand));
-    const len = converter.newTemp(PrimitiveTypes.int32);
-    // Udon extern is get_Length (capital L), not get_length.
-    converter.instructions.push(new PropertyGetInstruction(len, arr, "Length"));
-    return [arr, len];
-  }
-
-  // DataList — get Count, create native array, copy elements via loop.
-  // Skip redundant COPY if operand is already DataList-typed.
-  let list: TACOperand;
-  if (opType instanceof DataListTypeSymbol) {
-    list = operand;
-  } else {
-    list = converter.newTemp(ExternTypes.dataList);
-    converter.instructions.push(new CopyInstruction(list, operand));
-  }
+  source: TACOperand,
+  dest: TACOperand,
+): void {
   const len = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new PropertyGetInstruction(len, list, "Count"));
-  const ctorExtern = converter.requireExternSignature(
-    "object[]",
-    "ctor",
-    "method",
-    ["int"],
-    "object[]",
-  );
-  const arr = converter.newTemp(objArrayType);
-  converter.instructions.push(new CallInstruction(arr, ctorExtern, [len]));
+  converter.instructions.push(new PropertyGetInstruction(len, source, "Count"));
 
-  // for (i = 0; i < len; i++) arr[i] = list.get_Item(i).Reference
   const idx = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(
     new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
   );
-  const loopStart = converter.newLabel("dl2arr_start");
-  const loopEnd = converter.newLabel("dl2arr_end");
+  const loopStart = converter.newLabel("dlconcat_start");
+  const loopEnd = converter.newLabel("dlconcat_end");
   converter.instructions.push(new LabelInstruction(loopStart));
   const cond = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(new BinaryOpInstruction(cond, idx, "<", len));
-  // JUMP_IF_FALSE: exit when idx >= len
   converter.instructions.push(new ConditionalJumpInstruction(cond, loopEnd));
+
+  // token = source.get_Item(idx)
   const token = converter.newTemp(ExternTypes.dataToken);
   converter.instructions.push(
-    new MethodCallInstruction(token, list, "get_Item", [idx]),
+    new MethodCallInstruction(token, source, "get_Item", [idx]),
   );
-  const unwrapTargetType = (() => {
-    if (opType instanceof DataListTypeSymbol) return opType.elementType;
-    if (opType instanceof ArrayTypeSymbol) return opType.elementType;
-    return ObjectType;
-  })();
-  const isInlineHandleType =
-    (unwrapTargetType instanceof ClassTypeSymbol &&
-      converter.classMap.has(unwrapTargetType.name) &&
-      !converter.udonBehaviourClasses.has(unwrapTargetType.name)) ||
-    (unwrapTargetType instanceof InterfaceTypeSymbol &&
-      converter.interfaceClassIdMap.has(unwrapTargetType.name));
-  // Inline class arrays are stored as int handles inside DataToken; using
-  // .Reference can trigger unsupported externs on some UdonVM builds.
-  const elem = isInlineHandleType
-    ? (() => {
-        const handle = converter.newTemp(PrimitiveTypes.int32);
-        converter.instructions.push(
-          new PropertyGetInstruction(handle, token, "Int"),
-        );
-        return handle;
-      })()
-    : converter.unwrapDataToken(token, unwrapTargetType);
-  converter.instructions.push(new ArrayAssignmentInstruction(arr, idx, elem));
+  // dest.Add(token)
+  converter.instructions.push(
+    new MethodCallInstruction(undefined, dest, "Add", [token]),
+  );
+
   const next = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(
     new BinaryOpInstruction(
@@ -487,79 +414,48 @@ function coerceToNativeArray(
   converter.instructions.push(new CopyInstruction(idx, next));
   converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
   converter.instructions.push(new LabelInstruction(loopEnd));
-
-  return [arr, len];
 }
 
 /**
- * Emit instructions for array concatenation using native Array.Copy.
- * Accepts both native arrays and DataList operands (auto-coerced).
- * Creates a new SystemObjectArray of size a.length + b.length, then
- * copies elements from both sources using SystemArray.Copy.
+ * Emit instructions for array concatenation using DataList.
+ * Creates a new DataList, copies elements from both sources via
+ * get_Item/Add loops. Returns a DataList operand.
  */
 export function emitArrayConcat(
   converter: ASTToTACConverter,
   a: TACOperand,
   b: TACOperand,
 ): TACOperand {
-  const objArrayType = new ArrayTypeSymbol(ObjectType);
+  // Determine element type for the result DataList
+  const aType = converter.getOperandType(a);
+  const bType = converter.getOperandType(b);
+  const elementType =
+    aType instanceof DataListTypeSymbol
+      ? aType.elementType
+      : aType instanceof ArrayTypeSymbol
+        ? aType.elementType
+        : bType instanceof DataListTypeSymbol
+          ? bType.elementType
+          : bType instanceof ArrayTypeSymbol
+            ? bType.elementType
+            : ObjectType;
 
-  // Coerce both operands to native SystemObjectArray (handles DataList)
-  const [aArr, lenA] = coerceToNativeArray(converter, a, objArrayType);
-  const [bArr, lenB] = coerceToNativeArray(converter, b, objArrayType);
+  const resultType = new DataListTypeSymbol(elementType);
+  const result = converter.newTemp(resultType);
 
-  // totalLen = lenA + lenB
-  const totalLen = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new BinaryOpInstruction(totalLen, lenA, "+", lenB),
-  );
-
-  // result = new Object[totalLen]
+  // result = new DataList()
   const ctorExtern = converter.requireExternSignature(
-    "object[]",
+    "DataList",
     "ctor",
     "method",
-    ["int"],
-    "object[]",
+    [],
+    "DataList",
   );
-  const result = converter.newTemp(objArrayType);
-  converter.instructions.push(
-    new CallInstruction(result, ctorExtern, [totalLen]),
-  );
+  converter.instructions.push(new CallInstruction(result, ctorExtern, []));
 
-  // SystemArray.Copy(a, 0L, result, 0L, lenA64)
-  const copyExtern = converter.requireExternSignature(
-    "SystemArray",
-    "Copy",
-    "method",
-    ["SystemArray", "long", "SystemArray", "long", "long"],
-    "void",
-  );
-  const zero64 = createConstant(0n, PrimitiveTypes.int64);
-  const lenA64 = converter.newTemp(PrimitiveTypes.int64);
-  const lenB64 = converter.newTemp(PrimitiveTypes.int64);
-  converter.instructions.push(new CastInstruction(lenA64, lenA));
-  converter.instructions.push(new CastInstruction(lenB64, lenB));
-  converter.instructions.push(
-    new CallInstruction(undefined, copyExtern, [
-      aArr,
-      zero64,
-      result,
-      zero64,
-      lenA64,
-    ]),
-  );
-
-  // SystemArray.Copy(b, 0L, result, lenA64, lenB64)
-  converter.instructions.push(
-    new CallInstruction(undefined, copyExtern, [
-      bArr,
-      zero64,
-      result,
-      lenA64,
-      lenB64,
-    ]),
-  );
+  // Copy all elements from a, then from b
+  emitCopyElementsLoop(converter, a, result);
+  emitCopyElementsLoop(converter, b, result);
 
   return result;
 }
@@ -568,9 +464,17 @@ export function wrapDataToken(
   this: ASTToTACConverter,
   value: TACOperand,
 ): TACOperand {
-  const valueType = this.getOperandType(value);
+  let valueType = this.getOperandType(value);
   if (valueType.name === ExternTypes.dataToken.name) {
     return value;
+  }
+  // Inline class instances are stored as Int32 handles. Wrap as Int32
+  // so they can be unwrapped via DataToken.Int later.
+  if (isInlineHandleType(this, valueType)) {
+    const handle = this.newTemp(PrimitiveTypes.int32);
+    this.instructions.push(new CopyInstruction(handle, value));
+    value = handle;
+    valueType = PrimitiveTypes.int32;
   }
   const token = this.newTemp(ExternTypes.dataToken);
   const externSig = this.requireExternSignature(
@@ -594,41 +498,47 @@ export function unwrapDataToken(
     return token;
   }
 
+  // Inline class instances are stored as Int32 handles in DataToken.
+  // Must unwrap via .Int, not .Reference, to avoid Udon VM errors.
   let property = "Reference";
-  switch (targetType.udonType) {
-    case UdonType.String:
-      property = "String";
-      break;
-    case UdonType.Boolean:
-      property = "Boolean";
-      break;
-    case UdonType.Int32:
-    case UdonType.Int16:
-    case UdonType.UInt16:
-    case UdonType.UInt32:
-    case UdonType.Byte:
-    case UdonType.SByte:
-      property = "Int";
-      break;
-    case UdonType.Int64:
-    case UdonType.UInt64:
-      property = "Long";
-      break;
-    case UdonType.Single:
-      property = "Float";
-      break;
-    case UdonType.Double:
-      property = "Double";
-      break;
-    case UdonType.DataList:
-      property = "DataList";
-      break;
-    case UdonType.DataDictionary:
-      property = "DataDictionary";
-      break;
-    default:
-      property = "Reference";
-      break;
+  if (isInlineHandleType(this, targetType)) {
+    property = "Int";
+  } else {
+    switch (targetType.udonType) {
+      case UdonType.String:
+        property = "String";
+        break;
+      case UdonType.Boolean:
+        property = "Boolean";
+        break;
+      case UdonType.Int32:
+      case UdonType.Int16:
+      case UdonType.UInt16:
+      case UdonType.UInt32:
+      case UdonType.Byte:
+      case UdonType.SByte:
+        property = "Int";
+        break;
+      case UdonType.Int64:
+      case UdonType.UInt64:
+        property = "Long";
+        break;
+      case UdonType.Single:
+        property = "Float";
+        break;
+      case UdonType.Double:
+        property = "Double";
+        break;
+      case UdonType.DataList:
+        property = "DataList";
+        break;
+      case UdonType.DataDictionary:
+        property = "DataDictionary";
+        break;
+      default:
+        property = "Reference";
+        break;
+    }
   }
 
   const result = this.newTemp(targetType);

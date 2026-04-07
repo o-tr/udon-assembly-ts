@@ -29,6 +29,9 @@ export class DataList {
   TryGetValue(_index: UdonInt, _value: DataToken): boolean {
     return false;
   }
+  GetRange(_index: UdonInt, _count: UdonInt): DataList {
+    return new DataList();
+  }
   // Allow `for..of` in TypeScript sources.
   [Symbol.iterator](): Iterator<DataToken> {
     return {

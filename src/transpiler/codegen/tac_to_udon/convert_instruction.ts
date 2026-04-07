@@ -1,6 +1,4 @@
 import {
-  type ArrayAccessInstruction as TACArrayAccessInstruction,
-  type ArrayAssignmentInstruction as TACArrayAssignmentInstruction,
   type AssignmentInstruction as TACAssignmentInstruction,
   type BinaryOpInstruction as TACBinaryOpInstruction,
   type CallInstruction as TACCallInstruction,
@@ -34,22 +32,6 @@ import {
   PushInstruction,
 } from "../udon_instruction.js";
 import type { TACToUdonConverter } from "./converter.js";
-
-/**
- * Derive the concrete typed-array name and its element type name from an
- * operand type string.  The Udon VM registers per-type externs (e.g.
- * `SystemObjectArray.__Get__`) — the base `SystemArray` variants are not
- * implemented.  Falls back to `SystemObjectArray` / `SystemObject` when
- * the input is not a recognised `*Array` type.
- */
-function resolveTypedArrayNames(
-  operandTypeName: string,
-): [arrayType: string, elementType: string] {
-  if (operandTypeName.endsWith("Array") && operandTypeName !== "SystemArray") {
-    return [operandTypeName, operandTypeName.slice(0, -"Array".length)];
-  }
-  return ["SystemObjectArray", "SystemObject"];
-}
 
 export function convertInstruction(
   this: TACToUdonConverter,
@@ -612,47 +594,15 @@ export function convertInstruction(
       break;
     }
 
-    case TACInstructionKind.ArrayAccess: {
-      const arrayInst = inst as TACArrayAccessInstruction;
-      this.pushOperand(arrayInst.array);
-      this.pushOperand(arrayInst.index);
-
-      // Udon VM requires type-specific array Get signatures, e.g.
-      // SystemObjectArray.__Get__SystemInt32__SystemObject (not SystemArray.__Get__).
-      const [arrayType, elementType] = resolveTypedArrayNames(
-        this.getOperandTypeName(arrayInst.array),
+    case TACInstructionKind.ArrayAccess:
+    case TACInstructionKind.ArrayAssignment:
+      // These instructions should no longer be generated after the
+      // SystemArray → DataList migration. All array operations now use
+      // DataList get_Item/set_Item via MethodCallInstruction.
+      throw new Error(
+        "ArrayAccess/ArrayAssignment instructions should not be generated. " +
+          "All array operations must use DataList get_Item/set_Item.",
       );
-      const externSig = `${arrayType}.__Get__SystemInt32__${elementType}`;
-      this.externSignatures.add(externSig);
-
-      // Push return address before EXTERN (Udon VM calling convention)
-      const destAddr = this.getOperandAddress(arrayInst.dest);
-      this.instructions.push(new PushInstruction(destAddr));
-
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
-      break;
-    }
-
-    case TACInstructionKind.ArrayAssignment: {
-      const arrayInst = inst as TACArrayAssignmentInstruction;
-      this.pushOperand(arrayInst.array);
-      this.pushOperand(arrayInst.index);
-      this.pushOperand(arrayInst.value);
-
-      // Udon VM requires type-specific array Set signatures, e.g.
-      // SystemObjectArray.__Set__SystemInt32_SystemObject__SystemVoid.
-      const [arrayType, elementType] = resolveTypedArrayNames(
-        this.getOperandTypeName(arrayInst.array),
-      );
-      const externSig = `${arrayType}.__Set__SystemInt32_${elementType}__SystemVoid`;
-      this.externSignatures.add(externSig);
-      this.instructions.push(
-        new ExternInstruction(this.getExternSymbol(externSig), true),
-      );
-      break;
-    }
 
     case TACInstructionKind.Return: {
       const retInst = inst as TACReturnInstruction;
