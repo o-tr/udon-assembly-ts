@@ -154,7 +154,7 @@ The transpiler generates valid Udon Assembly (.uasm) files with the following st
 Current limitations (not yet implemented):
 
 - Function definitions and calls (only extern calls supported)
-- Native typed-array lowering in generated UASM (current default lowers TS arrays via DataList)
+- Native typed-array lowering in generated UASM. Currently, TS arrays are lowered via DataList by default.
 - Complex types (objects, classes)
 - Return statements
 - For loops and other control flow

@@ -40,7 +40,7 @@ const datalistArrayDisallowedExterns = [
   "SystemArray.__Get__SystemInt32__SystemObject",
   "SystemArray.__Copy__SystemArray_SystemInt64_SystemArray_SystemInt64_SystemInt64__SystemVoid",
   "SystemArray.__get_Length__SystemInt32",
-  "SystemObjectArray.__get_length__SystemInt32",
+  "SystemObjectArray.__get_Length__SystemInt32",
 ];
 
 export const VM_TEST_CASES: VmTestCase[] = [
