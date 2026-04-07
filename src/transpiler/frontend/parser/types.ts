@@ -27,18 +27,31 @@ function isInlineSafePropertyName(propName: string): boolean {
   return /^[$A-Z_a-z][$\w]*$/.test(propName);
 }
 
+const typeLiteralSourceFileCache = new Map<string, ts.SourceFile>();
+
+function getOrCreateTypeLiteralSourceFile(
+  trimmedTypeText: string,
+): ts.SourceFile {
+  let cached = typeLiteralSourceFileCache.get(trimmedTypeText);
+  if (!cached) {
+    const sourceText = `type __TypeLiteralFallback = ${trimmedTypeText};`;
+    cached = ts.createSourceFile(
+      "__type_literal_fallback.ts",
+      sourceText,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS,
+    );
+    typeLiteralSourceFileCache.set(trimmedTypeText, cached);
+  }
+  return cached;
+}
+
 function parseTypeLiteralFromText(
   parser: TypeScriptParser,
   trimmedTypeText: string,
 ): InterfaceTypeSymbol | null {
-  const sourceText = `type __TypeLiteralFallback = ${trimmedTypeText};`;
-  const sourceFile = ts.createSourceFile(
-    "__type_literal_fallback.ts",
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS,
-  );
+  const sourceFile = getOrCreateTypeLiteralSourceFile(trimmedTypeText);
   const typeAlias = sourceFile.statements.find(
     (statement): statement is ts.TypeAliasDeclaration =>
       ts.isTypeAliasDeclaration(statement),

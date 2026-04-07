@@ -439,6 +439,7 @@ function tryUntrackedInlineDispatch(
 
   for (const [instanceId, info] of candidateInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+    const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("untracked_call_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
     converter.instructions.push(
@@ -477,6 +478,7 @@ function tryUntrackedInlineDispatch(
     converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
     converter.instructions.push(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
+    converter.allInlineInstances = branchAllInlineSnapshot;
   }
 
   if (dispatchFailed) return null;
