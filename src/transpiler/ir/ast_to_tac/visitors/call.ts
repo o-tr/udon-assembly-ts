@@ -487,6 +487,7 @@ function tryUntrackedInlineDispatch(
   // For erased owners, that would generate invalid EXTERN signatures
   // (e.g. SystemObject.__inc__) and fail VM load.
   converter.inlineInstanceMap = savedInlineInstanceMap;
+  converter.allInlineInstances = savedAllInlineInstances;
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -2222,10 +2223,12 @@ export function visitCallExpression(
             | undefined;
 
           for (const [className, classId] of classIds) {
-            // Snapshot inlineInstanceMap before each branch so side-effects
-            // from one implementor's inlined body (e.g. temporaries tracked
-            // as inline instances) don't leak into subsequent branches.
+            // Snapshot inlineInstanceMap and allInlineInstances before each
+            // branch so side-effects from one implementor's inlined body
+            // (e.g. temporaries tracked as inline instances) don't leak into
+            // subsequent branches.
             const branchMapSnapshot = new Map(this.inlineInstanceMap);
+            const branchAllInlineSnapshot = new Map(this.allInlineInstances);
 
             const nextLabel = this.newLabel("iface_dispatch_next");
             const cond = this.newTemp(PrimitiveTypes.boolean);
@@ -2382,10 +2385,11 @@ export function visitCallExpression(
             this.instructions.push(new UnconditionalJumpInstruction(endLabel));
             this.instructions.push(new LabelInstruction(nextLabel));
 
-            // Restore map INSIDE the loop (not after) so each branch starts
+            // Restore maps INSIDE the loop (not after) so each branch starts
             // from the pre-dispatch state. After the loop, resultInlineMapping
             // is re-inserted for result.name if all branches agreed.
             this.inlineInstanceMap = branchMapSnapshot;
+            this.allInlineInstances = branchAllInlineSnapshot;
           }
 
           if (!dispatchFailed) {
