@@ -121,11 +121,16 @@ export class CollectionTypeSymbol extends ClassTypeSymbol {
   ) {
     super(
       typeName,
-      typeName === "DataDictionary"
-        ? UdonType.DataDictionary
-        : typeName === "DataList"
-          ? UdonType.DataList
-          : UdonType.Object,
+      (() => {
+        switch (typeName) {
+          case "DataDictionary":
+            return UdonType.DataDictionary;
+          case "DataList":
+            return UdonType.DataList;
+          default:
+            return UdonType.Object;
+        }
+      })(),
     );
   }
 }

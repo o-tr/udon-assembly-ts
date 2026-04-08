@@ -151,6 +151,38 @@ describe("known transpiler bugs", () => {
         "VRCSDK3DataDataToken.__get_DataDictionary__VRCSDK3DataDataDictionary",
       );
     });
+
+    const setFieldSource = `
+      class Entry {
+        public data: Set<string>;
+        constructor(data: Set<string>) {
+          this.data = data;
+        }
+      }
+      class Main {
+        Start(): void {
+          const entries: Entry[] = [];
+          for (let i: number = 0; i < 2; i++) {
+            const s: Set<string> = new Set<string>();
+            s.add("value");
+            entries.push(new Entry(s));
+          }
+          const d = entries[0].data;
+          Debug.Log(d.has("value"));
+        }
+      }
+    `;
+
+    it("Set field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
+      const result = new TypeScriptToUdonTranspiler().transpile(setFieldSource);
+
+      expect(result.uasm).not.toContain(
+        "DataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataDictionary__VRCSDK3DataDataDictionary",
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
