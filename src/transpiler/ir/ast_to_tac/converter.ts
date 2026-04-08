@@ -245,6 +245,21 @@ export class ASTToTACConverter {
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
+  /**
+   * Classes whose constructor is invoked inside a loop body.
+   * Detected in pass 1; pre-seeded into pass 2.
+   * SoA classes use per-field DataLists instead of per-instance heap variables,
+   * so each loop iteration stores field values at a distinct DataList index.
+   */
+  soaClasses: Set<string> = new Set();
+  /** Per-class, per-field DataList variable for SoA storage.
+   *  Key: className → fieldName → VariableOperand (DataList). */
+  soaFieldLists: Map<string, Map<string, VariableOperand>> = new Map();
+  /** Per-class runtime counter variable (Int32).
+   *  Handle = counter value at construction time. */
+  soaCounterVars: Map<string, VariableOperand> = new Map();
+  /** Tracks whether SoA DataLists + counter have been initialized for each class. */
+  soaInitialized: Set<string> = new Set();
   // Start at 1: Udon zero-initialises heap slots, so an uninitialised
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
@@ -378,6 +393,10 @@ export class ASTToTACConverter {
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
+    this.soaClasses = new Set();
+    this.soaFieldLists = new Map();
+    this.soaCounterVars = new Map();
+    this.soaInitialized = new Set();
     this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
     this.methodBodyInstanceCache = new Map();
@@ -458,11 +477,13 @@ export class ASTToTACConverter {
     const interfaceClassIdMapFromPass1 = new Map(
       [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
     );
+    const soaClassesFromPass1 = new Set(this.soaClasses);
 
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata
     this.resetState();
     this.allInlineInstances = allInstancesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
+    this.soaClasses = soaClassesFromPass1;
     return this.convertImpl(program);
   }
 

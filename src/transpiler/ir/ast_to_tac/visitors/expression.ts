@@ -1845,6 +1845,33 @@ export function visitPropertyAccessExpression(
             }
           }
           if (untrackedPropType) {
+            // SoA fast path: when the target class uses SoA storage,
+            // read the field value from the per-field DataList at the
+            // handle index. No per-instance branching needed.
+            const soaClassName = dispInstances[0][1].className;
+            if (
+              this.soaClasses.has(soaClassName) &&
+              this.soaFieldLists.has(soaClassName)
+            ) {
+              const fieldLists = this.soaFieldLists.get(soaClassName)!;
+              const fieldList = fieldLists.get(node.property);
+              if (fieldList) {
+                const hdlVar = this.newTemp(PrimitiveTypes.int32);
+                this.instructions.push(new CopyInstruction(hdlVar, object));
+                const token = this.newTemp(ExternTypes.dataToken);
+                this.instructions.push(
+                  new MethodCallInstruction(token, fieldList, "get_Item", [
+                    hdlVar,
+                  ]),
+                );
+                const result = this.unwrapDataToken(
+                  token,
+                  untrackedPropType,
+                );
+                return result;
+              }
+            }
+
             // Use the concrete inline field type for the dispatch result.
             // The miss path no longer emits a PropertyGetInstruction (it
             // uses Debug.LogError instead), so there is no need to widen

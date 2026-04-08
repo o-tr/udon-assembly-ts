@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ClassTypeSymbol,
+  DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
   ObjectType,
@@ -250,6 +251,74 @@ function buildInheritanceChain(
     }
   }
   return inheritanceChain;
+}
+
+/**
+ * Collect all non-static instance fields from a class and its ancestors,
+ * in inheritance order (base first). Deduplicates by field name.
+ */
+function collectAllInstanceFields(
+  converter: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+): Array<{ name: string; type: TypeSymbol }> {
+  const chain = buildInheritanceChain(converter, classNode);
+  const fields: Array<{ name: string; type: TypeSymbol }> = [];
+  const seen = new Set<string>();
+  for (const cls of chain) {
+    for (const prop of cls.properties) {
+      if (prop.isStatic || seen.has(prop.name)) continue;
+      seen.add(prop.name);
+      fields.push({ name: prop.name, type: prop.type });
+    }
+  }
+  return fields;
+}
+
+/**
+ * Lazily emit DataList constructors and counter initialization for a SoA class.
+ * Idempotent: no-ops if already initialized for this className.
+ */
+function initSoaForClass(
+  converter: ASTToTACConverter,
+  className: string,
+  classNode: ClassDeclarationNode,
+): void {
+  if (converter.soaInitialized.has(className)) return;
+  converter.soaInitialized.add(className);
+
+  const fields = collectAllInstanceFields(converter, classNode);
+  const fieldLists = new Map<string, VariableOperand>();
+
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+
+  for (const field of fields) {
+    const listVar = createVariable(
+      `__soa_${className}_${field.name}`,
+      new DataListTypeSymbol(ExternTypes.dataToken),
+    );
+    converter.instructions.push(new CallInstruction(listVar, listCtorSig, []));
+    fieldLists.set(field.name, listVar);
+  }
+
+  converter.soaFieldLists.set(className, fieldLists);
+
+  const counterVar = createVariable(
+    `__soa_${className}__counter`,
+    PrimitiveTypes.int32,
+  );
+  converter.instructions.push(
+    new AssignmentInstruction(
+      counterVar,
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.soaCounterVars.set(className, counterVar);
 }
 
 export function resolveClassProperty(
@@ -602,26 +671,43 @@ export function visitInlineConstructor(
   // Emit static property initializers once per class
   emitStaticPropertyInitializers(this, className);
 
+  // SoA detection: if this constructor runs inside a loop, mark the class
+  // so that pass 2 uses DataList-based SoA storage instead of static variables.
+  if (this.loopContextStack.length > 0) {
+    this.soaClasses.add(className);
+  }
+  const isSoA = this.soaClasses.has(className);
+
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
   // This prevents O(N_call_sites × N_instances) explosion for flyweight classes.
   const { instancePrefix, instanceId } =
     this.allocateBodyCachedInstance(className);
-  // Handle is Int32 (instanceId) for runtime dispatch via classId switch.
-  // When stored in an interface-typed array (Object[] in Udon), the Int32
-  // is CLR-boxed at the Object[] array boundary. The for-of dispatch
-  // copies it back to an Int32-typed variable via CopyInstruction, which
-  // the CLR runtime unboxes transparently at the typed heap slot.
+
   const instanceHandle = createVariable(
     `${instancePrefix}__handle`,
     PrimitiveTypes.int32,
   );
-  this.instructions.push(
-    new AssignmentInstruction(
-      instanceHandle,
-      createConstant(instanceId, PrimitiveTypes.int32),
-    ),
-  );
+
+  if (isSoA) {
+    // SoA: lazily create per-field DataLists and counter, then assign
+    // handle from the runtime counter (dynamic, not a static constant).
+    initSoaForClass(this, className, classNode);
+    const counterVar = this.soaCounterVars.get(className)!;
+    this.instructions.push(new CopyInstruction(instanceHandle, counterVar));
+  } else {
+    // Non-SoA: handle is a compile-time constant (instanceId).
+    // When stored in an interface-typed array (Object[] in Udon), the Int32
+    // is CLR-boxed at the Object[] array boundary. The for-of dispatch
+    // copies it back to an Int32-typed variable via CopyInstruction, which
+    // the CLR runtime unboxes transparently at the typed heap slot.
+    this.instructions.push(
+      new AssignmentInstruction(
+        instanceHandle,
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
+    );
+  }
   this.inlineInstanceMap.set(instanceHandle.name, {
     prefix: instancePrefix,
     className,
@@ -737,6 +823,36 @@ export function visitInlineConstructor(
     this.currentThisOverride = previousThisOverride;
     this.currentInlineBaseClass = previousBaseClass;
     this.currentInlineInitializerState = previousInitializerState;
+  }
+
+  // SoA epilogue: snapshot scratch-variable values into per-field DataLists
+  // and increment the counter so the next construction gets a fresh index.
+  if (isSoA) {
+    const fieldLists = this.soaFieldLists.get(className);
+    if (fieldLists) {
+      for (const [fieldName, listVar] of fieldLists) {
+        const scratchVar = this.mapInlineProperty(
+          className,
+          instancePrefix,
+          fieldName,
+        );
+        if (scratchVar) {
+          const token = this.wrapDataToken(scratchVar);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listVar, "Add", [token]),
+          );
+        }
+      }
+    }
+    const counterVar = this.soaCounterVars.get(className)!;
+    this.instructions.push(
+      new BinaryOpInstruction(
+        counterVar,
+        counterVar,
+        "+",
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+    );
   }
 
   return instanceHandle;
