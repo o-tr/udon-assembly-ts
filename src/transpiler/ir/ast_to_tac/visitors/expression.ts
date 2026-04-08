@@ -274,11 +274,7 @@ export function resolveTypeFromNode(
         const pa = call.callee as PropertyAccessExpressionNode;
         const baseType = resolveTypeFromNode(converter, pa.object);
         if (baseType && baseType !== ObjectType) {
-          const ret = resolveMethodReturnType(
-            converter,
-            baseType,
-            pa.property,
-          );
+          const ret = resolveMethodReturnType(converter, baseType, pa.property);
           if (ret) return ret;
         }
         // Static method on a class name: e.g. Tile.parse("1m")

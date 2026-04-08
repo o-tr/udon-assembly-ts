@@ -553,7 +553,7 @@ function tryD3MethodDispatch(
   object: TACOperand,
   objectType: TypeSymbol,
   propAccess: PropertyAccessExpressionNode,
-  rawArgs: ASTNode[],
+  _rawArgs: ASTNode[],
   evaluatedArgs: TACOperand[],
 ): TACOperand | null {
   const objectTypeName = objectType.name;
@@ -561,9 +561,8 @@ function tryD3MethodDispatch(
 
   // Collect candidate instances: match by type name, implementors, or
   // method-name fallback for erased types.
-  const dispInstances: Array<
-    [number, { prefix: string; className: string }]
-  > = [];
+  const dispInstances: Array<[number, { prefix: string; className: string }]> =
+    [];
   let usedErasedFallback = false;
 
   // Direct type match + interface implementor match
@@ -646,9 +645,10 @@ function tryD3MethodDispatch(
         if (candidateClasses.has(astName)) {
           narrowed = astName;
         } else {
-          const impls = converter.classRegistry
-            ?.getImplementorsOfInterface(astName)
-            .map((i) => i.name) ?? [];
+          const impls =
+            converter.classRegistry
+              ?.getImplementorsOfInterface(astName)
+              .map((i) => i.name) ?? [];
           for (const impl of impls) {
             if (candidateClasses.has(impl)) {
               narrowed = impl;
@@ -688,8 +688,7 @@ function tryD3MethodDispatch(
     ? (converter.typeMapper.getAlias(methodReturnType.name) ?? methodReturnType)
     : methodReturnType;
   const isVoid =
-    resolvedRetType?.name === "SystemVoid" ||
-    resolvedRetType?.name === "void";
+    resolvedRetType?.name === "SystemVoid" || resolvedRetType?.name === "void";
 
   // Save state for rollback.
   const savedInstructionCount = converter.instructions.length;
