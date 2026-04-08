@@ -426,12 +426,16 @@ function tryUntrackedInlineDispatch(
           };
         }
       }
-      const classNode = converter.classMap.get(className);
-      const method = classNode?.methods.find(
-        (candidate) => candidate.name === propAccess.property,
+      const resolved = resolveClassMethod(
+        converter,
+        className,
+        propAccess.property,
       );
-      if (method) {
-        return { className, returnType: method.returnType };
+      if (resolved) {
+        return {
+          className: resolved.declaringClassName,
+          returnType: resolved.method.returnType,
+        };
       }
     }
     return null;
