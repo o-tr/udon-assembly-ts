@@ -408,9 +408,10 @@ describe("interface dispatch with all-inline implementors", () => {
     expect(postLoopText).not.toContain("__viface_IAction");
     expect(postLoopText).not.toContain("__classId");
     // D3 method dispatch inlines the call for known inline instances
-    // instead of emitting a generic MethodCallInstruction. Verify that
-    // either the inlined body (done = true) or the D3 dispatch pattern
-    // is present, rather than a raw "call y.execute()".
+    // instead of emitting a generic MethodCallInstruction. Verify no
+    // invalid EXTERN is generated and that the inlined body or D3
+    // dispatch pattern is present.
+    expect(postLoopText).not.toContain("SystemObject.");
     expect(
       postLoopText.includes("__inst_ActionA_0_done = true") ||
         postLoopText.includes("d3_method_end"),

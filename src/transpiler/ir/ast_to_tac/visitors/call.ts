@@ -302,6 +302,56 @@ function evaluateArgsWithExpectedTypes(
   });
 }
 
+/**
+ * Merge inline tracking info across dispatch branches. Returns:
+ * - `undefined` on first branch (no prior value),
+ * - the mapping if all branches agree on className AND prefix,
+ * - `null` if any branch disagrees or is untracked.
+ */
+function mergeInlineMapping(
+  current: { prefix: string; className: string } | null | undefined,
+  inlineRes: TACOperand,
+  instanceMap: Map<string, { prefix: string; className: string }>,
+): { prefix: string; className: string } | null {
+  const resKey =
+    inlineRes.kind === TACOperandKind.Variable
+      ? (inlineRes as VariableOperand).name
+      : undefined;
+  const branchMapping = resKey ? instanceMap.get(resKey) : undefined;
+  if (current === undefined) {
+    return branchMapping ?? null;
+  }
+  if (
+    !branchMapping ||
+    !current ||
+    branchMapping.className !== current.className ||
+    branchMapping.prefix !== current.prefix
+  ) {
+    return null;
+  }
+  return current;
+}
+
+/** Populate and return the implementor names cache for a type. */
+function getOrPopulateImplementorNames(
+  converter: ASTToTACConverter,
+  typeName: string,
+): Set<string> | null {
+  if (!converter.implementorNamesCache.has(typeName)) {
+    converter.implementorNamesCache.set(
+      typeName,
+      converter.classRegistry
+        ? new Set(
+            converter.classRegistry
+              .getImplementorsOfInterface(typeName)
+              .map((i) => i.name),
+          )
+        : null,
+    );
+  }
+  return converter.implementorNamesCache.get(typeName) ?? null;
+}
+
 function tryUntrackedInlineDispatch(
   converter: ASTToTACConverter,
   object: TACOperand,
@@ -479,26 +529,11 @@ function tryUntrackedInlineDispatch(
       converter.instructions.push(
         new CopyInstruction(dispatchResult, inlineRes),
       );
-      // Capture inline tracking from the branch result for inline-like returns.
-      const resKey =
-        inlineRes.kind === TACOperandKind.Variable
-          ? (inlineRes as VariableOperand).name
-          : undefined;
-      const branchMapping = resKey
-        ? converter.inlineInstanceMap.get(resKey)
-        : undefined;
-      if (resultInlineMapping === undefined) {
-        resultInlineMapping = branchMapping ?? null;
-      } else if (
-        branchMapping &&
-        resultInlineMapping &&
-        branchMapping.className !== resultInlineMapping.className
-      ) {
-        // Branches disagree on className — leave untracked.
-        resultInlineMapping = null;
-      } else if (!branchMapping) {
-        resultInlineMapping = null;
-      }
+      resultInlineMapping = mergeInlineMapping(
+        resultInlineMapping,
+        inlineRes,
+        converter.inlineInstanceMap,
+      );
     }
     converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
     converter.instructions.push(new LabelInstruction(nextLabel));
@@ -553,7 +588,7 @@ function tryD3MethodDispatch(
   object: TACOperand,
   objectType: TypeSymbol,
   propAccess: PropertyAccessExpressionNode,
-  _rawArgs: ASTNode[],
+  rawArgs: ASTNode[],
   evaluatedArgs: TACOperand[],
 ): TACOperand | null {
   const objectTypeName = objectType.name;
@@ -566,20 +601,10 @@ function tryD3MethodDispatch(
   let usedErasedFallback = false;
 
   // Direct type match + interface implementor match
-  if (!converter.implementorNamesCache.has(objectTypeName)) {
-    converter.implementorNamesCache.set(
-      objectTypeName,
-      converter.classRegistry
-        ? new Set(
-            converter.classRegistry
-              .getImplementorsOfInterface(objectTypeName)
-              .map((i) => i.name),
-          )
-        : null,
-    );
-  }
-  const implementorNames =
-    converter.implementorNamesCache.get(objectTypeName) ?? null;
+  const implementorNames = getOrPopulateImplementorNames(
+    converter,
+    objectTypeName,
+  );
   for (const [instId, info] of converter.allInlineInstances) {
     if (
       info.className === objectTypeName ||
@@ -594,19 +619,7 @@ function tryD3MethodDispatch(
     const astType = resolveTypeFromNode(converter, propAccess.object);
     const astName = astType?.name;
     if (astName && astName !== objectTypeName) {
-      if (!converter.implementorNamesCache.has(astName)) {
-        converter.implementorNamesCache.set(
-          astName,
-          converter.classRegistry
-            ? new Set(
-                converter.classRegistry
-                  .getImplementorsOfInterface(astName)
-                  .map((i) => i.name),
-              )
-            : null,
-        );
-      }
-      const astImpl = converter.implementorNamesCache.get(astName) ?? null;
+      const astImpl = getOrPopulateImplementorNames(converter, astName);
       for (const [instId, info] of converter.allInlineInstances) {
         if (info.className === astName || astImpl?.has(info.className)) {
           dispInstances.push([instId, info]);
@@ -645,6 +658,8 @@ function tryD3MethodDispatch(
         if (candidateClasses.has(astName)) {
           narrowed = astName;
         } else {
+          // Tie-breaking uses the order returned by
+          // getImplementorsOfInterface — the first matching implementor wins.
           const impls =
             converter.classRegistry
               ?.getImplementorsOfInterface(astName)
@@ -675,7 +690,11 @@ function tryD3MethodDispatch(
     return null;
   }
 
-  // Verify at least one candidate can inline the method.
+  // Resolve the return type from the first candidate class. For the
+  // interface-implementor path all implementors share the same method
+  // signature, so the first is representative. For the method-name erased-type
+  // fallback, candidateClasses is narrowed to a single class before reaching
+  // this point, so divergent return types cannot occur.
   const firstClassName = dispInstances[0][1].className;
   const methodResolved = resolveClassMethod(
     converter,
@@ -697,6 +716,17 @@ function tryD3MethodDispatch(
   const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
   const savedAllInlineInstances = new Map(converter.allInlineInstances);
   let dispatchFailed = false;
+
+  // Re-evaluate arguments with expected parameter types so that object
+  // literals passed to interface-typed parameters are correctly recognised
+  // as inline instances rather than DataDictionary objects.
+  const typedArgs = evaluateArgsWithExpectedTypes(
+    converter,
+    firstClassName,
+    propAccess.property,
+    rawArgs,
+  );
+  const dispatchArgs = typedArgs ?? evaluatedArgs;
 
   const dispatchResult = isVoid
     ? undefined
@@ -732,7 +762,7 @@ function tryD3MethodDispatch(
       info.className,
       info.prefix,
       propAccess.property,
-      evaluatedArgs,
+      dispatchArgs,
     );
     if (!inlineRes) {
       converter.instructions.length = savedInstructionCount;
@@ -748,25 +778,11 @@ function tryD3MethodDispatch(
       converter.instructions.push(
         new CopyInstruction(dispatchResult, inlineRes),
       );
-      // Capture inline tracking from the branch result.
-      const resKey =
-        inlineRes.kind === TACOperandKind.Variable
-          ? (inlineRes as VariableOperand).name
-          : undefined;
-      const branchMapping = resKey
-        ? converter.inlineInstanceMap.get(resKey)
-        : undefined;
-      if (resultInlineMapping === undefined) {
-        resultInlineMapping = branchMapping ?? null;
-      } else if (
-        branchMapping &&
-        resultInlineMapping &&
-        branchMapping.className !== resultInlineMapping.className
-      ) {
-        resultInlineMapping = null;
-      } else if (!branchMapping) {
-        resultInlineMapping = null;
-      }
+      resultInlineMapping = mergeInlineMapping(
+        resultInlineMapping,
+        inlineRes,
+        converter.inlineInstanceMap,
+      );
     }
     converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
     converter.instructions.push(new LabelInstruction(nextLabel));

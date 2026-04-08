@@ -71,6 +71,7 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   operandTrackingKey,
+  resolveClassMethod,
   resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
@@ -358,12 +359,10 @@ function resolveMethodReturnType(
       }
     }
   }
-  // Check class map (AST nodes)
-  const classNode = converter.classMap.get(typeName);
-  if (classNode) {
-    const method = classNode.methods.find((m) => m.name === methodName);
-    if (method) return method.returnType;
-  }
+  // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
+  // to handle methods defined on base classes.
+  const resolved = resolveClassMethod(converter, typeName, methodName);
+  if (resolved) return resolved.method.returnType;
   return null;
 }
 
