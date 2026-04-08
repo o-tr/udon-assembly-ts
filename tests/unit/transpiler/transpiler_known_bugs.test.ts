@@ -180,7 +180,7 @@ describe("known transpiler bugs", () => {
       return lines.slice(startIdx, endIdx + 1);
     }
 
-    it.fails("number[] variable should not declare as %SystemArray in data section", () => {
+    it("number[] variable should not declare as %SystemArray in data section", () => {
       const source = `
           class Main {
             Start(): void {
@@ -197,33 +197,6 @@ describe("known transpiler bugs", () => {
       const numsLines = dataSection.filter((l) => l.includes("nums"));
       const hasSystemArray = numsLines.some((l) => l.includes("%SystemArray"));
       expect(hasSystemArray).toBe(false);
-    });
-
-    // DELETE this test when the ArrayTypeSymbol bug above is fixed
-    it("documents current bug: array variable declared as %SystemArray", () => {
-      const source = `
-        class Main {
-          Start(): void {
-            const nums: number[] = [1, 2, 3];
-            Debug.Log(nums);
-          }
-        }
-      `;
-      const result = new TypeScriptToUdonTranspiler().transpile(source);
-      const dataSection = getDataSection(result.uasm);
-
-      // BUG: getOperandAddress() stores varOp.type.udonType which is "Array"
-      // for ArrayTypeSymbol, becoming %SystemArray in the data section.
-      // But getOperandTypeName() has ArrayTypeSymbol → "VRCSDK3DataDataList"
-      // for EXTERN signatures. This mismatch causes VM errors.
-
-      // BUG EVIDENCE: %SystemArray in data section for the "nums" variable
-      const numsLines = dataSection.filter((l) => l.includes("nums"));
-      const hasSystemArray = numsLines.some((l) => l.includes("%SystemArray"));
-      expect(hasSystemArray).toBe(true);
-
-      // EXTERN signatures correctly use DataList (the mismatch)
-      expect(result.uasm).toContain("VRCSDK3DataDataList");
     });
   });
 });
