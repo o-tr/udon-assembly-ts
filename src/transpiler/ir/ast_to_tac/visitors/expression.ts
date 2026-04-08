@@ -1870,6 +1870,14 @@ export function visitPropertyAccessExpression(
                 );
                 return this.unwrapDataToken(token, untrackedPropType);
               }
+              // SoA class property not in soaFieldLists — the fallthrough
+              // to static-handle dispatch below will always miss because
+              // SoA handles are dynamic counters, not static instanceIds.
+              console.warn(
+                `transpiler: SoA class "${soaClassName}" has no DataList for ` +
+                  `property "${node.property}". D3 dispatch will fall through ` +
+                  `to static-handle comparison which cannot match dynamic SoA handles.`,
+              );
             }
 
             // Use the concrete inline field type for the dispatch result.
