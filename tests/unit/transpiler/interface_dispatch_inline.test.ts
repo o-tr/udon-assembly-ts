@@ -407,7 +407,14 @@ describe("interface dispatch with all-inline implementors", () => {
 
     expect(postLoopText).not.toContain("__viface_IAction");
     expect(postLoopText).not.toContain("__classId");
-    expect(postLoopText).toContain("call y.execute()");
+    // D3 method dispatch inlines the call for known inline instances
+    // instead of emitting a generic MethodCallInstruction. Verify that
+    // either the inlined body (done = true) or the D3 dispatch pattern
+    // is present, rather than a raw "call y.execute()".
+    expect(
+      postLoopText.includes("__inst_ActionA_0_done = true") ||
+        postLoopText.includes("d3_method_end"),
+    ).toBe(true);
   });
 
   it("handles both property access and method calls on the same interface variable", () => {
