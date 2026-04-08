@@ -1,8 +1,8 @@
 /**
  * Regression tests for three known transpiler bugs discovered during VM testing.
  *
- * Bug 1: String.slice() negative index — isNegConst() doesn't detect unary-minus
- *         expressions, so negative indices are passed raw to Substring.
+ * Bug 1 (FIXED): String.slice() negative index — resolved by replacing
+ *         compile-time isNegConst() with a runtime branch in resolveIndex().
  *         (root cause #12 in vm-test-failures-investigation.md)
  *
  * Bug 2: DataToken.get_Reference misselection — CollectionTypeSymbol hardcodes
@@ -44,9 +44,11 @@ describe("known transpiler bugs", () => {
 
       // Positive indices should produce a Substring call
       expect(result.uasm).toContain("__Substring__");
+      // Fast-path: no runtime get_Length branch for known non-negative constants
+      expect(result.uasm).not.toContain("__get_Length__");
     });
 
-    it.fails("slice(0, -1) should emit Length-adjusted endIndex", () => {
+    it("slice(0, -1) should emit Length-adjusted endIndex", () => {
       const source = `
           class Main {
             Start(): void {
@@ -67,7 +69,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("slice(-2) should emit Length-adjusted startIndex", () => {
+    it("slice(-2) should emit Length-adjusted startIndex", () => {
       const source = `
           class Main {
             Start(): void {
@@ -88,30 +90,28 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    // DELETE this test when the two slice it.fails tests above are fixed
-    it("documents current bug: negative literal index is not adjusted", () => {
+    it("slice(-999) should clamp over-negative index to 0", () => {
       const source = `
-        class Main {
-          Start(): void {
-            const s: string = "Hello World";
-            const r: string = s.slice(0, -1);
-            Debug.Log(r);
+          class Main {
+            Start(): void {
+              const s: string = "Hi";
+              const r: string = s.slice(-999);
+              Debug.Log(r);
+            }
           }
-        }
-      `;
+        `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // BUG: The parser creates -1 as UnaryExpression("-", Literal(1)), which
-      // becomes a UnaryOpInstruction result (TemporaryOperand), not a ConstantOperand.
-      // isNegConst() only checks ConstantOperand, so it returns false.
-      // This means get_Length is NOT called — the negative value passes through raw,
-      // producing Substring(0, -1) which crashes the Udon VM.
+      // Must adjust via get_Length + Addition
+      expect(result.uasm).toContain("__get_Length__");
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
+      );
 
-      // BUG EVIDENCE: No Length getter in the output
-      expect(result.uasm).not.toContain("__get_Length__");
-
-      // The Substring call is still emitted (just with wrong args)
-      expect(result.uasm).toContain("__Substring__");
+      // Must clamp via LessThan comparison against 0
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
     });
   });
 
