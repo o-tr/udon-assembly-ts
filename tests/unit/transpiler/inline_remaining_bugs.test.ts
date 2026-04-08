@@ -209,6 +209,15 @@ describe("inline remaining bugs", () => {
       // Both fields must be assigned from the constructor arguments
       expect(tac).toMatch(/__inst_Child_\d+_x = /);
       expect(tac).toMatch(/__inst_Child_\d+_y = /);
+
+      // No self-assignments should remain (partial-fix guard)
+      for (const param of ["x", "y"]) {
+        const selfAssigns = tac.split("\n").filter((l) => {
+          const m = l.match(/^\s*(\w+)\s*=\s*(\w+)\s*$/);
+          return m && m[1] === m[2] && m[1] === param;
+        });
+        expect(selfAssigns).toHaveLength(0);
+      }
     });
   });
 
