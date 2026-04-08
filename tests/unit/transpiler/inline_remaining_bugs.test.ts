@@ -61,7 +61,10 @@ describe("inline remaining bugs", () => {
       // or a dynamic counter. A single hardcoded "= 1" means all share storage.
       expect(handleAssignments.length).toBeGreaterThan(0);
       const uniqueValues = new Set(
-        handleAssignments.map((l) => l.split("=")[1]?.trim()),
+        handleAssignments.map((l) => {
+          const idx = l.indexOf("=");
+          return idx >= 0 ? l.slice(idx + 1).trim() : "";
+        }),
       );
       expect(uniqueValues.size).toBeGreaterThan(1);
     });
@@ -98,7 +101,10 @@ describe("inline remaining bugs", () => {
         );
 
       // Collect the source variables being read in D3 dispatch
-      const sources = d3Reads.map((l) => l.split("=")[1]?.trim());
+      const sources = d3Reads.map((l) => {
+        const idx = l.indexOf("=");
+        return idx >= 0 ? l.slice(idx + 1).trim() : "";
+      });
       const uniqueSources = new Set(sources);
 
       // items[0].id and items[1].id should read from different storage
