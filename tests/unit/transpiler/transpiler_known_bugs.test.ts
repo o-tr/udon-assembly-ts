@@ -46,7 +46,7 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain("__Substring__");
     });
 
-    it.fails("slice(0, -1) should emit Length-adjusted endIndex", () => {
+    it("slice(0, -1) should emit Length-adjusted endIndex", () => {
       const source = `
           class Main {
             Start(): void {
@@ -67,7 +67,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("slice(-2) should emit Length-adjusted startIndex", () => {
+    it("slice(-2) should emit Length-adjusted startIndex", () => {
       const source = `
           class Main {
             Start(): void {
@@ -88,31 +88,6 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    // DELETE this test when the two slice it.fails tests above are fixed
-    it("documents current bug: negative literal index is not adjusted", () => {
-      const source = `
-        class Main {
-          Start(): void {
-            const s: string = "Hello World";
-            const r: string = s.slice(0, -1);
-            Debug.Log(r);
-          }
-        }
-      `;
-      const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-      // BUG: The parser creates -1 as UnaryExpression("-", Literal(1)), which
-      // becomes a UnaryOpInstruction result (TemporaryOperand), not a ConstantOperand.
-      // isNegConst() only checks ConstantOperand, so it returns false.
-      // This means get_Length is NOT called — the negative value passes through raw,
-      // producing Substring(0, -1) which crashes the Udon VM.
-
-      // BUG EVIDENCE: No Length getter in the output
-      expect(result.uasm).not.toContain("__get_Length__");
-
-      // The Substring call is still emitted (just with wrong args)
-      expect(result.uasm).toContain("__Substring__");
-    });
   });
 
   // ---------------------------------------------------------------------------
