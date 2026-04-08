@@ -33,6 +33,7 @@ import {
   type IdentifierNode,
   type IfStatementNode,
   isNumericUdonType,
+  type MethodDeclarationNode,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
@@ -271,6 +272,39 @@ export function resolveClassProperty(
     );
     if (prop) {
       return { prop, declaringClassName: current.name };
+    }
+    if (!current.baseClass) break;
+    current = resolveClassNode(converter, current.baseClass);
+  }
+  return undefined;
+}
+
+/**
+ * Walk the inheritance chain to find an instance method by name.
+ * Similar to resolveClassProperty but for methods.
+ */
+export function resolveClassMethod(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  isStatic = false,
+):
+  | {
+      method: MethodDeclarationNode;
+      declaringClassName: string;
+    }
+  | undefined {
+  let current = resolveClassNode(converter, className);
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.name)) break;
+    visited.add(current.name);
+    const method = current.methods.find(
+      (candidate) =>
+        candidate.name === methodName && candidate.isStatic === isStatic,
+    );
+    if (method) {
+      return { method, declaringClassName: current.name };
     }
     if (!current.baseClass) break;
     current = resolveClassNode(converter, current.baseClass);
@@ -731,12 +765,10 @@ export function visitInlineStaticMethodCall(
     return null;
   }
 
-  const classNode = resolveClassNode(this, className);
-  if (!classNode) return null;
-  const method = classNode.methods.find(
-    (candidate) => candidate.name === methodName && candidate.isStatic,
-  );
-  if (!method) return null;
+  // Walk inheritance chain to find the static method (may be on a base class).
+  const resolved = resolveClassMethod(this, className, methodName, true);
+  if (!resolved) return null;
+  const method = resolved.method;
 
   let returnType: TypeSymbol = method.returnType;
   if (
@@ -1291,12 +1323,10 @@ function inlineInstanceMethodCallCore(
   if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
-  const classNode = resolveClassNode(converter, className);
-  if (!classNode) return null;
-  const method = classNode.methods.find(
-    (candidate) => candidate.name === methodName && !candidate.isStatic,
-  );
-  if (!method) return null;
+  // Walk inheritance chain to find the method (may be on a base class).
+  const resolved = resolveClassMethod(converter, className, methodName, false);
+  if (!resolved) return null;
+  const method = resolved.method;
 
   let returnType: TypeSymbol = method.returnType;
   if (

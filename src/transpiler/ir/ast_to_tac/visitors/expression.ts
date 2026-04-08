@@ -2,6 +2,7 @@ import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -70,6 +71,7 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   operandTrackingKey,
+  resolveClassMethod,
   resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
@@ -265,9 +267,133 @@ export function resolveTypeFromNode(
       }
       return null;
     }
+    case ASTNodeKind.CallExpression: {
+      // Resolve the return type of a call expression from the callee's
+      // method declaration. Handles `ClassName.method()` and `obj.method()`.
+      const call = node as CallExpressionNode;
+      if (call.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+        const pa = call.callee as PropertyAccessExpressionNode;
+        const baseType = resolveTypeFromNode(converter, pa.object);
+        if (baseType && baseType !== ObjectType) {
+          const ret = resolveMethodReturnType(converter, baseType, pa.property);
+          if (ret) return ret;
+        }
+        // Static method on a class name: e.g. Tile.parse("1m")
+        // Check classMap/classRegistry directly since typeMapper may map
+        // inline class names to ObjectType. Pass isStatic=true so the
+        // classMap fallback finds static methods.
+        if (pa.object.kind === ASTNodeKind.Identifier) {
+          const className = (pa.object as IdentifierNode).name;
+          const isKnownClass =
+            converter.classMap.has(className) ||
+            !!converter.classRegistry?.getClass(className);
+          if (isKnownClass) {
+            const syntheticType = new ClassTypeSymbol(
+              className,
+              UdonType.Int32,
+            );
+            return resolveMethodReturnType(
+              converter,
+              syntheticType,
+              pa.property,
+              true,
+            );
+          }
+        }
+      }
+      return null;
+    }
     default:
       return null;
   }
+}
+
+/**
+ * Resolve the return type of a method on a given base type.
+ * For inline class return types (not known extern types), creates a
+ * ClassTypeSymbol so callers can identify the concrete class.
+ *
+ * @param isStatic - When set, restricts the classMap fallback to static
+ *   (true) or instance (false) methods. When undefined, tries instance
+ *   first, then static (the classRegistry path via getMergedMethods does
+ *   not filter by static, so it already covers both).
+ */
+function resolveMethodReturnType(
+  converter: ASTToTACConverter,
+  baseType: TypeSymbol,
+  methodName: string,
+  isStatic?: boolean,
+): TypeSymbol | null {
+  const typeName = baseType.name;
+  if (!typeName) return null;
+
+  const resolveReturnTypeStr = (retType: string): TypeSymbol => {
+    const mapped = converter.typeMapper.mapTypeScriptType(retType);
+    // If the mapper returned ObjectType but the name is a known inline class,
+    // create a ClassTypeSymbol so callers can identify the concrete type.
+    if (
+      mapped === ObjectType &&
+      retType !== "object" &&
+      retType !== "unknown" &&
+      retType !== "any"
+    ) {
+      const isInlineClass =
+        converter.classMap.has(retType) ||
+        (converter.classRegistry?.getClass(retType) &&
+          !converter.udonBehaviourClasses.has(retType));
+      if (isInlineClass) {
+        return new ClassTypeSymbol(retType, UdonType.Int32);
+      }
+    }
+    return mapped;
+  };
+
+  // Check class registry for inline classes.
+  // getMergedMethods does not filter by static, so both instance and static
+  // methods are found regardless of the isStatic hint.
+  if (converter.classRegistry) {
+    const classMeta = converter.classRegistry.getClass(typeName);
+    if (classMeta) {
+      const method = converter.classRegistry
+        .getMergedMethods(typeName)
+        .find((m) => m.name === methodName);
+      if (method) {
+        return resolveReturnTypeStr(method.returnType);
+      }
+    }
+    const ifaceMeta = converter.classRegistry.getInterface(typeName);
+    if (ifaceMeta) {
+      const method = ifaceMeta.methods.find((m) => m.name === methodName);
+      if (method) {
+        return resolveReturnTypeStr(method.returnType);
+      }
+    }
+  }
+  // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
+  // to handle methods defined on base classes. Pipe through resolveReturnTypeStr
+  // when the return type name is available so inline class return types get
+  // upgraded from ObjectType to ClassTypeSymbol (consistent with classRegistry
+  // paths). Try the specified isStatic value first; when unspecified, try
+  // instance then static so both Tile.fromCode() and tile.toString() resolve.
+  const resolveFromClassMap = (staticFlag: boolean): TypeSymbol | null => {
+    const resolved = resolveClassMethod(
+      converter,
+      typeName,
+      methodName,
+      staticFlag,
+    );
+    if (resolved) {
+      const rt = resolved.method.returnType;
+      if (rt.name) return resolveReturnTypeStr(rt.name);
+      return rt;
+    }
+    return null;
+  };
+
+  if (isStatic !== undefined) {
+    return resolveFromClassMap(isStatic);
+  }
+  return resolveFromClassMap(false) ?? resolveFromClassMap(true);
 }
 
 function flattenStringConcatChain(

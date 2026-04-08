@@ -65,6 +65,7 @@ import {
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
   operandTrackingKey,
+  resolveClassMethod,
   resolveClassNode,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
@@ -73,6 +74,9 @@ import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
+// D3 method dispatch inlines full method bodies per instance, so use a
+// stricter limit than property dispatch to avoid excessive code bloat.
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 20;
 
 /**
  * Build a fallback IPC method layout from interface metadata when the
@@ -256,18 +260,12 @@ function evaluateArgsWithExpectedTypes(
   methodName: string,
   rawArgs: ASTNode[],
 ): TACOperand[] | null {
-  // resolveClassNode intentionally excludes UdonBehaviour and stub classes.
-  // Their methods are dispatched via IPC, not inlined, so they never need
-  // typed-object-arg evaluation here.
-  const classNode = resolveClassNode(converter, className);
-  if (!classNode) return null;
-
-  // NOTE: Picks the first non-static method with a matching name.
-  // Udon does not support method overloads, so at most one match exists.
-  const method = classNode.methods.find(
-    (m) => m.name === methodName && !m.isStatic,
-  );
-  if (!method) return null;
+  // Walk the inheritance chain to find the method (may be on a base class).
+  // resolveClassMethod excludes UdonBehaviour and stub classes, so their
+  // methods (dispatched via IPC) never enter this path.
+  const resolved = resolveClassMethod(converter, className, methodName);
+  if (!resolved) return null;
+  const method = resolved.method;
 
   const hasTypedObjectArg = rawArgs.some(
     (arg, i) =>
@@ -296,6 +294,53 @@ function evaluateArgsWithExpectedTypes(
     }
     return converter.visitExpression(arg);
   });
+}
+
+/**
+ * Merge inline tracking info across dispatch branches. Returns:
+ * - `undefined` on first branch (no prior value),
+ * - the mapping if all branches agree on className AND prefix,
+ * - `null` if any branch disagrees or is untracked.
+ */
+function mergeInlineMapping(
+  current: { prefix: string; className: string } | null | undefined,
+  inlineRes: TACOperand,
+  instanceMap: Map<string, { prefix: string; className: string }>,
+): { prefix: string; className: string } | null {
+  const resKey = operandTrackingKey(inlineRes);
+  const branchMapping = resKey ? instanceMap.get(resKey) : undefined;
+  if (current === undefined) {
+    return branchMapping ?? null;
+  }
+  if (
+    !branchMapping ||
+    !current ||
+    branchMapping.className !== current.className ||
+    branchMapping.prefix !== current.prefix
+  ) {
+    return null;
+  }
+  return current;
+}
+
+/** Populate and return the implementor names cache for a type. */
+function getOrPopulateImplementorNames(
+  converter: ASTToTACConverter,
+  typeName: string,
+): Set<string> | null {
+  if (!converter.implementorNamesCache.has(typeName)) {
+    converter.implementorNamesCache.set(
+      typeName,
+      converter.classRegistry
+        ? new Set(
+            converter.classRegistry
+              .getImplementorsOfInterface(typeName)
+              .map((i) => i.name),
+          )
+        : null,
+    );
+  }
+  return converter.implementorNamesCache.get(typeName) ?? null;
 }
 
 function tryUntrackedInlineDispatch(
@@ -381,12 +426,16 @@ function tryUntrackedInlineDispatch(
           };
         }
       }
-      const classNode = converter.classMap.get(className);
-      const method = classNode?.methods.find(
-        (candidate) => candidate.name === propAccess.property,
+      const resolved = resolveClassMethod(
+        converter,
+        className,
+        propAccess.property,
       );
-      if (method) {
-        return { className, returnType: method.returnType };
+      if (resolved) {
+        return {
+          className: resolved.declaringClassName,
+          returnType: resolved.method.returnType,
+        };
       }
     }
     return null;
@@ -409,12 +458,7 @@ function tryUntrackedInlineDispatch(
   const isVoid =
     resolvedUntrackedReturnType?.name === "SystemVoid" ||
     resolvedUntrackedReturnType?.name === "void";
-  const isInlineLikeReturn =
-    resolvedUntrackedReturnType instanceof InterfaceTypeSymbol ||
-    (!!resolvedUntrackedReturnType?.name &&
-      !!resolveClassNode(converter, resolvedUntrackedReturnType.name) &&
-      !converter.udonBehaviourClasses.has(resolvedUntrackedReturnType.name));
-  if (!resolvedUntrackedReturnType || isInlineLikeReturn) return null;
+  if (!resolvedUntrackedReturnType) return null;
 
   const savedInstructionCount = converter.instructions.length;
   const savedTempCounter = converter.tempCounter;
@@ -436,6 +480,12 @@ function tryUntrackedInlineDispatch(
   const handleVar = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(new CopyInstruction(handleVar, object));
   const endLabel = converter.newLabel("untracked_call_end");
+
+  // Track inline return info across branches for inline-like return types.
+  let resultInlineMapping:
+    | { prefix: string; className: string }
+    | null
+    | undefined;
 
   for (const [instanceId, info] of candidateInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
@@ -474,6 +524,11 @@ function tryUntrackedInlineDispatch(
       converter.instructions.push(
         new CopyInstruction(dispatchResult, inlineRes),
       );
+      resultInlineMapping = mergeInlineMapping(
+        resultInlineMapping,
+        inlineRes,
+        converter.inlineInstanceMap,
+      );
     }
     converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
     converter.instructions.push(new LabelInstruction(nextLabel));
@@ -503,6 +558,262 @@ function tryUntrackedInlineDispatch(
     new CallInstruction(undefined, logExtern, [missMsg]),
   );
   converter.instructions.push(new LabelInstruction(endLabel));
+
+  // Propagate inline tracking if all branches agreed.
+  if (dispatchResult && resultInlineMapping) {
+    const key = operandTrackingKey(dispatchResult);
+    if (key) {
+      converter.inlineInstanceMap.set(key, resultInlineMapping);
+    }
+  }
+  return dispatchResult ?? VOID_RETURN;
+}
+
+/**
+ * D3 method dispatch fallback: when a method call receiver is a Variable or
+ * Temporary with a known (or inferable) inline class type but no tracking,
+ * dispatch by runtime handle — mirrors D3 property dispatch in expression.ts.
+ *
+ * This catches cases that `tryUntrackedInlineDispatch` misses, such as when
+ * the operand type is erased to ObjectType or DataDictionary, or when the
+ * method signature could not be resolved from the candidate set.
+ */
+function tryD3MethodDispatch(
+  converter: ASTToTACConverter,
+  object: TACOperand,
+  objectType: TypeSymbol,
+  propAccess: PropertyAccessExpressionNode,
+  rawArgs: ASTNode[],
+  evaluatedArgs: TACOperand[],
+): TACOperand | null {
+  const objectTypeName = objectType.name;
+  if (!objectTypeName) return null;
+
+  // Collect candidate instances: match by type name, implementors, or
+  // method-name fallback for erased types.
+  const dispInstances: Array<[number, { prefix: string; className: string }]> =
+    [];
+
+  // Direct type match + interface implementor match
+  const implementorNames = getOrPopulateImplementorNames(
+    converter,
+    objectTypeName,
+  );
+  for (const [instId, info] of converter.allInlineInstances) {
+    if (
+      info.className === objectTypeName ||
+      implementorNames?.has(info.className)
+    ) {
+      dispInstances.push([instId, info]);
+    }
+  }
+
+  // AST type fallback: when operand type is erased, try resolving from AST.
+  if (dispInstances.length === 0) {
+    const astType = resolveTypeFromNode(converter, propAccess.object);
+    const astName = astType?.name;
+    if (astName && astName !== objectTypeName) {
+      const astImpl = getOrPopulateImplementorNames(converter, astName);
+      for (const [instId, info] of converter.allInlineInstances) {
+        if (info.className === astName || astImpl?.has(info.className)) {
+          dispInstances.push([instId, info]);
+        }
+      }
+      // usedErasedFallback: miss path always emits LogError regardless.
+    }
+  }
+
+  // Method-name fallback for erased types (ObjectType, DataDictionary):
+  // scan inline instances for classes that define the target method.
+  if (
+    dispInstances.length === 0 &&
+    (objectTypeName === "object" || objectTypeName === "DataDictionary")
+  ) {
+    const candidateClasses = new Set<string>();
+    for (const [, info] of converter.allInlineInstances) {
+      if (candidateClasses.has(info.className)) continue;
+      if (resolveClassMethod(converter, info.className, propAccess.property)) {
+        candidateClasses.add(info.className);
+      }
+    }
+    if (candidateClasses.size === 1) {
+      for (const [instId, info] of converter.allInlineInstances) {
+        if (candidateClasses.has(info.className)) {
+          dispInstances.push([instId, info]);
+        }
+      }
+      // usedErasedFallback: miss path always emits LogError regardless.
+    } else if (candidateClasses.size > 1) {
+      // Multiple classes share this method name. Try narrowing via AST type.
+      const astType = resolveTypeFromNode(converter, propAccess.object);
+      const astName = astType?.name;
+      let narrowed: string | undefined;
+      if (astName) {
+        if (candidateClasses.has(astName)) {
+          narrowed = astName;
+        } else {
+          // Tie-breaking uses the order returned by
+          // getImplementorsOfInterface — the first matching implementor wins.
+          const impls =
+            converter.classRegistry
+              ?.getImplementorsOfInterface(astName)
+              .map((i) => i.name) ?? [];
+          for (const impl of impls) {
+            if (candidateClasses.has(impl)) {
+              narrowed = impl;
+              break;
+            }
+          }
+        }
+      }
+      if (narrowed) {
+        for (const [instId, info] of converter.allInlineInstances) {
+          if (info.className === narrowed) {
+            dispInstances.push([instId, info]);
+          }
+        }
+        // usedErasedFallback: miss path always emits LogError regardless.
+      }
+    }
+  }
+
+  if (
+    dispInstances.length === 0 ||
+    dispInstances.length > MAX_D3_METHOD_DISPATCH_CANDIDATES
+  ) {
+    return null;
+  }
+
+  // Resolve the return type from the first candidate class. For the
+  // interface-implementor path all implementors share the same method
+  // signature, so the first is representative. For the method-name erased-type
+  // fallback, candidateClasses is narrowed to a single class before reaching
+  // this point, so divergent return types cannot occur.
+  const firstClassName = dispInstances[0][1].className;
+  const methodResolved = resolveClassMethod(
+    converter,
+    firstClassName,
+    propAccess.property,
+  );
+  if (!methodResolved) return null;
+  const methodReturnType = methodResolved.method.returnType;
+  const resolvedRetType = methodReturnType?.name
+    ? (converter.typeMapper.getAlias(methodReturnType.name) ?? methodReturnType)
+    : methodReturnType;
+  const isVoid =
+    resolvedRetType?.name === "SystemVoid" || resolvedRetType?.name === "void";
+
+  // Save state for rollback.
+  const savedInstructionCount = converter.instructions.length;
+  const savedTempCounter = converter.tempCounter;
+  const savedLabelCounter = converter.labelCounter;
+  const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
+  const savedAllInlineInstances = new Map(converter.allInlineInstances);
+  let dispatchFailed = false;
+
+  // Re-evaluate arguments with expected parameter types so that object
+  // literals passed to interface-typed parameters are correctly recognised
+  // as inline instances rather than DataDictionary objects.
+  const typedArgs = evaluateArgsWithExpectedTypes(
+    converter,
+    firstClassName,
+    propAccess.property,
+    rawArgs,
+  );
+  const dispatchArgs = typedArgs ?? evaluatedArgs;
+
+  const dispatchResult = isVoid
+    ? undefined
+    : converter.newTemp(resolvedRetType ?? ObjectType);
+  const handleVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(new CopyInstruction(handleVar, object));
+  const endLabel = converter.newLabel("d3_method_end");
+
+  // Track inline return info across branches.
+  let resultInlineMapping:
+    | { prefix: string; className: string }
+    | null
+    | undefined;
+
+  for (const [instanceId, info] of dispInstances) {
+    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+    const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
+    const nextLabel = converter.newLabel("d3_method_next");
+    const cond = converter.newTemp(PrimitiveTypes.boolean);
+    converter.instructions.push(
+      new BinaryOpInstruction(
+        cond,
+        handleVar,
+        "==",
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
+    );
+    converter.instructions.push(
+      new ConditionalJumpInstruction(cond, nextLabel),
+    );
+
+    const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
+      info.className,
+      info.prefix,
+      propAccess.property,
+      dispatchArgs,
+    );
+    if (!inlineRes) {
+      converter.instructions.length = savedInstructionCount;
+      converter.tempCounter = savedTempCounter;
+      converter.labelCounter = savedLabelCounter;
+      converter.inlineInstanceMap = savedInlineInstanceMap;
+      converter.allInlineInstances = savedAllInlineInstances;
+      dispatchFailed = true;
+      break;
+    }
+
+    if (dispatchResult) {
+      converter.instructions.push(
+        new CopyInstruction(dispatchResult, inlineRes),
+      );
+      resultInlineMapping = mergeInlineMapping(
+        resultInlineMapping,
+        inlineRes,
+        converter.inlineInstanceMap,
+      );
+    }
+    converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
+    converter.instructions.push(new LabelInstruction(nextLabel));
+    converter.inlineInstanceMap = branchMapSnapshot;
+    converter.allInlineInstances = branchAllInlineSnapshot;
+  }
+
+  if (dispatchFailed) return null;
+
+  // Miss path: always emit Debug.LogError so an unmatched handle at runtime
+  // produces a visible diagnostic instead of silently returning an
+  // uninitialized zero/null result.
+  converter.inlineInstanceMap = savedInlineInstanceMap;
+  converter.allInlineInstances = savedAllInlineInstances;
+  const logExtern = converter.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const errMsg = createConstant(
+    `[udon-assembly-ts] D3 method dispatch miss: ${propAccess.property} on untracked instance`,
+    PrimitiveTypes.string,
+  );
+  converter.instructions.push(
+    new CallInstruction(undefined, logExtern, [errMsg]),
+  );
+  converter.instructions.push(new LabelInstruction(endLabel));
+
+  // Propagate inline tracking if all branches agreed.
+  if (dispatchResult && resultInlineMapping) {
+    const key = operandTrackingKey(dispatchResult);
+    if (key) {
+      converter.inlineInstanceMap.set(key, resultInlineMapping);
+    }
+  }
   return dispatchResult ?? VOID_RETURN;
 }
 
@@ -2733,6 +3044,25 @@ export function visitCallExpression(
           }
         }
       }
+    }
+
+    // D3 method dispatch fallback: when the receiver is a Variable/Temporary
+    // with an inline class type but no tracking entry, dispatch by runtime
+    // handle. Mirrors the D3 property dispatch in expression.ts.
+    if (
+      (object.kind === TACOperandKind.Variable ||
+        object.kind === TACOperandKind.Temporary) &&
+      this.allInlineInstances.size > 0
+    ) {
+      const d3MethodResult = tryD3MethodDispatch(
+        this,
+        object,
+        objectType,
+        propAccess,
+        rawArgs,
+        evaluatedArgs,
+      );
+      if (d3MethodResult != null) return d3MethodResult;
     }
 
     if (resolvedReturnType === PrimitiveTypes.void) {
