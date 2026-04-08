@@ -64,6 +64,7 @@ import {
   emitDeferredInlineInitializers,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
+  isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
@@ -366,6 +367,16 @@ function tryUntrackedInlineDispatch(
       !converter.udonBehaviourClasses.has(typeName)
     ) {
       candidateClassNames.add(typeName);
+      // Also add subclasses that have inline instances
+      for (const [, inst] of converter.allInlineInstances) {
+        if (candidateClassNames.has(inst.className)) continue;
+        if (
+          !converter.udonBehaviourClasses.has(inst.className) &&
+          isSubclassOf(converter, inst.className, typeName)
+        ) {
+          candidateClassNames.add(inst.className);
+        }
+      }
       return;
     }
     if (converter.classRegistry?.getInterface(typeName)) {
@@ -602,7 +613,8 @@ function tryD3MethodDispatch(
   for (const [instId, info] of converter.allInlineInstances) {
     if (
       info.className === objectTypeName ||
-      implementorNames?.has(info.className)
+      implementorNames?.has(info.className) ||
+      isSubclassOf(converter, info.className, objectTypeName)
     ) {
       dispInstances.push([instId, info]);
     }
@@ -615,7 +627,11 @@ function tryD3MethodDispatch(
     if (astName && astName !== objectTypeName) {
       const astImpl = getOrPopulateImplementorNames(converter, astName);
       for (const [instId, info] of converter.allInlineInstances) {
-        if (info.className === astName || astImpl?.has(info.className)) {
+        if (
+          info.className === astName ||
+          astImpl?.has(info.className) ||
+          isSubclassOf(converter, info.className, astName)
+        ) {
           dispInstances.push([instId, info]);
         }
       }

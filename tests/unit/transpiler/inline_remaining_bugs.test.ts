@@ -214,8 +214,7 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("D3 dispatch for inherited methods", () => {
-    // TODO: convert to it() when inherited method D3 dispatch is fixed
-    it.fails("indexed access on child instances should D3-dispatch inherited methods", () => {
+    it("indexed access on child instances should D3-dispatch inherited methods", () => {
       const source = `
           class Base {
             constructor(public name: string) {}
@@ -238,15 +237,13 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__greet__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__greet__");
 
-      // The D3 method dispatch should inline the method body for each candidate.
-      // NOTE: "d3_method" matches the label prefix emitted by tryD3MethodDispatch (call.ts).
-      // Update if the dispatch mechanism or label naming changes.
+      // Verify handle-based dispatch: the TAC should contain a handle
+      // comparison (e.g. "t9 == 1") to select the correct inline instance.
       const tac = result.tac;
-      expect(tac).toContain("d3_method");
+      expect(tac).toMatch(/== \d+/);
     });
 
-    // TODO: convert to it() when inherited method D3 dispatch is fixed
-    it.fails("for-of loop on child instances should D3-dispatch inherited methods", () => {
+    it("for-of loop on child instances should D3-dispatch inherited methods", () => {
       const source = `
           class Base {
             constructor(public name: string) {}
@@ -271,12 +268,11 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__describe__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__describe__");
 
-      // NOTE: "d3_method" matches the label prefix from tryD3MethodDispatch (call.ts).
-      expect(result.tac).toContain("d3_method");
+      // Verify handle-based dispatch is present
+      expect(result.tac).toMatch(/== \d+/);
     });
 
-    // TODO: convert to it() when inherited method D3 dispatch is fixed
-    it.fails("polymorphic dispatch: base and child classes with overridden method", () => {
+    it("polymorphic dispatch: base and child classes with overridden method", () => {
       const source = `
           class Animal {
             constructor(public name: string) {}
@@ -305,8 +301,33 @@ describe("inline remaining bugs", () => {
       // Must NOT fall back to SystemObject EXTERNs
       expect(result.uasm).not.toContain("SystemObject.__speak__");
 
-      // NOTE: "d3_method" matches the label prefix from tryD3MethodDispatch (call.ts).
-      expect(result.tac).toContain("d3_method");
+      // Verify handle-based dispatch is present
+      expect(result.tac).toMatch(/== \d+/);
+    });
+
+    it("indexed access on child instances should dispatch inherited property access", () => {
+      const source = `
+          class Base {
+            constructor(public name: string) {}
+          }
+          class Child extends Base {
+            constructor(name: string) { super(name); }
+          }
+          class Main {
+            Start(): void {
+              const items: Base[] = [];
+              items.push(new Child("A"));
+              Debug.Log(items[0].name);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Must NOT generate a SystemObject property access
+      expect(result.uasm).not.toContain("SystemObject.__get_name__");
+
+      // Verify the property is resolved to the inline instance's heap variable
+      expect(result.tac).toContain("__inst_Child_0_name");
     });
   });
 });

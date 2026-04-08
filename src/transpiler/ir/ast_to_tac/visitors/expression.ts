@@ -70,6 +70,7 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
+  isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
@@ -1703,7 +1704,8 @@ export function visitPropertyAccessExpression(
         for (const [instId, info] of this.allInlineInstances) {
           if (
             info.className === untrackedTypeName ||
-            implementorNames?.has(info.className)
+            implementorNames?.has(info.className) ||
+            isSubclassOf(this, info.className, untrackedTypeName)
           ) {
             dispInstances.push([instId, info]);
           }
@@ -1737,7 +1739,8 @@ export function visitPropertyAccessExpression(
             for (const [instId, info] of this.allInlineInstances) {
               if (
                 info.className === astTypeName ||
-                astImplementorNames?.has(info.className)
+                astImplementorNames?.has(info.className) ||
+                isSubclassOf(this, info.className, astTypeName)
               ) {
                 dispInstances.push([instId, info]);
               }
