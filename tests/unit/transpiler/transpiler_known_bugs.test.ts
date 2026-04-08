@@ -141,28 +141,47 @@ describe("known transpiler bugs", () => {
       }
     `;
 
-    it.fails("Map field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
+    it("Map field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(mapFieldSource);
 
-      // After fix: DataToken containing a DataDictionary should unwrap via
-      // get_DataDictionary, not get_Reference.
       expect(result.uasm).not.toContain(
         "DataToken.__get_Reference__SystemObject",
       );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataDictionary__VRCSDK3DataDataDictionary",
+      );
     });
 
-    // DELETE this test when the DataToken unwrap bug above is fixed
-    it("documents current bug: Map field DataToken uses get_Reference", () => {
-      const result = new TypeScriptToUdonTranspiler().transpile(mapFieldSource);
+    const setFieldSource = `
+      class Entry {
+        public data: Set<string>;
+        constructor(data: Set<string>) {
+          this.data = data;
+        }
+      }
+      class Main {
+        Start(): void {
+          const entries: Entry[] = [];
+          for (let i: number = 0; i < 2; i++) {
+            const s: Set<string> = new Set<string>();
+            s.add("value");
+            entries.push(new Entry(s));
+          }
+          const d = entries[0].data;
+          Debug.Log(d.has("value"));
+        }
+      }
+    `;
 
-      // BUG: CollectionTypeSymbol at type_symbols.ts:122 calls
-      //   super(typeName, UdonType.Object)
-      // When unwrapDataToken() is called with this type, targetType.udonType
-      // is "Object", falling through to default → property = "Reference".
-      // VRChat DataToken throws on get_Reference for DataList/DataDictionary tokens.
+    it("Set field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
+      const result = new TypeScriptToUdonTranspiler().transpile(setFieldSource);
 
-      // BUG EVIDENCE: get_Reference is used instead of get_DataDictionary
-      expect(result.uasm).toContain("DataToken.__get_Reference__SystemObject");
+      expect(result.uasm).not.toContain(
+        "DataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataDictionary__VRCSDK3DataDataDictionary",
+      );
     });
   });
 

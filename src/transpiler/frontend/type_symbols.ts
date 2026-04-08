@@ -119,7 +119,19 @@ export class CollectionTypeSymbol extends ClassTypeSymbol {
     public readonly keyType?: TypeSymbol,
     public readonly valueType?: TypeSymbol,
   ) {
-    super(typeName, UdonType.Object);
+    super(
+      typeName,
+      (() => {
+        switch (typeName) {
+          case "DataDictionary":
+            return UdonType.DataDictionary;
+          case "DataList":
+            return UdonType.DataList;
+          default:
+            return UdonType.Object;
+        }
+      })(),
+    );
   }
 }
 
