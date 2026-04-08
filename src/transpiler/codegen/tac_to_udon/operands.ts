@@ -2,6 +2,7 @@ import {
   ArrayTypeSymbol,
   type TypeSymbol,
 } from "../../frontend/type_symbols.js";
+import { UdonType } from "../../frontend/types.js";
 import {
   type ConstantOperand,
   type LabelOperand,
@@ -16,6 +17,20 @@ import {
   udonTypeToCSharp,
 } from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
+
+/**
+ * Resolve the heap type name for a TypeSymbol.
+ * ArrayTypeSymbol uses DataList in Udon, not the raw "Array" udonType.
+ */
+function resolveHeapType(typeSymbol: TypeSymbol): string {
+  if (
+    typeSymbol instanceof ArrayTypeSymbol ||
+    (typeSymbol.name ?? "").endsWith("[]")
+  ) {
+    return UdonType.DataList;
+  }
+  return typeSymbol.udonType;
+}
 
 export function pushOperand(
   this: TACToUdonConverter,
@@ -35,7 +50,7 @@ export function getOperandAddress(
       const normalizedName = this.normalizeVariableName(varOp.name);
       if (!this.variableAddresses.has(normalizedName)) {
         this.variableAddresses.set(normalizedName, this.nextAddress++);
-        this.variableTypes.set(normalizedName, varOp.type.udonType);
+        this.variableTypes.set(normalizedName, resolveHeapType(varOp.type));
       }
       // Return the variable name for use in PUSH instruction
       return normalizedName;
@@ -45,7 +60,7 @@ export function getOperandAddress(
       const tempOp = operand as TemporaryOperand;
       if (!this.tempAddresses.has(tempOp.id)) {
         this.tempAddresses.set(tempOp.id, this.nextAddress++);
-        this.tempTypes.set(tempOp.id, tempOp.type.udonType);
+        this.tempTypes.set(tempOp.id, resolveHeapType(tempOp.type));
       }
       // Return the temporary name for use in PUSH instruction
       return `__t${tempOp.id}`;
@@ -57,7 +72,7 @@ export function getOperandAddress(
       if (!this.constantAddresses.has(key)) {
         const addr = this.nextAddress++;
         this.constantAddresses.set(key, addr);
-        this.constantTypes.set(key, constOp.type.udonType);
+        this.constantTypes.set(key, resolveHeapType(constOp.type));
       }
       // Return the constant variable name for use in PUSH instruction
       const addr = this.constantAddresses.get(key) as number;
