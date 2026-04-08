@@ -307,10 +307,7 @@ function mergeInlineMapping(
   inlineRes: TACOperand,
   instanceMap: Map<string, { prefix: string; className: string }>,
 ): { prefix: string; className: string } | null {
-  const resKey =
-    inlineRes.kind === TACOperandKind.Variable
-      ? (inlineRes as VariableOperand).name
-      : undefined;
+  const resKey = operandTrackingKey(inlineRes);
   const branchMapping = resKey ? instanceMap.get(resKey) : undefined;
   if (current === undefined) {
     return branchMapping ?? null;

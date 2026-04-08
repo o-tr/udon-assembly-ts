@@ -280,7 +280,8 @@ export function resolveTypeFromNode(
         }
         // Static method on a class name: e.g. Tile.parse("1m")
         // Check classMap/classRegistry directly since typeMapper may map
-        // inline class names to ObjectType.
+        // inline class names to ObjectType. Pass isStatic=true so the
+        // classMap fallback finds static methods.
         if (pa.object.kind === ASTNodeKind.Identifier) {
           const className = (pa.object as IdentifierNode).name;
           const isKnownClass =
@@ -295,6 +296,7 @@ export function resolveTypeFromNode(
               converter,
               syntheticType,
               pa.property,
+              true,
             );
           }
         }
@@ -310,11 +312,17 @@ export function resolveTypeFromNode(
  * Resolve the return type of a method on a given base type.
  * For inline class return types (not known extern types), creates a
  * ClassTypeSymbol so callers can identify the concrete class.
+ *
+ * @param isStatic - When set, restricts the classMap fallback to static
+ *   (true) or instance (false) methods. When undefined, tries instance
+ *   first, then static (the classRegistry path via getMergedMethods does
+ *   not filter by static, so it already covers both).
  */
 function resolveMethodReturnType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
   methodName: string,
+  isStatic?: boolean,
 ): TypeSymbol | null {
   const typeName = baseType.name;
   if (!typeName) return null;
@@ -340,7 +348,9 @@ function resolveMethodReturnType(
     return mapped;
   };
 
-  // Check class registry for inline classes
+  // Check class registry for inline classes.
+  // getMergedMethods does not filter by static, so both instance and static
+  // methods are found regardless of the isStatic hint.
   if (converter.classRegistry) {
     const classMeta = converter.classRegistry.getClass(typeName);
     if (classMeta) {
@@ -362,14 +372,30 @@ function resolveMethodReturnType(
   // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
   // to handle methods defined on base classes. Pipe through resolveReturnTypeStr
   // when the return type name is available so inline class return types get
-  // upgraded from ObjectType to ClassTypeSymbol (consistent with classRegistry paths).
-  const resolved = resolveClassMethod(converter, typeName, methodName);
-  if (resolved) {
-    const rt = resolved.method.returnType;
-    if (rt.name) return resolveReturnTypeStr(rt.name);
-    return rt;
+  // upgraded from ObjectType to ClassTypeSymbol (consistent with classRegistry
+  // paths). Try the specified isStatic value first; when unspecified, try
+  // instance then static so both Tile.fromCode() and tile.toString() resolve.
+  const resolveFromClassMap = (
+    staticFlag: boolean,
+  ): TypeSymbol | null => {
+    const resolved = resolveClassMethod(
+      converter,
+      typeName,
+      methodName,
+      staticFlag,
+    );
+    if (resolved) {
+      const rt = resolved.method.returnType;
+      if (rt.name) return resolveReturnTypeStr(rt.name);
+      return rt;
+    }
+    return null;
+  };
+
+  if (isStatic !== undefined) {
+    return resolveFromClassMap(isStatic);
   }
-  return null;
+  return resolveFromClassMap(false) ?? resolveFromClassMap(true);
 }
 
 function flattenStringConcatChain(
