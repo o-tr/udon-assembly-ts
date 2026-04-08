@@ -360,9 +360,15 @@ function resolveMethodReturnType(
     }
   }
   // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
-  // to handle methods defined on base classes.
+  // to handle methods defined on base classes. Pipe through resolveReturnTypeStr
+  // when the return type name is available so inline class return types get
+  // upgraded from ObjectType to ClassTypeSymbol (consistent with classRegistry paths).
   const resolved = resolveClassMethod(converter, typeName, methodName);
-  if (resolved) return resolved.method.returnType;
+  if (resolved) {
+    const rt = resolved.method.returnType;
+    if (rt.name) return resolveReturnTypeStr(rt.name);
+    return rt;
+  }
   return null;
 }
 
