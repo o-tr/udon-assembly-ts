@@ -366,6 +366,20 @@ function tryUntrackedInlineDispatch(
       !converter.udonBehaviourClasses.has(typeName)
     ) {
       candidateClassNames.add(typeName);
+      // Also add subclasses that have inline instances
+      if (converter.classRegistry) {
+        for (const [, inst] of converter.allInlineInstances) {
+          if (candidateClassNames.has(inst.className)) continue;
+          if (!converter.udonBehaviourClasses.has(inst.className)) {
+            const chain = converter.classRegistry.getInheritanceChain(
+              inst.className,
+            );
+            if (chain.includes(typeName)) {
+              candidateClassNames.add(inst.className);
+            }
+          }
+        }
+      }
       return;
     }
     if (converter.classRegistry?.getInterface(typeName)) {
@@ -602,7 +616,10 @@ function tryD3MethodDispatch(
   for (const [instId, info] of converter.allInlineInstances) {
     if (
       info.className === objectTypeName ||
-      implementorNames?.has(info.className)
+      implementorNames?.has(info.className) ||
+      (converter.classRegistry
+        ?.getInheritanceChain(info.className)
+        .includes(objectTypeName) ?? false)
     ) {
       dispInstances.push([instId, info]);
     }
@@ -615,7 +632,13 @@ function tryD3MethodDispatch(
     if (astName && astName !== objectTypeName) {
       const astImpl = getOrPopulateImplementorNames(converter, astName);
       for (const [instId, info] of converter.allInlineInstances) {
-        if (info.className === astName || astImpl?.has(info.className)) {
+        if (
+          info.className === astName ||
+          astImpl?.has(info.className) ||
+          (converter.classRegistry
+            ?.getInheritanceChain(info.className)
+            .includes(astName) ?? false)
+        ) {
           dispInstances.push([instId, info]);
         }
       }

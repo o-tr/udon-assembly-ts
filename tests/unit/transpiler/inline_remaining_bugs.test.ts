@@ -237,8 +237,7 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("D3 dispatch for inherited methods", () => {
-    // TODO: convert to it() when inherited method D3 dispatch is fixed
-    it.fails("indexed access on child instances should D3-dispatch inherited methods", () => {
+    it("indexed access on child instances should D3-dispatch inherited methods", () => {
       const source = `
           class Base {
             constructor(public name: string) {}
@@ -261,15 +260,14 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__greet__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__greet__");
 
-      // The D3 method dispatch should inline the method body for each candidate.
-      // NOTE: "d3_method" matches the label prefix emitted by tryD3MethodDispatch (call.ts).
+      // The inline dispatch should inline the method body for each candidate.
+      // NOTE: "untracked_call" matches the label prefix emitted by tryUntrackedInlineDispatch (call.ts).
       // Update if the dispatch mechanism or label naming changes.
       const tac = result.tac;
-      expect(tac).toContain("d3_method");
+      expect(tac).toContain("untracked_call");
     });
 
-    // TODO: convert to it() when inherited method D3 dispatch is fixed
-    it.fails("for-of loop on child instances should D3-dispatch inherited methods", () => {
+    it("for-of loop on child instances should D3-dispatch inherited methods", () => {
       const source = `
           class Base {
             constructor(public name: string) {}
@@ -294,12 +292,11 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__describe__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__describe__");
 
-      // NOTE: "d3_method" matches the label prefix from tryD3MethodDispatch (call.ts).
-      expect(result.tac).toContain("d3_method");
+      // NOTE: "untracked_call" matches the label prefix from tryUntrackedInlineDispatch (call.ts).
+      expect(result.tac).toContain("untracked_call");
     });
 
-    // TODO: convert to it() when inherited method D3 dispatch is fixed
-    it.fails("polymorphic dispatch: base and child classes with overridden method", () => {
+    it("polymorphic dispatch: base and child classes with overridden method", () => {
       const source = `
           class Animal {
             constructor(public name: string) {}
@@ -328,8 +325,8 @@ describe("inline remaining bugs", () => {
       // Must NOT fall back to SystemObject EXTERNs
       expect(result.uasm).not.toContain("SystemObject.__speak__");
 
-      // NOTE: "d3_method" matches the label prefix from tryD3MethodDispatch (call.ts).
-      expect(result.tac).toContain("d3_method");
+      // NOTE: "untracked_call" matches the label prefix from tryUntrackedInlineDispatch (call.ts).
+      expect(result.tac).toContain("untracked_call");
     });
   });
 });

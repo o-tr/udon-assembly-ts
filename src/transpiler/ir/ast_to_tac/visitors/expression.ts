@@ -1703,7 +1703,10 @@ export function visitPropertyAccessExpression(
         for (const [instId, info] of this.allInlineInstances) {
           if (
             info.className === untrackedTypeName ||
-            implementorNames?.has(info.className)
+            implementorNames?.has(info.className) ||
+            (this.classRegistry
+              ?.getInheritanceChain(info.className)
+              .includes(untrackedTypeName) ?? false)
           ) {
             dispInstances.push([instId, info]);
           }
@@ -1737,7 +1740,10 @@ export function visitPropertyAccessExpression(
             for (const [instId, info] of this.allInlineInstances) {
               if (
                 info.className === astTypeName ||
-                astImplementorNames?.has(info.className)
+                astImplementorNames?.has(info.className) ||
+                (this.classRegistry
+                  ?.getInheritanceChain(info.className)
+                  .includes(astTypeName) ?? false)
               ) {
                 dispInstances.push([instId, info]);
               }
