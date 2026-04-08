@@ -44,6 +44,8 @@ describe("known transpiler bugs", () => {
 
       // Positive indices should produce a Substring call
       expect(result.uasm).toContain("__Substring__");
+      // Fast-path: no runtime get_Length branch for known non-negative constants
+      expect(result.uasm).not.toContain("__get_Length__");
     });
 
     it("slice(0, -1) should emit Length-adjusted endIndex", () => {
