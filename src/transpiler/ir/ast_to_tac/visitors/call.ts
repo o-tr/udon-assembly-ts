@@ -1976,22 +1976,42 @@ export function visitCallExpression(
         this.instructions.push(new CastInstruction(cast, op));
         return cast;
       };
-      // Adjust a negative index at runtime: length + intArg
+      // Adjust a negative index at runtime: max(0, length + intArg)
       const adjustNegIndex = (intArg: TACOperand): TACOperand => {
         const lenTemp = this.newTemp(PrimitiveTypes.int32);
         // Strings use "Length", not "Count" (which is DataList-only).
         this.instructions.push(
           new PropertyGetInstruction(lenTemp, object, "Length"),
         );
-        const adjusted = this.newTemp(PrimitiveTypes.int32);
+        const sum = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(
-          new BinaryOpInstruction(adjusted, lenTemp, "+", intArg),
+          new BinaryOpInstruction(sum, lenTemp, "+", intArg),
         );
-        return adjusted;
+        // Clamp to 0: if index < -length the sum is still negative
+        const zero = createConstant(0, PrimitiveTypes.int32);
+        const stillNeg = this.newTemp(PrimitiveTypes.boolean);
+        this.instructions.push(
+          new BinaryOpInstruction(stillNeg, sum, "<", zero),
+        );
+        const clampSkip = this.newLabel("slice_clamp");
+        this.instructions.push(
+          new ConditionalJumpInstruction(stillNeg, clampSkip),
+        );
+        // Still negative → clamp to 0
+        this.instructions.push(new CopyInstruction(sum, zero));
+        this.instructions.push(new LabelInstruction(clampSkip));
+        return sum;
       };
       // Convert an index arg to Int32, adjusting negative values at runtime
       const resolveIndex = (arg: TACOperand): TACOperand => {
         const intArg = toInt32(arg);
+        // Fast path: skip runtime branch for known non-negative constants
+        if (
+          arg.kind === TACOperandKind.Constant &&
+          Number((arg as ConstantOperand).value) >= 0
+        ) {
+          return intArg;
+        }
         const resolved = this.newTemp(PrimitiveTypes.int32);
         this.instructions.push(new CopyInstruction(resolved, intArg));
         const isNeg = this.newTemp(PrimitiveTypes.boolean);
@@ -2008,7 +2028,7 @@ export function visitCallExpression(
         this.instructions.push(
           new ConditionalJumpInstruction(isNeg, skipLabel),
         );
-        // Negative path: resolved = length + intArg
+        // Negative path: resolved = max(0, length + intArg)
         const adjusted = adjustNegIndex(intArg);
         this.instructions.push(new CopyInstruction(resolved, adjusted));
         this.instructions.push(new LabelInstruction(skipLabel));
