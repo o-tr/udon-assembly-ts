@@ -16,7 +16,7 @@
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 describe("inline remaining bugs", () => {
@@ -58,6 +58,7 @@ describe("inline remaining bugs", () => {
 
       // There should be multiple distinct handle values (one per iteration),
       // or a dynamic counter. A single hardcoded "= 1" means all share storage.
+      expect(handleAssignments.length).toBeGreaterThan(0);
       const uniqueValues = new Set(
         handleAssignments.map((l) => l.split("=")[1]?.trim()),
       );
@@ -99,6 +100,7 @@ describe("inline remaining bugs", () => {
       const uniqueSources = new Set(sources);
 
       // items[0].id and items[1].id should read from different storage
+      expect(d3Reads.length).toBeGreaterThan(0);
       expect(uniqueSources.size).toBeGreaterThan(1);
     });
 
@@ -144,7 +146,7 @@ describe("inline remaining bugs", () => {
       const prefixes = new Set(
         instVars.map((v) => v.replace(/_kind$|_code$|__handle$/, "")),
       );
-      expect(prefixes.size).toBeGreaterThan(1);
+      expect(prefixes.size).toBeGreaterThanOrEqual(3); // at minimum one per outer iteration k=0,1,2
     });
   });
 
@@ -298,12 +300,8 @@ describe("inline remaining bugs", () => {
       // Must NOT fall back to SystemObject EXTERNs
       expect(result.uasm).not.toContain("SystemObject.__speak__");
 
-      // Should have D3 dispatch branches for both Dog and Cat
-      const tac = result.tac;
-      const hasDogBranch = tac.includes("__inst_Dog_");
-      const hasCatBranch = tac.includes("__inst_Cat_");
-      expect(hasDogBranch).toBe(true);
-      expect(hasCatBranch).toBe(true);
+      // Should have D3 method dispatch branches (not just constructor-time instance variables)
+      expect(result.tac).toContain("d3_method");
     });
   });
 });
