@@ -195,8 +195,13 @@ describe("known transpiler bugs", () => {
       // After fix: The array variable "nums" should use %VRCSDK3DataDataList
       // in the data section, not %SystemArray
       const numsLines = dataSection.filter((l) => l.includes("nums"));
+      expect(numsLines.length).toBeGreaterThan(0);
       const hasSystemArray = numsLines.some((l) => l.includes("%SystemArray"));
       expect(hasSystemArray).toBe(false);
+      const hasDataList = numsLines.some((l) =>
+        l.includes("%VRCSDK3DataDataList"),
+      );
+      expect(hasDataList).toBe(true);
     });
   });
 });

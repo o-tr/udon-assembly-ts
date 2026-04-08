@@ -23,7 +23,10 @@ import type { TACToUdonConverter } from "./converter.js";
  * ArrayTypeSymbol uses DataList in Udon, not the raw "Array" udonType.
  */
 function resolveHeapType(typeSymbol: TypeSymbol): string {
-  if (typeSymbol instanceof ArrayTypeSymbol) {
+  if (
+    typeSymbol instanceof ArrayTypeSymbol ||
+    (typeSymbol.name ?? "").endsWith("[]")
+  ) {
     return UdonType.DataList;
   }
   return typeSymbol.udonType;
