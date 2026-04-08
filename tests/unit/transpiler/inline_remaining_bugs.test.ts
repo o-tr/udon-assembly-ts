@@ -29,6 +29,7 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("loop inline instance sharing", () => {
+    // TODO: convert to it() when loop instance sharing (SoA) is fixed
     it.fails("each loop iteration should allocate distinct storage for inline instances", () => {
       const source = `
           class Item {
@@ -65,6 +66,7 @@ describe("inline remaining bugs", () => {
       expect(uniqueValues.size).toBeGreaterThan(1);
     });
 
+    // TODO: convert to it() when loop instance sharing (SoA) is fixed
     it.fails("items pushed in a loop should retain their own field values", () => {
       const source = `
           class Item {
@@ -104,6 +106,7 @@ describe("inline remaining bugs", () => {
       expect(uniqueSources.size).toBeGreaterThan(1);
     });
 
+    // TODO: convert to it() when loop instance sharing (SoA) is fixed
     it.fails("flyweight pattern: loop-created instances with distinct constructor args must not alias", () => {
       const source = `
           class Tile {
@@ -155,6 +158,7 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("super() constructor field propagation", () => {
+    // TODO: convert to it() when super() field propagation is fixed
     it.fails("super(arg) should assign arg to inherited parameter-property field", () => {
       const source = `
           class Base {
@@ -187,6 +191,7 @@ describe("inline remaining bugs", () => {
       expect(selfAssigns).toHaveLength(0);
     });
 
+    // TODO: convert to it() when super() field propagation is fixed
     it.fails("super() with multiple parameter properties propagates all fields", () => {
       const source = `
           class Base {
@@ -226,6 +231,7 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("D3 dispatch for inherited methods", () => {
+    // TODO: convert to it() when inherited method D3 dispatch is fixed
     it.fails("indexed access on child instances should D3-dispatch inherited methods", () => {
       const source = `
           class Base {
@@ -249,11 +255,14 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__greet__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__greet__");
 
-      // The D3 method dispatch should inline the method body for each candidate
+      // The D3 method dispatch should inline the method body for each candidate.
+      // NOTE: "d3_method" matches the label prefix emitted by tryD3MethodDispatch (call.ts).
+      // Update if the dispatch mechanism or label naming changes.
       const tac = result.tac;
       expect(tac).toContain("d3_method");
     });
 
+    // TODO: convert to it() when inherited method D3 dispatch is fixed
     it.fails("for-of loop on child instances should D3-dispatch inherited methods", () => {
       const source = `
           class Base {
@@ -279,10 +288,11 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__describe__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__describe__");
 
-      // The D3 method dispatch should be present
+      // NOTE: "d3_method" matches the label prefix from tryD3MethodDispatch (call.ts).
       expect(result.tac).toContain("d3_method");
     });
 
+    // TODO: convert to it() when inherited method D3 dispatch is fixed
     it.fails("polymorphic dispatch: base and child classes with overridden method", () => {
       const source = `
           class Animal {
@@ -312,7 +322,7 @@ describe("inline remaining bugs", () => {
       // Must NOT fall back to SystemObject EXTERNs
       expect(result.uasm).not.toContain("SystemObject.__speak__");
 
-      // Should have D3 method dispatch branches (not just constructor-time instance variables)
+      // NOTE: "d3_method" matches the label prefix from tryD3MethodDispatch (call.ts).
       expect(result.tac).toContain("d3_method");
     });
   });
