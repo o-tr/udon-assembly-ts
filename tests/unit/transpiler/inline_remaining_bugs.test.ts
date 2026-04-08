@@ -269,6 +269,9 @@ describe("inline remaining bugs", () => {
 
       // Must NOT generate a SystemObject.__describe__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__describe__");
+
+      // The D3 method dispatch should be present
+      expect(result.tac).toContain("d3_method");
     });
 
     it.fails("polymorphic dispatch: base and child classes with overridden method", () => {
