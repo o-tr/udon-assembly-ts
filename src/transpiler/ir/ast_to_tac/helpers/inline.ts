@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ClassTypeSymbol,
+  DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
   ObjectType,
@@ -250,6 +251,155 @@ function buildInheritanceChain(
     }
   }
   return inheritanceChain;
+}
+
+/**
+ * Collect all non-static instance fields from a class and its ancestors,
+ * in inheritance order (base first). Deduplicates by field name.
+ */
+function collectAllInstanceFields(
+  converter: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+): Array<{ name: string; type: TypeSymbol }> {
+  const chain = buildInheritanceChain(converter, classNode);
+  const fields: Array<{ name: string; type: TypeSymbol }> = [];
+  const seen = new Set<string>();
+  for (const cls of chain) {
+    for (const prop of cls.properties) {
+      if (prop.isStatic || seen.has(prop.name)) continue;
+      seen.add(prop.name);
+      fields.push({ name: prop.name, type: prop.type });
+    }
+  }
+  return fields;
+}
+
+/**
+ * Lazily emit DataList constructors and counter initialization for a SoA class.
+ * Idempotent: no-ops if already initialized for this className.
+ */
+/**
+ * Ensure per-field DataList operands and counter operand exist for a SoA class.
+ * Memoized by soaInitialized — creates operands exactly once per class per pass.
+ * Does NOT emit code; call emitSoaInitGuard separately.
+ */
+function ensureSoaOperands(
+  converter: ASTToTACConverter,
+  className: string,
+  classNode: ClassDeclarationNode,
+): void {
+  if (converter.soaInitialized.has(className)) return;
+  converter.soaInitialized.add(className);
+
+  const fields = collectAllInstanceFields(converter, classNode);
+  const fieldLists = new Map<string, VariableOperand>();
+  for (const field of fields) {
+    fieldLists.set(
+      field.name,
+      createVariable(
+        `__soa_${className}_${field.name}`,
+        new DataListTypeSymbol(ExternTypes.dataToken),
+      ),
+    );
+  }
+  converter.soaFieldLists.set(className, fieldLists);
+  converter.soaCounterVars.set(
+    className,
+    createVariable(`__soa_${className}__counter`, PrimitiveTypes.int32),
+  );
+}
+
+/**
+ * Emit a runtime-guarded init block for a SoA class.
+ * Called at every constructor call site so that whichever site executes first
+ * at runtime performs the initialisation (DataList construction, counter = 1,
+ * sentinel entries at index 0). The __soa_<class>__inited flag ensures the
+ * block runs at most once at runtime.
+ */
+function emitSoaInitGuard(
+  converter: ASTToTACConverter,
+  className: string,
+): void {
+  const fieldLists = converter.soaFieldLists.get(className);
+  const counterVar = converter.soaCounterVars.get(className);
+  if (!fieldLists || !counterVar) return;
+
+  const initedVar = createVariable(
+    `__soa_${className}__inited`,
+    PrimitiveTypes.int32,
+  );
+  const notYetInited = converter.newTemp(PrimitiveTypes.boolean);
+  const skipInitLabel = converter.newLabel("soa_init_skip");
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      notYetInited,
+      initedVar,
+      "==",
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  // ConditionalJump uses JUMP_IF_FALSE: jumps when notYetInited is false
+  // (i.e. already initialized) — skips the init block.
+  converter.instructions.push(
+    new ConditionalJumpInstruction(notYetInited, skipInitLabel),
+  );
+
+  converter.instructions.push(
+    new AssignmentInstruction(
+      initedVar,
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  for (const [, listVar] of fieldLists) {
+    converter.instructions.push(new CallInstruction(listVar, listCtorSig, []));
+  }
+
+  // Counter starts at 1: Udon zero-initialises heap slots, so an
+  // uninitialised array element holds 0. Reserving handle 0 as "no valid
+  // instance" prevents false SoA lookups on partially-populated arrays
+  // (consistent with the non-SoA nextInstanceId starting at 1).
+  converter.instructions.push(
+    new AssignmentInstruction(
+      counterVar,
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+
+  // Reserve index 0 as a sentinel in each DataList so that handle values
+  // (starting at 1) align with DataList indices.
+  for (const [, listVar] of fieldLists) {
+    const dummyToken = converter.wrapDataToken(
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    converter.instructions.push(
+      new MethodCallInstruction(undefined, listVar, "Add", [dummyToken]),
+    );
+  }
+
+  converter.instructions.push(new LabelInstruction(skipInitLabel));
+}
+
+/**
+ * Ensure SoA operands exist and emit a runtime-guarded init block.
+ * The operand creation is memoized (once per class per pass), but the guard
+ * block is emitted at every call site so that whichever constructor site
+ * executes first at runtime performs the initialisation.
+ */
+function initSoaForClass(
+  converter: ASTToTACConverter,
+  className: string,
+  classNode: ClassDeclarationNode,
+): void {
+  ensureSoaOperands(converter, className, classNode);
+  emitSoaInitGuard(converter, className);
 }
 
 export function resolveClassProperty(
@@ -602,26 +752,45 @@ export function visitInlineConstructor(
   // Emit static property initializers once per class
   emitStaticPropertyInitializers(this, className);
 
+  // SoA detection: if this constructor runs inside a loop, mark the class
+  // so that pass 2 uses DataList-based SoA storage instead of static variables.
+  if (this.loopContextStack.length > 0) {
+    this.soaClasses.add(className);
+  }
+  const isSoA = this.soaClasses.has(className);
+
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
   // This prevents O(N_call_sites × N_instances) explosion for flyweight classes.
   const { instancePrefix, instanceId } =
     this.allocateBodyCachedInstance(className);
-  // Handle is Int32 (instanceId) for runtime dispatch via classId switch.
-  // When stored in an interface-typed array (Object[] in Udon), the Int32
-  // is CLR-boxed at the Object[] array boundary. The for-of dispatch
-  // copies it back to an Int32-typed variable via CopyInstruction, which
-  // the CLR runtime unboxes transparently at the typed heap slot.
+
   const instanceHandle = createVariable(
     `${instancePrefix}__handle`,
     PrimitiveTypes.int32,
   );
-  this.instructions.push(
-    new AssignmentInstruction(
-      instanceHandle,
-      createConstant(instanceId, PrimitiveTypes.int32),
-    ),
-  );
+
+  if (isSoA) {
+    // SoA: lazily create per-field DataLists and counter, then assign
+    // handle from the runtime counter (dynamic, not a static constant).
+    initSoaForClass(this, className, classNode);
+    const counterVar = this.soaCounterVars.get(className);
+    if (counterVar) {
+      this.instructions.push(new CopyInstruction(instanceHandle, counterVar));
+    }
+  } else {
+    // Non-SoA: handle is a compile-time constant (instanceId).
+    // When stored in an interface-typed array (Object[] in Udon), the Int32
+    // is CLR-boxed at the Object[] array boundary. The for-of dispatch
+    // copies it back to an Int32-typed variable via CopyInstruction, which
+    // the CLR runtime unboxes transparently at the typed heap slot.
+    this.instructions.push(
+      new AssignmentInstruction(
+        instanceHandle,
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
+    );
+  }
   this.inlineInstanceMap.set(instanceHandle.name, {
     prefix: instancePrefix,
     className,
@@ -737,6 +906,44 @@ export function visitInlineConstructor(
     this.currentThisOverride = previousThisOverride;
     this.currentInlineBaseClass = previousBaseClass;
     this.currentInlineInitializerState = previousInitializerState;
+  }
+
+  // SoA epilogue: snapshot scratch-variable values into per-field DataLists
+  // and increment the counter so the next construction gets a fresh index.
+  if (isSoA) {
+    const fieldLists = this.soaFieldLists.get(className);
+    if (fieldLists) {
+      for (const [fieldName, listVar] of fieldLists) {
+        const scratchVar = this.mapInlineProperty(
+          className,
+          instancePrefix,
+          fieldName,
+        );
+        if (scratchVar) {
+          const token = this.wrapDataToken(scratchVar);
+          this.instructions.push(
+            new MethodCallInstruction(undefined, listVar, "Add", [token]),
+          );
+        } else {
+          console.warn(
+            `transpiler: SoA epilogue for ${className}: mapInlineProperty returned ` +
+              `undefined for field "${fieldName}" (prefix ${instancePrefix}). ` +
+              `DataList index alignment may be broken.`,
+          );
+        }
+      }
+    }
+    const counterVar = this.soaCounterVars.get(className);
+    if (counterVar) {
+      this.instructions.push(
+        new BinaryOpInstruction(
+          counterVar,
+          counterVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+    }
   }
 
   return instanceHandle;

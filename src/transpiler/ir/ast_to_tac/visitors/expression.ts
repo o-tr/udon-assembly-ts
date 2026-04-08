@@ -1845,6 +1845,41 @@ export function visitPropertyAccessExpression(
             }
           }
           if (untrackedPropType) {
+            // SoA fast path: when ALL candidate instances belong to a single
+            // SoA class, read the field from the per-field DataList at the
+            // handle index. No per-instance branching needed.
+            const soaClassName = dispInstances[0][1].className;
+            const allSameClass = dispInstances.every(
+              ([, i]) => i.className === soaClassName,
+            );
+            if (
+              allSameClass &&
+              this.soaClasses.has(soaClassName) &&
+              this.soaFieldLists.has(soaClassName)
+            ) {
+              const fieldLists = this.soaFieldLists.get(soaClassName);
+              const fieldList = fieldLists?.get(node.property);
+              if (fieldList) {
+                const hdlVar = this.newTemp(PrimitiveTypes.int32);
+                this.instructions.push(new CopyInstruction(hdlVar, object));
+                const token = this.newTemp(ExternTypes.dataToken);
+                this.instructions.push(
+                  new MethodCallInstruction(token, fieldList, "get_Item", [
+                    hdlVar,
+                  ]),
+                );
+                return this.unwrapDataToken(token, untrackedPropType);
+              }
+              // SoA class property not in soaFieldLists — the fallthrough
+              // to static-handle dispatch below will always miss because
+              // SoA handles are dynamic counters, not static instanceIds.
+              console.warn(
+                `transpiler: SoA class "${soaClassName}" has no DataList for ` +
+                  `property "${node.property}". D3 dispatch will fall through ` +
+                  `to static-handle comparison which cannot match dynamic SoA handles.`,
+              );
+            }
+
             // Use the concrete inline field type for the dispatch result.
             // The miss path no longer emits a PropertyGetInstruction (it
             // uses Debug.LogError instead), so there is no need to widen
