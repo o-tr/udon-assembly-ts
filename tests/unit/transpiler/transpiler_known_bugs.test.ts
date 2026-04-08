@@ -87,6 +87,30 @@ describe("known transpiler bugs", () => {
         "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
       );
     });
+
+    it("slice(-999) should clamp over-negative index to 0", () => {
+      const source = `
+          class Main {
+            Start(): void {
+              const s: string = "Hi";
+              const r: string = s.slice(-999);
+              Debug.Log(r);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Must adjust via get_Length + Addition
+      expect(result.uasm).toContain("__get_Length__");
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
+      );
+
+      // Must clamp via LessThan comparison against 0
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
