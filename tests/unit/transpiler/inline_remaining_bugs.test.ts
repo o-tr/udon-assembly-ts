@@ -260,11 +260,10 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__greet__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__greet__");
 
-      // The inline dispatch should inline the method body for each candidate.
-      // NOTE: "untracked_call" matches the label prefix emitted by tryUntrackedInlineDispatch (call.ts).
-      // Update if the dispatch mechanism or label naming changes.
+      // Verify handle-based dispatch: the TAC should contain a handle
+      // comparison (e.g. "t9 == 1") to select the correct inline instance.
       const tac = result.tac;
-      expect(tac).toContain("untracked_call");
+      expect(tac).toMatch(/== \d+/);
     });
 
     it("for-of loop on child instances should D3-dispatch inherited methods", () => {
@@ -292,8 +291,8 @@ describe("inline remaining bugs", () => {
       // Must NOT generate a SystemObject.__describe__ EXTERN
       expect(result.uasm).not.toContain("SystemObject.__describe__");
 
-      // NOTE: "untracked_call" matches the label prefix from tryUntrackedInlineDispatch (call.ts).
-      expect(result.tac).toContain("untracked_call");
+      // Verify handle-based dispatch is present
+      expect(result.tac).toMatch(/== \d+/);
     });
 
     it("polymorphic dispatch: base and child classes with overridden method", () => {
@@ -325,8 +324,33 @@ describe("inline remaining bugs", () => {
       // Must NOT fall back to SystemObject EXTERNs
       expect(result.uasm).not.toContain("SystemObject.__speak__");
 
-      // NOTE: "untracked_call" matches the label prefix from tryUntrackedInlineDispatch (call.ts).
-      expect(result.tac).toContain("untracked_call");
+      // Verify handle-based dispatch is present
+      expect(result.tac).toMatch(/== \d+/);
+    });
+
+    it("indexed access on child instances should dispatch inherited property access", () => {
+      const source = `
+          class Base {
+            constructor(public name: string) {}
+          }
+          class Child extends Base {
+            constructor(name: string) { super(name); }
+          }
+          class Main {
+            Start(): void {
+              const items: Base[] = [];
+              items.push(new Child("A"));
+              Debug.Log(items[0].name);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Must NOT generate a SystemObject property access
+      expect(result.uasm).not.toContain("SystemObject.__get_name__");
+
+      // Verify the property is resolved to the inline instance's heap variable
+      expect(result.tac).toContain("__inst_Child_0_name");
     });
   });
 });

@@ -64,6 +64,7 @@ import {
   emitDeferredInlineInitializers,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
+  isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
@@ -367,17 +368,13 @@ function tryUntrackedInlineDispatch(
     ) {
       candidateClassNames.add(typeName);
       // Also add subclasses that have inline instances
-      if (converter.classRegistry) {
-        for (const [, inst] of converter.allInlineInstances) {
-          if (candidateClassNames.has(inst.className)) continue;
-          if (!converter.udonBehaviourClasses.has(inst.className)) {
-            const chain = converter.classRegistry.getInheritanceChain(
-              inst.className,
-            );
-            if (chain.includes(typeName)) {
-              candidateClassNames.add(inst.className);
-            }
-          }
+      for (const [, inst] of converter.allInlineInstances) {
+        if (candidateClassNames.has(inst.className)) continue;
+        if (
+          !converter.udonBehaviourClasses.has(inst.className) &&
+          isSubclassOf(converter, inst.className, typeName)
+        ) {
+          candidateClassNames.add(inst.className);
         }
       }
       return;
@@ -617,9 +614,7 @@ function tryD3MethodDispatch(
     if (
       info.className === objectTypeName ||
       implementorNames?.has(info.className) ||
-      (converter.classRegistry
-        ?.getInheritanceChain(info.className)
-        .includes(objectTypeName) ?? false)
+      isSubclassOf(converter, info.className, objectTypeName)
     ) {
       dispInstances.push([instId, info]);
     }
@@ -635,9 +630,7 @@ function tryD3MethodDispatch(
         if (
           info.className === astName ||
           astImpl?.has(info.className) ||
-          (converter.classRegistry
-            ?.getInheritanceChain(info.className)
-            .includes(astName) ?? false)
+          isSubclassOf(converter, info.className, astName)
         ) {
           dispInstances.push([instId, info]);
         }

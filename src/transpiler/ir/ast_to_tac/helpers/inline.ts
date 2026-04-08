@@ -100,6 +100,22 @@ export function isInlineHandleType(
 }
 
 /**
+ * Check whether `className` is equal to or a subclass of `baseName`
+ * according to the class registry's inheritance chain.
+ */
+export function isSubclassOf(
+  converter: ASTToTACConverter,
+  className: string,
+  baseName: string,
+): boolean {
+  return (
+    converter.classRegistry
+      ?.getInheritanceChain(className)
+      .includes(baseName) ?? false
+  );
+}
+
+/**
  * Resolve a class node by name, checking classMap first then classRegistry.
  */
 export function resolveClassNode(
