@@ -46,10 +46,8 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain("__Substring__");
     });
 
-    it.fails(
-      "slice(0, -1) should emit Length-adjusted endIndex",
-      () => {
-        const source = `
+    it.fails("slice(0, -1) should emit Length-adjusted endIndex", () => {
+      const source = `
           class Main {
             Start(): void {
               const s: string = "Hello World";
@@ -58,22 +56,19 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // After fix: must call get_Length to adjust the negative index
-        expect(result.uasm).toContain("__get_Length__");
+      // After fix: must call get_Length to adjust the negative index
+      expect(result.uasm).toContain("__get_Length__");
 
-        // Should contain Addition for length + (-1) adjustment
-        expect(result.uasm).toContain(
-          "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
-        );
-      },
-    );
+      // Should contain Addition for length + (-1) adjustment
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
+      );
+    });
 
-    it.fails(
-      "slice(-2) should emit Length-adjusted startIndex",
-      () => {
-        const source = `
+    it.fails("slice(-2) should emit Length-adjusted startIndex", () => {
+      const source = `
           class Main {
             Start(): void {
               const s: string = "Hello World";
@@ -82,18 +77,18 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // After fix: must call get_Length to adjust the negative start index
-        expect(result.uasm).toContain("__get_Length__");
+      // After fix: must call get_Length to adjust the negative start index
+      expect(result.uasm).toContain("__get_Length__");
 
-        // Should contain Addition for length + (-2) adjustment
-        expect(result.uasm).toContain(
-          "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
-        );
-      },
-    );
+      // Should contain Addition for length + (-2) adjustment
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
+      );
+    });
 
+    // DELETE this test when the two slice it.fails tests above are fixed
     it("documents current bug: negative literal index is not adjusted", () => {
       const source = `
         class Main {
@@ -146,21 +141,17 @@ describe("known transpiler bugs", () => {
       }
     `;
 
-    it.fails(
-      "Map field in loop-created inline class should unwrap via DataDictionary, not Reference",
-      () => {
-        const result = new TypeScriptToUdonTranspiler().transpile(
-          mapFieldSource,
-        );
+    it.fails("Map field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
+      const result = new TypeScriptToUdonTranspiler().transpile(mapFieldSource);
 
-        // After fix: DataToken containing a DataDictionary should unwrap via
-        // get_DataDictionary, not get_Reference.
-        expect(result.uasm).not.toContain(
-          "DataToken.__get_Reference__SystemObject",
-        );
-      },
-    );
+      // After fix: DataToken containing a DataDictionary should unwrap via
+      // get_DataDictionary, not get_Reference.
+      expect(result.uasm).not.toContain(
+        "DataToken.__get_Reference__SystemObject",
+      );
+    });
 
+    // DELETE this test when the DataToken unwrap bug above is fixed
     it("documents current bug: Map field DataToken uses get_Reference", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(mapFieldSource);
 
@@ -171,9 +162,7 @@ describe("known transpiler bugs", () => {
       // VRChat DataToken throws on get_Reference for DataList/DataDictionary tokens.
 
       // BUG EVIDENCE: get_Reference is used instead of get_DataDictionary
-      expect(result.uasm).toContain(
-        "DataToken.__get_Reference__SystemObject",
-      );
+      expect(result.uasm).toContain("DataToken.__get_Reference__SystemObject");
     });
   });
 
@@ -191,10 +180,8 @@ describe("known transpiler bugs", () => {
       return lines.slice(startIdx, endIdx + 1);
     }
 
-    it.fails(
-      "number[] variable should not declare as %SystemArray in data section",
-      () => {
-        const source = `
+    it.fails("number[] variable should not declare as %SystemArray in data section", () => {
+      const source = `
           class Main {
             Start(): void {
               const nums: number[] = [1, 2, 3];
@@ -202,18 +189,17 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
-        const dataSection = getDataSection(result.uasm);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
-        // After fix: All array-typed variables should use %VRCSDK3DataDataList
-        // in the data section, not %SystemArray
-        const hasSystemArray = dataSection.some((l) =>
-          l.includes("%SystemArray"),
-        );
-        expect(hasSystemArray).toBe(false);
-      },
-    );
+      // After fix: The array variable "nums" should use %VRCSDK3DataDataList
+      // in the data section, not %SystemArray
+      const numsLines = dataSection.filter((l) => l.includes("nums"));
+      const hasSystemArray = numsLines.some((l) => l.includes("%SystemArray"));
+      expect(hasSystemArray).toBe(false);
+    });
 
+    // DELETE this test when the ArrayTypeSymbol bug above is fixed
     it("documents current bug: array variable declared as %SystemArray", () => {
       const source = `
         class Main {
@@ -231,10 +217,9 @@ describe("known transpiler bugs", () => {
       // But getOperandTypeName() has ArrayTypeSymbol → "VRCSDK3DataDataList"
       // for EXTERN signatures. This mismatch causes VM errors.
 
-      // BUG EVIDENCE: %SystemArray in data section
-      const hasSystemArray = dataSection.some((l) =>
-        l.includes("%SystemArray"),
-      );
+      // BUG EVIDENCE: %SystemArray in data section for the "nums" variable
+      const numsLines = dataSection.filter((l) => l.includes("nums"));
+      const hasSystemArray = numsLines.some((l) => l.includes("%SystemArray"));
       expect(hasSystemArray).toBe(true);
 
       // EXTERN signatures correctly use DataList (the mismatch)
