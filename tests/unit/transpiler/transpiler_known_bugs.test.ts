@@ -1,8 +1,8 @@
 /**
  * Regression tests for three known transpiler bugs discovered during VM testing.
  *
- * Bug 1: String.slice() negative index — isNegConst() doesn't detect unary-minus
- *         expressions, so negative indices are passed raw to Substring.
+ * Bug 1 (FIXED): String.slice() negative index — resolved by replacing
+ *         compile-time isNegConst() with a runtime branch in resolveIndex().
  *         (root cause #12 in vm-test-failures-investigation.md)
  *
  * Bug 2: DataToken.get_Reference misselection — CollectionTypeSymbol hardcodes
@@ -87,7 +87,6 @@ describe("known transpiler bugs", () => {
         "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32",
       );
     });
-
   });
 
   // ---------------------------------------------------------------------------
