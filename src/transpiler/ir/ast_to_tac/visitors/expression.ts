@@ -468,16 +468,8 @@ export function visitExpression(
       return this.visitDeleteExpression(node as DeleteExpressionNode);
     case ASTNodeKind.SuperExpression:
       return this.visitSuperExpression(node as SuperExpressionNode);
-    case ASTNodeKind.CallExpression: {
-      const _ce = node as CallExpressionNode;
-      if (_ce.callee.kind === ASTNodeKind.PropertyAccessExpression) {
-        const _pa = _ce.callee as PropertyAccessExpressionNode;
-        if (_pa.property === "toString" || _pa.property === "equals") {
-          console.log(`[D3-EXPR] visitExpression→CallExpression: ${_pa.property}`);
-        }
-      }
-      return this.visitCallExpression(_ce);
-    }
+    case ASTNodeKind.CallExpression:
+      return this.visitCallExpression(node as CallExpressionNode);
     case ASTNodeKind.AsExpression:
       return this.visitAsExpression(node as AsExpressionNode);
     case ASTNodeKind.AssignmentExpression:
