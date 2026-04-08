@@ -141,28 +141,15 @@ describe("known transpiler bugs", () => {
       }
     `;
 
-    it.fails("Map field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
+    it("Map field in loop-created inline class should unwrap via DataDictionary, not Reference", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(mapFieldSource);
 
-      // After fix: DataToken containing a DataDictionary should unwrap via
-      // get_DataDictionary, not get_Reference.
       expect(result.uasm).not.toContain(
         "DataToken.__get_Reference__SystemObject",
       );
-    });
-
-    // DELETE this test when the DataToken unwrap bug above is fixed
-    it("documents current bug: Map field DataToken uses get_Reference", () => {
-      const result = new TypeScriptToUdonTranspiler().transpile(mapFieldSource);
-
-      // BUG: CollectionTypeSymbol at type_symbols.ts:122 calls
-      //   super(typeName, UdonType.Object)
-      // When unwrapDataToken() is called with this type, targetType.udonType
-      // is "Object", falling through to default → property = "Reference".
-      // VRChat DataToken throws on get_Reference for DataList/DataDictionary tokens.
-
-      // BUG EVIDENCE: get_Reference is used instead of get_DataDictionary
-      expect(result.uasm).toContain("DataToken.__get_Reference__SystemObject");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataDictionary__VRCSDK3DataDataDictionary",
+      );
     });
   });
 
