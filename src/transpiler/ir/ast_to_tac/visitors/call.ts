@@ -557,10 +557,10 @@ function tryUntrackedInlineDispatch(
 
   // Propagate inline tracking if all branches agreed.
   if (dispatchResult && resultInlineMapping) {
-    converter.inlineInstanceMap.set(
-      operandTrackingKey(dispatchResult) ?? "",
-      resultInlineMapping,
-    );
+    const key = operandTrackingKey(dispatchResult);
+    if (key) {
+      converter.inlineInstanceMap.set(key, resultInlineMapping);
+    }
   }
   return dispatchResult ?? VOID_RETURN;
 }
@@ -805,10 +805,10 @@ function tryD3MethodDispatch(
 
   // Propagate inline tracking if all branches agreed.
   if (dispatchResult && resultInlineMapping) {
-    converter.inlineInstanceMap.set(
-      operandTrackingKey(dispatchResult) ?? "",
-      resultInlineMapping,
-    );
+    const key = operandTrackingKey(dispatchResult);
+    if (key) {
+      converter.inlineInstanceMap.set(key, resultInlineMapping);
+    }
   }
   return dispatchResult ?? VOID_RETURN;
 }
