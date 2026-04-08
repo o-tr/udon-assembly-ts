@@ -501,35 +501,35 @@ export function getCurrentDeferredInitializerClassName(
 }
 
 /**
- * Emit implicit assignments for parameter properties declared on a base class
- * constructor (e.g. `constructor(public name: string)`). Mirrors the
- * `emitParamPropertyAssignments` closure inside `visitInlineConstructor` but
- * operates on the base class node reached via super().
+ * Emit implicit assignments for TypeScript parameter properties
+ * (e.g. `constructor(public name: string)` → `this.name = name`).
+ *
+ * Used by both `visitInlineConstructor` (for the outermost class) and
+ * `inlineSuperConstructorFromArgs` (for base classes reached via super()),
+ * as well as the super() call handler in `call.ts` (for correct post-super
+ * timing in derived classes).
  */
-function emitBaseParamPropertyAssignments(
+export function emitParamPropertyAssignments(
   converter: ASTToTACConverter,
-  baseClassNode: ClassDeclarationNode,
+  className: string,
 ): void {
   if (!converter.currentInlineContext) return;
-  if (!baseClassNode.constructor) return;
+  const classNode = resolveClassNode(converter, className);
+  if (!classNode?.constructor) return;
   const { instancePrefix } = converter.currentInlineContext;
-  for (const param of baseClassNode.constructor.parameters) {
-    const isParamProperty = baseClassNode.properties.some(
-      (prop) => prop.name === param.name && !prop.isStatic,
+  for (const param of classNode.constructor.parameters) {
+    if (!param.isParameterProperty) continue;
+    const fieldVar = converter.mapInlineProperty(
+      className,
+      instancePrefix,
+      param.name,
     );
-    if (isParamProperty) {
-      const fieldVar = converter.mapInlineProperty(
-        baseClassNode.name,
-        instancePrefix,
-        param.name,
-      );
-      if (fieldVar) {
-        const paramType = converter.typeMapper.mapTypeScriptType(param.type);
-        const paramVar = createVariable(param.name, paramType, {
-          isParameter: true,
-        });
-        converter.emitCopyWithTracking(fieldVar, paramVar);
-      }
+    if (fieldVar) {
+      const paramType = converter.typeMapper.mapTypeScriptType(param.type);
+      const paramVar = createVariable(param.name, paramType, {
+        isParameter: true,
+      });
+      converter.emitCopyWithTracking(fieldVar, paramVar);
     }
   }
 }
@@ -576,15 +576,16 @@ export function inlineSuperConstructorFromArgs(
       try {
         if (!baseClassNode.baseClass) {
           emitDeferredInlineInitializers(converter, baseClassNode.name);
-          emitBaseParamPropertyAssignments(converter, baseClassNode);
+          emitParamPropertyAssignments(converter, baseClassNode.name);
         }
         converter.visitStatement(baseClassNode.constructor.body);
         // Safety-net: if the constructor body contains a super() call, its
         // handler already emitted the deferred initializers (guarded by
         // emittedClassNames). This only does real work when super() was
         // omitted (invalid TypeScript) to avoid silently dropping inits.
+        // Param property assignments for derived bases are emitted by the
+        // super() call handler in call.ts right after super() returns.
         if (baseClassNode.baseClass) {
-          emitBaseParamPropertyAssignments(converter, baseClassNode);
           emitDeferredInlineInitializers(converter, baseClassNode.name);
         }
       } finally {
@@ -719,42 +720,17 @@ export function visitInlineConstructor(
         typedParams,
         args,
       );
-      // Helper: emit implicit assignments for TypeScript parameter properties
-      // (e.g., `constructor(public value: UdonInt)` auto-assigns
-      // `this.value = value`). Must run after super() and initializers.
-      const emitParamPropertyAssignments = () => {
-        if (!classNode.constructor) return;
-        for (const param of classNode.constructor.parameters) {
-          const isParamProperty = classNode.properties.some(
-            (prop) => prop.name === param.name && !prop.isStatic,
-          );
-          if (isParamProperty) {
-            const fieldVar = this.mapInlineProperty(
-              className,
-              instancePrefix,
-              param.name,
-            );
-            if (fieldVar) {
-              const paramType = this.typeMapper.mapTypeScriptType(param.type);
-              const paramVar = createVariable(param.name, paramType, {
-                isParameter: true,
-              });
-              this.emitCopyWithTracking(fieldVar, paramVar);
-            }
-          }
-        }
-      };
-
       try {
         if (!classNode.baseClass) {
           emitDeferredInlineInitializers(this, classNode.name);
-          // For base classes: param properties before body (body may read them)
-          emitParamPropertyAssignments();
+          emitParamPropertyAssignments(this, classNode.name);
         }
         this.visitStatement(classNode.constructor.body);
+        // For derived classes: param property assignments are emitted by the
+        // super() call handler in call.ts right after super() returns.
+        // Deferred initializers use emittedClassNames guard to prevent
+        // double-emission; this safety-net handles omitted super().
         if (classNode.baseClass) {
-          // For derived classes: param properties after body (body contains super())
-          emitParamPropertyAssignments();
           emitDeferredInlineInitializers(this, classNode.name);
         }
       } finally {

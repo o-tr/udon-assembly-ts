@@ -49,7 +49,7 @@ export interface ClassMetadata {
   methods: MethodInfo[];
   properties: PropertyInfo[];
   constructor?: {
-    parameters: Array<{ name: string; type: string }>;
+    parameters: Array<{ name: string; type: string; isParameterProperty?: boolean }>;
     body: ASTNode;
   };
   node: ClassDeclarationNode;
