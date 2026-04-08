@@ -473,6 +473,7 @@ export interface ClassDeclarationNode extends ASTNode {
       name: string;
       type: string;
       isSerializeField?: boolean;
+      isParameterProperty?: boolean;
     }>;
     body: ASTNode;
   };

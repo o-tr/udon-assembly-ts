@@ -62,6 +62,7 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   emitDeferredInlineInitializers,
+  emitParamPropertyAssignments,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
   isSubclassOf,
@@ -854,6 +855,15 @@ export function visitCallExpression(
         this.currentInlineBaseClass,
         superArgs,
       );
+      // Emit parameter property assignments for the current class right after
+      // super() returns — matches TypeScript semantics where `this.prop = prop`
+      // is placed between the super() call and the first post-super statement.
+      if (this.currentInlineConstructorClassName) {
+        emitParamPropertyAssignments(
+          this,
+          this.currentInlineConstructorClassName,
+        );
+      }
       const deferredClassName = getCurrentDeferredInitializerClassName(this);
       if (deferredClassName) {
         emitDeferredInlineInitializers(this, deferredClassName);

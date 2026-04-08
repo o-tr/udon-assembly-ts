@@ -111,22 +111,8 @@ export function visitClassDeclaration(
         );
       }
 
-      // Build params, marking @SerializeField ones
-      const params = member.parameters.map((param) => ({
-        name: param.name.getText(),
-        type: param.type ? param.type.getText() : "number",
-        ...(serializeFieldParams.has(param.name.getText())
-          ? { isSerializeField: true }
-          : {}),
-      }));
-      const body = member.body ? this.visitBlock(member.body) : undefined;
-      if (body) {
-        constructorNode = {
-          parameters: params,
-          body,
-        };
-      }
-      for (const param of member.parameters) {
+      // Pre-compute property modifier info for each parameter once
+      const paramPropertyInfo = member.parameters.map((param) => {
         const hasPropertyModifier =
           param.modifiers?.some(
             (mod) =>
@@ -135,11 +121,39 @@ export function visitClassDeclaration(
               mod.kind === ts.SyntaxKind.ProtectedKeyword ||
               mod.kind === ts.SyntaxKind.ReadonlyKeyword,
           ) ?? false;
-        if (
-          !hasPropertyModifier &&
-          !serializeFieldParams.has(param.name.getText())
-        )
-          continue;
+        const paramName = param.name.getText();
+        return {
+          hasPropertyModifier,
+          isParameterProperty:
+            hasPropertyModifier || serializeFieldParams.has(paramName),
+        };
+      });
+
+      // Build params, marking @SerializeField and parameter-property ones
+      const params = member.parameters.map((param, i) => {
+        const paramName = param.name.getText();
+        const { isParameterProperty } = paramPropertyInfo[i];
+        return {
+          name: paramName,
+          type: param.type ? param.type.getText() : "number",
+          ...(serializeFieldParams.has(paramName)
+            ? { isSerializeField: true }
+            : {}),
+          ...(isParameterProperty ? { isParameterProperty: true } : {}),
+        };
+      });
+      const body = member.body ? this.visitBlock(member.body) : undefined;
+      if (body) {
+        constructorNode = {
+          parameters: params,
+          body,
+        };
+      }
+      for (let i = 0; i < member.parameters.length; i++) {
+        const param = member.parameters[i];
+        const { hasPropertyModifier, isParameterProperty } =
+          paramPropertyInfo[i];
+        if (!isParameterProperty) continue;
         const propName = param.name.getText();
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
