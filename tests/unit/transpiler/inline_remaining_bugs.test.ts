@@ -65,6 +65,9 @@ describe("inline remaining bugs", () => {
 
       // SoA counter should exist and be incremented in the loop
       expect(result.tac).toContain("__soa_Item__counter");
+
+      // Runtime init guard must exist so DataList init is not repeated per iteration
+      expect(result.tac).toContain("__soa_Item__inited");
     });
 
     it("items pushed in a loop should retain their own field values", () => {
@@ -123,17 +126,13 @@ describe("inline remaining bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       // SoA: per-field DataLists should exist for Tile class in the UASM data section.
-      // Each field (kind, code) gets its own DataList for independent storage.
-      const soaVars = result.uasm
-        .split("\n")
-        .filter(
-          (l) => l.includes("__soa_Tile_") && l.includes(":"),
-        );
-      // At minimum: DataLists for 'kind' and 'code' fields
-      expect(soaVars.length).toBeGreaterThanOrEqual(2);
+      // Explicitly check for both field DataLists (not counter/inited vars).
+      expect(result.uasm).toContain("__soa_Tile_kind:");
+      expect(result.uasm).toContain("__soa_Tile_code:");
 
-      // SoA counter should be present
+      // SoA counter and runtime guard flag should be present
       expect(result.uasm).toContain("__soa_Tile__counter");
+      expect(result.uasm).toContain("__soa_Tile__inited");
     });
   });
 

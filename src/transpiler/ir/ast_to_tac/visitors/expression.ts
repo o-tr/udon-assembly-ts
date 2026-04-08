@@ -1845,16 +1845,20 @@ export function visitPropertyAccessExpression(
             }
           }
           if (untrackedPropType) {
-            // SoA fast path: when the target class uses SoA storage,
-            // read the field value from the per-field DataList at the
+            // SoA fast path: when ALL candidate instances belong to a single
+            // SoA class, read the field from the per-field DataList at the
             // handle index. No per-instance branching needed.
             const soaClassName = dispInstances[0][1].className;
+            const allSameClass = dispInstances.every(
+              ([, i]) => i.className === soaClassName,
+            );
             if (
+              allSameClass &&
               this.soaClasses.has(soaClassName) &&
               this.soaFieldLists.has(soaClassName)
             ) {
-              const fieldLists = this.soaFieldLists.get(soaClassName)!;
-              const fieldList = fieldLists.get(node.property);
+              const fieldLists = this.soaFieldLists.get(soaClassName);
+              const fieldList = fieldLists?.get(node.property);
               if (fieldList) {
                 const hdlVar = this.newTemp(PrimitiveTypes.int32);
                 this.instructions.push(new CopyInstruction(hdlVar, object));
@@ -1864,11 +1868,7 @@ export function visitPropertyAccessExpression(
                     hdlVar,
                   ]),
                 );
-                const result = this.unwrapDataToken(
-                  token,
-                  untrackedPropType,
-                );
-                return result;
+                return this.unwrapDataToken(token, untrackedPropType);
               }
             }
 

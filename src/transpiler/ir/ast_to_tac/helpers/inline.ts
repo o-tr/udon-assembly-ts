@@ -289,6 +289,39 @@ function initSoaForClass(
   const fields = collectAllInstanceFields(converter, classNode);
   const fieldLists = new Map<string, VariableOperand>();
 
+  // Runtime guard: this code may be emitted inside a loop body (because
+  // initSoaForClass is called lazily from visitInlineConstructor).
+  // Without a guard the DataLists and counter would be re-created on every
+  // iteration, wiping previously stored field values.
+  // Use __soa_<class>__inited (Int32, heap-zero-initialised to 0) as a flag.
+  const initedVar = createVariable(
+    `__soa_${className}__inited`,
+    PrimitiveTypes.int32,
+  );
+  const notYetInited = converter.newTemp(PrimitiveTypes.boolean);
+  const skipInitLabel = converter.newLabel("soa_init_skip");
+  converter.instructions.push(
+    new BinaryOpInstruction(
+      notYetInited,
+      initedVar,
+      "==",
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  // ConditionalJump uses JUMP_IF_FALSE: jumps when notYetInited is false
+  // (i.e. already initialized) — skips the init block.
+  converter.instructions.push(
+    new ConditionalJumpInstruction(notYetInited, skipInitLabel),
+  );
+
+  // Mark as initialized before the actual init to prevent re-entry.
+  converter.instructions.push(
+    new AssignmentInstruction(
+      initedVar,
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+
   const listCtorSig = converter.requireExternSignature(
     "DataList",
     "ctor",
@@ -308,6 +341,10 @@ function initSoaForClass(
 
   converter.soaFieldLists.set(className, fieldLists);
 
+  // Counter starts at 1: Udon zero-initialises heap slots, so an
+  // uninitialised array element holds 0. Reserving handle 0 as "no valid
+  // instance" prevents false SoA lookups on partially-populated arrays
+  // (consistent with the non-SoA nextInstanceId starting at 1).
   const counterVar = createVariable(
     `__soa_${className}__counter`,
     PrimitiveTypes.int32,
@@ -315,10 +352,23 @@ function initSoaForClass(
   converter.instructions.push(
     new AssignmentInstruction(
       counterVar,
-      createConstant(0, PrimitiveTypes.int32),
+      createConstant(1, PrimitiveTypes.int32),
     ),
   );
   converter.soaCounterVars.set(className, counterVar);
+
+  // Reserve index 0 as a sentinel in each DataList so that handle values
+  // (starting at 1) align with DataList indices.
+  for (const [, listVar] of fieldLists) {
+    const dummyToken = converter.wrapDataToken(
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    converter.instructions.push(
+      new MethodCallInstruction(undefined, listVar, "Add", [dummyToken]),
+    );
+  }
+
+  converter.instructions.push(new LabelInstruction(skipInitLabel));
 }
 
 export function resolveClassProperty(
@@ -693,8 +743,10 @@ export function visitInlineConstructor(
     // SoA: lazily create per-field DataLists and counter, then assign
     // handle from the runtime counter (dynamic, not a static constant).
     initSoaForClass(this, className, classNode);
-    const counterVar = this.soaCounterVars.get(className)!;
-    this.instructions.push(new CopyInstruction(instanceHandle, counterVar));
+    const counterVar = this.soaCounterVars.get(className);
+    if (counterVar) {
+      this.instructions.push(new CopyInstruction(instanceHandle, counterVar));
+    }
   } else {
     // Non-SoA: handle is a compile-time constant (instanceId).
     // When stored in an interface-typed array (Object[] in Udon), the Int32
@@ -844,15 +896,17 @@ export function visitInlineConstructor(
         }
       }
     }
-    const counterVar = this.soaCounterVars.get(className)!;
-    this.instructions.push(
-      new BinaryOpInstruction(
-        counterVar,
-        counterVar,
-        "+",
-        createConstant(1, PrimitiveTypes.int32),
-      ),
-    );
+    const counterVar = this.soaCounterVars.get(className);
+    if (counterVar) {
+      this.instructions.push(
+        new BinaryOpInstruction(
+          counterVar,
+          counterVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+    }
   }
 
   return instanceHandle;
