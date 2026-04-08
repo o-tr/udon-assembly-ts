@@ -375,9 +375,7 @@ function resolveMethodReturnType(
   // upgraded from ObjectType to ClassTypeSymbol (consistent with classRegistry
   // paths). Try the specified isStatic value first; when unspecified, try
   // instance then static so both Tile.fromCode() and tile.toString() resolve.
-  const resolveFromClassMap = (
-    staticFlag: boolean,
-  ): TypeSymbol | null => {
+  const resolveFromClassMap = (staticFlag: boolean): TypeSymbol | null => {
     const resolved = resolveClassMethod(
       converter,
       typeName,
