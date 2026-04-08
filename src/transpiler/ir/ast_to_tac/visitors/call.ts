@@ -260,18 +260,12 @@ function evaluateArgsWithExpectedTypes(
   methodName: string,
   rawArgs: ASTNode[],
 ): TACOperand[] | null {
-  // resolveClassNode intentionally excludes UdonBehaviour and stub classes.
-  // Their methods are dispatched via IPC, not inlined, so they never need
-  // typed-object-arg evaluation here.
-  const classNode = resolveClassNode(converter, className);
-  if (!classNode) return null;
-
-  // NOTE: Picks the first non-static method with a matching name.
-  // Udon does not support method overloads, so at most one match exists.
-  const method = classNode.methods.find(
-    (m) => m.name === methodName && !m.isStatic,
-  );
-  if (!method) return null;
+  // Walk the inheritance chain to find the method (may be on a base class).
+  // resolveClassMethod excludes UdonBehaviour and stub classes, so their
+  // methods (dispatched via IPC) never enter this path.
+  const resolved = resolveClassMethod(converter, className, methodName);
+  if (!resolved) return null;
+  const method = resolved.method;
 
   const hasTypedObjectArg = rawArgs.some(
     (arg, i) =>
@@ -598,7 +592,6 @@ function tryD3MethodDispatch(
   // method-name fallback for erased types.
   const dispInstances: Array<[number, { prefix: string; className: string }]> =
     [];
-  let usedErasedFallback = false;
 
   // Direct type match + interface implementor match
   const implementorNames = getOrPopulateImplementorNames(
@@ -625,7 +618,7 @@ function tryD3MethodDispatch(
           dispInstances.push([instId, info]);
         }
       }
-      if (dispInstances.length > 0) usedErasedFallback = true;
+      // usedErasedFallback: miss path always emits LogError regardless.
     }
   }
 
@@ -648,7 +641,7 @@ function tryD3MethodDispatch(
           dispInstances.push([instId, info]);
         }
       }
-      if (dispInstances.length > 0) usedErasedFallback = true;
+      // usedErasedFallback: miss path always emits LogError regardless.
     } else if (candidateClasses.size > 1) {
       // Multiple classes share this method name. Try narrowing via AST type.
       const astType = resolveTypeFromNode(converter, propAccess.object);
@@ -678,7 +671,7 @@ function tryD3MethodDispatch(
             dispInstances.push([instId, info]);
           }
         }
-        if (dispInstances.length > 0) usedErasedFallback = true;
+        // usedErasedFallback: miss path always emits LogError regardless.
       }
     }
   }
@@ -792,25 +785,25 @@ function tryD3MethodDispatch(
 
   if (dispatchFailed) return null;
 
-  // Miss path: emit Debug.LogError instead of invalid EXTERN.
+  // Miss path: always emit Debug.LogError so an unmatched handle at runtime
+  // produces a visible diagnostic instead of silently returning an
+  // uninitialized zero/null result.
   converter.inlineInstanceMap = savedInlineInstanceMap;
   converter.allInlineInstances = savedAllInlineInstances;
-  if (usedErasedFallback) {
-    const logExtern = converter.requireExternSignature(
-      "Debug",
-      "LogError",
-      "method",
-      ["object"],
-      "void",
-    );
-    const errMsg = createConstant(
-      `[udon-assembly-ts] D3 method dispatch miss: ${propAccess.property} on untracked instance`,
-      PrimitiveTypes.string,
-    );
-    converter.instructions.push(
-      new CallInstruction(undefined, logExtern, [errMsg]),
-    );
-  }
+  const logExtern = converter.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const errMsg = createConstant(
+    `[udon-assembly-ts] D3 method dispatch miss: ${propAccess.property} on untracked instance`,
+    PrimitiveTypes.string,
+  );
+  converter.instructions.push(
+    new CallInstruction(undefined, logExtern, [errMsg]),
+  );
   converter.instructions.push(new LabelInstruction(endLabel));
 
   // Propagate inline tracking if all branches agreed.
