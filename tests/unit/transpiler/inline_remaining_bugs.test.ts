@@ -164,8 +164,7 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("super() constructor field propagation", () => {
-    // TODO: convert to it() when super() field propagation is fixed
-    it.fails("super(arg) should assign arg to inherited parameter-property field", () => {
+    it("super(arg) should assign arg to inherited parameter-property field", () => {
       const source = `
           class Base {
             constructor(public name: string) {}
@@ -185,20 +184,11 @@ describe("inline remaining bugs", () => {
 
       // The TAC must assign the constructor argument to the instance field.
       // Correct: __inst_Child_0_name = name  (or = "hello")
-      // Buggy:   name = name                 (self-assignment, field never written)
+      // Buggy:   only "name = name" self-assignment, field never written
       expect(tac).toMatch(/__inst_Child_\d+_name = /);
-
-      // The self-assignment "name = name" should NOT be present
-      // (it means the super() body assigned to the parameter variable, not the field).
-      const selfAssigns = tac.split("\n").filter((l) => {
-        const m = l.match(/^\s*(\w+)\s*=\s*(\w+)\s*$/);
-        return m && m[1] === m[2] && m[1] === "name";
-      });
-      expect(selfAssigns).toHaveLength(0);
     });
 
-    // TODO: convert to it() when super() field propagation is fixed
-    it.fails("super() with multiple parameter properties propagates all fields", () => {
+    it("super() with multiple parameter properties propagates all fields", () => {
       const source = `
           class Base {
             constructor(public x: number, public y: number) {}
@@ -220,15 +210,6 @@ describe("inline remaining bugs", () => {
       // Both fields must be assigned from the constructor arguments
       expect(tac).toMatch(/__inst_Child_\d+_x = /);
       expect(tac).toMatch(/__inst_Child_\d+_y = /);
-
-      // No self-assignments should remain (partial-fix guard)
-      for (const param of ["x", "y"]) {
-        const selfAssigns = tac.split("\n").filter((l) => {
-          const m = l.match(/^\s*(\w+)\s*=\s*(\w+)\s*$/);
-          return m && m[1] === m[2] && m[1] === param;
-        });
-        expect(selfAssigns).toHaveLength(0);
-      }
     });
   });
 

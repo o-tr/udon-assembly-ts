@@ -500,6 +500,40 @@ export function getCurrentDeferredInitializerClassName(
   return undefined;
 }
 
+/**
+ * Emit implicit assignments for parameter properties declared on a base class
+ * constructor (e.g. `constructor(public name: string)`). Mirrors the
+ * `emitParamPropertyAssignments` closure inside `visitInlineConstructor` but
+ * operates on the base class node reached via super().
+ */
+function emitBaseParamPropertyAssignments(
+  converter: ASTToTACConverter,
+  baseClassNode: ClassDeclarationNode,
+): void {
+  if (!converter.currentInlineContext) return;
+  if (!baseClassNode.constructor) return;
+  const { instancePrefix } = converter.currentInlineContext;
+  for (const param of baseClassNode.constructor.parameters) {
+    const isParamProperty = baseClassNode.properties.some(
+      (prop) => prop.name === param.name && !prop.isStatic,
+    );
+    if (isParamProperty) {
+      const fieldVar = converter.mapInlineProperty(
+        baseClassNode.name,
+        instancePrefix,
+        param.name,
+      );
+      if (fieldVar) {
+        const paramType = converter.typeMapper.mapTypeScriptType(param.type);
+        const paramVar = createVariable(param.name, paramType, {
+          isParameter: true,
+        });
+        converter.emitCopyWithTracking(fieldVar, paramVar);
+      }
+    }
+  }
+}
+
 export function inlineSuperConstructorFromArgs(
   converter: ASTToTACConverter,
   baseClassName: string,
@@ -542,6 +576,7 @@ export function inlineSuperConstructorFromArgs(
       try {
         if (!baseClassNode.baseClass) {
           emitDeferredInlineInitializers(converter, baseClassNode.name);
+          emitBaseParamPropertyAssignments(converter, baseClassNode);
         }
         converter.visitStatement(baseClassNode.constructor.body);
         // Safety-net: if the constructor body contains a super() call, its
@@ -549,6 +584,7 @@ export function inlineSuperConstructorFromArgs(
         // emittedClassNames). This only does real work when super() was
         // omitted (invalid TypeScript) to avoid silently dropping inits.
         if (baseClassNode.baseClass) {
+          emitBaseParamPropertyAssignments(converter, baseClassNode);
           emitDeferredInlineInitializers(converter, baseClassNode.name);
         }
       } finally {
