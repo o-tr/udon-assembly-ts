@@ -14,6 +14,7 @@ import {
   type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
+  type VariableDeclarationNode,
   type WhileStatementNode,
 } from "../../../frontend/types.js";
 
@@ -27,6 +28,7 @@ import {
  *  - Is directly assigned to a property (this.field = arr)
  *  - Is reassigned (arr = something)
  *  - Is the iterable in a destructured for...of
+ *  - Is aliased via a plain identifier initializer (const b = arr → both ineligible)
  *
  * Returns the set of ineligible variable names. Variables not in this set
  * may still be native-array-eligible if their initializer is a constant-length
@@ -109,6 +111,20 @@ function collectIneligible(
       }
       collectIneligible(assign.target, ineligible);
       collectIneligible(assign.value, ineligible);
+      break;
+    }
+
+    case ASTNodeKind.VariableDeclaration: {
+      const varDecl = node as VariableDeclarationNode;
+      // If the initializer is a plain identifier (alias copy: const b = arr),
+      // mark both sides ineligible. The two variables share the same runtime
+      // object, so if one escapes scope via a later use, the other must also
+      // be treated as DataList for type compatibility.
+      if (varDecl.initializer?.kind === ASTNodeKind.Identifier) {
+        ineligible.add(varDecl.name);
+        ineligible.add((varDecl.initializer as IdentifierNode).name);
+      }
+      if (varDecl.initializer) collectIneligible(varDecl.initializer, ineligible);
       break;
     }
 
