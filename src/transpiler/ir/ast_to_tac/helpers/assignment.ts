@@ -74,6 +74,34 @@ export function assignToTarget(
       this.instructions.push(new CastInstruction(intIndex, index));
       coercedIndex = intIndex;
     }
+    // Bounds-check-and-grow loop: ensure Count > coercedIndex before set_Item.
+    // DataList.set_Item throws IndexOutOfRange if the index does not already
+    // exist, so we grow the list with Add until it is large enough.
+    // DataToken is a C# struct (value type) — DataList.Add copies the value,
+    // so reusing the same heap slot for defaultToken across iterations is safe.
+    const defaultToken = this.wrapDataToken(
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    const dlgrowStart = this.newLabel("dlgrow_start");
+    const dlgrowEnd = this.newLabel("dlgrow_end");
+    this.instructions.push(new LabelInstruction(dlgrowStart));
+    const currentCount = this.newTemp(PrimitiveTypes.int32);
+    this.instructions.push(
+      new PropertyGetInstruction(currentCount, array, "Count"),
+    );
+    const needsGrow = this.newTemp(PrimitiveTypes.boolean);
+    this.instructions.push(
+      new BinaryOpInstruction(needsGrow, currentCount, "<=", coercedIndex),
+    );
+    this.instructions.push(
+      new ConditionalJumpInstruction(needsGrow, dlgrowEnd),
+    );
+    this.instructions.push(
+      new MethodCallInstruction(undefined, array, "Add", [defaultToken]),
+    );
+    this.instructions.push(new UnconditionalJumpInstruction(dlgrowStart));
+    this.instructions.push(new LabelInstruction(dlgrowEnd));
+
     const token = this.wrapDataToken(value);
     this.instructions.push(
       new MethodCallInstruction(undefined, array, "set_Item", [
