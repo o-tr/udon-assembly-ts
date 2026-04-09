@@ -1,1 +1,1 @@
-export { TACOptimizer } from "./tac_optimizer.js";
+export { computeFingerprint, TACOptimizer } from "./tac_optimizer.js";

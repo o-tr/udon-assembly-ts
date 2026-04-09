@@ -150,7 +150,7 @@ const hashOperand = (h: number, op: TACOperand): number => {
 const hashOptOperand = (h: number, op: TACOperand | undefined): number =>
   op ? hashOperand(hashByte(h, 0x01), op) : hashByte(h, 0x00);
 
-const computeFingerprint = (insts: TACInstruction[]): number => {
+export const computeFingerprint = (insts: TACInstruction[]): number => {
   let h = 0x811c9dc5; // FNV-1a offset basis
   h = hashNum(h, insts.length);
   for (const inst of insts) {

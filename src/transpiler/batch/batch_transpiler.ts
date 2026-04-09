@@ -2,8 +2,10 @@
  * Batch transpiler orchestrator
  */
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { appendReflectionData } from "../codegen/reflection.js";
 import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
@@ -45,10 +47,69 @@ import {
   UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
-import { TACOptimizer } from "../ir/optimizer/index.js";
+import { computeFingerprint, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import { discoverTypeScriptFiles } from "./file_discovery.js";
+
+// ---- Cache types ----
+
+interface FileCacheEntry {
+  mtime: number;
+  hash: string;
+}
+
+interface CacheV3 {
+  version: 3;
+  transpilerHash: string;
+  files: Record<string, FileCacheEntry>;
+  entryPoints: Record<string, { usedFiles: string[] }>;
+}
+
+interface OutputCacheEntry {
+  key: string;
+  uasm: string;
+  warnings?: string[];
+}
+
+// ---- Transpiler identity hash ----
+// Computed once per process: a SHA-256 over all transpiler source / dist files.
+// When the transpiler code itself changes, all caches are invalidated.
+
+let _transpilerHash: string | undefined;
+
+function hashDirectoryRecursive(hash: crypto.Hash, dir: string): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      hashDirectoryRecursive(hash, fullPath);
+    } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) {
+      hash.update(entry.name);
+      hash.update(fs.readFileSync(fullPath));
+    }
+  }
+}
+
+function getTranspilerHash(): string {
+  if (_transpilerHash !== undefined) return _transpilerHash;
+  // batch_transpiler.ts is in src/transpiler/batch/ (or dist/transpiler/batch/)
+  // Go up one level to reach the transpiler root directory.
+  const thisFile = fileURLToPath(import.meta.url);
+  const transpilerRoot = path.resolve(path.dirname(thisFile), "..");
+  const hash = crypto.createHash("sha256");
+  hashDirectoryRecursive(hash, transpilerRoot);
+  _transpilerHash = hash.digest("hex");
+  return _transpilerHash;
+}
+
+// ---- End cache types ----
 
 function isTranspilableSource(filePath: string): boolean {
   if (filePath.endsWith(".d.ts")) return false;
@@ -210,8 +271,17 @@ export class BatchTranspiler {
       entryFilesToCompile.clear();
       for (const entryFile of entryFiles) {
         try {
-          const compilationOrder = resolver.getCompilationOrder(entryFile);
-          const hasChanges = compilationOrder.some((file) =>
+          // Tier 3: Use recorded usedFiles when available (faster, avoids full
+          // compilationOrder traversal for unchanged entry points).
+          const entryClass = registry
+            .getEntryPoints()
+            .find((ep) => ep.filePath === entryFile);
+          const cachedUsedFiles =
+            entryClass && cache.entryPoints[entryClass.name]?.usedFiles;
+          const filesToCheck = cachedUsedFiles
+            ? cachedUsedFiles
+            : resolver.getCompilationOrder(entryFile);
+          const hasChanges = filesToCheck.some((file) =>
             changedFiles.has(file),
           );
           if (hasChanges) {
@@ -242,7 +312,7 @@ export class BatchTranspiler {
     }
 
     if (entryFilesToCompile.size === 0) {
-      this.saveCache(cachePath, cacheFiles);
+      this.saveCache(cachePath, cacheFiles, cache?.entryPoints ?? {}, cache);
       return { outputs: [] };
     }
 
@@ -307,6 +377,12 @@ export class BatchTranspiler {
     }
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
+
+    const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
+    // Carry forward entryPoints metadata for skipped (cached) entry points
+    const entryPointsCache: Record<string, { usedFiles: string[] }> = {
+      ...(cache?.entryPoints ?? {}),
+    };
 
     for (const entryPoint of registry.getEntryPoints()) {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
@@ -410,13 +486,62 @@ export class BatchTranspiler {
         );
       }
 
+      // Tier 2: Build output cache key from pre-optimization TAC fingerprint.
+      // computeExposedLabels == computeExportLabels, so compute once and reuse.
+      const exposedLabels = computeExposedLabels(
+        registry,
+        udonBehaviourLayouts,
+        entryPoint.name,
+      );
+      const syncModes = new Map<string, string>();
+      for (const prop of mergedProperties) {
+        if (prop.syncMode) {
+          syncModes.set(prop.name, prop.syncMode.toLowerCase());
+        }
+      }
+      const outputCacheKey = this.computeOutputCacheKey(
+        computeFingerprint(tacInstructions),
+        exposedLabels,
+        entryPoint.name,
+        filteredInlineClassNames,
+        syncModes,
+        entryPoint.behaviourSyncMode,
+        options.reflect === true,
+        ext,
+      );
+      const cachedOutput = this.loadOutputCache(
+        optCacheDir,
+        entryPoint.name,
+        outputCacheKey,
+      );
+      if (cachedOutput !== null) {
+        if (options?.verbose) {
+          console.log(`  - Output cache hit for ${entryPoint.name}.`);
+        }
+        const outPath = path.join(
+          options.outputDir,
+          `${entryPoint.name}.${ext}`,
+        );
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
+        fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
+        outputs.push({
+          className: entryPoint.name,
+          outputPath: outPath,
+          warnings: cachedOutput.warnings,
+        });
+        entryPointsCache[entryPoint.name] = {
+          usedFiles: this.collectUsedFiles(
+            entryPoint.filePath,
+            filteredInlineClassNames,
+            registry,
+          ),
+        };
+        continue;
+      }
+
+      // Output cache miss: run the full optimization + codegen pipeline.
       if (options.optimize === true) {
         const optimizer = new TACOptimizer();
-        const exposedLabels = computeExposedLabels(
-          registry,
-          udonBehaviourLayouts,
-          entryPoint.name,
-        );
         tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
       }
 
@@ -434,18 +559,7 @@ export class BatchTranspiler {
           entryPoint.name,
         );
       }
-      const syncModes = new Map<string, string>();
-      for (const prop of mergedProperties) {
-        if (prop.syncMode) {
-          syncModes.set(prop.name, prop.syncMode.toLowerCase());
-        }
-      }
 
-      const exportLabels = computeExportLabels(
-        registry,
-        udonBehaviourLayouts,
-        entryPoint.name,
-      );
       const assembler = new UdonAssembler();
       const uasm = assembler.assemble(
         udonInstructions,
@@ -453,7 +567,7 @@ export class BatchTranspiler {
         dataSectionWithTypes,
         syncModes,
         entryPoint.behaviourSyncMode,
-        exportLabels,
+        exposedLabels, // same as computeExportLabels(...)
       );
       let splitCandidates: Map<string, number> | undefined;
       const heapUsage = computeHeapUsage(dataSectionWithTypes);
@@ -495,10 +609,26 @@ export class BatchTranspiler {
       fs.writeFileSync(outPath, uasm, "utf8");
 
       const assemblerWarnings = assembler.getWarnings();
+      const warnings =
+        assemblerWarnings.length > 0 ? assemblerWarnings : undefined;
+      // Tier 2: Save assembled output to cache.
+      this.saveOutputCache(optCacheDir, entryPoint.name, {
+        key: outputCacheKey,
+        uasm,
+        warnings,
+      });
+      // Tier 3: Record which files contributed to this entry point.
+      entryPointsCache[entryPoint.name] = {
+        usedFiles: this.collectUsedFiles(
+          entryPoint.filePath,
+          filteredInlineClassNames,
+          registry,
+        ),
+      };
       outputs.push({
         className: entryPoint.name,
         outputPath: outPath,
-        warnings: assemblerWarnings.length > 0 ? assemblerWarnings : undefined,
+        warnings,
       });
     }
 
@@ -506,7 +636,7 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
-    this.saveCache(cachePath, cacheFiles);
+    this.saveCache(cachePath, cacheFiles, entryPointsCache, cache);
     return { outputs };
   }
 
@@ -724,31 +854,78 @@ export class BatchTranspiler {
     return computeHeapUsage(dataSectionWithTypes);
   }
 
-  private loadCache(cachePath: string): Record<string, number> | null {
+  private loadCache(cachePath: string): CacheV3 | null {
     try {
       if (!fs.existsSync(cachePath)) return null;
       const raw = fs.readFileSync(cachePath, "utf8");
-      return JSON.parse(raw) as Record<string, number>;
+      const parsed = JSON.parse(raw);
+      // v1 format: plain Record<string, number> — treat as cold cache
+      if (!parsed || typeof parsed !== "object" || !("version" in parsed)) {
+        return null;
+      }
+      const currentHash = getTranspilerHash();
+      // v2 format: { version: 2, files: ... } — upgrade to v3
+      if ((parsed as { version: number }).version === 2) {
+        // No transpilerHash in v2, so file-level entries can be reused
+        // but all entry points must recompile.
+        return {
+          version: 3,
+          transpilerHash: currentHash,
+          files: (parsed as { files: Record<string, FileCacheEntry> }).files ??
+            {},
+          entryPoints: {},
+        };
+      }
+      if ((parsed as { version: number }).version === 3) {
+        const cache = parsed as CacheV3;
+        // Transpiler code changed → invalidate everything
+        if (cache.transpilerHash !== currentHash) {
+          return null;
+        }
+        return cache;
+      }
+      return null;
     } catch {
       return null;
     }
   }
 
-  private saveCache(cachePath: string, files: string[]): void {
-    const snapshot: Record<string, number> = {};
+  private saveCache(
+    cachePath: string,
+    files: string[],
+    entryPoints: Record<string, { usedFiles: string[] }>,
+    existingCache: CacheV3 | null,
+  ): void {
+    const snapshot: Record<string, FileCacheEntry> = {};
     for (const file of files) {
       try {
-        snapshot[file] = fs.statSync(file).mtimeMs;
+        const mtime = fs.statSync(file).mtimeMs;
+        // Reuse cached hash if mtime unchanged, otherwise compute fresh
+        const cachedEntry = existingCache?.files[file];
+        const hash =
+          cachedEntry && cachedEntry.mtime === mtime
+            ? cachedEntry.hash
+            : crypto
+                .createHash("sha256")
+                .update(fs.readFileSync(file))
+                .digest("hex");
+        snapshot[file] = { mtime, hash };
       } catch {
-        // ignore
+        // ignore unreadable files
       }
     }
-    fs.writeFileSync(cachePath, JSON.stringify(snapshot, null, 2), "utf8");
+    const cache: CacheV3 = {
+      version: 3,
+      transpilerHash: getTranspilerHash(),
+      files: snapshot,
+      entryPoints,
+    };
+    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf8");
   }
 
   private getChangedFiles(
     files: string[],
-    cache: Record<string, number> | null,
+    cache: CacheV3 | null,
   ): Set<string> {
     const changed = new Set<string>();
     if (!cache) {
@@ -758,7 +935,19 @@ export class BatchTranspiler {
     for (const file of files) {
       try {
         const mtime = fs.statSync(file).mtimeMs;
-        if (!cache[file] || cache[file] !== mtime) {
+        const entry = cache.files[file];
+        if (!entry) {
+          changed.add(file);
+          continue;
+        }
+        // Fast path: mtime unchanged → no need to hash
+        if (entry.mtime === mtime) continue;
+        // mtime changed → compare content hash
+        const hash = crypto
+          .createHash("sha256")
+          .update(fs.readFileSync(file))
+          .digest("hex");
+        if (entry.hash !== hash) {
           changed.add(file);
         }
       } catch {
@@ -766,6 +955,87 @@ export class BatchTranspiler {
       }
     }
     return changed;
+  }
+
+  // ---- Output cache helpers (Tier 2) ----
+
+  private computeOutputCacheKey(
+    tacFingerprint: number,
+    exposedLabels: Set<string>,
+    entryClassName: string,
+    inlineClassNames: string[],
+    syncModes: Map<string, string>,
+    behaviourSyncMode: string | undefined,
+    reflect: boolean,
+    ext: string,
+  ): string {
+    const sortedExposed = [...exposedLabels].sort().join(",");
+    const sortedInline = [...inlineClassNames].sort().join(",");
+    const sortedSync = [...syncModes.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}:${v}`)
+      .join(",");
+    const raw = [
+      getTranspilerHash(),
+      tacFingerprint.toString(16),
+      sortedExposed,
+      entryClassName,
+      sortedInline,
+      sortedSync,
+      behaviourSyncMode ?? "",
+      reflect ? "1" : "0",
+      ext,
+    ].join("|");
+    return crypto.createHash("sha256").update(raw).digest("hex");
+  }
+
+  private loadOutputCache(
+    cacheDir: string,
+    className: string,
+    expectedKey: string,
+  ): OutputCacheEntry | null {
+    try {
+      const filePath = path.join(cacheDir, `${className}.json`);
+      if (!fs.existsSync(filePath)) return null;
+      const entry = JSON.parse(
+        fs.readFileSync(filePath, "utf8"),
+      ) as OutputCacheEntry;
+      return entry.key === expectedKey ? entry : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private saveOutputCache(
+    cacheDir: string,
+    className: string,
+    entry: OutputCacheEntry,
+  ): void {
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(cacheDir, `${className}.json`),
+        JSON.stringify(entry),
+        "utf8",
+      );
+    } catch {
+      // Non-fatal: if we can't write the cache, compilation still succeeds
+    }
+  }
+
+  // ---- Dependency tracking helper (Tier 3) ----
+
+  private collectUsedFiles(
+    entryFilePath: string,
+    inlineClassNames: string[],
+    registry: ClassRegistry,
+  ): string[] {
+    const used = new Set<string>([entryFilePath]);
+    for (const name of inlineClassNames) {
+      const meta = registry.getClass(name);
+      if (meta?.filePath) used.add(meta.filePath);
+    }
+    return [...used];
   }
 
   private pickEntryMethod(methods: MethodInfo[]): MethodInfo | null {
