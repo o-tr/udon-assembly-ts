@@ -7,20 +7,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
-
-/** Extract the full _start section (up to the next top-level label). */
-function getStartSection(tac: string): string {
-  const lines = tac.split("\n");
-  const startIdx = lines.findIndex((line) => line.includes("_start:"));
-  if (startIdx < 0) return "";
-  const endIdx = lines.findIndex(
-    (line, i) =>
-      i > startIdx &&
-      /^\w[\w_]*:/.test(line.trim()) &&
-      !line.includes("_start:"),
-  );
-  return lines.slice(startIdx, endIdx !== -1 ? endIdx : undefined).join("\n");
-}
+import { getStartSection } from "./test_helpers.js";
 
 describe("inline inheritance", () => {
   beforeAll(() => {

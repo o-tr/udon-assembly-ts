@@ -6,27 +6,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
-
-function getStartSection(tac: string): string {
-  const lines = tac.split("\n");
-  const startIdx = lines.findIndex((line) => line.includes("_start:"));
-  if (startIdx < 0) return "";
-  const nextLabelIdx = lines.findIndex(
-    (line, i) =>
-      i > startIdx && /^_{1,2}[A-Za-z0-9][A-Za-z0-9_]*:$/.test(line.trim()),
-  );
-  const searchEnd = nextLabelIdx !== -1 ? nextLabelIdx : lines.length;
-  let endIdx = -1;
-  for (let i = searchEnd - 1; i > startIdx; i--) {
-    if (lines[i].trim().startsWith("return")) {
-      endIdx = i;
-      break;
-    }
-  }
-  return lines
-    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : searchEnd)
-    .join("\n");
-}
+import { getStartSection } from "./test_helpers.js";
 
 describe("interface dispatch: for-of with 3+ classes and state mutation", () => {
   beforeAll(() => {
@@ -41,17 +21,17 @@ describe("interface dispatch: for-of with 3+ classes and state mutation", () => 
       }
       class FixedScorer implements IScorer {
         private points: number = 0;
-        addPoints(n: number): void { this.points = this.points + n; }
+        addPoints(n: number): void { this.points += n; }
         getPoints(): number { return this.points; }
       }
       class DoubleScorer implements IScorer {
         private points: number = 0;
-        addPoints(n: number): void { this.points = this.points + n * 2; }
+        addPoints(n: number): void { this.points += n * 2; }
         getPoints(): number { return this.points; }
       }
       class BonusScorer implements IScorer {
         private points: number = 0;
-        addPoints(n: number): void { this.points = this.points + n + 10; }
+        addPoints(n: number): void { this.points += n + 10; }
         getPoints(): number { return this.points; }
       }
       @UdonBehaviour()
@@ -63,7 +43,7 @@ describe("interface dispatch: for-of with 3+ classes and state mutation", () => 
           }
           let total: number = 0;
           for (const s of this.scorers) {
-            total = total + s.getPoints();
+            total += s.getPoints();
           }
         }
       }
@@ -177,17 +157,17 @@ describe("interface dispatch: for-of with 3+ classes and state mutation", () => 
       }
       class CounterA implements ICounter {
         private n: number = 0;
-        inc(): void { this.n = this.n + 1; }
+        inc(): void { this.n++; }
         get(): number { return this.n; }
       }
       class CounterB implements ICounter {
         private n: number = 0;
-        inc(): void { this.n = this.n + 2; }
+        inc(): void { this.n += 2; }
         get(): number { return this.n; }
       }
       class CounterC implements ICounter {
         private n: number = 0;
-        inc(): void { this.n = this.n + 3; }
+        inc(): void { this.n += 3; }
         get(): number { return this.n; }
       }
       @UdonBehaviour()

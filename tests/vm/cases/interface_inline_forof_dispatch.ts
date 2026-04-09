@@ -21,7 +21,7 @@ class FixedScorer implements IScorer {
   }
 
   addPoints(n: number): void {
-    this.points = this.points + n;
+    this.points += n;
   }
 
   getPoints(): number {
@@ -38,7 +38,7 @@ class DoubleScorer implements IScorer {
   }
 
   addPoints(n: number): void {
-    this.points = this.points + n * 2;
+    this.points += n * 2;
   }
 
   getPoints(): number {
@@ -55,7 +55,7 @@ class BonusScorer implements IScorer {
   }
 
   addPoints(n: number): void {
-    this.points = this.points + n + 10;
+    this.points += n + 10;
   }
 
   getPoints(): number {
@@ -102,7 +102,7 @@ export class InterfaceInlineForofDispatch extends UdonSharpBehaviour {
     // 5. Accumulate total — verifies return value plumbing through iface_ret
     let total: number = 0;
     for (const s of this.scorers) {
-      total = total + s.getPoints();
+      total += s.getPoints();
     }
     Debug.Log(total);
     // Expected: 52 (8+16+28)
