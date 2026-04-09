@@ -152,6 +152,55 @@ describe("native array optimization", () => {
     });
   });
 
+  describe("new Array<T>(N) → native array", () => {
+    it("new Array<number>(3) emits native ctor without element init", () => {
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = new Array<number>(3);
+            const x: number = arr[0];
+          }
+        }
+      `);
+      expect(uasm).toContain(
+        "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
+      );
+      expect(uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
+      // No per-element Set calls (ctor zero-initializes)
+      expect(uasm).not.toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("DataToken");
+    });
+
+    it("new Array<number>(0) falls back to DataList (zero-length)", () => {
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = new Array<number>(0);
+          }
+        }
+      `);
+      // Zero-length native arrays are not useful; stay as DataList
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+    });
+
+    it("new Array<number>(N) falls back to DataList for runtime N", () => {
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const n: number = 3;
+            const arr: number[] = new Array<number>(n);
+          }
+        }
+      `);
+      // Runtime-length array cannot be statically sized → DataList
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+    });
+  });
+
   describe("boolean[] and string[] → native arrays", () => {
     it("uses SystemBooleanArray for boolean[]", () => {
       const { uasm } = transpile(`

@@ -252,11 +252,14 @@ export function visitVariableDeclaration(
         this.currentExpectedType = prev;
       }
     } else {
-      // If the initializer is an array literal, determine whether this variable
-      // is eligible for native (fixed-length) array optimization. Signal to
-      // visitArrayLiteralExpression by setting currentNativeArrayVarName.
+      // If the initializer is an array literal or new Array<T>(N), determine
+      // whether this variable is eligible for native array optimization.
+      // Signal to visitArrayLiteralExpression / visitCallExpression by setting
+      // currentNativeArrayVarName. The receiving visitor validates its own
+      // additional conditions (element count > 0, constant N, etc.).
       if (
-        node.initializer.kind === ASTNodeKind.ArrayLiteralExpression &&
+        (node.initializer.kind === ASTNodeKind.ArrayLiteralExpression ||
+          node.initializer.kind === ASTNodeKind.CallExpression) &&
         !this.nativeArrayIneligible.has(node.name) &&
         node.type instanceof ArrayTypeSymbol &&
         getNativeArrayTypeName(node.type.elementType.udonType) !== null
@@ -467,8 +470,13 @@ export function visitForOfStatement(
     const variableName =
       typeof node.variable === "string" ? node.variable : null;
     if (!variableName) {
-      // Destructured for...of on native arrays should have been excluded by eligibility analysis.
-      // Fall through to the DataList path, which will error at runtime — but prevent a crash here.
+      // Destructured for...of on native arrays should have been excluded by
+      // analyzeNativeArrayIneligibility. If we reach here, there is a gap in
+      // the eligibility analysis — throw so it is caught during transpilation.
+      throw new Error(
+        "[native-array] Destructured for...of on a native array reached codegen — " +
+          "this is a bug in analyzeNativeArrayIneligibility. Please file an issue.",
+      );
     } else {
       if (!this.symbolTable.hasInCurrentScope(variableName)) {
         this.symbolTable.addSymbol(variableName, elemType, false, false);
