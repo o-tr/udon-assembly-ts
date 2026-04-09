@@ -25,6 +25,7 @@ import {
   getOperandUdonType,
   getReturnValueAddress,
   normalizeVariableName,
+  pushConstant,
   pushOperand,
 } from "./operands.js";
 import {
@@ -232,6 +233,7 @@ export class TACToUdonConverter {
   convertInstruction = convertInstruction;
 
   pushOperand = pushOperand;
+  pushConstant = pushConstant;
   getOperandAddress = getOperandAddress;
   getOperandTypeName = getOperandTypeName;
   getOperandUdonType = getOperandUdonType;

@@ -40,6 +40,27 @@ export function pushOperand(
   this.instructions.push(new PushInstruction(addr));
 }
 
+/**
+ * Allocate a primitive constant on the heap (if not already present) and push it.
+ * @param value - The constant value (number, boolean, string, etc.)
+ * @param typeName - The Udon type name (e.g. "Int32", "Boolean")
+ */
+export function pushConstant(
+  this: TACToUdonConverter,
+  value: unknown,
+  typeName: string,
+): void {
+  const key = this.getConstantKey(value, typeName);
+  if (!this.constantAddresses.has(key)) {
+    const addr = this.nextAddress++;
+    this.constantAddresses.set(key, addr);
+    this.constantTypes.set(key, typeName);
+  }
+  const addr = this.constantAddresses.get(key) as number;
+  const name = `__const_${addr}_System${typeName}`;
+  this.instructions.push(new PushInstruction(name));
+}
+
 export function getOperandAddress(
   this: TACToUdonConverter,
   operand: TACOperand,

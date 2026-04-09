@@ -274,15 +274,7 @@ export function convertInstruction(
 
         // Step 2: Compare length == 0 → dest (Boolean)
         this.instructions.push(new PushInstruction(lenTmpName));
-        const zeroKey = this.getConstantKey(0, "Int32");
-        if (!this.constantAddresses.has(zeroKey)) {
-          const addr = this.nextAddress++;
-          this.constantAddresses.set(zeroKey, addr);
-          this.constantTypes.set(zeroKey, "Int32");
-        }
-        const zeroAddr = this.constantAddresses.get(zeroKey) as number;
-        const zeroName = `__const_${zeroAddr}_SystemInt32`;
-        this.instructions.push(new PushInstruction(zeroName));
+        this.pushConstant(0, "Int32");
         const destAddr = this.getOperandAddress(unInst.dest);
         this.instructions.push(new PushInstruction(destAddr));
         // The TAC dest inherits String type from the operand; override to Boolean
