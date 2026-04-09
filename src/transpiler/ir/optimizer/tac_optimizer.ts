@@ -150,134 +150,149 @@ const hashOperand = (h: number, op: TACOperand): number => {
 const hashOptOperand = (h: number, op: TACOperand | undefined): number =>
   op ? hashOperand(hashByte(h, 0x01), op) : hashByte(h, 0x00);
 
+const hashOneInstruction = (h: number, inst: TACInstruction): number => {
+  h = hashByte(h, instructionKindIndex[inst.kind] ?? 0);
+  switch (inst.kind) {
+    case TACInstructionKind.Assignment: {
+      const a = inst as AssignmentInstruction;
+      h = hashOperand(h, a.dest);
+      h = hashOperand(h, a.src);
+      break;
+    }
+    case TACInstructionKind.BinaryOp: {
+      const b = inst as BinaryOpInstruction;
+      h = hashOperand(h, b.dest);
+      h = hashOperand(h, b.left);
+      h = hashStr(h, b.operator);
+      h = hashOperand(h, b.right);
+      break;
+    }
+    case TACInstructionKind.UnaryOp: {
+      const u = inst as UnaryOpInstruction;
+      h = hashOperand(h, u.dest);
+      h = hashStr(h, u.operator);
+      h = hashOperand(h, u.operand);
+      break;
+    }
+    case TACInstructionKind.Copy: {
+      const c = inst as CopyInstruction;
+      h = hashOperand(h, c.dest);
+      h = hashOperand(h, c.src);
+      break;
+    }
+    case TACInstructionKind.Cast: {
+      const ca = inst as CastInstruction;
+      h = hashOperand(h, ca.dest);
+      h = hashOperand(h, ca.src);
+      break;
+    }
+    case TACInstructionKind.ConditionalJump: {
+      const cj = inst as ConditionalJumpInstruction;
+      h = hashOperand(h, cj.condition);
+      h = hashOperand(h, cj.label);
+      break;
+    }
+    case TACInstructionKind.UnconditionalJump: {
+      const uj = inst as UnconditionalJumpInstruction;
+      h = hashOperand(h, uj.label);
+      break;
+    }
+    case TACInstructionKind.Label: {
+      const li = inst as LabelInstruction;
+      h = hashOperand(h, li.label);
+      break;
+    }
+    case TACInstructionKind.Call: {
+      const cl = inst as CallInstruction;
+      h = hashOptOperand(h, cl.dest);
+      h = hashStr(h, cl.func);
+      h = hashNum(h, cl.args.length);
+      for (const arg of cl.args) h = hashOperand(h, arg);
+      h = hashByte(h, cl.isTailCall ? 1 : 0);
+      break;
+    }
+    case TACInstructionKind.MethodCall: {
+      const mc = inst as MethodCallInstruction;
+      h = hashOptOperand(h, mc.dest);
+      h = hashOperand(h, mc.object);
+      h = hashStr(h, mc.method);
+      h = hashNum(h, mc.args.length);
+      for (const arg of mc.args) h = hashOperand(h, arg);
+      h = hashByte(h, mc.isTailCall ? 1 : 0);
+      break;
+    }
+    case TACInstructionKind.PropertyGet: {
+      const pg = inst as PropertyGetInstruction;
+      h = hashOperand(h, pg.dest);
+      h = hashOperand(h, pg.object);
+      h = hashStr(h, pg.property);
+      break;
+    }
+    case TACInstructionKind.PropertySet: {
+      const ps = inst as PropertySetInstruction;
+      h = hashOperand(h, ps.object);
+      h = hashStr(h, ps.property);
+      h = hashOperand(h, ps.value);
+      break;
+    }
+    case TACInstructionKind.Return: {
+      const r = inst as ReturnInstruction;
+      h = hashOptOperand(h, r.value);
+      if (r.returnVarName) h = hashStr(hashByte(h, 0x01), r.returnVarName);
+      else h = hashByte(h, 0x00);
+      break;
+    }
+    case TACInstructionKind.ArrayAccess: {
+      const aa = inst as ArrayAccessInstruction;
+      h = hashOperand(h, aa.dest);
+      h = hashOperand(h, aa.array);
+      h = hashOperand(h, aa.index);
+      break;
+    }
+    case TACInstructionKind.ArrayAssignment: {
+      const aas = inst as ArrayAssignmentInstruction;
+      h = hashOperand(h, aas.array);
+      h = hashOperand(h, aas.index);
+      h = hashOperand(h, aas.value);
+      break;
+    }
+    case TACInstructionKind.Phi: {
+      const phi = inst as PhiInstruction;
+      h = hashOperand(h, phi.dest);
+      h = hashNum(h, phi.sources.length);
+      for (const src of phi.sources) {
+        h = hashNum(h, src.pred);
+        h = hashOperand(h, src.value);
+      }
+      break;
+    }
+  }
+  return hashByte(h, 0xff);
+};
+
 export const computeFingerprint = (
   insts: TACInstruction[],
   seed = 0x811c9dc5,
 ): number => {
-  let h = seed; // FNV-1a offset basis
+  let h = seed;
   h = hashNum(h, insts.length);
-  for (const inst of insts) {
-    // Hash instruction kind as a unique ordinal index
-    h = hashByte(h, instructionKindIndex[inst.kind] ?? 0);
-    switch (inst.kind) {
-      case TACInstructionKind.Assignment: {
-        const a = inst as AssignmentInstruction;
-        h = hashOperand(h, a.dest);
-        h = hashOperand(h, a.src);
-        break;
-      }
-      case TACInstructionKind.BinaryOp: {
-        const b = inst as BinaryOpInstruction;
-        h = hashOperand(h, b.dest);
-        h = hashOperand(h, b.left);
-        h = hashStr(h, b.operator);
-        h = hashOperand(h, b.right);
-        break;
-      }
-      case TACInstructionKind.UnaryOp: {
-        const u = inst as UnaryOpInstruction;
-        h = hashOperand(h, u.dest);
-        h = hashStr(h, u.operator);
-        h = hashOperand(h, u.operand);
-        break;
-      }
-      case TACInstructionKind.Copy: {
-        const c = inst as CopyInstruction;
-        h = hashOperand(h, c.dest);
-        h = hashOperand(h, c.src);
-        break;
-      }
-      case TACInstructionKind.Cast: {
-        const ca = inst as CastInstruction;
-        h = hashOperand(h, ca.dest);
-        h = hashOperand(h, ca.src);
-        break;
-      }
-      case TACInstructionKind.ConditionalJump: {
-        const cj = inst as ConditionalJumpInstruction;
-        h = hashOperand(h, cj.condition);
-        h = hashOperand(h, cj.label);
-        break;
-      }
-      case TACInstructionKind.UnconditionalJump: {
-        const uj = inst as UnconditionalJumpInstruction;
-        h = hashOperand(h, uj.label);
-        break;
-      }
-      case TACInstructionKind.Label: {
-        const li = inst as LabelInstruction;
-        h = hashOperand(h, li.label);
-        break;
-      }
-      case TACInstructionKind.Call: {
-        const cl = inst as CallInstruction;
-        h = hashOptOperand(h, cl.dest);
-        h = hashStr(h, cl.func);
-        h = hashNum(h, cl.args.length);
-        for (const arg of cl.args) h = hashOperand(h, arg);
-        h = hashByte(h, cl.isTailCall ? 1 : 0);
-        break;
-      }
-      case TACInstructionKind.MethodCall: {
-        const mc = inst as MethodCallInstruction;
-        h = hashOptOperand(h, mc.dest);
-        h = hashOperand(h, mc.object);
-        h = hashStr(h, mc.method);
-        h = hashNum(h, mc.args.length);
-        for (const arg of mc.args) h = hashOperand(h, arg);
-        h = hashByte(h, mc.isTailCall ? 1 : 0);
-        break;
-      }
-      case TACInstructionKind.PropertyGet: {
-        const pg = inst as PropertyGetInstruction;
-        h = hashOperand(h, pg.dest);
-        h = hashOperand(h, pg.object);
-        h = hashStr(h, pg.property);
-        break;
-      }
-      case TACInstructionKind.PropertySet: {
-        const ps = inst as PropertySetInstruction;
-        h = hashOperand(h, ps.object);
-        h = hashStr(h, ps.property);
-        h = hashOperand(h, ps.value);
-        break;
-      }
-      case TACInstructionKind.Return: {
-        const r = inst as ReturnInstruction;
-        h = hashOptOperand(h, r.value);
-        if (r.returnVarName) h = hashStr(hashByte(h, 0x01), r.returnVarName);
-        else h = hashByte(h, 0x00);
-        break;
-      }
-      case TACInstructionKind.ArrayAccess: {
-        const aa = inst as ArrayAccessInstruction;
-        h = hashOperand(h, aa.dest);
-        h = hashOperand(h, aa.array);
-        h = hashOperand(h, aa.index);
-        break;
-      }
-      case TACInstructionKind.ArrayAssignment: {
-        const aas = inst as ArrayAssignmentInstruction;
-        h = hashOperand(h, aas.array);
-        h = hashOperand(h, aas.index);
-        h = hashOperand(h, aas.value);
-        break;
-      }
-      case TACInstructionKind.Phi: {
-        const phi = inst as PhiInstruction;
-        h = hashOperand(h, phi.dest);
-        h = hashNum(h, phi.sources.length);
-        for (const src of phi.sources) {
-          h = hashNum(h, src.pred);
-          h = hashOperand(h, src.value);
-        }
-        break;
-      }
-    }
-    // Separator between instructions
-    h = hashByte(h, 0xff);
-  }
+  for (const inst of insts) h = hashOneInstruction(h, inst);
   return h | 0;
+};
+
+/** Single-pass 64-bit fingerprint: two independent FNV-1a accumulators. */
+export const computeFingerprintPair = (
+  insts: TACInstruction[],
+): [number, number] => {
+  let h1 = 0x811c9dc5;
+  let h2 = 0x84222325;
+  h1 = hashNum(h1, insts.length);
+  h2 = hashNum(h2, insts.length);
+  for (const inst of insts) {
+    h1 = hashOneInstruction(h1, inst);
+    h2 = hashOneInstruction(h2, inst);
+  }
+  return [h1 | 0, h2 | 0];
 };
 
 /**

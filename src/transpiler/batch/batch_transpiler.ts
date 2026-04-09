@@ -44,7 +44,7 @@ import {
   UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
-import { computeFingerprint, TACOptimizer } from "../ir/optimizer/index.js";
+import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import { discoverTypeScriptFiles } from "./file_discovery.js";
@@ -506,10 +506,12 @@ export class BatchTranspiler {
         optimize,
         useStringBuilder,
         ext,
+        heapLimit,
       );
+      const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
       const outputCacheKey = this.computeOutputCacheKey(
-        computeFingerprint(tacInstructions),
-        computeFingerprint(tacInstructions, 0x84222325),
+        tacFp1,
+        tacFp2,
         exposedLabels,
         entryPoint.name,
         filteredInlineClassNames,
@@ -974,6 +976,7 @@ export class BatchTranspiler {
     optimize: boolean,
     useStringBuilder: boolean,
     ext: string,
+    heapLimit: number,
   ): string {
     const slot = crypto
       .createHash("sha256")
@@ -983,6 +986,7 @@ export class BatchTranspiler {
           optimize ? "1" : "0",
           useStringBuilder ? "1" : "0",
           ext,
+          heapLimit.toString(),
         ].join("|"),
       )
       .digest("hex")
