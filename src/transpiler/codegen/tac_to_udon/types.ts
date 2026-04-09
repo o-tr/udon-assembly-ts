@@ -1,7 +1,9 @@
 import {
   ArrayTypeSymbol,
+  NativeArrayTypeSymbol,
   type TypeSymbol,
 } from "../../frontend/type_symbols.js";
+import { mapTypeScriptToCSharp } from "../udon_type_resolver.js";
 import { type TACOperand, TACOperandKind } from "../../ir/tac_operand.js";
 import { isKnownExternElementType } from "../udon_type_resolver.js";
 import { TACToUdonConverter } from "./converter.js";
@@ -127,6 +129,11 @@ export function getOperandTsTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
+      // Native array: return the C# array type (e.g. "System.Single[]") so that
+      // resolveExternSignature can find the __get_Length__ extern correctly.
+      if (typeSymbol instanceof NativeArrayTypeSymbol) {
+        return `${mapTypeScriptToCSharp(typeSymbol.elementType.name)}[]`;
+      }
       // All TypeScript arrays are backed by DataList at runtime.
       if (
         typeSymbol instanceof ArrayTypeSymbol ||

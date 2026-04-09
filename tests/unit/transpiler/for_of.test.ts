@@ -11,8 +11,10 @@ import {
 } from "../../../src/transpiler/ir/tac_instruction";
 
 describe("for...of", () => {
-  it("should lower for...of into DataList get_Item and loop control", () => {
+  it("should lower for...of over a native array using ArrayAccess and loop control", () => {
     const parser = new TypeScriptParser();
+    // number[] with a constant-length literal → native array (SystemSingleArray).
+    // for...of uses ArrayAccess (not DataList get_Item).
     const source = `
       const tiles: number[] = [1, 2, 3];
       for (const tile of tiles) {
@@ -27,7 +29,44 @@ describe("for...of", () => {
     );
     const tac = converter.convert(ast);
 
-    // for...of uses DataList get_Item (MethodCall) for element access
+    // Native for...of uses ArrayAccess, not DataList get_Item.
+    const hasArrayAccess = tac.some(
+      (inst) => inst.kind === TACInstructionKind.ArrayAccess,
+    );
+    const hasLabels = tac.some(
+      (inst) => inst.kind === TACInstructionKind.Label,
+    );
+    const hasGetItem = tac.some(
+      (inst) =>
+        inst.kind === TACInstructionKind.MethodCall &&
+        (inst as MethodCallInstruction).method === "get_Item",
+    );
+
+    expect(hasArrayAccess).toBe(true);
+    expect(hasLabels).toBe(true);
+    expect(hasGetItem).toBe(false);
+  });
+
+  it("should lower for...of over a DataList array using get_Item and loop control", () => {
+    const parser = new TypeScriptParser();
+    // Passing the array to a function marks it ineligible → stays as DataList.
+    const source = `
+      function consume(arr: number[]): void {}
+      const tiles: number[] = [1, 2, 3];
+      consume(tiles);
+      for (const tile of tiles) {
+        let x: number = tile;
+      }
+    `;
+    const ast = parser.parse(source);
+
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    // DataList for...of uses MethodCall with get_Item.
     const hasGetItem = tac.some(
       (inst) =>
         inst.kind === TACInstructionKind.MethodCall &&

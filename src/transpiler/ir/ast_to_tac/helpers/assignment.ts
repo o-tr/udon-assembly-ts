@@ -5,6 +5,7 @@ import {
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -27,6 +28,7 @@ import {
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
+  ArrayAssignmentInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
@@ -61,6 +63,13 @@ export function assignToTarget(
     if (arrayType instanceof CollectionTypeSymbol) {
       this.instructions.push(
         new MethodCallInstruction(undefined, array, "set_Item", [index, value]),
+      );
+      return value;
+    }
+    // Native array path: emit ArrayAssignmentInstruction (no DataToken wrapping).
+    if (arrayType instanceof NativeArrayTypeSymbol) {
+      this.instructions.push(
+        new ArrayAssignmentInstruction(array, index, value),
       );
       return value;
     }

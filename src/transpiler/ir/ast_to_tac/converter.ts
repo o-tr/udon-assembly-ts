@@ -53,6 +53,7 @@ import {
   emitDictionaryFromProperties,
 } from "./helpers/data_dictionary.js";
 import { requireExternSignature } from "./helpers/extern.js";
+import { analyzeNativeArrayIneligibility } from "./helpers/native_array_analysis.js";
 import {
   allocateBodyCachedInstance,
   collectRecursiveLocals,
@@ -329,6 +330,14 @@ export class ASTToTACConverter {
   inSerializeFieldInitializer = false;
   pendingTopLevelInits: VariableDeclarationNode[] = [];
   currentExpectedType: TypeSymbol | undefined = undefined;
+  /** Variable names ineligible for native array optimization in the current method body. */
+  nativeArrayIneligible: Set<string> = new Set();
+  /**
+   * When non-null, visitArrayLiteralExpression emits a native (fixed-length)
+   * array for the named variable rather than a DataList.
+   * Set by visitVariableDeclaration immediately before visiting the initializer.
+   */
+  currentNativeArrayVarName: string | null = null;
 
   constructor(
     symbolTable: SymbolTable,
@@ -428,6 +437,8 @@ export class ASTToTACConverter {
     this.propertyAccessDepth = 0;
     this.currentMethodLayout = null;
     this.inSerializeFieldInitializer = false;
+    this.nativeArrayIneligible = new Set();
+    this.currentNativeArrayVarName = null;
   }
 
   /**
@@ -581,6 +592,20 @@ export class ASTToTACConverter {
           this.classMap.set(cls.name, cls.node);
         }
       }
+    }
+
+    // Pre-scan ALL top-level statements (consts + non-class) for native array
+    // eligibility BEFORE generating the entry point, so that pendingTopLevelInits
+    // processed inside generateEntryPoint already see the correct ineligible set.
+    // (Method bodies are scanned inside visitClassMethod before each body.)
+    const allTopLevelStatements = [
+      ...topLevelConsts,
+      ...otherStatements.filter((s) => s.kind !== ASTNodeKind.ClassDeclaration),
+    ];
+    if (allTopLevelStatements.length > 0) {
+      this.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+        allTopLevelStatements,
+      );
     }
 
     // Generate entry point _start if a Start method exists
