@@ -266,6 +266,13 @@ const hashOneInstruction = (h: number, inst: TACInstruction): number => {
       }
       break;
     }
+    default: {
+      // Exhaustiveness guard: TypeScript will error here if a new
+      // TACInstructionKind is added without updating this switch.
+      const _exhaustive: never = inst;
+      void _exhaustive;
+      break;
+    }
   }
   return hashByte(h, 0xff);
 };
@@ -280,9 +287,11 @@ export const computeFingerprint = (
   return h | 0;
 };
 
-/** Single-pass 64-bit fingerprint: two independent FNV-1a accumulators.
- * h2 starts at 0x84222325 ^ 0x27d4eb2f so the two lanes diverge from
- * the first byte despite sharing the same update function. */
+/** Single-pass 64-bit fingerprint: two seeded FNV-1a accumulators run over
+ * the same instruction stream with different initial values (h1 = standard
+ * FNV offset basis; h2 = 0x84222325 ^ 0x27d4eb2f). Collision probability
+ * is substantially lower than a single 32-bit hash, though the two lanes
+ * are not cryptographically independent. */
 export const computeFingerprintPair = (
   insts: TACInstruction[],
 ): [number, number] => {
