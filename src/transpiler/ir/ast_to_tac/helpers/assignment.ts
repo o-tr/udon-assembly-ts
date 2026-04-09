@@ -483,6 +483,11 @@ export function wrapDataToken(
     value = handle;
     valueType = PrimitiveTypes.int32;
   }
+  // Arrays are DataLists at the Udon VM level. Wrap via DataList constructor
+  // so DataToken stores the correct token type for later .DataList unwrap.
+  if (valueType.udonType === UdonType.Array) {
+    valueType = ExternTypes.dataList;
+  }
   const token = this.newTemp(ExternTypes.dataToken);
   const externSig = this.requireExternSignature(
     "DataToken",
@@ -537,6 +542,7 @@ export function unwrapDataToken(
         property = "Double";
         break;
       case UdonType.DataList:
+      case UdonType.Array:
         property = "DataList";
         break;
       case UdonType.DataDictionary:
