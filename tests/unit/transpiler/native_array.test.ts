@@ -267,7 +267,7 @@ describe("native array optimization", () => {
     });
 
     it("falls back to DataList for empty array []", () => {
-      const { tac } = transpile(`
+      const { tac, uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [];
@@ -279,13 +279,6 @@ describe("native array optimization", () => {
         false,
       );
       // No native ctor in UASM
-      const { uasm } = transpile(`
-        class Demo {
-          Start(): void {
-            const arr: number[] = [];
-          }
-        }
-      `);
       expect(uasm).not.toContain("SystemSingleArray.__ctor__");
     });
 

@@ -6,6 +6,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getNativeArrayTypeName,
   getPromotedType,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
@@ -1078,7 +1079,8 @@ export function visitArrayLiteralExpression(
   if (
     this.currentNativeArrayVarName !== null &&
     node.elements.length > 0 &&
-    node.elements.every((e) => e.kind === "element")
+    node.elements.every((e) => e.kind === "element") &&
+    getNativeArrayTypeName(elementType.udonType) !== null
   ) {
     const nativeType = new NativeArrayTypeSymbol(elementType);
     const arrayResult = this.newTemp(nativeType);
