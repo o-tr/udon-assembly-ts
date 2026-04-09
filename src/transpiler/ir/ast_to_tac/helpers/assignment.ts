@@ -93,7 +93,9 @@ export function assignToTarget(
     this.instructions.push(
       new BinaryOpInstruction(needsGrow, currentCount, "<=", coercedIndex),
     );
-    this.instructions.push(new ConditionalJumpInstruction(needsGrow, dlgrowEnd));
+    this.instructions.push(
+      new ConditionalJumpInstruction(needsGrow, dlgrowEnd),
+    );
     this.instructions.push(
       new MethodCallInstruction(undefined, array, "Add", [defaultToken]),
     );
