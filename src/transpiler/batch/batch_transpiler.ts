@@ -91,7 +91,7 @@ function hashDirectoryRecursive(hash: crypto.Hash, dir: string): void {
     if (entry.isDirectory()) {
       hashDirectoryRecursive(hash, fullPath);
     } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) {
-      hash.update(entry.name);
+      hash.update(fullPath);
       hash.update(fs.readFileSync(fullPath));
     }
   }
@@ -507,6 +507,8 @@ export class BatchTranspiler {
         syncModes,
         entryPoint.behaviourSyncMode,
         options.reflect === true,
+        options.optimize === true,
+        options.useStringBuilder === true,
         ext,
       );
       const cachedOutput = this.loadOutputCache(
@@ -532,6 +534,7 @@ export class BatchTranspiler {
         entryPointsCache[entryPoint.name] = {
           usedFiles: this.collectUsedFiles(
             entryPoint.filePath,
+            entryPoint.name,
             filteredInlineClassNames,
             registry,
           ),
@@ -621,6 +624,7 @@ export class BatchTranspiler {
       entryPointsCache[entryPoint.name] = {
         usedFiles: this.collectUsedFiles(
           entryPoint.filePath,
+          entryPoint.name,
           filteredInlineClassNames,
           registry,
         ),
@@ -967,6 +971,8 @@ export class BatchTranspiler {
     syncModes: Map<string, string>,
     behaviourSyncMode: string | undefined,
     reflect: boolean,
+    optimize: boolean,
+    useStringBuilder: boolean,
     ext: string,
   ): string {
     const sortedExposed = [...exposedLabels].sort().join(",");
@@ -984,6 +990,8 @@ export class BatchTranspiler {
       sortedSync,
       behaviourSyncMode ?? "",
       reflect ? "1" : "0",
+      optimize ? "1" : "0",
+      useStringBuilder ? "1" : "0",
       ext,
     ].join("|");
     return crypto.createHash("sha256").update(raw).digest("hex");
@@ -1027,13 +1035,21 @@ export class BatchTranspiler {
 
   private collectUsedFiles(
     entryFilePath: string,
+    entryClassName: string,
     inlineClassNames: string[],
     registry: ClassRegistry,
   ): string[] {
     const used = new Set<string>([entryFilePath]);
+    // Add the file for a class and all its base classes.
+    const addWithInheritance = (className: string) => {
+      for (const name of [className, ...registry.getInheritanceChain(className)]) {
+        const meta = registry.getClass(name);
+        if (meta?.filePath) used.add(meta.filePath);
+      }
+    };
+    addWithInheritance(entryClassName);
     for (const name of inlineClassNames) {
-      const meta = registry.getClass(name);
-      if (meta?.filePath) used.add(meta.filePath);
+      addWithInheritance(name);
     }
     return [...used];
   }
