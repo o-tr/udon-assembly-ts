@@ -280,12 +280,14 @@ export const computeFingerprint = (
   return h | 0;
 };
 
-/** Single-pass 64-bit fingerprint: two independent FNV-1a accumulators. */
+/** Single-pass 64-bit fingerprint: two independent FNV-1a accumulators.
+ * h2 starts at 0x84222325 ^ 0x27d4eb2f so the two lanes diverge from
+ * the first byte despite sharing the same update function. */
 export const computeFingerprintPair = (
   insts: TACInstruction[],
 ): [number, number] => {
   let h1 = 0x811c9dc5;
-  let h2 = 0x84222325;
+  let h2 = 0xa3f6c80a; // 0x84222325 ^ 0x27d4eb2f
   h1 = hashNum(h1, insts.length);
   h2 = hashNum(h2, insts.length);
   for (const inst of insts) {

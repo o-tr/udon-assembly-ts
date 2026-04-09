@@ -75,7 +75,19 @@ interface OutputCacheEntry {
 
 let _transpilerHash: string | undefined;
 
-function hashDirectoryRecursive(hash: crypto.Hash, dir: string): void {
+function hashDirectoryRecursive(
+  hash: crypto.Hash,
+  dir: string,
+  visited: Set<string>,
+): void {
+  let realDir: string;
+  try {
+    realDir = fs.realpathSync(dir);
+  } catch {
+    return;
+  }
+  if (visited.has(realDir)) return;
+  visited.add(realDir);
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -86,7 +98,7 @@ function hashDirectoryRecursive(hash: crypto.Hash, dir: string): void {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      hashDirectoryRecursive(hash, fullPath);
+      hashDirectoryRecursive(hash, fullPath, visited);
     } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) {
       hash.update(fullPath);
       hash.update(fs.readFileSync(fullPath));
@@ -101,7 +113,7 @@ function getTranspilerHash(): string {
   const thisFile = fileURLToPath(import.meta.url);
   const transpilerRoot = path.resolve(path.dirname(thisFile), "..");
   const hash = crypto.createHash("sha256");
-  hashDirectoryRecursive(hash, transpilerRoot);
+  hashDirectoryRecursive(hash, transpilerRoot, new Set());
   _transpilerHash = hash.digest("hex");
   return _transpilerHash;
 }
@@ -533,6 +545,7 @@ export class BatchTranspiler {
         );
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
         fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
+        for (const w of cachedOutput.warnings ?? []) console.warn(w);
         outputs.push({
           className: entryPoint.name,
           outputPath: outPath,
@@ -602,7 +615,7 @@ export class BatchTranspiler {
         }
       }
 
-      this.ensureHeapWithinLimit(
+      const heapWarnings = this.ensureHeapWithinLimit(
         entryPoint.name,
         dataSectionWithTypes,
         udonConverter.getHeapUsageByClass(),
@@ -613,14 +626,14 @@ export class BatchTranspiler {
         heapLimit,
         ext,
       );
+      for (const w of heapWarnings) console.warn(w);
 
       const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
-      const assemblerWarnings = assembler.getWarnings();
-      const warnings =
-        assemblerWarnings.length > 0 ? assemblerWarnings : undefined;
+      const allWarnings = [...assembler.getWarnings(), ...heapWarnings];
+      const warnings = allWarnings.length > 0 ? allWarnings : undefined;
       // Tier 2: Save assembled output to cache.
       this.saveOutputCache(cacheFilePath, {
         key: outputCacheKey,
@@ -661,15 +674,16 @@ export class BatchTranspiler {
     heapUsage?: number,
     heapLimit?: number,
     outputExt?: string,
-  ): void {
+  ): string[] {
     heapLimit = heapLimit ?? UASM_HEAP_LIMIT;
     const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
+    const collected: string[] = [];
     if (outputExt === "uasm" && resolvedUsage > UASM_RUNTIME_LIMIT) {
-      console.warn(
+      collected.push(
         `UASM heap usage ${resolvedUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPointName}.`,
       );
     }
-    if (resolvedUsage <= heapLimit) return;
+    if (resolvedUsage <= heapLimit) return collected;
 
     const breakdown = buildHeapUsageTreeBreakdown(
       usageByClass,
@@ -691,8 +705,8 @@ export class BatchTranspiler {
         splitReport,
       );
     }
-    const message = messageParts.join("\n");
-    console.warn(message);
+    collected.push(messageParts.join("\n"));
+    return collected;
   }
 
   private formatSplitCandidateReport(
