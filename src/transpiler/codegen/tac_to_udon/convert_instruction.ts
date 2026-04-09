@@ -15,11 +15,12 @@ import {
   type UnaryOpInstruction as TACUnaryOpInstruction,
   type UnconditionalJumpInstruction as TACUnconditionalJumpInstruction,
 } from "../../ir/tac_instruction.js";
-import type {
-  ConstantOperand,
-  LabelOperand,
-  TemporaryOperand,
-  VariableOperand,
+import {
+  type ConstantOperand,
+  type LabelOperand,
+  TACOperandKind,
+  type TemporaryOperand,
+  type VariableOperand,
 } from "../../ir/tac_operand.js";
 import { resolveExternSignature } from "../extern_signatures.js";
 import {
@@ -255,7 +256,42 @@ export function convertInstruction(
         | TemporaryOperand;
       const operandType = operandOp.type?.udonType ?? "Single";
 
-      if (unInst.operator === "!" && operandType !== "Boolean") {
+      if (unInst.operator === "!" && operandType === "String") {
+        // String truthiness: !str <==> str.Length == 0
+        // (length == 0 directly gives !str result, no separate negation needed)
+
+        // Step 1: Get string length → Int32 temp
+        this.pushOperand(unInst.operand);
+        const lenTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(lenTmpName, this.nextAddress++);
+        this.variableTypes.set(lenTmpName, "Int32");
+        this.instructions.push(new PushInstruction(lenTmpName));
+        const getLengthSig = "SystemString.__get_Length__SystemInt32";
+        this.externSignatures.add(getLengthSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(getLengthSig), true),
+        );
+
+        // Step 2: Compare length == 0 → dest (Boolean)
+        this.instructions.push(new PushInstruction(lenTmpName));
+        this.pushConstant(0, "Int32");
+        const destAddr = this.getOperandAddress(unInst.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+        // The TAC dest inherits String type from the operand; override to Boolean
+        if (unInst.dest.kind === TACOperandKind.Temporary) {
+          this.tempTypes.set((unInst.dest as TemporaryOperand).id, "Boolean");
+        } else if (unInst.dest.kind === TACOperandKind.Variable) {
+          const varName = this.normalizeVariableName(
+            (unInst.dest as VariableOperand).name,
+          );
+          this.variableTypes.set(varName, "Boolean");
+        }
+        const eqSig = this.getExternForBinaryOp("==", "Int32");
+        this.externSignatures.add(eqSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(eqSig), true),
+        );
+      } else if (unInst.operator === "!" && operandType !== "Boolean") {
         // Need to coerce to Boolean first, then negate
         // Step 1: Convert to Boolean (needs intermediate temp)
         this.pushOperand(unInst.operand);

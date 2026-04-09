@@ -316,7 +316,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("string boolean coercion", () => {
-    it.fails("negating a string should not use SystemConvert.ToBoolean", () => {
+    it("negating a string should not use SystemConvert.ToBoolean", () => {
       // JS: !str is truthy/falsy based on emptiness (non-empty = true).
       // C#: Convert.ToBoolean("hello") throws FormatException.
       // The transpiler should emit a length check or null/empty check
@@ -343,7 +343,7 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
     });
 
-    it.fails("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
+    it("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
       // Pattern from Tile.parse: `if (!rankStr) { ... }`
       // Uses substring (fixed indices) instead of slice to avoid get_Length
       // side-effect from negative-index adjustment.
