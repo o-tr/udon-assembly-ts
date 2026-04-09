@@ -192,23 +192,29 @@ function collectIneligible(
 }
 
 /**
+ * Minimal type guard: any object with a string `kind` discriminant is an ASTNode.
+ */
+function isASTNode(value: unknown): value is ASTNode {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as Record<string, unknown>).kind === "string"
+  );
+}
+
+/**
  * Fallback: recursively visits any child ASTNode-valued properties of a node.
  * Used for node types not explicitly handled above (e.g. BinaryExpression,
  * UnaryExpression, ConditionalExpression, ExpressionStatement, etc.).
  */
 function recurseChildren(node: ASTNode, ineligible: Set<string>): void {
   for (const value of Object.values(node)) {
-    if (!value || typeof value !== "object") continue;
-    if (typeof (value as ASTNode).kind === "string") {
-      collectIneligible(value as ASTNode, ineligible);
+    if (isASTNode(value)) {
+      collectIneligible(value, ineligible);
     } else if (Array.isArray(value)) {
       for (const item of value) {
-        if (
-          item &&
-          typeof item === "object" &&
-          typeof (item as ASTNode).kind === "string"
-        ) {
-          collectIneligible(item as ASTNode, ineligible);
+        if (isASTNode(item)) {
+          collectIneligible(item, ineligible);
         }
       }
     }

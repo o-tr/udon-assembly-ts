@@ -68,8 +68,16 @@ export function assignToTarget(
     }
     // Native array path: emit ArrayAssignmentInstruction (no DataToken wrapping).
     if (arrayType instanceof NativeArrayTypeSymbol) {
+      // Coerce index to Int32 (native array __Set__ expects SystemInt32).
+      let nativeIndex = index;
+      const nativeIdxType = this.getOperandType(index);
+      if (needsInt32IndexCoercion(nativeIdxType.udonType)) {
+        const intIndex = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(intIndex, index));
+        nativeIndex = intIndex;
+      }
       this.instructions.push(
-        new ArrayAssignmentInstruction(array, index, value),
+        new ArrayAssignmentInstruction(array, nativeIndex, value),
       );
       return value;
     }

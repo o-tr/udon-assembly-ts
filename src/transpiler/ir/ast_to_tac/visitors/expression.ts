@@ -1090,7 +1090,7 @@ export function visitArrayLiteralExpression(
       nativeType.nativeUdonTypeName,
     );
     const lengthConst = createConstant(
-      String(node.elements.length),
+      node.elements.length,
       PrimitiveTypes.int32,
     );
     this.instructions.push(
@@ -1098,7 +1098,7 @@ export function visitArrayLiteralExpression(
     );
     for (let i = 0; i < node.elements.length; i++) {
       const value = this.visitExpression(node.elements[i].value);
-      const idxConst = createConstant(String(i), PrimitiveTypes.int32);
+      const idxConst = createConstant(i, PrimitiveTypes.int32);
       this.instructions.push(
         new ArrayAssignmentInstruction(arrayResult, idxConst, value),
       );
@@ -1418,7 +1418,17 @@ export function visitArrayAccessExpression(
   // Native array path: emit ArrayAccessInstruction (no DataToken unwrap needed).
   if (arrayType instanceof NativeArrayTypeSymbol) {
     const result = this.newTemp(arrayType.elementType);
-    this.instructions.push(new ArrayAccessInstruction(result, array, index));
+    // Coerce index to Int32 (native array __Get__ expects SystemInt32).
+    let nativeIndex = index;
+    const nativeIndexType = this.getOperandType(index);
+    if (needsInt32IndexCoercion(nativeIndexType.udonType)) {
+      const intIndex = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CastInstruction(intIndex, index));
+      nativeIndex = intIndex;
+    }
+    this.instructions.push(
+      new ArrayAccessInstruction(result, array, nativeIndex),
+    );
     return result;
   }
 

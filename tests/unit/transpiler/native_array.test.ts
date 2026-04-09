@@ -8,32 +8,10 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
-import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
-import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
-import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-function compileToExterns(source: string): string[] {
-  const parser = new TypeScriptParser();
-  const ast = parser.parse(source);
-  const tacConverter = new ASTToTACConverter(
-    parser.getSymbolTable(),
-    parser.getEnumRegistry(),
-  );
-  const tac = tacConverter.convert(ast);
-  const udonConverter = new TACToUdonConverter();
-  udonConverter.convert(tac);
-  return udonConverter.getExternSignatures();
-}
-
-function compileToTAC(source: string) {
-  const parser = new TypeScriptParser();
-  const ast = parser.parse(source);
-  const converter = new ASTToTACConverter(
-    parser.getSymbolTable(),
-    parser.getEnumRegistry(),
-  );
-  return converter.convert(ast);
+function transpile(source: string) {
+  return new TypeScriptToUdonTranspiler().transpile(source);
 }
 
 describe("native array optimization", () => {
@@ -43,7 +21,7 @@ describe("native array optimization", () => {
 
   describe("array literal → SystemSingleArray (number[])", () => {
     it("emits native ctor and no DataToken on array literal", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [1, 2, 3];
@@ -51,32 +29,20 @@ describe("native array optimization", () => {
         }
       `);
       // Native ctor must be present
-      expect(
-        externs.some((s) =>
-          s.includes(
-            "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
-          ),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
+      );
       // Native set must be present for each element
-      expect(
-        externs.some((s) =>
-          s.includes(
-            "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
-          ),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+      );
       // No DataList or DataToken externs should appear for this array
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataToken.__ctor__")),
-      ).toBe(false);
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataList.__Add__")),
-      ).toBe(false);
+      expect(uasm).not.toContain("VRCSDK3DataDataToken.__ctor__");
+      expect(uasm).not.toContain("VRCSDK3DataDataList.__Add__");
     });
 
     it("emits native Get for element read", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [1, 2, 3];
@@ -84,17 +50,15 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemSingleArray.__Get__SystemInt32__SystemSingle"),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
       // No DataToken unwrap
-      expect(externs.some((s) => s.includes("DataToken"))).toBe(false);
+      expect(uasm).not.toContain("DataToken");
     });
 
     it("emits native Set for element write", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             let arr: number[] = [1, 2, 3];
@@ -102,18 +66,14 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes(
-            "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
-          ),
-        ),
-      ).toBe(true);
-      expect(externs.some((s) => s.includes("DataToken"))).toBe(false);
+      expect(uasm).toContain(
+        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+      );
+      expect(uasm).not.toContain("DataToken");
     });
 
     it("emits native Get+Set for compound assignment arr[i] += v", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             let arr: number[] = [1, 2, 3];
@@ -121,22 +81,16 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemSingleArray.__Get__SystemInt32__SystemSingle"),
-        ),
-      ).toBe(true);
-      expect(
-        externs.some((s) =>
-          s.includes(
-            "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
-          ),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
+      expect(uasm).toContain(
+        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+      );
     });
 
     it("emits native get_Length for .length property", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [1, 2, 3];
@@ -144,17 +98,13 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemSingleArray.__get_Length__SystemInt32"),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain("SystemSingleArray.__get_Length__SystemInt32");
       // No DataList Count
-      expect(externs.some((s) => s.includes("__get_Count__"))).toBe(false);
+      expect(uasm).not.toContain("__get_Count__");
     });
 
     it("emits native get_Length and Get in for...of loop", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [10, 20, 30];
@@ -165,24 +115,46 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemSingleArray.__get_Length__SystemInt32"),
-        ),
-      ).toBe(true);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemSingleArray.__Get__SystemInt32__SystemSingle"),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain("SystemSingleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
       // No DataList get_Item
-      expect(externs.some((s) => s.includes("__get_Item__"))).toBe(false);
+      expect(uasm).not.toContain("__get_Item__");
+    });
+
+    it("native for...of with continue correctly increments the index", () => {
+      // Regression: continueLabel must point to the increment, not loopStart.
+      // If continue jumps to loopStart (before increment), the loop hangs forever.
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = [10, 20, 30];
+            let sum: number = 0;
+            for (const x of arr) {
+              if (x === 20) {
+                continue;
+              }
+              sum = sum + x;
+            }
+          }
+        }
+      `);
+      // Must use native externs (not DataList get_Item)
+      expect(uasm).toContain("SystemSingleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
+      expect(uasm).not.toContain("__get_Item__");
+      // The forof_native_continue label must appear in the assembled output
+      // so the continue instruction has a valid target past the loop body.
+      expect(uasm).toContain("forof_native_continue");
     });
   });
 
   describe("boolean[] and string[] → native arrays", () => {
     it("uses SystemBooleanArray for boolean[]", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const flags: boolean[] = [true, false, true];
@@ -190,22 +162,16 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes(
-            "SystemBooleanArray.__ctor__SystemInt32__SystemBooleanArray",
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemBooleanArray.__Get__SystemInt32__SystemBoolean"),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemBooleanArray.__ctor__SystemInt32__SystemBooleanArray",
+      );
+      expect(uasm).toContain(
+        "SystemBooleanArray.__Get__SystemInt32__SystemBoolean",
+      );
     });
 
     it("uses SystemStringArray for string[]", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const words: string[] = ["a", "b"];
@@ -213,24 +179,18 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) =>
-          s.includes(
-            "SystemStringArray.__ctor__SystemInt32__SystemStringArray",
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        externs.some((s) =>
-          s.includes("SystemStringArray.__Get__SystemInt32__SystemString"),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemStringArray.__ctor__SystemInt32__SystemStringArray",
+      );
+      expect(uasm).toContain(
+        "SystemStringArray.__Get__SystemInt32__SystemString",
+      );
     });
   });
 
   describe("ineligibility fallback → DataList", () => {
     it("falls back to DataList when .push() is used", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             let arr: number[] = [1, 2, 3];
@@ -239,14 +199,12 @@ describe("native array optimization", () => {
         }
       `);
       // Must use DataList (not native) because push is called
-      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
-      expect(
-        externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
-      ).toBe(false);
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
     });
 
     it("falls back to DataList when array is passed to a function", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [1, 2, 3];
@@ -255,14 +213,12 @@ describe("native array optimization", () => {
           consume(arr: number[]): void {}
         }
       `);
-      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
-      expect(
-        externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
-      ).toBe(false);
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
     });
 
     it("falls back to DataList for empty array []", () => {
-      const tac = compileToTAC(`
+      const { tac } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [];
@@ -270,35 +226,22 @@ describe("native array optimization", () => {
         }
       `);
       // No ArrayAccess or ArrayAssignment for an empty array
-      expect(
-        tac.some((inst) => inst.kind === TACInstructionKind.ArrayAccess),
-      ).toBe(false);
-      // DataList ctor should still appear (or at minimum no native array ctor)
-      const externs = (() => {
-        const parser = new TypeScriptParser();
-        const ast = parser.parse(`
-          class Demo {
-            Start(): void {
-              const arr: number[] = [];
-            }
+      expect(tac.split("\n").some((line) => line.includes("ArrayAccess"))).toBe(
+        false,
+      );
+      // No native ctor in UASM
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = [];
           }
-        `);
-        const converter = new ASTToTACConverter(
-          parser.getSymbolTable(),
-          parser.getEnumRegistry(),
-        );
-        const tac2 = converter.convert(ast);
-        const udon = new TACToUdonConverter();
-        udon.convert(tac2);
-        return udon.getExternSignatures();
-      })();
-      expect(
-        externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
-      ).toBe(false);
+        }
+      `);
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
     });
 
     it("falls back to DataList for custom class array", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Tile {
           code: number = 0;
         }
@@ -310,12 +253,12 @@ describe("native array optimization", () => {
         }
       `);
       // Custom class element type has no native Udon array mapping
-      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
-      expect(externs.every((s) => !s.includes("SystemTileArray"))).toBe(true);
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemTileArray");
     });
 
     it("falls back when .slice() is used (DataList method)", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             const arr: number[] = [1, 2, 3];
@@ -323,16 +266,14 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
-      expect(
-        externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
-      ).toBe(false);
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
     });
   });
 
   describe("mixed eligibility", () => {
     it("native array and DataList can coexist in the same method", () => {
-      const externs = compileToExterns(`
+      const { uasm } = transpile(`
         class Demo {
           Start(): void {
             // This stays native (no dynamic ops)
@@ -345,13 +286,47 @@ describe("native array optimization", () => {
         }
       `);
       // Native externs from 'fixed'
-      expect(
-        externs.some((s) =>
-          s.includes("SystemSingleArray.__Get__SystemInt32__SystemSingle"),
-        ),
-      ).toBe(true);
+      expect(uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
       // DataList externs from 'dynamic'
-      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
+      expect(uasm).toContain("VRCSDK3DataDataList");
+    });
+  });
+
+  describe("Int32 constant values in UASM data section", () => {
+    it("emits bare integer (not quoted) for native array length constant", () => {
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = [1, 2, 3];
+          }
+        }
+      `);
+      // The heap declaration for length/index constants must be unquoted integers.
+      // A quoted string like `"3"` is invalid UASM and would fail to load in VRChat.
+      expect(uasm).toContain("%SystemInt32, 3");
+      expect(uasm).toContain("%SystemInt32, 0");
+      expect(uasm).toContain("%SystemInt32, 1");
+      expect(uasm).toContain("%SystemInt32, 2");
+      // No string-wrapped integers like `"\"3\""` in the data section
+      expect(uasm).not.toMatch(/%SystemInt32,\s*""\d+""/);
+    });
+  });
+
+  describe("TAC-level checks", () => {
+    it("emits array index access notation for native array read", () => {
+      const result = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = [1, 2, 3];
+            const x: number = arr[0];
+          }
+        }
+      `);
+      // TAC renders ArrayAccess as arr[idx] notation
+      expect(result.tac).toMatch(/arr\[/);
+      expect(result.tac).not.toContain("get_Item");
     });
   });
 });

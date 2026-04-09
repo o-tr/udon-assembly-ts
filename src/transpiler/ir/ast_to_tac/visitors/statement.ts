@@ -503,13 +503,15 @@ export function visitForOfStatement(
       );
       this.instructions.push(new AssignmentInstruction(elemVar, elemTemp));
 
+      const loopIncrement = this.newLabel("forof_native_continue");
       this.loopContextStack.push({
         breakLabel: loopEnd,
-        continueLabel: loopStart,
+        continueLabel: loopIncrement,
       });
       this.visitStatement(node.body);
       this.loopContextStack.pop();
 
+      this.instructions.push(new LabelInstruction(loopIncrement));
       const nextIdx = this.newTemp(PrimitiveTypes.int32);
       this.instructions.push(
         new BinaryOpInstruction(
