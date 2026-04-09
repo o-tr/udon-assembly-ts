@@ -345,12 +345,13 @@ describe("known transpiler bugs", () => {
 
     it.fails("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
       // Pattern from Tile.parse: `if (!rankStr) { ... }`
-      // where rankStr is a string extracted from slice
+      // Uses substring (fixed indices) instead of slice to avoid get_Length
+      // side-effect from negative-index adjustment.
       const source = `
           class Main {
             Start(): void {
               const s: string = "1m";
-              const rankStr: string = s.slice(0, -1);
+              const rankStr: string = s.substring(0, 1);
               if (!rankStr) {
                 Debug.Log("invalid");
               }
@@ -364,7 +365,6 @@ describe("known transpiler bugs", () => {
         "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
       );
       // Should use a length check for string truthiness
-      // (get_Length also appears from slice, but documents expected fix behavior)
       expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
     });
   });
