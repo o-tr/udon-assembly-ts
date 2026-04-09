@@ -343,6 +343,39 @@ describe("native array optimization", () => {
     });
   });
 
+  describe("alias propagation", () => {
+    it("alias with dynamic op falls back to DataList for both variables", () => {
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = [1, 2, 3];
+            const b = arr;
+            b.push(4);
+          }
+        }
+      `);
+      // Both arr and b share the same object; b.push makes b ineligible.
+      // The alias (const b = arr) must also make arr ineligible.
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+    });
+
+    it("alias passed to function falls back to DataList for both variables", () => {
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const arr: number[] = [1, 2, 3];
+            const b = arr;
+            this.consume(b);
+          }
+          consume(x: number[]): void {}
+        }
+      `);
+      expect(uasm).toContain("VRCSDK3DataDataList");
+      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+    });
+  });
+
   describe("Int32 constant values in UASM data section", () => {
     it("emits bare integer (not quoted) for native array length constant", () => {
       const { uasm } = transpile(`

@@ -292,7 +292,10 @@ export function visitVariableDeclaration(
     // update destType so the heap variable gets the correct typed native array type.
     if (destType instanceof ArrayTypeSymbol) {
       const inferredType = this.getOperandType(src);
-      if (inferredType instanceof NativeArrayTypeSymbol) {
+      if (
+        inferredType instanceof NativeArrayTypeSymbol &&
+        !this.nativeArrayIneligible.has(node.name)
+      ) {
         destType = inferredType;
       } else if (
         node.initializer?.kind === ASTNodeKind.CallExpression &&

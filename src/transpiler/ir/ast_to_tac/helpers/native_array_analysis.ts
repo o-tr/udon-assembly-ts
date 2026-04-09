@@ -6,6 +6,7 @@ import {
   type BlockStatementNode,
   type CallExpressionNode,
   type CaseClauseNode,
+  type ConditionalExpressionNode,
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
@@ -29,6 +30,7 @@ import {
  *  - Is reassigned (arr = something)
  *  - Is the iterable in a destructured for...of
  *  - Is aliased via a plain identifier initializer (const b = arr → both ineligible)
+ *  - Appears as a direct branch of a ternary (c ? arr : other → arr ineligible)
  *
  * Returns the set of ineligible variable names. Variables not in this set
  * may still be native-array-eligible if their initializer is a constant-length
@@ -114,6 +116,24 @@ function collectIneligible(
       break;
     }
 
+    case ASTNodeKind.ConditionalExpression: {
+      const cond = node as ConditionalExpressionNode;
+      // Mark direct identifier branches ineligible: the ternary result has a
+      // single heap slot whose type is chosen from the true branch. If the two
+      // branches have different array kinds (native vs DataList), that single slot
+      // would receive a type-incompatible value. Marking both sides ineligible
+      // (conservative) ensures both branches produce DataList, which is always
+      // assignable to a DataList-typed result slot.
+      const trueName = getIdentifierName(cond.whenTrue);
+      if (trueName) ineligible.add(trueName);
+      const falseName = getIdentifierName(cond.whenFalse);
+      if (falseName) ineligible.add(falseName);
+      collectIneligible(cond.condition, ineligible);
+      collectIneligible(cond.whenTrue, ineligible);
+      collectIneligible(cond.whenFalse, ineligible);
+      break;
+    }
+
     case ASTNodeKind.VariableDeclaration: {
       const varDecl = node as VariableDeclarationNode;
       // If the initializer is a plain identifier (alias copy: const b = arr),
@@ -124,7 +144,8 @@ function collectIneligible(
         ineligible.add(varDecl.name);
         ineligible.add((varDecl.initializer as IdentifierNode).name);
       }
-      if (varDecl.initializer) collectIneligible(varDecl.initializer, ineligible);
+      if (varDecl.initializer)
+        collectIneligible(varDecl.initializer, ineligible);
       break;
     }
 
