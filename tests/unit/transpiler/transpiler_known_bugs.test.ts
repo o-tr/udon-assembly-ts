@@ -374,17 +374,14 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("array index assignment pre-population", () => {
-    it.fails("loop-based index assignment to empty array should use Add instead of set_Item", () => {
+    it("loop-based index assignment to empty array emits bounds-check-and-grow loop", () => {
       // Pattern from Tile.createCounts():
       //   const counts: number[] = [];
       //   for (let i = 0; i < 34; i++) { counts[i] = 0; }
       //
-      // The DataList starts empty. `counts[i] = 0` should use
-      // DataList.Add() (append) rather than DataList.set_Item() (update),
-      // since set_Item at a non-existent index throws IndexOutOfRange.
-      //
-      // Alternatively, the transpiler could detect that the loop fills
-      // sequentially from 0 and pre-populate the DataList.
+      // The DataList starts empty. The transpiler now emits a runtime
+      // bounds-check-and-grow loop before each set_Item: it calls Add to
+      // grow the DataList until Count > index, then set_Item is safe.
       const source = `
           class Main {
             Start(): void {
@@ -399,12 +396,41 @@ describe("known transpiler bugs", () => {
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // After fix: empty array population should use Add (not bare set_Item)
+      // Grow loop: Add is called when the index is out of bounds
       expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
       );
-      expect(result.uasm).not.toContain(
+      // Bounds check: Count is read each iteration
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__get_Count__SystemInt32",
+      );
+      // Actual write: set_Item is called after the list is large enough
+      expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
+      );
+    });
+
+    it("index assignment to pre-populated array still uses set_Item with bounds check", () => {
+      // Overwriting an element that already exists should still work.
+      // The grow loop will not execute at runtime (Count > index immediately),
+      // but the extern signatures for Add, get_Count, and set_Item are all
+      // still present in the generated code.
+      const source = `
+          class Main {
+            Start(): void {
+              const arr: number[] = [1, 2, 3];
+              arr[1] = 99;
+              Debug.Log(arr[1]);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__get_Count__SystemInt32",
       );
     });
   });
