@@ -412,13 +412,12 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it("index assignment to pre-populated array still uses set_Item with bounds check", () => {
-      // Overwriting an element that already exists should still work.
-      // The grow loop will not execute at runtime (Count > index immediately),
-      // but all three extern signatures are present in the generated code.
-      // Note: Add is emitted for two reasons — the literal [1,2,3] calls Add
-      // three times, and the grow loop before arr[1]=99 also emits Add.
-      // get_Count is the definitive indicator that the bounds-check is present.
+    it("index assignment to pre-populated literal array uses native Set (fixed by native-array optimization)", () => {
+      // Previously: [1,2,3] with arr[1]=99 generated DataList with a
+      // bounds-check-and-grow loop (Add + get_Count + set_Item overhead).
+      // Now: constant-length array literals are lowered to native Udon typed
+      // arrays (SystemSingleArray), so index assignment uses __Set__ directly
+      // with no bounds-check overhead.
       const source = `
           class Main {
             Start(): void {
@@ -430,15 +429,18 @@ describe("known transpiler bugs", () => {
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
+      // Native array ctor and Set/Get — no DataList or DataToken overhead
       expect(result.uasm).toContain(
-        "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+        "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
       );
       expect(result.uasm).toContain(
-        "VRCSDK3DataDataList.__get_Count__SystemInt32",
+        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
       );
       expect(result.uasm).toContain(
-        "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
       );
+      expect(result.uasm).not.toContain("VRCSDK3DataDataList");
+      expect(result.uasm).not.toContain("VRCSDK3DataDataToken");
     });
   });
 });
