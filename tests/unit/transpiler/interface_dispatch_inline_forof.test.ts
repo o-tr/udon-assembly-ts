@@ -107,9 +107,9 @@ describe("interface dispatch: for-of with 3+ classes and state mutation", () => 
     expect(startSection).not.toContain("EXTERN");
     expect(startSection).toContain("__viface_IAccum");
 
-    // arguments should appear in the inlined bodies
-    expect(startSection).toContain("10");
-    expect(startSection).toContain("3");
+    // arguments appear as parameter bindings in each inlined dispatch body
+    expect(startSection).toContain("x = 10");
+    expect(startSection).toContain("y = 3");
 
     // 3 classId dispatch branches
     const dispatchNextCount = (

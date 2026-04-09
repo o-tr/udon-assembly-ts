@@ -10,7 +10,7 @@
  */
 export function getStartSection(tac: string): string {
   const lines = tac.split("\n");
-  const startIdx = lines.findIndex((line) => line.includes("_start:"));
+  const startIdx = lines.findIndex((line) => /^_start:$/.test(line.trim()));
   if (startIdx < 0) return "";
   // Find the next top-level method label after _start (e.g. _update:, __0_foo:)
   // but not internal control-flow labels (viface_end_0:, forof_start_1:).
@@ -21,7 +21,7 @@ export function getStartSection(tac: string): string {
   const searchEnd = nextLabelIdx !== -1 ? nextLabelIdx : lines.length;
   let endIdx = -1;
   for (let i = searchEnd - 1; i > startIdx; i--) {
-    if (lines[i].trim().startsWith("return")) {
+    if (/^return\b/.test(lines[i].trim())) {
       endIdx = i;
       break;
     }
