@@ -15,10 +15,7 @@ import {
   AggregateTranspileError,
   DuplicateTopLevelConstError,
 } from "../errors/transpile_errors.js";
-import {
-  computeExportLabels,
-  computeExposedLabels,
-} from "../exposed_labels.js";
+import { computeExposedLabels } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
 import type {
   MethodInfo,
@@ -875,8 +872,8 @@ export class BatchTranspiler {
         return {
           version: 3,
           transpilerHash: currentHash,
-          files: (parsed as { files: Record<string, FileCacheEntry> }).files ??
-            {},
+          files:
+            (parsed as { files: Record<string, FileCacheEntry> }).files ?? {},
           entryPoints: {},
         };
       }
@@ -927,10 +924,7 @@ export class BatchTranspiler {
     fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf8");
   }
 
-  private getChangedFiles(
-    files: string[],
-    cache: CacheV3 | null,
-  ): Set<string> {
+  private getChangedFiles(files: string[], cache: CacheV3 | null): Set<string> {
     const changed = new Set<string>();
     if (!cache) {
       for (const file of files) changed.add(file);
@@ -1042,7 +1036,10 @@ export class BatchTranspiler {
     const used = new Set<string>([entryFilePath]);
     // Add the file for a class and all its base classes.
     const addWithInheritance = (className: string) => {
-      for (const name of [className, ...registry.getInheritanceChain(className)]) {
+      for (const name of [
+        className,
+        ...registry.getInheritanceChain(className),
+      ]) {
         const meta = registry.getClass(name);
         if (meta?.filePath) used.add(meta.filePath);
       }
