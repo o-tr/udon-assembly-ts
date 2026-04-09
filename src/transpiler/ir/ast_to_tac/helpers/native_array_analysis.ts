@@ -100,7 +100,10 @@ function collectIneligible(
         // The object of the property setter (e.g. "arr" in arr.length = v) is ineligible.
         const paObjName = getIdentifierName(pa.object);
         if (paObjName) ineligible.add(paObjName);
-        // The value being assigned (e.g. "other" in this.field = other) escapes scope.
+      }
+      // Value escapes in any assignment whose target is not a simple indexed write
+      // (covers: this.field = arr, [a, b] = arr, plain reassignment handled above).
+      if (assign.target.kind !== ASTNodeKind.ArrayAccessExpression) {
         const valueName = getIdentifierName(assign.value);
         if (valueName) ineligible.add(valueName);
       }

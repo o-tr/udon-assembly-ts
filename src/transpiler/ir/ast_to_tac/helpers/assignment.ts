@@ -533,6 +533,12 @@ export function wrapDataToken(
   if (valueType.udonType === UdonType.Array) {
     valueType = ExternTypes.dataList;
   }
+  if (valueType.udonType === UdonType.NativeArray) {
+    throw new Error(
+      `[native-array] wrapDataToken called on NativeArrayTypeSymbol (${valueType.name}). ` +
+        "This is a bug in native array eligibility analysis.",
+    );
+  }
   const token = this.newTemp(ExternTypes.dataToken);
   const externSig = this.requireExternSignature(
     "DataToken",
