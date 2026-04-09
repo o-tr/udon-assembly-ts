@@ -520,6 +520,21 @@ exports[`JS Runtime Equivalence Tests > JS: interface_inline_dispatch 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: interface_inline_forof_dispatch 1`] = `
+[
+  "fixed",
+  "double",
+  "bonus",
+  "5",
+  "10",
+  "15",
+  "8",
+  "16",
+  "28",
+  "52",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: interface_untracked_dispatch 1`] = `
 [
   "1",
