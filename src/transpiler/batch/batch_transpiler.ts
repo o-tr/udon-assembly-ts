@@ -282,6 +282,13 @@ export class BatchTranspiler {
         try {
           // Tier 3: Use recorded usedFiles when available (faster, avoids full
           // compilationOrder traversal for unchanged entry points).
+          // Bootstrap invariant: to add a new dependency to an entry point,
+          // some file already tracked in usedFiles must be modified to
+          // reference it. That modification is detected as a change, triggering
+          // a recompile and updating usedFiles to include the new file.
+          // The stale usedFiles set is therefore safe: any source edit that
+          // introduces a new transitive dependency also touches an already-
+          // tracked file. The gap exists only on the single transitional run.
           const entryClass = registry
             .getEntryPoints()
             .find((ep) => ep.filePath === entryFile);
@@ -1009,9 +1016,9 @@ export class BatchTranspiler {
   }
 
   private computeOutputCacheKey(
-    // Finding 1: accept two independent 32-bit FNV-1a fingerprints so the
-    // effective TAC content signal is 64-bit, reducing collision probability
-    // from ~2.3e-10 per pair to ~5.4e-20.
+    // Two seeded FNV-1a fingerprints (correlated, not independent) combined
+    // into a 64-bit value; collision probability is substantially lower than
+    // a single 32-bit hash but higher than a true 64-bit independent pair.
     tacFp1: number,
     tacFp2: number,
     exposedLabels: Set<string>,

@@ -133,9 +133,15 @@ const hashConstantValue = (h: number, value: ConstantValue): number => {
 const hashOperand = (h: number, op: TACOperand): number => {
   switch (op.kind) {
     case TACOperandKind.Variable:
-      return hashStr(hashByte(h, 0x10), (op as VariableOperand).name);
+      return hashStr(
+        hashStr(hashByte(h, 0x10), (op as VariableOperand).name),
+        (op as VariableOperand).type.name,
+      );
     case TACOperandKind.Temporary:
-      return hashNum(hashByte(h, 0x11), (op as TemporaryOperand).id);
+      return hashStr(
+        hashNum(hashByte(h, 0x11), (op as TemporaryOperand).id),
+        (op as TemporaryOperand).type.name,
+      );
     case TACOperandKind.Constant:
       return hashConstantValue(
         hashByte(h, 0x12),
@@ -267,9 +273,11 @@ const hashOneInstruction = (h: number, inst: TACInstruction): number => {
       break;
     }
     default: {
-      // Exhaustiveness guard: TypeScript will error here if a new
+      // Exhaustiveness guard: TACInstruction is an interface (not a union),
+      // so we check inst.kind — TypeScript narrows enum types to never when
+      // all members are covered, and will error here if a new
       // TACInstructionKind is added without updating this switch.
-      const _exhaustive: never = inst;
+      const _exhaustive: never = inst.kind;
       void _exhaustive;
       break;
     }
