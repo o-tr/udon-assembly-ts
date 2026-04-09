@@ -642,13 +642,15 @@ export class BatchTranspiler {
         heapLimit,
         ext,
       );
+      const assemblerWarnings = assembler.getWarnings();
       for (const w of heapWarnings) console.warn(w);
+      for (const w of assemblerWarnings) console.warn(w);
 
       const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
-      const allWarnings = [...assembler.getWarnings(), ...heapWarnings];
+      const allWarnings = [...assemblerWarnings, ...heapWarnings];
       const warnings = allWarnings.length > 0 ? allWarnings : undefined;
       // Tier 2: Save assembled output to cache.
       this.saveOutputCache(cacheFilePath, {
