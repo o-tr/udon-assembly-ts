@@ -1093,7 +1093,9 @@ export function visitArrayLiteralExpression(
       String(node.elements.length),
       PrimitiveTypes.int32,
     );
-    this.instructions.push(new CallInstruction(arrayResult, ctorSig, [lengthConst]));
+    this.instructions.push(
+      new CallInstruction(arrayResult, ctorSig, [lengthConst]),
+    );
     for (let i = 0; i < node.elements.length; i++) {
       const value = this.visitExpression(node.elements[i].value);
       const idxConst = createConstant(String(i), PrimitiveTypes.int32);
@@ -2010,7 +2012,10 @@ export function visitPropertyAccessExpression(
     const objectType = this.getOperandType(object);
 
     // Native array .length → __get_Length__ (not DataList.Count).
-    if (objectType instanceof NativeArrayTypeSymbol && node.property === "length") {
+    if (
+      objectType instanceof NativeArrayTypeSymbol &&
+      node.property === "length"
+    ) {
       const result = this.newTemp(PrimitiveTypes.int32);
       this.instructions.push(
         new PropertyGetInstruction(result, object, "Length"),

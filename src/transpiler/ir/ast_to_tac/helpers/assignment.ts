@@ -21,6 +21,7 @@ import {
   type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
+  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -28,7 +29,6 @@ import {
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
-  ArrayAssignmentInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,

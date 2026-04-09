@@ -53,7 +53,9 @@ describe("native array optimization", () => {
       // Native ctor must be present
       expect(
         externs.some((s) =>
-          s.includes("SystemSingleArray.__ctor__SystemInt32__SystemSingleArray"),
+          s.includes(
+            "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
+          ),
         ),
       ).toBe(true);
       // Native set must be present for each element
@@ -69,9 +71,7 @@ describe("native array optimization", () => {
         externs.some((s) => s.includes("VRCSDK3DataDataToken.__ctor__")),
       ).toBe(false);
       expect(
-        externs.some((s) =>
-          s.includes("VRCSDK3DataDataList.__Add__"),
-        ),
+        externs.some((s) => s.includes("VRCSDK3DataDataList.__Add__")),
       ).toBe(false);
     });
 
@@ -90,9 +90,7 @@ describe("native array optimization", () => {
         ),
       ).toBe(true);
       // No DataToken unwrap
-      expect(
-        externs.some((s) => s.includes("DataToken")),
-      ).toBe(false);
+      expect(externs.some((s) => s.includes("DataToken"))).toBe(false);
     });
 
     it("emits native Set for element write", () => {
@@ -111,9 +109,7 @@ describe("native array optimization", () => {
           ),
         ),
       ).toBe(true);
-      expect(
-        externs.some((s) => s.includes("DataToken")),
-      ).toBe(false);
+      expect(externs.some((s) => s.includes("DataToken"))).toBe(false);
     });
 
     it("emits native Get+Set for compound assignment arr[i] += v", () => {
@@ -154,9 +150,7 @@ describe("native array optimization", () => {
         ),
       ).toBe(true);
       // No DataList Count
-      expect(
-        externs.some((s) => s.includes("__get_Count__")),
-      ).toBe(false);
+      expect(externs.some((s) => s.includes("__get_Count__"))).toBe(false);
     });
 
     it("emits native get_Length and Get in for...of loop", () => {
@@ -182,9 +176,7 @@ describe("native array optimization", () => {
         ),
       ).toBe(true);
       // No DataList get_Item
-      expect(
-        externs.some((s) => s.includes("__get_Item__")),
-      ).toBe(false);
+      expect(externs.some((s) => s.includes("__get_Item__"))).toBe(false);
     });
   });
 
@@ -200,7 +192,9 @@ describe("native array optimization", () => {
       `);
       expect(
         externs.some((s) =>
-          s.includes("SystemBooleanArray.__ctor__SystemInt32__SystemBooleanArray"),
+          s.includes(
+            "SystemBooleanArray.__ctor__SystemInt32__SystemBooleanArray",
+          ),
         ),
       ).toBe(true);
       expect(
@@ -221,7 +215,9 @@ describe("native array optimization", () => {
       `);
       expect(
         externs.some((s) =>
-          s.includes("SystemStringArray.__ctor__SystemInt32__SystemStringArray"),
+          s.includes(
+            "SystemStringArray.__ctor__SystemInt32__SystemStringArray",
+          ),
         ),
       ).toBe(true);
       expect(
@@ -243,9 +239,7 @@ describe("native array optimization", () => {
         }
       `);
       // Must use DataList (not native) because push is called
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataList")),
-      ).toBe(true);
+      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
       expect(
         externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
       ).toBe(false);
@@ -261,9 +255,7 @@ describe("native array optimization", () => {
           consume(arr: number[]): void {}
         }
       `);
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataList")),
-      ).toBe(true);
+      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
       expect(
         externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
       ).toBe(false);
@@ -318,12 +310,8 @@ describe("native array optimization", () => {
         }
       `);
       // Custom class element type has no native Udon array mapping
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataList")),
-      ).toBe(true);
-      expect(
-        externs.every((s) => !s.includes("SystemTileArray")),
-      ).toBe(true);
+      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
+      expect(externs.every((s) => !s.includes("SystemTileArray"))).toBe(true);
     });
 
     it("falls back when .slice() is used (DataList method)", () => {
@@ -335,9 +323,7 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataList")),
-      ).toBe(true);
+      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
       expect(
         externs.some((s) => s.includes("SystemSingleArray.__ctor__")),
       ).toBe(false);
@@ -365,9 +351,7 @@ describe("native array optimization", () => {
         ),
       ).toBe(true);
       // DataList externs from 'dynamic'
-      expect(
-        externs.some((s) => s.includes("VRCSDK3DataDataList")),
-      ).toBe(true);
+      expect(externs.some((s) => s.includes("VRCSDK3DataDataList"))).toBe(true);
     });
   });
 });

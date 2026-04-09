@@ -464,7 +464,8 @@ export function visitForOfStatement(
   // ArrayAccessInstruction (__Get__) without DataToken unwrap.
   if (iterableType instanceof NativeArrayTypeSymbol) {
     const elemType = iterableType.elementType;
-    const variableName = typeof node.variable === "string" ? node.variable : null;
+    const variableName =
+      typeof node.variable === "string" ? node.variable : null;
     if (!variableName) {
       // Destructured for...of on native arrays should have been excluded by eligibility analysis.
       // Fall through to the DataList path, which will error at runtime — but prevent a crash here.
@@ -477,7 +478,10 @@ export function visitForOfStatement(
       const lenVar = this.newTemp(PrimitiveTypes.int32);
 
       this.instructions.push(
-        new AssignmentInstruction(idxVar, createConstant(0, PrimitiveTypes.int32)),
+        new AssignmentInstruction(
+          idxVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
       );
       this.instructions.push(
         new PropertyGetInstruction(lenVar, iterableOperand, "Length"),
@@ -508,7 +512,12 @@ export function visitForOfStatement(
 
       const nextIdx = this.newTemp(PrimitiveTypes.int32);
       this.instructions.push(
-        new BinaryOpInstruction(nextIdx, idxVar, "+", createConstant(1, PrimitiveTypes.int32)),
+        new BinaryOpInstruction(
+          nextIdx,
+          idxVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
       );
       this.instructions.push(new AssignmentInstruction(idxVar, nextIdx));
       this.instructions.push(new UnconditionalJumpInstruction(loopStart));

@@ -1,7 +1,7 @@
 import {
-  ASTNodeKind,
-  type ASTNode,
   type ArrayLiteralExpressionNode,
+  type ASTNode,
+  ASTNodeKind,
   type AssignmentExpressionNode,
   type BlockStatementNode,
   type CallExpressionNode,
@@ -47,7 +47,10 @@ function getIdentifierName(node: ASTNode): string | null {
   return null;
 }
 
-function collectIneligible(node: ASTNode | undefined, ineligible: Set<string>): void {
+function collectIneligible(
+  node: ASTNode | undefined,
+  ineligible: Set<string>,
+): void {
   if (!node) return;
 
   switch (node.kind) {
@@ -200,7 +203,11 @@ function recurseChildren(node: ASTNode, ineligible: Set<string>): void {
       collectIneligible(value as ASTNode, ineligible);
     } else if (Array.isArray(value)) {
       for (const item of value) {
-        if (item && typeof item === "object" && typeof (item as ASTNode).kind === "string") {
+        if (
+          item &&
+          typeof item === "object" &&
+          typeof (item as ASTNode).kind === "string"
+        ) {
           collectIneligible(item as ASTNode, ineligible);
         }
       }

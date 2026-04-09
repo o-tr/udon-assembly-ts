@@ -3,9 +3,11 @@ import {
   NativeArrayTypeSymbol,
   type TypeSymbol,
 } from "../../frontend/type_symbols.js";
-import { mapTypeScriptToCSharp } from "../udon_type_resolver.js";
 import { type TACOperand, TACOperandKind } from "../../ir/tac_operand.js";
-import { isKnownExternElementType } from "../udon_type_resolver.js";
+import {
+  isKnownExternElementType,
+  mapTypeScriptToCSharp,
+} from "../udon_type_resolver.js";
 import { TACToUdonConverter } from "./converter.js";
 
 export function isFloatType(

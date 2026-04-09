@@ -53,7 +53,6 @@ import {
   emitDictionaryFromProperties,
 } from "./helpers/data_dictionary.js";
 import { requireExternSignature } from "./helpers/extern.js";
-import { analyzeNativeArrayIneligibility } from "./helpers/native_array_analysis.js";
 import {
   allocateBodyCachedInstance,
   collectRecursiveLocals,
@@ -74,6 +73,7 @@ import {
   visitInlineInstanceMethodCallWithContext,
   visitInlineStaticMethodCall,
 } from "./helpers/inline.js";
+import { analyzeNativeArrayIneligibility } from "./helpers/native_array_analysis.js";
 import {
   coerceSwitchOperand,
   isSwitchComparableType,

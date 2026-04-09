@@ -78,7 +78,9 @@ const NATIVE_ARRAY_TYPE_NAMES: Partial<Record<UdonType, string>> = {
  * Returns the Udon native array type name for a given element UdonType,
  * or null if the element type has no corresponding native array.
  */
-export function getNativeArrayTypeName(elementUdonType: UdonType): string | null {
+export function getNativeArrayTypeName(
+  elementUdonType: UdonType,
+): string | null {
   return NATIVE_ARRAY_TYPE_NAMES[elementUdonType] ?? null;
 }
 

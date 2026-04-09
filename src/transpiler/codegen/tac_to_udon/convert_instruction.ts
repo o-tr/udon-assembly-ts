@@ -1,3 +1,4 @@
+import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
 import {
   type ArrayAccessInstruction as TACArrayAccessInstruction,
   type ArrayAssignmentInstruction as TACArrayAssignmentInstruction,
@@ -17,7 +18,6 @@ import {
   type UnaryOpInstruction as TACUnaryOpInstruction,
   type UnconditionalJumpInstruction as TACUnconditionalJumpInstruction,
 } from "../../ir/tac_instruction.js";
-import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
 import {
   type ConstantOperand,
   type LabelOperand,
@@ -25,10 +25,6 @@ import {
   type TemporaryOperand,
   type VariableOperand,
 } from "../../ir/tac_operand.js";
-import {
-  generateExternSignature,
-  mapTypeScriptToCSharp,
-} from "../udon_type_resolver.js";
 import { resolveExternSignature } from "../extern_signatures.js";
 import {
   CopyInstruction,
@@ -39,6 +35,10 @@ import {
   LabelInstruction,
   PushInstruction,
 } from "../udon_instruction.js";
+import {
+  generateExternSignature,
+  mapTypeScriptToCSharp,
+} from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function convertInstruction(
