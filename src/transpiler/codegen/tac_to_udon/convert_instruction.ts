@@ -285,9 +285,14 @@ export function convertInstruction(
         this.instructions.push(new PushInstruction(zeroName));
         const destAddr = this.getOperandAddress(unInst.dest);
         this.instructions.push(new PushInstruction(destAddr));
-        // The TAC dest temp inherits String type from the operand; override to Boolean
+        // The TAC dest inherits String type from the operand; override to Boolean
         if (unInst.dest.kind === TACOperandKind.Temporary) {
           this.tempTypes.set((unInst.dest as TemporaryOperand).id, "Boolean");
+        } else if (unInst.dest.kind === TACOperandKind.Variable) {
+          const varName = this.normalizeVariableName(
+            (unInst.dest as VariableOperand).name,
+          );
+          this.variableTypes.set(varName, "Boolean");
         }
         const eqSig = this.getExternForBinaryOp("==", "Int32");
         this.externSignatures.add(eqSig);
