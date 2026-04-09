@@ -237,7 +237,7 @@ export function visitVariableStatement(
   const name = declaration.name.getText();
 
   // Infer type from initializer or type annotation
-  let type: TypeSymbol = this.mapTypeWithGenerics("number");
+  let type: TypeSymbol = ObjectType;
   let originalTypeName: string | undefined;
   if (declaration.type) {
     const typeText = declaration.type.getText();
