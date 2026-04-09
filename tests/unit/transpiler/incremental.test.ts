@@ -257,4 +257,91 @@ describe("incremental compilation", () => {
     expect(second.outputs.length).toBe(1);
     expect(second.outputs[0]?.className).toBe("B");
   });
+
+  it("Tier 3: recompiles when base-class file changes", () => {
+    // A inherits from BaseA defined in C.ts.
+    // collectUsedFiles walks the inheritance chain, so C.ts is in A's
+    // usedFiles even though A.ts itself is unchanged.
+    // C change → A recompiles. D change → only D recompiles, A skipped.
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "transpiler-t3c-"));
+    const srcDir = path.join(tempDir, "src");
+    const outDir = path.join(tempDir, "out");
+
+    const fileA = path.join(srcDir, "A.ts");
+    const fileC = path.join(srcDir, "C.ts"); // base class file A depends on
+    const fileD = path.join(srcDir, "D.ts"); // unrelated entry point
+
+    // C.ts: non-entry base class (no @UdonBehaviour)
+    const srcBase = `
+class BaseA extends UdonSharpBehaviour {
+  protected baseMethod(): void {}
+}
+`;
+    const srcAExtends = `
+@UdonBehaviour()
+class A extends BaseA {
+  Start(): void { this.baseMethod(); }
+}
+`;
+    const srcD = `
+@UdonBehaviour()
+class D extends UdonSharpBehaviour {
+  Start(): void {}
+}
+`;
+
+    writeFile(fileA, srcAExtends);
+    writeFile(fileC, srcBase);
+    writeFile(fileD, srcD);
+
+    const transpiler = new BatchTranspiler();
+    const first = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    expect(first.outputs.length).toBe(2); // A and D
+
+    // Change C.ts (base class body) — A inherits from it
+    writeFile(
+      fileC,
+      `
+class BaseA extends UdonSharpBehaviour {
+  protected baseMethod(): void { const _x: number = 1; }
+}
+`,
+    );
+
+    const second = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    // A must recompile (BaseA/C.ts is in A's usedFiles via inheritance); D must not
+    expect(second.outputs.length).toBe(1);
+    expect(second.outputs[0]?.className).toBe("A");
+
+    // Now change D (unrelated to A)
+    writeFile(
+      fileD,
+      `
+@UdonBehaviour()
+class D extends UdonSharpBehaviour {
+  Start(): void { const x: number = 7; }
+}
+`,
+    );
+
+    const third = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    // Only D recompiles; A is still cached
+    expect(third.outputs.length).toBe(1);
+    expect(third.outputs[0]?.className).toBe("D");
+  });
 });

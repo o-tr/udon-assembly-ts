@@ -67,6 +67,7 @@ interface OutputCacheEntry {
   key: string;
   uasm: string;
   warnings?: string[];
+  transpilerHash?: string;
 }
 
 // ---- Transpiler identity hash ----
@@ -274,8 +275,17 @@ export class BatchTranspiler {
         `registered ${registry.getAllClasses().length} classes from ${totalRegisteredFiles} files (${sourceFileCount} source, ${externalFileCount} external).`,
       );
     }
+    // Include usedFiles from prior cache entries so changes to transitive
+    // dependencies not reachable via the import graph (e.g. base-class files
+    // in the same directory with no explicit imports) are still detected.
+    const trackedFiles = new Set(cacheFiles);
+    if (cache?.entryPoints) {
+      for (const ep of Object.values(cache.entryPoints)) {
+        for (const f of ep.usedFiles) trackedFiles.add(f);
+      }
+    }
     const { changed: changedFiles, computedHashes } = this.getChangedFiles(
-      cacheFiles,
+      Array.from(trackedFiles),
       cache,
     );
     const entryFilesToCompile = new Set<string>(entryFiles);
@@ -331,9 +341,12 @@ export class BatchTranspiler {
     }
 
     if (entryFilesToCompile.size === 0) {
+      // Save trackedFiles (not just cacheFiles) so transitive dependencies
+      // discovered in prior runs (e.g. base-class files with no explicit import)
+      // continue to have their hashes persisted for future change detection.
       this.saveCache(
         cachePath,
-        cacheFiles,
+        Array.from(trackedFiles),
         cache?.entryPoints ?? {},
         cache,
         computedHashes,
@@ -404,6 +417,9 @@ export class BatchTranspiler {
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
+    // When transpilerHash changed (or no prior cache), sweep stale output-cache
+    // entries so the optcache directory does not grow unboundedly across upgrades.
+    if (cache === null) this.sweepOutputCache(optCacheDir);
     // Carry forward entryPoints metadata for skipped (cached) entry points
     const entryPointsCache: Record<string, { usedFiles: string[] }> = {
       ...(cache?.entryPoints ?? {}),
@@ -657,6 +673,7 @@ export class BatchTranspiler {
         key: outputCacheKey,
         uasm,
         warnings,
+        transpilerHash: getTranspilerHash(),
       });
       // Tier 3: Record which files contributed to this entry point.
       entryPointsCache[entryPoint.name] = {
@@ -678,9 +695,16 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
+    // Union trackedFiles (which already includes prior usedFiles) with new
+    // entryPointsCache usedFiles so freshly-discovered transitive dependencies
+    // (e.g. base-class files with no explicit import) are hashed on first run.
+    const allTrackedFiles = new Set(trackedFiles);
+    for (const ep of Object.values(entryPointsCache)) {
+      for (const f of ep.usedFiles) allTrackedFiles.add(f);
+    }
     this.saveCache(
       cachePath,
-      cacheFiles,
+      Array.from(allTrackedFiles),
       entryPointsCache,
       cache,
       computedHashes,
@@ -1101,6 +1125,33 @@ export class BatchTranspiler {
       return entry.key === expectedKey ? entry : null;
     } catch {
       return null;
+    }
+  }
+
+  private sweepOutputCache(optCacheDir: string): void {
+    try {
+      if (!fs.existsSync(optCacheDir)) return;
+      const currentHash = getTranspilerHash();
+      for (const file of fs.readdirSync(optCacheDir)) {
+        if (!file.endsWith(".json")) continue;
+        const filePath = path.join(optCacheDir, file);
+        try {
+          const entry = JSON.parse(
+            fs.readFileSync(filePath, "utf8"),
+          ) as OutputCacheEntry;
+          if (!entry.transpilerHash || entry.transpilerHash !== currentHash) {
+            fs.unlinkSync(filePath);
+          }
+        } catch {
+          try {
+            fs.unlinkSync(filePath);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch {
+      /* Non-fatal */
     }
   }
 
