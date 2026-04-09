@@ -112,9 +112,8 @@ describe("interface dispatch: for-of with 3+ classes and state mutation", () => 
     expect(startSection).toContain("y = 3");
 
     // 3 classId dispatch branches
-    const dispatchNextCount = (
-      startSection.match(/iface_dispatch_next/g) || []
-    ).length;
+    const dispatchNextCount = (startSection.match(/iface_dispatch_next/g) || [])
+      .length;
     expect(dispatchNextCount).toBeGreaterThanOrEqual(3);
   });
 
