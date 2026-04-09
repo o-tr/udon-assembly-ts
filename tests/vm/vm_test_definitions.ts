@@ -373,6 +373,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "inline_interface_return_dispatch.ts",
   },
   {
+    name: "interface_inline_forof_dispatch",
+    sourceFile: "interface_inline_forof_dispatch.ts",
+  },
+  {
     name: "inline_multi_return_paths",
     sourceFile: "inline_multi_return_paths.ts",
   },
