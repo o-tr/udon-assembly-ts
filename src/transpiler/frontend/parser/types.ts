@@ -377,10 +377,12 @@ export function inferType(
     case ts.SyntaxKind.NewExpression: {
       const newExpr = node as ts.NewExpression;
       if (ts.isIdentifier(newExpr.expression)) {
-        return this.mapTypeWithGenerics(
-          newExpr.expression.text,
-          newExpr.typeArguments?.[0],
-        );
+        const baseName = newExpr.expression.text;
+        if (newExpr.typeArguments && newExpr.typeArguments.length > 0) {
+          const args = newExpr.typeArguments.map((a) => a.getText()).join(", ");
+          return this.mapTypeWithGenerics(`${baseName}<${args}>`);
+        }
+        return this.mapTypeWithGenerics(baseName);
       }
       return ObjectType;
     }
@@ -389,10 +391,27 @@ export function inferType(
       return this.typeMapper.mapTypeScriptType("string");
     case ts.SyntaxKind.ParenthesizedExpression:
       return this.inferType((node as ts.ParenthesizedExpression).expression);
-    case ts.SyntaxKind.ConditionalExpression:
-      return this.inferType((node as ts.ConditionalExpression).whenTrue);
-    case ts.SyntaxKind.PrefixUnaryExpression:
+    case ts.SyntaxKind.ConditionalExpression: {
+      const cond = node as ts.ConditionalExpression;
+      const trueType = this.inferType(cond.whenTrue);
+      const falseType = this.inferType(cond.whenFalse);
+      if (
+        trueType.name === falseType.name &&
+        trueType.udonType === falseType.udonType
+      ) {
+        return trueType;
+      }
+      if (trueType === ObjectType) return falseType;
+      if (falseType === ObjectType) return trueType;
+      return ObjectType;
+    }
+    case ts.SyntaxKind.PrefixUnaryExpression: {
+      const pue = node as ts.PrefixUnaryExpression;
+      if (pue.operator === ts.SyntaxKind.ExclamationToken) {
+        return this.typeMapper.mapTypeScriptType("boolean");
+      }
       return this.typeMapper.mapTypeScriptType("number");
+    }
     default:
       return ObjectType;
   }
