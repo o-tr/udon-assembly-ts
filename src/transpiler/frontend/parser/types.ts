@@ -372,7 +372,28 @@ export function inferType(
       }
       return this.typeMapper.mapTypeScriptType("object");
     }
+    case ts.SyntaxKind.CallExpression:
+      return ObjectType;
+    case ts.SyntaxKind.NewExpression: {
+      const newExpr = node as ts.NewExpression;
+      if (ts.isIdentifier(newExpr.expression)) {
+        return this.mapTypeWithGenerics(
+          newExpr.expression.text,
+          newExpr.typeArguments?.[0],
+        );
+      }
+      return ObjectType;
+    }
+    case ts.SyntaxKind.TemplateExpression:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+      return this.typeMapper.mapTypeScriptType("string");
+    case ts.SyntaxKind.ParenthesizedExpression:
+      return this.inferType((node as ts.ParenthesizedExpression).expression);
+    case ts.SyntaxKind.ConditionalExpression:
+      return this.inferType((node as ts.ConditionalExpression).whenTrue);
+    case ts.SyntaxKind.PrefixUnaryExpression:
+      return this.typeMapper.mapTypeScriptType("number");
     default:
-      return this.typeMapper.mapTypeScriptType("number"); // Default fallback
+      return ObjectType;
   }
 }
