@@ -73,6 +73,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
 export type InlineParamSave = Map<
   string,
@@ -1091,9 +1092,17 @@ export function visitInlineStaticMethodCall(
   // prior call to the same body).
   this.methodBodyConstructorIndex.set(method.body, 0);
   this.inlinedBodyStack.push(method.body);
+  const savedInlineNativeIneligible = this.nativeArrayIneligible;
+  const savedInlineNativeVarName = this.currentNativeArrayVarName;
+  this.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+    method.body.statements,
+  );
+  this.currentNativeArrayVarName = null;
   try {
     this.visitBlockStatement(method.body);
   } finally {
+    this.nativeArrayIneligible = savedInlineNativeIneligible;
+    this.currentNativeArrayVarName = savedInlineNativeVarName;
     this.inlinedBodyStack.pop();
     this.inlineReturnStack.pop();
     this.inlineMethodStack.delete(inlineKey);
@@ -1365,10 +1374,18 @@ function emitInlineRecursiveStaticMethod(
   });
   converter.methodBodyConstructorIndex.set(method.body, 0);
   converter.inlinedBodyStack.push(method.body);
+  const savedRecNativeIneligible = converter.nativeArrayIneligible;
+  const savedRecNativeVarName = converter.currentNativeArrayVarName;
+  converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+    method.body.statements,
+  );
+  converter.currentNativeArrayVarName = null;
 
   try {
     converter.visitBlockStatement(method.body);
   } finally {
+    converter.nativeArrayIneligible = savedRecNativeIneligible;
+    converter.currentNativeArrayVarName = savedRecNativeVarName;
     converter.inlinedBodyStack.pop();
     converter.inlineReturnStack.pop();
     converter.inlineMethodStack.delete(inlineKey);
@@ -1629,9 +1646,17 @@ function inlineInstanceMethodCallCore(
   // position 0 on each invocation (cache may already be populated).
   converter.methodBodyConstructorIndex.set(method.body, 0);
   converter.inlinedBodyStack.push(method.body);
+  const savedInstNativeIneligible = converter.nativeArrayIneligible;
+  const savedInstNativeVarName = converter.currentNativeArrayVarName;
+  converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+    method.body.statements,
+  );
+  converter.currentNativeArrayVarName = null;
   try {
     converter.visitBlockStatement(method.body);
   } finally {
+    converter.nativeArrayIneligible = savedInstNativeIneligible;
+    converter.currentNativeArrayVarName = savedInstNativeVarName;
     converter.inlinedBodyStack.pop();
     converter.inlineReturnStack.pop();
     converter.inlineMethodStack.delete(inlineKey);

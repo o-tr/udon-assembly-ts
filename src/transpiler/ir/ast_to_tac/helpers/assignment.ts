@@ -393,6 +393,9 @@ export function getArrayElementType(
     if (type instanceof ArrayTypeSymbol) {
       return type.elementType;
     }
+    if (type instanceof NativeArrayTypeSymbol) {
+      return type.elementType;
+    }
   }
   return null;
 }
