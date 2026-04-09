@@ -382,6 +382,9 @@ describe("known transpiler bugs", () => {
       // The DataList starts empty. The transpiler now emits a runtime
       // bounds-check-and-grow loop before each set_Item: it calls Add to
       // grow the DataList until Count > index, then set_Item is safe.
+      // Note: counts.length (which compiles to get_Count) is intentionally
+      // absent from this source so that __get_Count__ can only come from the
+      // bounds-check grow loop. counts[0] compiles to get_Item, not get_Count.
       const source = `
           class Main {
             Start(): void {
@@ -390,7 +393,6 @@ describe("known transpiler bugs", () => {
                 counts[i] = 0;
               }
               Debug.Log(counts[0]);
-              Debug.Log(counts.length);
             }
           }
         `;
@@ -400,7 +402,7 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
       );
-      // Bounds check: Count is read each iteration
+      // Bounds check: Count is read each iteration of the grow loop
       expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__get_Count__SystemInt32",
       );
@@ -413,8 +415,10 @@ describe("known transpiler bugs", () => {
     it("index assignment to pre-populated array still uses set_Item with bounds check", () => {
       // Overwriting an element that already exists should still work.
       // The grow loop will not execute at runtime (Count > index immediately),
-      // but the extern signatures for Add, get_Count, and set_Item are all
-      // still present in the generated code.
+      // but all three extern signatures are present in the generated code.
+      // Note: Add is emitted for two reasons — the literal [1,2,3] calls Add
+      // three times, and the grow loop before arr[1]=99 also emits Add.
+      // get_Count is the definitive indicator that the bounds-check is present.
       const source = `
           class Main {
             Start(): void {
@@ -427,10 +431,13 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       expect(result.uasm).toContain(
-        "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
+        "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
       );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__get_Count__SystemInt32",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
       );
     });
   });
