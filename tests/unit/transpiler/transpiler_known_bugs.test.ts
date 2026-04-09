@@ -280,13 +280,11 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails(
-      "inline class with number[] field accessed after loop should unwrap via DataList",
-      () => {
-        // When an inline class has a number[] field and instances are created
-        // in a loop, accessing the array field should unwrap the DataToken
-        // via .DataList, not .Reference.
-        const source = `
+    it.fails("inline class with number[] field accessed after loop should unwrap via DataList", () => {
+      // When an inline class has a number[] field and instances are created
+      // in a loop, accessing the array field should unwrap the DataToken
+      // via .DataList, not .Reference.
+      const source = `
           class Container {
             public values: number[] = [10, 20, 30];
           }
@@ -301,14 +299,16 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // The SoA field for 'values' should be unwrapped via .DataList
-        expect(result.uasm).not.toContain(
-          "DataToken.__get_Reference__SystemObject",
-        );
-      },
-    );
+      // The SoA field for 'values' should be unwrapped via .DataList, not .Reference
+      expect(result.uasm).not.toContain(
+        "DataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList",
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -316,14 +316,12 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("string boolean coercion", () => {
-    it.fails(
-      "negating a string should not use SystemConvert.ToBoolean",
-      () => {
-        // JS: !str is truthy/falsy based on emptiness (non-empty = true).
-        // C#: Convert.ToBoolean("hello") throws FormatException.
-        // The transpiler should emit a length check or null/empty check
-        // instead of SystemConvert.ToBoolean(string).
-        const source = `
+    it.fails("negating a string should not use SystemConvert.ToBoolean", () => {
+      // JS: !str is truthy/falsy based on emptiness (non-empty = true).
+      // C#: Convert.ToBoolean("hello") throws FormatException.
+      // The transpiler should emit a length check or null/empty check
+      // instead of SystemConvert.ToBoolean(string).
+      const source = `
           class Main {
             Start(): void {
               const str: string = "hello";
@@ -335,21 +333,18 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // Should NOT call SystemConvert.ToBoolean on a string
-        expect(result.uasm).not.toContain(
-          "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
-        );
-      },
-    );
+      // Should NOT call SystemConvert.ToBoolean on a string
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
+      );
+    });
 
-    it.fails(
-      "string in if-condition with logical NOT should not use SystemConvert.ToBoolean",
-      () => {
-        // Pattern from Tile.parse: `if (!rankStr) { ... }`
-        // where rankStr is a string extracted from slice
-        const source = `
+    it.fails("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
+      // Pattern from Tile.parse: `if (!rankStr) { ... }`
+      // where rankStr is a string extracted from slice
+      const source = `
           class Main {
             Start(): void {
               const s: string = "1m";
@@ -361,13 +356,12 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        expect(result.uasm).not.toContain(
-          "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
-        );
-      },
-    );
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -375,20 +369,18 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("array index assignment pre-population", () => {
-    it.fails(
-      "loop-based index assignment to empty array should use Add instead of set_Item",
-      () => {
-        // Pattern from Tile.createCounts():
-        //   const counts: number[] = [];
-        //   for (let i = 0; i < 34; i++) { counts[i] = 0; }
-        //
-        // The DataList starts empty. `counts[i] = 0` should use
-        // DataList.Add() (append) rather than DataList.set_Item() (update),
-        // since set_Item at a non-existent index throws IndexOutOfRange.
-        //
-        // Alternatively, the transpiler could detect that the loop fills
-        // sequentially from 0 and pre-populate the DataList.
-        const source = `
+    it.fails("loop-based index assignment to empty array should use Add instead of set_Item", () => {
+      // Pattern from Tile.createCounts():
+      //   const counts: number[] = [];
+      //   for (let i = 0; i < 34; i++) { counts[i] = 0; }
+      //
+      // The DataList starts empty. `counts[i] = 0` should use
+      // DataList.Add() (append) rather than DataList.set_Item() (update),
+      // since set_Item at a non-existent index throws IndexOutOfRange.
+      //
+      // Alternatively, the transpiler could detect that the loop fills
+      // sequentially from 0 and pre-populate the DataList.
+      const source = `
           class Main {
             Start(): void {
               const counts: number[] = [];
@@ -400,27 +392,12 @@ describe("known transpiler bugs", () => {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // The generated UASM should not use set_Item for appending to an
-        // empty DataList. It should either:
-        // 1. Use DataList.Add() for each element, or
-        // 2. Pre-populate the DataList before the loop
-        //
-        // Check that the pattern doesn't crash: the DataList should have
-        // items added before any set_Item call.
-        // For now, verify that Add is used somewhere in the array population
-        const hasAdd = result.uasm.includes(
-          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
-        );
-        const hasSetItem = result.uasm.includes(
-          "VRCSDK3DataDataList.__set_Item__",
-        );
-        // If set_Item is used, Add should also be used (for pre-population)
-        if (hasSetItem) {
-          expect(hasAdd).toBe(true);
-        }
-      },
-    );
+      // After fix: empty array population should use Add (not bare set_Item)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+      );
+    });
   });
 });
