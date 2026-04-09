@@ -274,7 +274,10 @@ export class BatchTranspiler {
         `registered ${registry.getAllClasses().length} classes from ${totalRegisteredFiles} files (${sourceFileCount} source, ${externalFileCount} external).`,
       );
     }
-    const changedFiles = this.getChangedFiles(cacheFiles, cache);
+    const { changed: changedFiles, computedHashes } = this.getChangedFiles(
+      cacheFiles,
+      cache,
+    );
     const entryFilesToCompile = new Set<string>(entryFiles);
     if (cache) {
       entryFilesToCompile.clear();
@@ -328,7 +331,13 @@ export class BatchTranspiler {
     }
 
     if (entryFilesToCompile.size === 0) {
-      this.saveCache(cachePath, cacheFiles, cache?.entryPoints ?? {}, cache);
+      this.saveCache(
+        cachePath,
+        cacheFiles,
+        cache?.entryPoints ?? {},
+        cache,
+        computedHashes,
+      );
       return { outputs: [] };
     }
 
@@ -667,7 +676,13 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
-    this.saveCache(cachePath, cacheFiles, entryPointsCache, cache);
+    this.saveCache(
+      cachePath,
+      cacheFiles,
+      entryPointsCache,
+      cache,
+      computedHashes,
+    );
     return { outputs };
   }
 
@@ -927,20 +942,28 @@ export class BatchTranspiler {
     files: string[],
     entryPoints: Record<string, { usedFiles: string[] }>,
     existingCache: CacheV3 | null,
+    computedHashes: Map<string, { hash: string; mtime: number }>,
   ): void {
     const snapshot: Record<string, FileCacheEntry> = {};
     for (const file of files) {
       try {
         const mtime = fs.statSync(file).mtimeMs;
-        // Reuse cached hash if mtime unchanged, otherwise compute fresh
         const cachedEntry = existingCache?.files[file];
+        // Use the hash computed by getChangedFiles only if the file has not
+        // been modified since (mtime must match to guard against the race
+        // window between the two calls). Fall back to the previous cached
+        // hash if mtime is unchanged, or compute fresh otherwise.
+        const precomputed = computedHashes.get(file);
         const hash =
-          cachedEntry && cachedEntry.mtime === mtime
+          (precomputed && precomputed.mtime === mtime
+            ? precomputed.hash
+            : undefined) ??
+          (cachedEntry && cachedEntry.mtime === mtime
             ? cachedEntry.hash
             : crypto
                 .createHash("sha256")
                 .update(fs.readFileSync(file))
-                .digest("hex");
+                .digest("hex"));
         snapshot[file] = { mtime, hash };
       } catch {
         // ignore unreadable files
@@ -955,11 +978,18 @@ export class BatchTranspiler {
     fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf8");
   }
 
-  private getChangedFiles(files: string[], cache: CacheV3 | null): Set<string> {
+  private getChangedFiles(
+    files: string[],
+    cache: CacheV3 | null,
+  ): {
+    changed: Set<string>;
+    computedHashes: Map<string, { hash: string; mtime: number }>;
+  } {
     const changed = new Set<string>();
+    const computedHashes = new Map<string, { hash: string; mtime: number }>();
     if (!cache) {
       for (const file of files) changed.add(file);
-      return changed;
+      return { changed, computedHashes };
     }
     for (const file of files) {
       try {
@@ -971,11 +1001,12 @@ export class BatchTranspiler {
         }
         // Fast path: mtime unchanged → no need to hash
         if (entry.mtime === mtime) continue;
-        // mtime changed → compare content hash
+        // mtime changed → compare content hash; stash result for saveCache
         const hash = crypto
           .createHash("sha256")
           .update(fs.readFileSync(file))
           .digest("hex");
+        computedHashes.set(file, { hash, mtime });
         if (entry.hash !== hash) {
           changed.add(file);
         }
@@ -983,7 +1014,7 @@ export class BatchTranspiler {
         changed.add(file);
       }
     }
-    return changed;
+    return { changed, computedHashes };
   }
 
   // ---- Output cache helpers (Tier 2) ----
