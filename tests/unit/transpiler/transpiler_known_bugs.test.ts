@@ -280,7 +280,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("inline class with number[] field accessed after loop should unwrap via DataList", () => {
+    it("inline class with number[] field accessed after loop should unwrap via DataList", () => {
       // When an inline class has a number[] field and instances are created
       // in a loop, accessing the array field should unwrap the DataToken
       // via .DataList, not .Reference.
