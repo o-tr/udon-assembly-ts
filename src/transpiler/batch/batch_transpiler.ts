@@ -496,23 +496,31 @@ export class BatchTranspiler {
           syncModes.set(prop.name, prop.syncMode.toLowerCase());
         }
       }
+      const reflect = options.reflect === true;
+      const optimize = options.optimize === true;
+      const useStringBuilder = options.useStringBuilder === true;
+      const cacheFilePath = this.outputCacheFilePath(
+        optCacheDir,
+        entryPoint.name,
+        reflect,
+        optimize,
+        useStringBuilder,
+        ext,
+      );
       const outputCacheKey = this.computeOutputCacheKey(
         computeFingerprint(tacInstructions),
+        computeFingerprint(tacInstructions, 0x84222325),
         exposedLabels,
         entryPoint.name,
         filteredInlineClassNames,
         syncModes,
         entryPoint.behaviourSyncMode,
-        options.reflect === true,
-        options.optimize === true,
-        options.useStringBuilder === true,
+        reflect,
+        optimize,
+        useStringBuilder,
         ext,
       );
-      const cachedOutput = this.loadOutputCache(
-        optCacheDir,
-        entryPoint.name,
-        outputCacheKey,
-      );
+      const cachedOutput = this.loadOutputCache(cacheFilePath, outputCacheKey);
       if (cachedOutput !== null) {
         if (options?.verbose) {
           console.log(`  - Output cache hit for ${entryPoint.name}.`);
@@ -612,7 +620,7 @@ export class BatchTranspiler {
       const warnings =
         assemblerWarnings.length > 0 ? assemblerWarnings : undefined;
       // Tier 2: Save assembled output to cache.
-      this.saveOutputCache(optCacheDir, entryPoint.name, {
+      this.saveOutputCache(cacheFilePath, {
         key: outputCacheKey,
         uasm,
         warnings,
@@ -957,8 +965,37 @@ export class BatchTranspiler {
 
   // ---- Output cache helpers (Tier 2) ----
 
+  // Finding 2: derive a slot path so different build configurations for the
+  // same class each get their own cache file and don't evict each other.
+  private outputCacheFilePath(
+    cacheDir: string,
+    className: string,
+    reflect: boolean,
+    optimize: boolean,
+    useStringBuilder: boolean,
+    ext: string,
+  ): string {
+    const slot = crypto
+      .createHash("sha256")
+      .update(
+        [
+          reflect ? "1" : "0",
+          optimize ? "1" : "0",
+          useStringBuilder ? "1" : "0",
+          ext,
+        ].join("|"),
+      )
+      .digest("hex")
+      .slice(0, 8);
+    return path.join(cacheDir, `${className}-${slot}.json`);
+  }
+
   private computeOutputCacheKey(
-    tacFingerprint: number,
+    // Finding 1: accept two independent 32-bit FNV-1a fingerprints so the
+    // effective TAC content signal is 64-bit, reducing collision probability
+    // from ~2.3e-10 per pair to ~5.4e-20.
+    tacFp1: number,
+    tacFp2: number,
     exposedLabels: Set<string>,
     entryClassName: string,
     inlineClassNames: string[],
@@ -969,6 +1006,9 @@ export class BatchTranspiler {
     useStringBuilder: boolean,
     ext: string,
   ): string {
+    const tacHash =
+      (tacFp1 >>> 0).toString(16).padStart(8, "0") +
+      (tacFp2 >>> 0).toString(16).padStart(8, "0");
     const sortedExposed = [...exposedLabels].sort().join(",");
     const sortedInline = [...inlineClassNames].sort().join(",");
     const sortedSync = [...syncModes.entries()]
@@ -977,7 +1017,7 @@ export class BatchTranspiler {
       .join(",");
     const raw = [
       getTranspilerHash(),
-      tacFingerprint.toString(16),
+      tacHash,
       sortedExposed,
       entryClassName,
       sortedInline,
@@ -992,12 +1032,10 @@ export class BatchTranspiler {
   }
 
   private loadOutputCache(
-    cacheDir: string,
-    className: string,
+    filePath: string,
     expectedKey: string,
   ): OutputCacheEntry | null {
     try {
-      const filePath = path.join(cacheDir, `${className}.json`);
       if (!fs.existsSync(filePath)) return null;
       const entry = JSON.parse(
         fs.readFileSync(filePath, "utf8"),
@@ -1008,18 +1046,10 @@ export class BatchTranspiler {
     }
   }
 
-  private saveOutputCache(
-    cacheDir: string,
-    className: string,
-    entry: OutputCacheEntry,
-  ): void {
+  private saveOutputCache(filePath: string, entry: OutputCacheEntry): void {
     try {
-      fs.mkdirSync(cacheDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(cacheDir, `${className}.json`),
-        JSON.stringify(entry),
-        "utf8",
-      );
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, JSON.stringify(entry), "utf8");
     } catch {
       // Non-fatal: if we can't write the cache, compilation still succeeds
     }
