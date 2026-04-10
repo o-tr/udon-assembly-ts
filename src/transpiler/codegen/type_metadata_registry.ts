@@ -1,3 +1,10 @@
+export function normalizeTypeName(typeName: string): string {
+  if (typeName === "string" || typeName === "String") return "SystemString";
+  if (typeName === "System.String") return "SystemString";
+  if (typeName === "Math" || typeName === "System.Math") return "SystemMath";
+  return typeName;
+}
+
 export interface MemberMetadata {
   ownerCsharpType: string;
   memberName: string;
@@ -30,7 +37,7 @@ export class TypeMetadataRegistry {
   }
 
   hasType(tsTypeName: string): boolean {
-    return this.types.has(tsTypeName);
+    return this.types.has(normalizeTypeName(tsTypeName));
   }
 
   isEmpty(): boolean {
@@ -41,14 +48,14 @@ export class TypeMetadataRegistry {
     tsTypeName: string,
     memberName: string,
   ): MemberMetadata | undefined {
-    const type = this.types.get(tsTypeName);
+    const type = this.types.get(normalizeTypeName(tsTypeName));
     if (!type) return undefined;
     const candidates = type.members.get(memberName);
     return candidates?.[0];
   }
 
   getMemberOverloads(tsTypeName: string, memberName: string): MemberMetadata[] {
-    const type = this.types.get(tsTypeName);
+    const type = this.types.get(normalizeTypeName(tsTypeName));
     if (!type) return [];
     return type.members.get(memberName) ?? [];
   }
@@ -58,7 +65,7 @@ export class TypeMetadataRegistry {
     memberName: string,
     argCount: number,
   ): MemberMetadata | undefined {
-    const type = this.types.get(tsTypeName);
+    const type = this.types.get(normalizeTypeName(tsTypeName));
     if (!type) return undefined;
     const candidates = type.members.get(memberName) ?? [];
     return candidates.find(
