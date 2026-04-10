@@ -73,4 +73,81 @@ describe("Convert method overload resolution", () => {
       "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
     );
   });
+
+  it("folds literal numeric cast to direct Int32 constant without optimizer", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonInt = 42 as UdonInt;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    // Conversion externs should NOT be emitted for literal casts
+    expect(result.uasm).not.toContain("SystemConvert.__ToDouble");
+    expect(result.uasm).not.toContain("SystemMath.__Truncate");
+    // Int32 constant should be emitted directly
+    expect(result.uasm).toContain("SystemInt32, 42");
+  });
+
+  it("folds zero literal cast to Int32", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonInt = 0 as UdonInt;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).not.toContain("SystemConvert.__ToDouble");
+    expect(result.uasm).toContain("SystemInt32, 0");
+  });
+
+  it("does not fold Single-to-Double cast (float precision mismatch)", () => {
+    // JS number is f64; folding Single→Double would skip the f32 round-trip,
+    // producing 3.7 instead of 3.700000047683716... as C# Convert.ToDouble would.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonDouble } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonDouble = 3.7 as UdonDouble;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    // Float→float casts should NOT be folded; runtime conversion is needed
+    expect(result.uasm).toContain("SystemConvert.__ToDouble__SystemSingle");
+  });
+
+  it("does not fold out-of-range literal (256 as UdonByte)", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonByte } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonByte = 256 as UdonByte;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    // Out-of-range value should NOT be folded; fall back to CastInstruction
+    expect(result.uasm).toContain("SystemConvert");
+  });
 });
