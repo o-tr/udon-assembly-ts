@@ -177,6 +177,11 @@ function runUdonSharpCompiler(
         killed?: boolean;
       };
       if (spawnError.killed) {
+        try {
+          rmSync(logFile, { force: true });
+        } catch {
+          /* ignore */
+        }
         throw new Error(
           `Unity process timed out after ${UNITY_TIMEOUT_MS / 1000}s`,
         );
@@ -556,10 +561,17 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
 
   if (allClassNames.size <= 1) {
     // Single-class case (or no output from either side)
-    const usText =
-      usMap.size > 0 ? (usMap.values().next().value ?? null) : null;
-    const tsText =
-      tsMap.size > 0 ? (tsMap.values().next().value ?? null) : null;
+    const usClassName =
+      usMap.size > 0 ? (usMap.keys().next().value ?? null) : null;
+    const tsClassName =
+      tsMap.size > 0 ? (tsMap.keys().next().value ?? null) : null;
+    if (usClassName && tsClassName && usClassName !== tsClassName) {
+      console.warn(
+        `  [compare] "${tc.name}": class name mismatch — UdonSharp="${usClassName}" vs TASM="${tsClassName}"`,
+      );
+    }
+    const usText = usClassName ? (usMap.get(usClassName) ?? null) : null;
+    const tsText = tsClassName ? (tsMap.get(tsClassName) ?? null) : null;
     return {
       name: tc.name,
       udonSharpUasm: usText ? parseUasm(usText) : null,

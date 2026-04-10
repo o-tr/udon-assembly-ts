@@ -386,7 +386,7 @@ public static class UdonSharpCompileRunner
                         args[i] = paramInfos[i].HasDefaultValue
                             ? paramInfos[i].DefaultValue
                             : paramInfos[i].ParameterType == typeof(bool)
-                                ? (object)true
+                                ? (object)false
                                 : paramInfos[i].ParameterType.IsValueType
                                     ? Activator.CreateInstance(paramInfos[i].ParameterType)
                                     : null;
