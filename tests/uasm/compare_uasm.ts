@@ -334,8 +334,8 @@ function printReport(reports: CaseReport[]) {
     }
 
     // Data section diff (by type only)
-    const usTypes = us.variables.map((v) => v.type).sort();
-    const tsTypes = ts.variables.map((v) => v.type).sort();
+    const usTypes = [...new Set(us.variables.map((v) => v.type))].sort();
+    const tsTypes = [...new Set(ts.variables.map((v) => v.type))].sort();
     const typesDiff = setDiff(usTypes, tsTypes);
     if (typesDiff.onlyInA.length === 0 && typesDiff.onlyInB.length === 0) {
       if (us.variables.length !== ts.variables.length) {
@@ -462,7 +462,7 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
     udonSharpError:
       usText !== null
         ? "multi-class: per-class comparison not supported"
-        : usText === null && UNITY_EDITOR_PATH
+        : UNITY_EDITOR_PATH
           ? "UASM not generated"
           : null,
     tasmError: null,
