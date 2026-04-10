@@ -38,6 +38,8 @@
     "test": "vitest run --hideSkippedTests",
     "test:vm": "vitest run tests/vm/ --hideSkippedTests",
     "setup:vm": "vrc-get resolve -p tests/vm/unity-project",
+    "probe:uasm": "tsx tests/uasm/run_probe.ts",
+    "compare:uasm": "tsx tests/uasm/compare_uasm.ts",
     "format": "biome format",
     "format:fix": "biome format --write",
     "lint": "biome check",
