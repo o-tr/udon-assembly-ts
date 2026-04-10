@@ -8,7 +8,7 @@ describe("string / for-of / null-check regressions", () => {
   });
 
   describe("Bug 1: string method/property return types resolve to SystemObject", () => {
-    it.fails("indexOf() without annotation produces SystemObject comparison", () => {
+    it("indexOf() without annotation does not produce SystemObject comparison", () => {
       const source = `
         class Main {
           Start(): void {
@@ -26,7 +26,7 @@ describe("string / for-of / null-check regressions", () => {
       );
     });
 
-    it.fails("toUpperCase() without annotation produces SystemObject variable", () => {
+    it("toUpperCase() without annotation resolves to SystemString", () => {
       const source = `
         class Main {
           Start(): void {
@@ -41,7 +41,7 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).toMatch(/\bu: %SystemString/);
     });
 
-    it.fails("string.length without annotation produces SystemObject comparison", () => {
+    it("string.length without annotation does not produce SystemObject comparison", () => {
       const source = `
         class Main {
           Start(): void {
@@ -58,7 +58,7 @@ describe("string / for-of / null-check regressions", () => {
       );
     });
 
-    it.fails("startsWith() without annotation produces SystemObject variable", () => {
+    it("startsWith() without annotation resolves to SystemBoolean", () => {
       const source = `
         class Main {
           Start(): void {

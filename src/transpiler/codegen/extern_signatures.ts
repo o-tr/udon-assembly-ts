@@ -1,15 +1,11 @@
-import { typeMetadataRegistry } from "./type_metadata_registry.js";
+import {
+  normalizeTypeName,
+  typeMetadataRegistry,
+} from "./type_metadata_registry.js";
 import {
   generateExternSignature,
   mapTypeScriptToCSharp,
 } from "./udon_type_resolver.js";
-
-function normalizeTypeName(typeName: string): string {
-  if (typeName === "string" || typeName === "String") return "SystemString";
-  if (typeName === "System.String") return "SystemString";
-  if (typeName === "Math" || typeName === "System.Math") return "SystemMath";
-  return typeName;
-}
 
 function isGenericPlaceholder(typeName: string): boolean {
   const base = typeName.endsWith("[]") ? typeName.slice(0, -2) : typeName;

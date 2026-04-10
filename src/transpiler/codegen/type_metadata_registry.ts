@@ -1,3 +1,15 @@
+// Maps TypeScript/C# type aliases to registry keys (stub class names).
+// Only "string" and "Math" need normalization because they are the only
+// types whose TS primitive name differs from the stub class name AND
+// whose instances have methods/properties that users call.
+// Other primitives (number, boolean) have no instance methods in Udon.
+export function normalizeTypeName(typeName: string): string {
+  if (typeName === "string" || typeName === "String") return "SystemString";
+  if (typeName === "System.String") return "SystemString";
+  if (typeName === "Math" || typeName === "System.Math") return "SystemMath";
+  return typeName;
+}
+
 export interface MemberMetadata {
   ownerCsharpType: string;
   memberName: string;
@@ -22,15 +34,15 @@ export class TypeMetadataRegistry {
   }
 
   registerType(metadata: TypeMetadata): void {
-    this.types.set(metadata.tsName, metadata);
+    this.types.set(normalizeTypeName(metadata.tsName), metadata);
   }
 
   unregisterType(tsTypeName: string): void {
-    this.types.delete(tsTypeName);
+    this.types.delete(normalizeTypeName(tsTypeName));
   }
 
   hasType(tsTypeName: string): boolean {
-    return this.types.has(tsTypeName);
+    return this.types.has(normalizeTypeName(tsTypeName));
   }
 
   isEmpty(): boolean {
@@ -41,14 +53,14 @@ export class TypeMetadataRegistry {
     tsTypeName: string,
     memberName: string,
   ): MemberMetadata | undefined {
-    const type = this.types.get(tsTypeName);
+    const type = this.types.get(normalizeTypeName(tsTypeName));
     if (!type) return undefined;
     const candidates = type.members.get(memberName);
     return candidates?.[0];
   }
 
   getMemberOverloads(tsTypeName: string, memberName: string): MemberMetadata[] {
-    const type = this.types.get(tsTypeName);
+    const type = this.types.get(normalizeTypeName(tsTypeName));
     if (!type) return [];
     return type.members.get(memberName) ?? [];
   }
@@ -58,7 +70,7 @@ export class TypeMetadataRegistry {
     memberName: string,
     argCount: number,
   ): MemberMetadata | undefined {
-    const type = this.types.get(tsTypeName);
+    const type = this.types.get(normalizeTypeName(tsTypeName));
     if (!type) return undefined;
     const candidates = type.members.get(memberName) ?? [];
     return candidates.find(
