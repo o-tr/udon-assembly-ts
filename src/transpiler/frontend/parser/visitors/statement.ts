@@ -260,9 +260,15 @@ export function visitVariableStatement(
 
   if (declaration.initializer) {
     if (ts.isArrayLiteralExpression(declaration.initializer)) {
-      const typeHint = declaration.type
-        ? declaration.type.getText().replace(/\[\]$/, "")
-        : undefined;
+      let typeHint: string | undefined;
+      if (declaration.type) {
+        typeHint = declaration.type.getText().replace(/\[\]$/, "");
+      } else if (
+        type instanceof ArrayTypeSymbol &&
+        type.elementType !== ObjectType
+      ) {
+        typeHint = type.elementType.name;
+      }
       result.initializer = this.visitArrayLiteralExpression(
         declaration.initializer,
         typeHint,
