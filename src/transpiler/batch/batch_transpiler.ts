@@ -79,6 +79,7 @@ let _transpilerHash: string | undefined;
 function hashDirectoryRecursive(
   hash: crypto.Hash,
   dir: string,
+  root: string,
   visited: Set<string>,
 ): void {
   let realDir: string;
@@ -99,9 +100,9 @@ function hashDirectoryRecursive(
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      hashDirectoryRecursive(hash, fullPath, visited);
+      hashDirectoryRecursive(hash, fullPath, root, visited);
     } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".js")) {
-      hash.update(fullPath);
+      hash.update(path.relative(root, fullPath));
       hash.update(fs.readFileSync(fullPath));
     }
   }
@@ -114,7 +115,7 @@ function getTranspilerHash(): string {
   const thisFile = fileURLToPath(import.meta.url);
   const transpilerRoot = path.resolve(path.dirname(thisFile), "..");
   const hash = crypto.createHash("sha256");
-  hashDirectoryRecursive(hash, transpilerRoot, new Set());
+  hashDirectoryRecursive(hash, transpilerRoot, transpilerRoot, new Set());
   _transpilerHash = hash.digest("hex");
   return _transpilerHash;
 }
@@ -466,6 +467,18 @@ export class BatchTranspiler {
         );
       }
 
+      // Resolve import-graph dependencies for Tier-3 usedFiles tracking.
+      // May fail for entry points whose dependency graph couldn't be built;
+      // in that case, fall back to class-level tracking only.
+      let entryCompilationOrder: string[] | undefined;
+      try {
+        entryCompilationOrder = resolver.getCompilationOrder(
+          entryPoint.filePath,
+        );
+      } catch {
+        // non-fatal: class-level tracking still works
+      }
+
       const entryPointMethods = this.orderEntryMethods(
         this.filterMethodsByUsage(mergedMethods, entryPoint.name, methodUsage),
       );
@@ -599,6 +612,7 @@ export class BatchTranspiler {
             entryPoint.name,
             filteredInlineClassNames,
             registry,
+            entryCompilationOrder,
           ),
         };
         continue;
@@ -692,6 +706,7 @@ export class BatchTranspiler {
           entryPoint.name,
           filteredInlineClassNames,
           registry,
+          entryCompilationOrder,
         ),
       };
       outputs.push({
@@ -1011,7 +1026,12 @@ export class BatchTranspiler {
       files: snapshot,
       entryPoints,
     };
-    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf8");
+    try {
+      fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf8");
+    } catch {
+      // Non-fatal: a cache write failure should not abort an otherwise
+      // successful build.
+    }
   }
 
   private getChangedFiles(
@@ -1181,6 +1201,7 @@ export class BatchTranspiler {
     entryClassName: string,
     inlineClassNames: string[],
     registry: ClassRegistry,
+    importedFiles?: string[],
   ): string[] {
     const used = new Set<string>([entryFilePath]);
     // Add the file for a class and all its base classes.
@@ -1196,6 +1217,11 @@ export class BatchTranspiler {
     addWithInheritance(entryClassName);
     for (const name of inlineClassNames) {
       addWithInheritance(name);
+    }
+    // Include explicitly-imported files (e.g. utility files with top-level
+    // consts or non-inline classes) so their changes trigger recompilation.
+    if (importedFiles) {
+      for (const f of importedFiles) used.add(f);
     }
     return [...used];
   }
