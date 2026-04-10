@@ -999,24 +999,12 @@ export class BatchTranspiler {
         return null;
       }
       const currentHash = getTranspilerHash();
-      // v2 format: { version: 2, files: ... } — upgrade to v3
+      // v2 format: { version: 2, files: ... } — treat as cold cache.
+      // v2 entries lack both transpilerHash and per-file hash, so there is
+      // nothing worth preserving. Returning null forces a full rebuild and
+      // the caller's cache===null check sweeps any stale optcache entries.
       if ((parsed as { version: number }).version === 2) {
-        // No transpilerHash in v2, so file-level entries can be reused
-        // but all entry points must recompile. Use empty transpilerHash so
-        // the caller's hash-mismatch check triggers sweepOutputCache to
-        // clean up any optcache entries left by the prior transpiler version.
-        // saveCache will write the real transpilerHash at the end of the build.
-        // Note: v2 file entries lack the `hash` field (only mtime). For files
-        // whose mtime changed since the last v2 build, `entry.hash` is
-        // undefined so the comparison in getChangedFiles always marks them as
-        // changed — this is conservative but correct (one-time cost on upgrade).
-        return {
-          version: 3,
-          transpilerHash: "",
-          files:
-            (parsed as { files: Record<string, FileCacheEntry> }).files ?? {},
-          entryPoints: {},
-        };
+        return null;
       }
       if ((parsed as { version: number }).version === 3) {
         const cache = parsed as CacheV3;
@@ -1091,12 +1079,14 @@ export class BatchTranspiler {
       for (const file of files) {
         changed.add(file);
         try {
-          const content = fs.readFileSync(file);
+          // stat before read (consistent with cache-hit branch) to avoid
+          // TOCTOU: if the file is modified between the two calls, mtime
+          // reflects content that was actually hashed.
+          const mtime = fs.statSync(file).mtimeMs;
           const hash = crypto
             .createHash("sha256")
-            .update(content)
+            .update(fs.readFileSync(file))
             .digest("hex");
-          const mtime = fs.statSync(file).mtimeMs;
           computedHashes.set(file, { hash, mtime });
         } catch {
           // ignore; saveCache will handle unreadable files
