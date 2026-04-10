@@ -87,7 +87,6 @@ function runUnityProbe(inputDir: string, outputDir: string): string {
   try {
     execFileSync(UNITY_EDITOR_PATH, unityArgs, {
       timeout: 300_000, // 5 minutes
-      stdio: "inherit",
     });
   } catch (err: unknown) {
     const spawnError = err as NodeJS.ErrnoException & { status?: number };

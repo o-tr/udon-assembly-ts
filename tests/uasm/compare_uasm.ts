@@ -163,7 +163,6 @@ function runUdonSharpCompiler(
   try {
     execFileSync(UNITY_EDITOR_PATH, unityArgs, {
       timeout: 300_000,
-      stdio: "inherit",
     });
   } catch (err: unknown) {
     const spawnError = err as NodeJS.ErrnoException & { status?: number };
@@ -315,6 +314,17 @@ function printReport(reports: CaseReport[]) {
     if (!us || !ts) {
       console.log("  (skipping diff — one side missing)\n");
       continue;
+    }
+
+    // Sync mode
+    if (us.syncMode || ts.syncMode) {
+      if (us.syncMode === ts.syncMode) {
+        console.log(`  SyncMode: MATCH (${us.syncMode})`);
+      } else {
+        console.log(
+          `  SyncMode: DIFF  UdonSharp=${us.syncMode ?? "(none)"}  TASM=${ts.syncMode ?? "(none)"}`,
+        );
+      }
     }
 
     // Exports diff
