@@ -55,6 +55,7 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
+  type ConstantOperand,
   createConstant,
   createVariable,
   type TACOperand,
@@ -62,6 +63,10 @@ import {
   type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
+import {
+  evaluateCastValue,
+  isPrimitiveFoldValue,
+} from "../../optimizer/passes/constant_folding.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { emitArrayConcat } from "../helpers/assignment.js";
 import {
@@ -2365,6 +2370,27 @@ export function visitAsExpression(
     NUMERIC_UDON_TYPES.has(srcType.udonType) &&
     NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType)
   ) {
+    // Fold constant numeric casts at compile time (e.g. `0 as UdonInt`
+    // becomes a direct %SystemInt32 constant instead of 3 extern calls).
+    if (operand.kind === TACOperandKind.Constant) {
+      const srcConst = operand as ConstantOperand;
+      if (
+        srcConst.value !== null &&
+        isPrimitiveFoldValue(srcConst.value) &&
+        (typeof srcConst.value !== "number" || Number.isFinite(srcConst.value))
+      ) {
+        const foldedValue = evaluateCastValue(srcConst.value, targetTypeSymbol);
+        if (foldedValue !== null) {
+          this.instructions.push(
+            new AssignmentInstruction(
+              result,
+              createConstant(foldedValue, targetTypeSymbol),
+            ),
+          );
+          return result;
+        }
+      }
+    }
     this.instructions.push(new CastInstruction(result, operand));
   } else {
     this.emitCopyWithTracking(result, operand);

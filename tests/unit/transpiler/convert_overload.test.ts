@@ -73,4 +73,61 @@ describe("Convert method overload resolution", () => {
       "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
     );
   });
+
+  it("folds literal numeric cast to direct Int32 constant without optimizer", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonInt = 42 as UdonInt;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    // Conversion externs should NOT be emitted for literal casts
+    expect(result.uasm).not.toContain("SystemConvert.__ToDouble");
+    expect(result.uasm).not.toContain("SystemMath.__Truncate");
+    // Int32 constant should be emitted directly
+    expect(result.uasm).toContain("SystemInt32, 42");
+  });
+
+  it("folds zero literal cast to Int32", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonInt = 0 as UdonInt;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).not.toContain("SystemConvert.__ToDouble");
+    expect(result.uasm).toContain("SystemInt32, 0");
+  });
+
+  it("folds Single literal to Double constant", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonDouble } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const a: UdonDouble = 3.7 as UdonDouble;
+          Debug.Log(a);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).not.toContain("SystemConvert.__ToDouble__SystemSingle");
+    expect(result.uasm).toContain("SystemDouble, 3.7");
+  });
 });
