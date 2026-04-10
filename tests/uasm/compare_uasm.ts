@@ -88,12 +88,11 @@ function runUdonSharpCompiler(
   const casesWithCs = cases.filter((c) => c.csFiles.length > 0);
   if (casesWithCs.length === 0) return uasmByName;
 
-  // Write manifest (prefix filenames with case name to avoid collisions)
+  // Write manifest
   const sources = casesWithCs.flatMap((tc) =>
     tc.csFiles.map((f) => ({
       name: tc.name,
       className: path.basename(f, ".cs"),
-      csFile: `${tc.name}_${path.basename(f)}`,
     })),
   );
   writeFileSync(
@@ -101,16 +100,6 @@ function runUdonSharpCompiler(
     JSON.stringify({ sources }, null, 2),
     "utf-8",
   );
-
-  // Copy .cs files to the manifest input dir (prefixed to avoid collisions)
-  for (const tc of casesWithCs) {
-    for (const csFile of tc.csFiles) {
-      copyFileSync(
-        csFile,
-        path.join(inputDir, `${tc.name}_${path.basename(csFile)}`),
-      );
-    }
-  }
 
   // Copy .cs files into Assets/UdonSharpInput/ BEFORE Unity starts so they are
   // compiled during Unity's startup domain reload (AssetDatabase.Refresh() in

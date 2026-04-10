@@ -40,7 +40,6 @@ public static class UdonSharpCompileRunner
     {
         public string name;
         public string className;
-        public string csFile;
     }
 
     [Serializable]

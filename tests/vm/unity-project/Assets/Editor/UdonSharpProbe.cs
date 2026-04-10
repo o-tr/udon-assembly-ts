@@ -125,51 +125,59 @@ public static class UdonSharpProbe
 
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
+            IEnumerable<Type> types;
             try
             {
-                foreach (var type in asm.GetTypes())
-                {
-                    var ns = type.Namespace ?? "";
-                    if (ns.StartsWith("UdonSharp") || type.Name.Contains("UdonSharp"))
-                    {
-                        udonSharpTypes.Add($"{asm.GetName().Name}: {type.FullName}");
-                        if (type.Name.Contains("Compiler") || type.Name.Contains("Assembly") ||
-                            type.Name.Contains("Program") || type.Name.Contains("Editor"))
-                        {
-                            compilerTypes.Add($"{asm.GetName().Name}: {type.FullName}");
-
-                            // Log methods on interesting types
-                            try
-                            {
-                                var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static |
-                                                              BindingFlags.Instance | BindingFlags.NonPublic)
-                                    .Select(m => $"  {(m.IsStatic ? "static " : "")}{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})")
-                                    .ToArray();
-                                log.Add($"Type {type.FullName} methods:");
-                                foreach (var m in methods) log.Add(m);
-
-                                // Check fields
-                                var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance |
-                                                            BindingFlags.NonPublic | BindingFlags.Static)
-                                    .Select(f => $"  [{(f.IsPublic ? "pub" : "prv")}] {f.FieldType.Name} {f.Name}")
-                                    .ToArray();
-                                if (fields.Length > 0)
-                                {
-                                    log.Add($"Type {type.FullName} fields:");
-                                    foreach (var f in fields) log.Add(f);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                log.Add($"  (could not reflect methods: {ex.Message})");
-                            }
-                        }
-                    }
-                }
+                types = asm.GetTypes();
+            }
+            catch (ReflectionTypeLoadException rtle)
+            {
+                // Recover partial type list from assemblies with unresolved deps
+                types = rtle.Types.Where(t => t != null);
             }
             catch
             {
-                // Some assemblies may throw on GetTypes(); skip them
+                continue;
+            }
+
+            foreach (var type in types)
+            {
+                var ns = type.Namespace ?? "";
+                if (ns.StartsWith("UdonSharp") || type.Name.Contains("UdonSharp"))
+                {
+                    udonSharpTypes.Add($"{asm.GetName().Name}: {type.FullName}");
+                    if (type.Name.Contains("Compiler") || type.Name.Contains("Assembly") ||
+                        type.Name.Contains("Program") || type.Name.Contains("Editor"))
+                    {
+                        compilerTypes.Add($"{asm.GetName().Name}: {type.FullName}");
+
+                        // Log methods on interesting types
+                        try
+                        {
+                            var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static |
+                                                          BindingFlags.Instance | BindingFlags.NonPublic)
+                                .Select(m => $"  {(m.IsStatic ? "static " : "")}{m.Name}({string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name))})")
+                                .ToArray();
+                            log.Add($"Type {type.FullName} methods:");
+                            foreach (var m in methods) log.Add(m);
+
+                            // Check fields
+                            var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance |
+                                                        BindingFlags.NonPublic | BindingFlags.Static)
+                                .Select(f => $"  [{(f.IsPublic ? "pub" : "prv")}] {f.FieldType.Name} {f.Name}")
+                                .ToArray();
+                            if (fields.Length > 0)
+                            {
+                                log.Add($"Type {type.FullName} fields:");
+                                foreach (var f in fields) log.Add(f);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Add($"  (could not reflect methods: {ex.Message})");
+                        }
+                    }
+                }
             }
         }
 
