@@ -1,3 +1,8 @@
+// Maps TypeScript/C# type aliases to registry keys (stub class names).
+// Only "string" and "Math" need normalization because they are the only
+// types whose TS primitive name differs from the stub class name AND
+// whose instances have methods/properties that users call.
+// Other primitives (number, boolean) have no instance methods in Udon.
 export function normalizeTypeName(typeName: string): string {
   if (typeName === "string" || typeName === "String") return "SystemString";
   if (typeName === "System.String") return "SystemString";
@@ -33,7 +38,7 @@ export class TypeMetadataRegistry {
   }
 
   unregisterType(tsTypeName: string): void {
-    this.types.delete(tsTypeName);
+    this.types.delete(normalizeTypeName(tsTypeName));
   }
 
   hasType(tsTypeName: string): boolean {
