@@ -34,7 +34,7 @@ export class TypeMetadataRegistry {
   }
 
   registerType(metadata: TypeMetadata): void {
-    this.types.set(metadata.tsName, metadata);
+    this.types.set(normalizeTypeName(metadata.tsName), metadata);
   }
 
   unregisterType(tsTypeName: string): void {
