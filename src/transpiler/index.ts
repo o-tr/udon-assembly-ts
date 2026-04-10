@@ -256,6 +256,7 @@ export {
   type BatchResult,
   BatchTranspiler,
   type BatchTranspilerOptions,
+  resetTranspilerHash,
 } from "./batch/batch_transpiler.js";
 export { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 export { UdonAssembler } from "./codegen/udon_assembler.js";

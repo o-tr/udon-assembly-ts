@@ -119,6 +119,16 @@ function getTranspilerHash(): string {
   return _transpilerHash;
 }
 
+/**
+ * Reset the cached transpiler hash so it is recomputed on the next call to
+ * getTranspilerHash(). Long-lived processes (watch servers, Vite plugins, etc.)
+ * should call this after the transpiler source is rebuilt or hot-reloaded to
+ * ensure Tier-1 / Tier-2 cache invalidation remains accurate.
+ */
+export function resetTranspilerHash(): void {
+  _transpilerHash = undefined;
+}
+
 // ---- End cache types ----
 
 function isTranspilableSource(filePath: string): boolean {
@@ -1068,7 +1078,7 @@ export class BatchTranspiler {
         ].join("|"),
       )
       .digest("hex")
-      .slice(0, 8);
+      .slice(0, 16);
     return path.join(cacheDir, `${className}-${slot}.json`);
   }
 
