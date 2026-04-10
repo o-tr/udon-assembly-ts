@@ -73,7 +73,7 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).toMatch(/\bb: %SystemBoolean/);
     });
 
-    it("indexOf() with annotation still has SystemObject temp", () => {
+    it("idx annotated as number avoids SystemObject op_LessThan despite inferred call-site temp", () => {
       const source = `
         class Main {
           Start(): void {
@@ -99,6 +99,9 @@ describe("string / for-of / null-check regressions", () => {
             const idx = s.indexOf("l");
             const len = s.length;
             const u = s.toUpperCase();
+            Debug.Log(idx);
+            Debug.Log(len);
+            Debug.Log(u);
           }
         }
       `;
@@ -184,9 +187,7 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).toContain(
         "SystemStringArray.__Get__SystemInt32__SystemString",
       );
-      expect(result.uasm).not.toContain(
-        "VRCSDK3DataDataToken.__get_Reference",
-      );
+      expect(result.uasm).not.toContain("VRCSDK3DataDataToken.__get_Reference");
     });
   });
 
