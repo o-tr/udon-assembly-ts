@@ -83,8 +83,8 @@ function runUdonSharpCompiler(
   cases: TestCase[],
   inputDir: string,
   outputDir: string,
-): Map<string, string> {
-  const uasmByName = new Map<string, string>();
+): Map<string, Map<string, string>> {
+  const uasmByName = new Map<string, Map<string, string>>();
   const casesWithCs = cases.filter((c) => c.csFiles.length > 0);
   if (casesWithCs.length === 0) return uasmByName;
 
@@ -191,12 +191,18 @@ function runUdonSharpCompiler(
 
   for (const r of rawResults.results) {
     if (r.error) {
-      console.error(`  [UdonSharp] ${r.name}: ERROR: ${r.error}`);
+      console.error(
+        `  [UdonSharp] ${r.name}/${r.className}: ERROR: ${r.error}`,
+      );
       continue;
     }
     const uasmPath = path.join(outputDir, r.uasmFile);
     if (existsSync(uasmPath)) {
-      uasmByName.set(r.name, readFileSync(uasmPath, "utf-8"));
+      const text = readFileSync(uasmPath, "utf-8").replace(/^\uFEFF/, "");
+      if (!uasmByName.has(r.name)) {
+        uasmByName.set(r.name, new Map());
+      }
+      uasmByName.get(r.name)?.set(r.className, text);
     }
   }
 
@@ -421,7 +427,7 @@ console.log(
 );
 
 // UdonSharp compilation (Unity required)
-let udonSharpUasms = new Map<string, string>();
+let udonSharpUasms = new Map<string, Map<string, string>>();
 if (UNITY_EDITOR_PATH) {
   const inputDir = path.join(UNITY_PROJECT_PATH, "UdonSharpInput");
   const outputDir = path.join(UNITY_PROJECT_PATH, "UdonSharpOutput");
@@ -449,11 +455,15 @@ const tasmUasms = transpileTs(cases);
 
 // Build reports
 const reports: CaseReport[] = cases.flatMap((tc) => {
-  const usText = udonSharpUasms.get(tc.name) ?? null;
-  const tsMap = tasmUasms.get(tc.name) ?? new Map();
+  const usMap = udonSharpUasms.get(tc.name) ?? new Map<string, string>();
+  const tsMap = tasmUasms.get(tc.name) ?? new Map<string, string>();
 
-  if (tsMap.size <= 1) {
-    // Single-class case (or no TS output)
+  // Collect all class names from both sides
+  const allClassNames = new Set([...usMap.keys(), ...tsMap.keys()]);
+
+  if (allClassNames.size <= 1) {
+    // Single-class case (or no output from either side)
+    const usText = usMap.size > 0 ? [...usMap.values()][0] : null;
     const tsText = tsMap.size > 0 ? [...tsMap.values()][0] : null;
     return {
       name: tc.name,
@@ -465,21 +475,19 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
     };
   }
 
-  // Multi-class case: emit one report per class.
-  // UdonSharp comparison is skipped because the UdonSharp UASM map is keyed
-  // by case name (not class name), so we can't match class-to-class.
-  return [...tsMap.entries()].map(([className, tsText]) => ({
-    name: `${tc.name}/${className}`,
-    udonSharpUasm: null,
-    tasmUasm: parseUasm(tsText),
-    udonSharpError:
-      usText !== null
-        ? "multi-class: per-class comparison not supported"
-        : UNITY_EDITOR_PATH
-          ? "UASM not generated"
-          : null,
-    tasmError: null,
-  }));
+  // Multi-class case: one report per className, matching both sides
+  return [...allClassNames].map((className) => {
+    const usText = usMap.get(className) ?? null;
+    const tsText = tsMap.get(className) ?? null;
+    return {
+      name: `${tc.name}/${className}`,
+      udonSharpUasm: usText ? parseUasm(usText) : null,
+      tasmUasm: tsText ? parseUasm(tsText) : null,
+      udonSharpError:
+        usText === null && UNITY_EDITOR_PATH ? "UASM not generated" : null,
+      tasmError: tsText === null ? "UASM not generated" : null,
+    };
+  });
 });
 
 printReport(reports);

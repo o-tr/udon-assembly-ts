@@ -110,7 +110,20 @@ public static class UdonSharpCompileRunner
         catch (Exception e)
         {
             Debug.LogException(e);
-            // Write partial results
+            // Populate failing entries so compile_results.json reflects the error
+            if (resultEntries.Count == 0)
+            {
+                foreach (var source in manifest.sources)
+                {
+                    resultEntries.Add(new CompileResultEntry
+                    {
+                        name = source.name,
+                        className = source.className,
+                        uasmFile = "",
+                        error = $"{e.GetType().Name}: {e.Message}",
+                    });
+                }
+            }
         }
         finally
         {
@@ -120,7 +133,7 @@ public static class UdonSharpCompileRunner
         // Write results JSON
         var compileResults = new CompileResults { results = resultEntries.ToArray() };
         var resultJson = JsonUtility.ToJson(compileResults, true);
-        File.WriteAllText(Path.Combine(outputDir, "compile_results.json"), resultJson, Encoding.UTF8);
+        File.WriteAllText(Path.Combine(outputDir, "compile_results.json"), resultJson, new UTF8Encoding(false));
 
         var failCount = resultEntries.Count(r => !string.IsNullOrEmpty(r.error));
         Debug.Log($"[UdonSharpCompileRunner] Done: {resultEntries.Count - failCount}/{resultEntries.Count} succeeded");
@@ -143,7 +156,7 @@ public static class UdonSharpCompileRunner
         if (programAssetType == null)
             throw new InvalidOperationException("[UdonSharpCompileRunner] UdonSharpProgramAsset type not found");
 
-        var programAssets = new Dictionary<string, UnityEngine.Object>(); // name -> asset
+        var programAssets = new Dictionary<string, UnityEngine.Object>(); // "name|className" -> asset
 
         foreach (var source in sources)
         {
@@ -166,8 +179,8 @@ public static class UdonSharpCompileRunner
 
             if (asset != null)
             {
-                programAssets[source.name] = asset;
-                Debug.Log($"[UdonSharpCompileRunner] Program asset ready for: {source.name}");
+                programAssets[$"{source.name}|{source.className}"] = asset;
+                Debug.Log($"[UdonSharpCompileRunner] Program asset ready for: {source.name}/{source.className}");
             }
         }
 
@@ -189,7 +202,7 @@ public static class UdonSharpCompileRunner
                 error = "",
             };
 
-            if (!programAssets.TryGetValue(source.name, out var asset))
+            if (!programAssets.TryGetValue($"{source.name}|{source.className}", out var asset))
             {
                 entry.error = "Program asset creation failed";
                 results.Add(entry);
@@ -207,7 +220,7 @@ public static class UdonSharpCompileRunner
                 else
                 {
                     var outPath = Path.Combine(outputDir, entry.uasmFile);
-                    File.WriteAllText(outPath, uasmText, Encoding.UTF8);
+                    File.WriteAllText(outPath, uasmText, new UTF8Encoding(false));
                     Debug.Log($"[UdonSharpCompileRunner] Wrote {outPath} ({uasmText.Length} chars)");
                 }
             }

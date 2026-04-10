@@ -75,7 +75,9 @@ public static class UdonSharpProbe
         }
 
         // Step 2: Compile any .cs files and attempt UASM extraction
-        var csFiles = Directory.GetFiles(inputDir, "*.cs");
+        var csFiles = Directory.Exists(inputDir)
+            ? Directory.GetFiles(inputDir, "*.cs")
+            : Array.Empty<string>();
         var csSourcePath = csFiles.Length > 0 ? csFiles[0] : null;
         if (csSourcePath != null)
         {
@@ -105,7 +107,7 @@ public static class UdonSharpProbe
 
         var json = JsonUtility.ToJson(result, true);
         var outPath = Path.Combine(outputDir, "probe_results.json");
-        File.WriteAllText(outPath, json, Encoding.UTF8);
+        File.WriteAllText(outPath, json, new UTF8Encoding(false));
         Debug.Log($"[UdonSharpProbe] Results written to: {outPath}");
         Debug.Log($"[UdonSharpProbe] udonSharpAvailable={result.udonSharpAvailable}, " +
                   $"udonAssemblyFieldExists={result.udonAssemblyFieldExists}, " +
