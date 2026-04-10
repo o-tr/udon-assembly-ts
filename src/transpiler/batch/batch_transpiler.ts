@@ -360,7 +360,50 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
+    const rawExt = options.outputExtension ?? "tasm";
+    const normalized = rawExt.trim().toLowerCase();
+    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const ext = sanitized.length > 0 ? sanitized : "tasm";
+    if (ext !== "tasm" && ext !== "uasm") {
+      throw new Error(
+        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
+      );
+    }
+    const heapLimit =
+      options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
+
+    const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
+    // Sweep stale output-cache entries when there is no prior cache or when the
+    // transpiler hash changed (including v2→v3 upgrades where loadCache injects
+    // the current hash but old optcache entries still carry the prior version's).
+    const currentTranspilerHash = getTranspilerHash();
+    if (cache === null || cache.transpilerHash !== currentTranspilerHash) {
+      this.sweepOutputCache(optCacheDir);
+    }
+
+    const reflect = options.reflect === true;
+    const optimize = options.optimize === true;
+    const useStringBuilder = options.useStringBuilder === true;
+
+    // Record slot files for ALL entry points (including skipped ones) so
+    // sweepUnusedSlotFiles does not delete cache files for cached entries.
+    const activeSlotFiles = new Set<string>();
+    for (const ep of registry.getEntryPoints()) {
+      activeSlotFiles.add(
+        this.outputCacheFilePath(
+          optCacheDir,
+          ep.name,
+          reflect,
+          optimize,
+          useStringBuilder,
+          ext,
+          heapLimit,
+        ),
+      );
+    }
+
     if (entryFilesToCompile.size === 0) {
+      this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
       // Save trackedFiles (not just cacheFiles) so transitive dependencies
       // discovered in prior runs (e.g. base-class files with no explicit import)
       // continue to have their hashes persisted for future change detection.
@@ -423,52 +466,10 @@ export class BatchTranspiler {
       interfaceLikes,
       classImplements,
     );
-
-    const rawExt = options.outputExtension ?? "tasm";
-    const normalized = rawExt.trim().toLowerCase();
-    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
-    const ext = sanitized.length > 0 ? sanitized : "tasm";
-    if (ext !== "tasm" && ext !== "uasm") {
-      throw new Error(
-        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
-      );
-    }
-    const heapLimit =
-      options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
-
-    const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
-    // Sweep stale output-cache entries when there is no prior cache or when the
-    // transpiler hash changed (including v2→v3 upgrades where loadCache injects
-    // the current hash but old optcache entries still carry the prior version's).
-    const currentTranspilerHash = getTranspilerHash();
-    if (cache === null || cache.transpilerHash !== currentTranspilerHash) {
-      this.sweepOutputCache(optCacheDir);
-    }
-    const activeSlotFiles = new Set<string>();
     // Carry forward entryPoints metadata for skipped (cached) entry points
     const entryPointsCache: Record<string, { usedFiles: string[] }> = {
       ...(cache?.entryPoints ?? {}),
     };
-
-    const reflect = options.reflect === true;
-    const optimize = options.optimize === true;
-    const useStringBuilder = options.useStringBuilder === true;
-
-    // Record slot files for ALL entry points (including skipped ones) so
-    // sweepUnusedSlotFiles does not delete cache files for cached entries.
-    for (const ep of registry.getEntryPoints()) {
-      activeSlotFiles.add(
-        this.outputCacheFilePath(
-          optCacheDir,
-          ep.name,
-          reflect,
-          optimize,
-          useStringBuilder,
-          ext,
-          heapLimit,
-        ),
-      );
-    }
 
     for (const entryPoint of registry.getEntryPoints()) {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
@@ -1091,6 +1092,12 @@ export class BatchTranspiler {
         const mtime = fs.statSync(file).mtimeMs;
         const entry = cache.files[file];
         if (!entry) {
+          // Stash hash for saveCache so it doesn't need to re-read the file.
+          const hash = crypto
+            .createHash("sha256")
+            .update(fs.readFileSync(file))
+            .digest("hex");
+          computedHashes.set(file, { hash, mtime });
           changed.add(file);
           continue;
         }
