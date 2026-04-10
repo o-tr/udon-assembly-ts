@@ -67,7 +67,13 @@ function discoverTestCases(): TestCase[] {
           .map((f) => path.join(sampleDir, f)),
       };
     })
-    .filter((tc) => tc.tsFiles.length > 0);
+    .filter((tc) => {
+      if (tc.tsFiles.length === 0) {
+        console.warn(`  Skipping sample "${tc.name}": no .ts files (only .cs)`);
+        return false;
+      }
+      return true;
+    });
 }
 
 // ─── UdonSharp compilation ────────────────────────────────────────────────────

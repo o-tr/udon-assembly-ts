@@ -220,6 +220,13 @@ console.log(
   `\nFull results saved to: ${path.join(outputDir, "probe_results.json")}`,
 );
 
+// Clean up probe input directory (output kept for inspection)
+try {
+  rmSync(inputDir, { recursive: true, force: true });
+} catch {
+  /* ignore */
+}
+
 if (results.errors?.length > 0) {
   process.exit(1);
 }
