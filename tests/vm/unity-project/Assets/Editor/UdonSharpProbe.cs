@@ -272,6 +272,8 @@ public static class UdonSharpProbe
         foreach (var guid in guids)
         {
             var path = AssetDatabase.GUIDToAssetPath(guid);
+            // Only inspect assets under the probe input folder
+            if (!path.StartsWith("Assets/UdonSharpProbeInput/")) continue;
             var asset = AssetDatabase.LoadAssetAtPath(path, programAssetType);
             if (asset == null) continue;
 

@@ -132,8 +132,9 @@ function runUdonSharpCompiler(
     for (const csFile of tc.csFiles) {
       const baseName = path.basename(csFile);
       if (seenBaseNames.has(baseName)) {
-        console.warn(
-          `  [UdonSharp] WARNING: duplicate filename ${baseName} (from ${tc.name}), overwriting previous`,
+        throw new Error(
+          `Duplicate .cs filename "${baseName}" from test case "${tc.name}". ` +
+            "UdonSharp requires unique class names across all test cases.",
         );
       }
       seenBaseNames.add(baseName);
@@ -167,6 +168,10 @@ function runUdonSharpCompiler(
   } catch (err: unknown) {
     const spawnError = err as NodeJS.ErrnoException & { status?: number };
     if (spawnError.code !== undefined && spawnError.status == null) throw err;
+    // Non-zero exit — Unity may still have written results; continue
+    console.warn(
+      `  [UdonSharp] Unity exited with status ${spawnError.status ?? "(unknown)"}, checking for output...`,
+    );
   }
 
   // Read results
@@ -226,7 +231,7 @@ function transpileTs(cases: TestCase[]): Map<string, Map<string, string>> {
     if (tc.tsFiles.length === 0) continue;
     const tempDir = path.join(
       tmpdir(),
-      `uasm-compare-ts-${Date.now()}-${tc.name}`,
+      `uasm-compare-ts-${tc.name}-${Math.random().toString(36).slice(2)}`,
     );
     const sourceDir = path.join(tempDir, "src");
     const outputDir = path.join(tempDir, "out");

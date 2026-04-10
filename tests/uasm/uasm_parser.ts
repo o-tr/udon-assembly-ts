@@ -49,6 +49,12 @@ export function parseUasm(text: string): UasmData {
       if (!line) continue;
     }
 
+    // .behaviourSyncMode can appear at top level (UdonSharp) or inside code section
+    if (line.startsWith(".behaviourSyncMode ")) {
+      syncMode = line.slice(".behaviourSyncMode ".length).trim();
+      continue;
+    }
+
     if (line === ".data_start") {
       inData = true;
       inCode = false;
@@ -101,10 +107,6 @@ export function parseUasm(text: string): UasmData {
     if (inCode) {
       if (line.startsWith(".export ")) {
         exports.push(line.slice(".export ".length).trim());
-        continue;
-      }
-      if (line.startsWith(".behaviourSyncMode ")) {
-        syncMode = line.slice(".behaviourSyncMode ".length).trim();
         continue;
       }
       // Skip label definitions (e.g. "_start:")
