@@ -219,3 +219,7 @@ cleanupLogFile(logFile);
 console.log(
   `\nFull results saved to: ${path.join(outputDir, "probe_results.json")}`,
 );
+
+if (results.errors?.length > 0) {
+  process.exit(1);
+}

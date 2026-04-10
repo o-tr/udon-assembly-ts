@@ -485,9 +485,21 @@ if (UNITY_EDITOR_PATH) {
     const result = runUdonSharpCompiler(cases, inputDir, outputDir);
     udonSharpUasms = result.uasms;
     udonSharpErrors = result.errors;
-    console.log(`UdonSharp compiled ${udonSharpUasms.size} UASM(s)`);
+    const uasmCount = [...udonSharpUasms.values()].reduce(
+      (n, m) => n + m.size,
+      0,
+    );
+    console.log(`UdonSharp compiled ${uasmCount} UASM(s)`);
   } catch (err) {
     console.error(`UdonSharp compilation failed: ${err}`);
+  } finally {
+    for (const dir of [inputDir, outputDir]) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    }
   }
 } else {
   console.log(
