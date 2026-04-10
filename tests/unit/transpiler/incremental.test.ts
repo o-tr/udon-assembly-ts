@@ -87,6 +87,9 @@ describe("incremental compilation", () => {
 
     // Rewrite fileA with identical content (mtime will change, hash stays the same)
     fs.writeFileSync(fileA, srcA, "utf8");
+    // Explicitly advance mtime to survive coarse-resolution (1 s) filesystems.
+    const future = new Date(Date.now() + 2000);
+    fs.utimesSync(fileA, future, future);
 
     const second = transpiler.transpile({
       sourceDir: srcDir,

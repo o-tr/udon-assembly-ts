@@ -1084,7 +1084,20 @@ export class BatchTranspiler {
     const changed = new Set<string>();
     const computedHashes = new Map<string, { hash: string; mtime: number }>();
     if (!cache) {
-      for (const file of files) changed.add(file);
+      for (const file of files) {
+        changed.add(file);
+        try {
+          const content = fs.readFileSync(file);
+          const hash = crypto
+            .createHash("sha256")
+            .update(content)
+            .digest("hex");
+          const mtime = fs.statSync(file).mtimeMs;
+          computedHashes.set(file, { hash, mtime });
+        } catch {
+          // ignore; saveCache will handle unreadable files
+        }
+      }
       return { changed, computedHashes };
     }
     for (const file of files) {

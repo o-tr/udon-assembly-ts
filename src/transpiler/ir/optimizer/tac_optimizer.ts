@@ -83,7 +83,9 @@ const instructionKindIndex: Record<string, number> = Object.fromEntries(
 /** Feed a string into an FNV-1a hash without allocating intermediate strings. */
 const hashStr = (h: number, s: string): number => {
   for (let i = 0; i < s.length; i++) {
-    h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+    const c = s.charCodeAt(i);
+    h = Math.imul(h ^ (c & 0xff), 0x01000193);
+    if (c > 0xff) h = Math.imul(h ^ ((c >> 8) & 0xff), 0x01000193);
   }
   return h;
 };
