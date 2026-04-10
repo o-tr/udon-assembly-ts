@@ -313,13 +313,22 @@ export class BatchTranspiler {
           // The stale usedFiles set is therefore safe: any source edit that
           // introduces a new transitive dependency also touches an already-
           // tracked file. The gap exists only on the single transitional run.
-          const entryClass = registry
+          // Collect usedFiles from ALL entry points in this file (a file
+          // may contain multiple @UdonBehaviour classes with different deps).
+          const entryClasses = registry
             .getEntryPoints()
-            .find((ep) => ep.filePath === entryFile);
-          const cachedUsedFiles =
-            entryClass && cache.entryPoints[entryClass.name]?.usedFiles;
-          const filesToCheck = cachedUsedFiles
-            ? cachedUsedFiles
+            .filter((ep) => ep.filePath === entryFile);
+          const usedFilesUnion = new Set<string>();
+          let hasAnyCachedUsedFiles = false;
+          for (const ec of entryClasses) {
+            const uf = cache.entryPoints[ec.name]?.usedFiles;
+            if (uf) {
+              hasAnyCachedUsedFiles = true;
+              for (const f of uf) usedFilesUnion.add(f);
+            }
+          }
+          const filesToCheck = hasAnyCachedUsedFiles
+            ? Array.from(usedFilesUnion)
             : resolver.getCompilationOrder(entryFile);
           const hasChanges = filesToCheck.some((file) =>
             changedFiles.has(file),
@@ -708,7 +717,7 @@ export class BatchTranspiler {
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
-      const allWarnings = [...assemblerWarnings, ...heapWarnings];
+      const allWarnings = [...heapWarnings, ...assemblerWarnings];
       const warnings = allWarnings.length > 0 ? allWarnings : undefined;
       // Tier 2: Save assembled output to cache.
       this.saveOutputCache(cacheFilePath, {
