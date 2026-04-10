@@ -363,7 +363,11 @@ public static class UdonSharpCompileRunner
                 if (paramInfos.Length == 0)
                     compileAll.Invoke(null, null);
                 else if (paramInfos.Length == 2)
+                {
+                    Debug.Log($"[UdonSharpCompileRunner] CompileAllCsPrograms params: " +
+                              $"{paramInfos[0].ParameterType.Name}, {paramInfos[1].ParameterType.Name}");
                     compileAll.Invoke(null, new object[] { true, true });
+                }
                 else
                     compileAll.Invoke(null, new object[paramInfos.Length]);
 

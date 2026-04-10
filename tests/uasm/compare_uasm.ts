@@ -232,9 +232,15 @@ function runUdonSharpCompiler(
 
 // ─── TS transpilation ─────────────────────────────────────────────────────────
 
-function transpileTs(cases: TestCase[]): Map<string, Map<string, string>> {
-  // Returns: caseName -> (className -> uasmText)
+interface TasmTranspileResult {
+  uasms: Map<string, Map<string, string>>;
+  errors: Map<string, string>;
+}
+
+function transpileTs(cases: TestCase[]): TasmTranspileResult {
+  // uasms: caseName -> (className -> uasmText), errors: caseName -> errorMessage
   const result = new Map<string, Map<string, string>>();
+  const errors = new Map<string, string>();
 
   const transpiler = new BatchTranspiler();
 
@@ -273,14 +279,16 @@ function transpileTs(cases: TestCase[]): Map<string, Map<string, string>> {
       }
       result.set(tc.name, outputs);
     } catch (err) {
-      console.error(`  [TASM] ${tc.name}: transpilation error: ${err}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`  [TASM] ${tc.name}: transpilation error: ${msg}`);
       result.set(tc.name, new Map());
+      errors.set(tc.name, msg);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
   }
 
-  return result;
+  return { uasms: result, errors };
 }
 
 // ─── Report ───────────────────────────────────────────────────────────────────
@@ -480,7 +488,9 @@ if (UNITY_EDITOR_PATH) {
 
 // TS transpilation
 console.log("Transpiling TypeScript...");
-const tasmUasms = transpileTs(cases);
+const tasmResult = transpileTs(cases);
+const tasmUasms = tasmResult.uasms;
+const tasmErrors = tasmResult.errors;
 
 // Build reports
 function getUsError(
@@ -496,13 +506,26 @@ function getUsError(
   return err ?? "UASM not generated";
 }
 
+function getTsError(
+  tsText: string | null,
+  caseError: string | undefined,
+): string | null {
+  if (tsText !== null) return null;
+  return caseError ?? "UASM not generated";
+}
+
 const reports: CaseReport[] = cases.flatMap((tc) => {
   const usMap = udonSharpUasms.get(tc.name) ?? new Map<string, string>();
   const tsMap = tasmUasms.get(tc.name) ?? new Map<string, string>();
   const usErrMap = udonSharpErrors.get(tc.name);
+  const tsErr = tasmErrors.get(tc.name);
 
-  // Collect all class names from both sides
-  const allClassNames = new Set([...usMap.keys(), ...tsMap.keys()]);
+  // Collect all class names from results, errors, and declared files
+  const allClassNames = new Set([
+    ...usMap.keys(),
+    ...tsMap.keys(),
+    ...(usErrMap?.keys() ?? []),
+  ]);
 
   if (allClassNames.size <= 1) {
     // Single-class case (or no output from either side)
@@ -515,7 +538,7 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
       udonSharpUasm: usText ? parseUasm(usText) : null,
       tasmUasm: tsText ? parseUasm(tsText) : null,
       udonSharpError: getUsError(usText, usErrMap),
-      tasmError: tsText === null ? "UASM not generated" : null,
+      tasmError: getTsError(tsText, tsErr),
     };
   }
 
@@ -528,7 +551,7 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
       udonSharpUasm: usText ? parseUasm(usText) : null,
       tasmUasm: tsText ? parseUasm(tsText) : null,
       udonSharpError: getUsError(usText, usErrMap, className),
-      tasmError: tsText === null ? "UASM not generated" : null,
+      tasmError: getTsError(tsText, tsErr),
     };
   });
 });

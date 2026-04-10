@@ -119,7 +119,7 @@ export function parseUasm(text: string): UasmData {
       const opcode =
         commaIdx >= 0 ? line.slice(0, commaIdx).trim() : line.trim();
 
-      if (opcode === "NOP") continue; // skip NOPs for counting
+      if (opcode === "NOP") continue; // skip NOPs for both instruction count and opcodes list
       instructionCount++;
       opcodes.push(opcode);
 
