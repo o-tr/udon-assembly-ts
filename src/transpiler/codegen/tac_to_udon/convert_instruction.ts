@@ -75,6 +75,18 @@ export function convertInstruction(
 
       // Shift operators require Int32 right operand; skip promotion for those.
       const isShift = binInst.operator === "<<" || binInst.operator === ">>";
+      // Detect null-literal equality/inequality: null comparisons must use
+      // SystemObject.__op_Equality/Inequality regardless of the declared type
+      // (the type mapper assigns DataDictionary to null literals via the
+      // "object" mapping, but Udon requires Object-level comparison for null).
+      // Only applies to == and != operators — other operators with null
+      // operands are invalid and should not be silently promoted.
+      const isNullComparison =
+        (binInst.operator === "==" || binInst.operator === "!=") &&
+        ((leftOp.kind === TACOperandKind.Constant &&
+          (leftOp as ConstantOperand).value === null) ||
+          (rightOp.kind === TACOperandKind.Constant &&
+            (rightOp as ConstantOperand).value === null));
       // Coerce operands to a common promoted type if numeric types differ
       const promotedType =
         !isShift &&
@@ -82,7 +94,9 @@ export function convertInstruction(
         this.isNumericType(leftType) &&
         this.isNumericType(rightType)
           ? this.getPromotedNumericType(leftType, rightType)
-          : leftType;
+          : isNullComparison
+            ? "Object"
+            : leftType;
 
       if (
         !isShift &&

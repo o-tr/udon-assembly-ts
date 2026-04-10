@@ -192,7 +192,7 @@ describe("string / for-of / null-check regressions", () => {
   });
 
   describe("Bug 3: nullable array null-check uses SystemArray comparison", () => {
-    it.fails("string[] | null !== null uses SystemArray.__op_Inequality", () => {
+    it("string[] | null !== null uses SystemObject.__op_Inequality", () => {
       const source = `
         class Main {
           private data: string[] | null = null;
@@ -207,9 +207,12 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "SystemArray.__op_Inequality__SystemArray_SystemArray__SystemBoolean",
       );
+      expect(result.uasm).toContain(
+        "SystemObject.__op_Inequality__SystemObject_SystemObject__SystemBoolean",
+      );
     });
 
-    it.fails("number[] | null === null uses SystemArray.__op_Equality", () => {
+    it("number[] | null === null uses SystemObject.__op_Equality", () => {
       const source = `
         class Main {
           private counts: number[] | null = null;
@@ -224,9 +227,12 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "SystemArray.__op_Equality__SystemArray_SystemArray__SystemBoolean",
       );
+      expect(result.uasm).toContain(
+        "SystemObject.__op_Equality__SystemObject_SystemObject__SystemBoolean",
+      );
     });
 
-    it.fails("static field flyweight pattern uses SystemArray.__op_Inequality", () => {
+    it("static field flyweight pattern uses SystemObject.__op_Inequality", () => {
       const source = `
         class Cache {
           private static _items: string[] | null = null;
@@ -245,6 +251,9 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "SystemArray.__op_Inequality__SystemArray_SystemArray__SystemBoolean",
       );
+      expect(result.uasm).toContain(
+        "SystemObject.__op_Inequality__SystemObject_SystemObject__SystemBoolean",
+      );
     });
 
     it("Map | null does not use SystemArray comparison", () => {
@@ -260,6 +269,9 @@ describe("string / for-of / null-check regressions", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
       expect(result.uasm).not.toContain("SystemArray.__op_Inequality");
       expect(result.uasm).not.toContain("SystemArray.__op_Equality");
+      expect(result.uasm).toContain(
+        "SystemObject.__op_Inequality__SystemObject_SystemObject__SystemBoolean",
+      );
     });
   });
 });
