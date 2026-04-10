@@ -437,9 +437,13 @@ export class BatchTranspiler {
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
-    // When transpilerHash changed (or no prior cache), sweep stale output-cache
-    // entries so the optcache directory does not grow unboundedly across upgrades.
-    if (cache === null) this.sweepOutputCache(optCacheDir);
+    // Sweep stale output-cache entries when there is no prior cache or when the
+    // transpiler hash changed (including v2→v3 upgrades where loadCache injects
+    // the current hash but old optcache entries still carry the prior version's).
+    const currentTranspilerHash = getTranspilerHash();
+    if (cache === null || cache.transpilerHash !== currentTranspilerHash) {
+      this.sweepOutputCache(optCacheDir);
+    }
     const activeSlotFiles = new Set<string>();
     // Carry forward entryPoints metadata for skipped (cached) entry points
     const entryPointsCache: Record<string, { usedFiles: string[] }> = {
@@ -997,10 +1001,13 @@ export class BatchTranspiler {
       // v2 format: { version: 2, files: ... } — upgrade to v3
       if ((parsed as { version: number }).version === 2) {
         // No transpilerHash in v2, so file-level entries can be reused
-        // but all entry points must recompile.
+        // but all entry points must recompile. Use empty transpilerHash so
+        // the caller's hash-mismatch check triggers sweepOutputCache to
+        // clean up any optcache entries left by the prior transpiler version.
+        // saveCache will write the real transpilerHash at the end of the build.
         return {
           version: 3,
-          transpilerHash: currentHash,
+          transpilerHash: "",
           files:
             (parsed as { files: Record<string, FileCacheEntry> }).files ?? {},
           entryPoints: {},
