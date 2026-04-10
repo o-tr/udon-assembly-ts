@@ -103,7 +103,7 @@ function runUnityProbe(inputDir: string, outputDir: string): string {
 function readProbeResults(outputDir: string, logFile: string): ProbeResults {
   const resultsPath = path.join(outputDir, "probe_results.json");
   if (!existsSync(resultsPath)) {
-    console.error(`\nERROR: probe_results.json not found at ${resultsPath}`);
+    let detail = `probe_results.json not found at ${resultsPath}`;
     if (existsSync(logFile)) {
       const logContent = readFileSync(logFile, "utf-8");
       const errorLines = logContent
@@ -116,9 +116,9 @@ function readProbeResults(outputDir: string, logFile: string): ProbeResults {
         )
         .slice(-30)
         .join("\n");
-      console.error("Unity log excerpt:\n", errorLines);
+      if (errorLines) detail += `\nUnity log excerpt:\n${errorLines}`;
     }
-    process.exit(1);
+    throw new Error(detail);
   }
 
   // Strip BOM if present (Unity's JsonUtility writes UTF-8 with BOM on some platforms)
@@ -211,22 +211,28 @@ if (!UNITY_EDITOR_PATH) {
 }
 
 const { inputDir, outputDir } = prepareProbeDirs();
-const logFile = runUnityProbe(inputDir, outputDir);
-const results = readProbeResults(outputDir, logFile);
-printProbeReport(results);
-cleanupLogFile(logFile);
-
-console.log(
-  `\nFull results saved to: ${path.join(outputDir, "probe_results.json")}`,
-);
-
-// Clean up probe input directory (output kept for inspection)
+let logFile = "";
 try {
-  rmSync(inputDir, { recursive: true, force: true });
-} catch {
-  /* ignore */
-}
+  logFile = runUnityProbe(inputDir, outputDir);
+  const results = readProbeResults(outputDir, logFile);
+  printProbeReport(results);
 
-if (results.errors?.length > 0) {
-  process.exit(1);
+  console.log(
+    `\nFull results saved to: ${path.join(outputDir, "probe_results.json")}`,
+  );
+
+  if (results.errors?.length > 0) {
+    process.exitCode = 1;
+  }
+} catch (err) {
+  console.error(err instanceof Error ? err.message : err);
+  process.exitCode = 1;
+} finally {
+  if (logFile) cleanupLogFile(logFile);
+  // Clean up probe input directory (output kept for inspection)
+  try {
+    rmSync(inputDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 }

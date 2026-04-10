@@ -396,7 +396,7 @@ public static class UdonSharpCompileRunner
                 }
 
                 // Try to wait for the async task via WaitForCompile
-                var waitForCompile = compilerType.GetMethod("WaitForCompile",
+                var waitForCompile = compilerType?.GetMethod("WaitForCompile",
                     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
                 waitForCompile?.Invoke(null, null);
 
