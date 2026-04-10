@@ -342,7 +342,7 @@ function printReport(reports: CaseReport[]) {
 
     // Sync mode
     if (us.syncMode || ts.syncMode) {
-      if (us.syncMode === ts.syncMode) {
+      if (us.syncMode?.toLowerCase() === ts.syncMode?.toLowerCase()) {
         console.log(`  SyncMode: MATCH (${us.syncMode})`);
       } else {
         console.log(

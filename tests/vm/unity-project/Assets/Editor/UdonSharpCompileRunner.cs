@@ -362,14 +362,23 @@ public static class UdonSharpCompileRunner
             {
                 if (paramInfos.Length == 0)
                     compileAll.Invoke(null, null);
-                else if (paramInfos.Length == 2)
-                {
-                    Debug.Log($"[UdonSharpCompileRunner] CompileAllCsPrograms params: " +
-                              $"{paramInfos[0].ParameterType.Name}, {paramInfos[1].ParameterType.Name}");
-                    compileAll.Invoke(null, new object[] { true, true });
-                }
                 else
-                    compileAll.Invoke(null, new object[paramInfos.Length]);
+                {
+                    // Build type-safe default args for any parameter count
+                    var args = new object[paramInfos.Length];
+                    for (int i = 0; i < paramInfos.Length; i++)
+                    {
+                        args[i] = paramInfos[i].HasDefaultValue
+                            ? paramInfos[i].DefaultValue
+                            : paramInfos[i].ParameterType == typeof(bool)
+                                ? (object)true
+                                : paramInfos[i].ParameterType.IsValueType
+                                    ? Activator.CreateInstance(paramInfos[i].ParameterType)
+                                    : null;
+                    }
+                    Debug.Log($"[UdonSharpCompileRunner] CompileAllCsPrograms({string.Join(", ", paramInfos.Select(p => p.ParameterType.Name))})");
+                    compileAll.Invoke(null, args);
+                }
 
                 // Try to wait for the async task via WaitForCompile
                 if (compilerType != null)
