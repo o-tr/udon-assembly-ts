@@ -140,7 +140,8 @@ export function parseUasm(text: string): UasmData {
     }
   }
 
-  // Post-loop fixup: resolve any extern references that preceded the data section
+  // Post-loop fixup: guard against hypothetical out-of-order UASM where code
+  // section precedes data section (standard UASM always has data first)
   for (let i = 0; i < externs.length; i++) {
     const resolved = externVarMap.get(externs[i]);
     if (resolved) externs[i] = resolved;

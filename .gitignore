@@ -11,5 +11,6 @@ tests/vm/unity-project/Assets/UdonSharpProbeInput/
 tests/vm/unity-project/Assets/UdonSharpProbeInput.meta
 tests/vm/unity-project/Assets/UdonSharpInput/
 tests/vm/unity-project/Assets/UdonSharpInput.meta
+tests/vm/unity-project/UdonSharpInput/
 tests/vm/unity-project/UdonSharpOutput/
 tests/uasm/reports/

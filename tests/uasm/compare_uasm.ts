@@ -506,8 +506,10 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
 
   if (allClassNames.size <= 1) {
     // Single-class case (or no output from either side)
-    const usText = usMap.size > 0 ? [...usMap.values()][0] : null;
-    const tsText = tsMap.size > 0 ? [...tsMap.values()][0] : null;
+    const usText =
+      usMap.size > 0 ? (usMap.values().next().value ?? null) : null;
+    const tsText =
+      tsMap.size > 0 ? (tsMap.values().next().value ?? null) : null;
     return {
       name: tc.name,
       udonSharpUasm: usText ? parseUasm(usText) : null,
