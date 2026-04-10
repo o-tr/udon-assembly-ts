@@ -305,7 +305,7 @@ public static class UdonSharpCompileRunner
                     {
                         options = TryCreateCompileOptions(paramInfos[0].ParameterType);
                     }
-                    compileSync.Invoke(null, options != null ? new[] { options } : null);
+                    compileSync.Invoke(null, paramInfos.Length > 0 ? new[] { options } : null);
                     Debug.Log("[UdonSharpCompileRunner] CompileSync() completed");
                     return;
                 }
@@ -328,7 +328,7 @@ public static class UdonSharpCompileRunner
                     object options = null;
                     if (paramInfos.Length > 0)
                         options = TryCreateCompileOptions(paramInfos[0].ParameterType);
-                    compile.Invoke(null, options != null ? new[] { options } : null);
+                    compile.Invoke(null, paramInfos.Length > 0 ? new[] { options } : null);
                     waitForCompile.Invoke(null, null);
                     Debug.Log("[UdonSharpCompileRunner] Compile() + WaitForCompile() completed");
                     return;

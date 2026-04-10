@@ -206,7 +206,10 @@ function transpileTs(cases: TestCase[]): Map<string, Map<string, string>> {
 
   for (const tc of cases) {
     if (tc.tsFiles.length === 0) continue;
-    const tempDir = path.join(tmpdir(), `uasm-compare-ts-${Date.now()}`);
+    const tempDir = path.join(
+      tmpdir(),
+      `uasm-compare-ts-${Date.now()}-${tc.name}`,
+    );
     const sourceDir = path.join(tempDir, "src");
     const outputDir = path.join(tempDir, "out");
     mkdirSync(sourceDir, { recursive: true });
@@ -311,7 +314,15 @@ function printReport(reports: CaseReport[]) {
       [...new Set(ts.externs)],
     );
     if (externsDiff.onlyInA.length === 0 && externsDiff.onlyInB.length === 0) {
-      console.log(`  Externs:  MATCH (${us.externs.length} unique signatures)`);
+      if (us.externs.length !== ts.externs.length) {
+        console.log(
+          `  Externs:  MATCH signatures, DIFF count  UdonSharp=${us.externs.length}  TASM=${ts.externs.length}`,
+        );
+      } else {
+        console.log(
+          `  Externs:  MATCH (${us.externs.length} unique signatures)`,
+        );
+      }
     } else {
       console.log("  Externs:  DIFF");
       for (const sig of externsDiff.onlyInA)
