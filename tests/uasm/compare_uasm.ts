@@ -165,47 +165,49 @@ function runUdonSharpCompiler(
 
   // Read results
   const resultsPath = path.join(outputDir, "compile_results.json");
-  if (!existsSync(resultsPath)) {
-    const logContent = existsSync(logFile)
-      ? readFileSync(logFile, "utf-8")
-          .split("\n")
-          .filter((l) => l.includes("error") || l.includes("Error"))
-          .slice(-20)
-          .join("\n")
-      : "(no log)";
-    throw new Error(
-      `Unity did not produce compile_results.json.\nLog excerpt:\n${logContent}`,
-    );
-  }
-
-  const rawResults = JSON.parse(
-    readFileSync(resultsPath, "utf-8").replace(/^\uFEFF/, ""),
-  ) as { results: CompileResultEntry[] };
-
-  for (const r of rawResults.results) {
-    if (r.error) {
-      console.error(
-        `  [UdonSharp] ${r.name}/${r.className}: ERROR: ${r.error}`,
-      );
-      continue;
-    }
-    const uasmPath = path.join(outputDir, r.uasmFile);
-    if (existsSync(uasmPath)) {
-      const text = readFileSync(uasmPath, "utf-8").replace(/^\uFEFF/, "");
-      if (!uasmByName.has(r.name)) {
-        uasmByName.set(r.name, new Map());
-      }
-      uasmByName.get(r.name)?.set(r.className, text);
-    }
-  }
-
   try {
-    rmSync(logFile, { force: true });
-  } catch {
-    /* ignore */
-  }
+    if (!existsSync(resultsPath)) {
+      const logContent = existsSync(logFile)
+        ? readFileSync(logFile, "utf-8")
+            .split("\n")
+            .filter((l) => l.includes("error") || l.includes("Error"))
+            .slice(-20)
+            .join("\n")
+        : "(no log)";
+      throw new Error(
+        `Unity did not produce compile_results.json.\nLog excerpt:\n${logContent}`,
+      );
+    }
 
-  return uasmByName;
+    const rawResults = JSON.parse(
+      readFileSync(resultsPath, "utf-8").replace(/^\uFEFF/, ""),
+    ) as { results: CompileResultEntry[] };
+
+    for (const r of rawResults.results) {
+      if (r.error) {
+        console.error(
+          `  [UdonSharp] ${r.name}/${r.className}: ERROR: ${r.error}`,
+        );
+        continue;
+      }
+      const uasmPath = path.join(outputDir, r.uasmFile);
+      if (existsSync(uasmPath)) {
+        const text = readFileSync(uasmPath, "utf-8").replace(/^\uFEFF/, "");
+        if (!uasmByName.has(r.name)) {
+          uasmByName.set(r.name, new Map());
+        }
+        uasmByName.get(r.name)?.set(r.className, text);
+      }
+    }
+
+    return uasmByName;
+  } finally {
+    try {
+      rmSync(logFile, { force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // ─── TS transpilation ─────────────────────────────────────────────────────────
