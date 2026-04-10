@@ -1006,6 +1006,10 @@ export class BatchTranspiler {
         // the caller's hash-mismatch check triggers sweepOutputCache to
         // clean up any optcache entries left by the prior transpiler version.
         // saveCache will write the real transpilerHash at the end of the build.
+        // Note: v2 file entries lack the `hash` field (only mtime). For files
+        // whose mtime changed since the last v2 build, `entry.hash` is
+        // undefined so the comparison in getChangedFiles always marks them as
+        // changed — this is conservative but correct (one-time cost on upgrade).
         return {
           version: 3,
           transpilerHash: "",

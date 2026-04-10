@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
+import {
+  BatchTranspiler,
+  resetTranspilerHash,
+} from "../../../src/transpiler/batch/batch_transpiler";
 
 const writeFile = (filePath: string, content: string) => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -346,5 +349,96 @@ class D extends UdonSharpBehaviour {
     // Only D recompiles; A is still cached
     expect(third.outputs.length).toBe(1);
     expect(third.outputs[0]?.className).toBe("D");
+  });
+
+  it("v2→v3 cache upgrade: recompiles all and rewrites cache as v3", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "transpiler-v2-"));
+    const srcDir = path.join(tempDir, "src");
+    const outDir = path.join(tempDir, "out");
+    const fileA = path.join(srcDir, "A.ts");
+
+    writeFile(fileA, srcA);
+
+    const transpiler = new BatchTranspiler();
+    // First run: builds v3 cache
+    transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+
+    // Overwrite the cache file with a v2-shaped object (no transpilerHash)
+    const cachePath = path.join(srcDir, ".transpiler-cache.json");
+    const v2Cache = {
+      version: 2,
+      files: {
+        [fileA]: { mtime: fs.statSync(fileA).mtimeMs },
+      },
+    };
+    fs.writeFileSync(cachePath, JSON.stringify(v2Cache), "utf8");
+
+    // Second run: should detect upgrade, recompile everything
+    const second = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    expect(second.outputs.length).toBe(1);
+    expect(second.outputs[0]?.className).toBe("A");
+
+    // Cache should now be v3
+    const raw = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    expect(raw.version).toBe(3);
+    expect(raw.transpilerHash).toBeTruthy();
+    expect(raw.entryPoints).toBeDefined();
+  });
+
+  it("transpiler hash change invalidates all caches", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "transpiler-th-"));
+    const srcDir = path.join(tempDir, "src");
+    const outDir = path.join(tempDir, "out");
+    const fileA = path.join(srcDir, "A.ts");
+
+    writeFile(fileA, srcA);
+
+    const transpiler = new BatchTranspiler();
+    // First run: populates cache
+    const first = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    expect(first.outputs.length).toBe(1);
+
+    // Second run: everything cached, no recompilation
+    const second = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    expect(second.outputs.length).toBe(0);
+
+    // Simulate transpiler code change: write a stale transpilerHash into the
+    // cache file, then reset the memoized hash so the next transpile call
+    // recomputes it (producing the real hash that won't match "fake-old-hash").
+    const cachePath = path.join(srcDir, ".transpiler-cache.json");
+    const raw = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    raw.transpilerHash = "fake-old-hash";
+    fs.writeFileSync(cachePath, JSON.stringify(raw), "utf8");
+    resetTranspilerHash();
+
+    // Third run: transpilerHash mismatch → full invalidation
+    const third = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+    });
+    expect(third.outputs.length).toBe(1);
+    expect(third.outputs[0]?.className).toBe("A");
   });
 });
