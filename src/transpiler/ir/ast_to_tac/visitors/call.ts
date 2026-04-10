@@ -8,8 +8,10 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getNativeArrayTypeName,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -1223,6 +1225,46 @@ export function visitCallExpression(
       return dictResult;
     }
     if (calleeName === "Array") {
+      // Native array fast path: new Array<T>(N) with constant N > 0 when the
+      // variable is eligible (currentNativeArrayVarName set by visitVariableDeclaration).
+      if (
+        node.isNew &&
+        node.typeArguments?.[0] &&
+        this.currentNativeArrayVarName !== null &&
+        rawArgs.length === 1
+      ) {
+        const [argOp] = getArgs();
+        if (argOp.kind === TACOperandKind.Constant) {
+          const rawVal = (argOp as ConstantOperand).value;
+          const count =
+            typeof rawVal === "number" && Number.isInteger(rawVal) && rawVal > 0
+              ? rawVal
+              : null;
+          if (count !== null) {
+            const elemType = this.typeMapper.mapTypeScriptType(
+              node.typeArguments[0],
+            );
+            if (getNativeArrayTypeName(elemType.udonType) !== null) {
+              const nativeType = new NativeArrayTypeSymbol(elemType);
+              const nativeResult = this.newTemp(nativeType);
+              const ctorSig = this.requireExternSignature(
+                nativeType.nativeUdonTypeName,
+                "ctor",
+                "method",
+                ["int"],
+                nativeType.nativeUdonTypeName,
+              );
+              this.instructions.push(
+                new CallInstruction(nativeResult, ctorSig, [
+                  createConstant(count, PrimitiveTypes.int32),
+                ]),
+              );
+              return nativeResult;
+            }
+          }
+        }
+      }
+
       const evaluatedArgs = getArgs();
       const arrayType = node.typeArguments?.[0]
         ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])

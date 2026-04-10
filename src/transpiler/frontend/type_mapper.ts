@@ -5,6 +5,7 @@ import {
   CollectionTypeSymbol,
   ExternTypes,
   GenericTypeParameterSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
@@ -446,6 +447,8 @@ export class TypeMapper {
         return ExternTypes.systemType;
       case UdonType.Array:
         return new ArrayTypeSymbol(ObjectType);
+      case UdonType.NativeArray:
+        return new NativeArrayTypeSymbol(ObjectType);
       default:
         return ObjectType;
     }

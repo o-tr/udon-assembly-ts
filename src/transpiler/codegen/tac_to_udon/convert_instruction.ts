@@ -1,4 +1,7 @@
+import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
 import {
+  type ArrayAccessInstruction as TACArrayAccessInstruction,
+  type ArrayAssignmentInstruction as TACArrayAssignmentInstruction,
   type AssignmentInstruction as TACAssignmentInstruction,
   type BinaryOpInstruction as TACBinaryOpInstruction,
   type CallInstruction as TACCallInstruction,
@@ -32,6 +35,10 @@ import {
   LabelInstruction,
   PushInstruction,
 } from "../udon_instruction.js";
+import {
+  generateExternSignature,
+  mapTypeScriptToCSharp,
+} from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function convertInstruction(
@@ -630,15 +637,62 @@ export function convertInstruction(
       break;
     }
 
-    case TACInstructionKind.ArrayAccess:
-    case TACInstructionKind.ArrayAssignment:
-      // These instructions should no longer be generated after the
-      // SystemArray → DataList migration. All array operations now use
-      // DataList get_Item/set_Item via MethodCallInstruction.
-      throw new Error(
-        "ArrayAccess/ArrayAssignment instructions should not be generated. " +
-          "All array operations must use DataList get_Item/set_Item.",
+    case TACInstructionKind.ArrayAccess: {
+      // Native typed-array element read: {ArrayType}.__Get__SystemInt32__{ElementType}
+      const arrAccess = inst as TACArrayAccessInstruction;
+      const arrType = (arrAccess.array as unknown as { type: unknown }).type;
+      if (!(arrType instanceof NativeArrayTypeSymbol)) {
+        throw new Error(
+          "ArrayAccess instruction requires a NativeArrayTypeSymbol operand. " +
+            "Use DataList get_Item/set_Item for all other arrays.",
+        );
+      }
+      const csharpElem = mapTypeScriptToCSharp(arrType.elementType.name);
+      const csharpArr = `${csharpElem}[]`;
+      const getExternSig = generateExternSignature(
+        csharpArr,
+        "Get",
+        ["System.Int32"],
+        csharpElem,
       );
+      this.pushOperand(arrAccess.array);
+      this.pushOperand(arrAccess.index);
+      const destAddr = this.getOperandAddress(arrAccess.dest);
+      this.instructions.push(new PushInstruction(destAddr));
+      this.externSignatures.add(getExternSig);
+      this.instructions.push(
+        new ExternInstruction(this.getExternSymbol(getExternSig), true),
+      );
+      break;
+    }
+
+    case TACInstructionKind.ArrayAssignment: {
+      // Native typed-array element write: {ArrayType}.__Set__SystemInt32_{ElementType}__SystemVoid
+      const arrAssign = inst as TACArrayAssignmentInstruction;
+      const arrType = (arrAssign.array as unknown as { type: unknown }).type;
+      if (!(arrType instanceof NativeArrayTypeSymbol)) {
+        throw new Error(
+          "ArrayAssignment instruction requires a NativeArrayTypeSymbol operand. " +
+            "Use DataList get_Item/set_Item for all other arrays.",
+        );
+      }
+      const csharpElem = mapTypeScriptToCSharp(arrType.elementType.name);
+      const csharpArr = `${csharpElem}[]`;
+      const setExternSig = generateExternSignature(
+        csharpArr,
+        "Set",
+        ["System.Int32", csharpElem],
+        "System.Void",
+      );
+      this.pushOperand(arrAssign.array);
+      this.pushOperand(arrAssign.index);
+      this.pushOperand(arrAssign.value);
+      this.externSignatures.add(setExternSig);
+      this.instructions.push(
+        new ExternInstruction(this.getExternSymbol(setExternSig), true),
+      );
+      break;
+    }
 
     case TACInstructionKind.Return: {
       const retInst = inst as TACReturnInstruction;

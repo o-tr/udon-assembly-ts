@@ -5,6 +5,7 @@ import {
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -20,6 +21,7 @@ import {
   type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
+  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -61,6 +63,21 @@ export function assignToTarget(
     if (arrayType instanceof CollectionTypeSymbol) {
       this.instructions.push(
         new MethodCallInstruction(undefined, array, "set_Item", [index, value]),
+      );
+      return value;
+    }
+    // Native array path: emit ArrayAssignmentInstruction (no DataToken wrapping).
+    if (arrayType instanceof NativeArrayTypeSymbol) {
+      // Coerce index to Int32 (native array __Set__ expects SystemInt32).
+      let nativeIndex = index;
+      const nativeIdxType = this.getOperandType(index);
+      if (needsInt32IndexCoercion(nativeIdxType.udonType)) {
+        const intIndex = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(intIndex, index));
+        nativeIndex = intIndex;
+      }
+      this.instructions.push(
+        new ArrayAssignmentInstruction(array, nativeIndex, value),
       );
       return value;
     }
@@ -376,6 +393,9 @@ export function getArrayElementType(
     if (type instanceof ArrayTypeSymbol) {
       return type.elementType;
     }
+    if (type instanceof NativeArrayTypeSymbol) {
+      return type.elementType;
+    }
   }
   return null;
 }
@@ -515,6 +535,12 @@ export function wrapDataToken(
   // so DataToken stores the correct token type for later .DataList unwrap.
   if (valueType.udonType === UdonType.Array) {
     valueType = ExternTypes.dataList;
+  }
+  if (valueType.udonType === UdonType.NativeArray) {
+    throw new Error(
+      `[native-array] wrapDataToken called on NativeArrayTypeSymbol (${valueType.name}). ` +
+        "This is a bug in native array eligibility analysis.",
+    );
   }
   const token = this.newTemp(ExternTypes.dataToken);
   const externSig = this.requireExternSignature(

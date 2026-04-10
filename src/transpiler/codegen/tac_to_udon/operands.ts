@@ -1,5 +1,6 @@
 import {
   ArrayTypeSymbol,
+  NativeArrayTypeSymbol,
   type TypeSymbol,
 } from "../../frontend/type_symbols.js";
 import { UdonType } from "../../frontend/types.js";
@@ -23,6 +24,10 @@ import type { TACToUdonConverter } from "./converter.js";
  * ArrayTypeSymbol uses DataList in Udon, not the raw "Array" udonType.
  */
 function resolveHeapType(typeSymbol: TypeSymbol): string {
+  // Native array: use the specific Udon type name (e.g. "SystemSingleArray").
+  if (typeSymbol instanceof NativeArrayTypeSymbol) {
+    return typeSymbol.nativeUdonTypeName;
+  }
   if (
     typeSymbol instanceof ArrayTypeSymbol ||
     (typeSymbol.name ?? "").endsWith("[]")
@@ -120,6 +125,10 @@ export function getOperandTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
+      // Native array: return the typed Udon array name (e.g. "SystemSingleArray").
+      if (typeSymbol instanceof NativeArrayTypeSymbol) {
+        return typeSymbol.nativeUdonTypeName;
+      }
       // Current lowering policy represents TypeScript arrays as DataList in
       // generated UASM, even though native typed arrays exist in Udon.
       if (
