@@ -269,6 +269,9 @@ describe("string / for-of / null-check regressions", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
       expect(result.uasm).not.toContain("SystemArray.__op_Inequality");
       expect(result.uasm).not.toContain("SystemArray.__op_Equality");
+      expect(result.uasm).toContain(
+        "SystemObject.__op_Inequality__SystemObject_SystemObject__SystemBoolean",
+      );
     });
   });
 });
