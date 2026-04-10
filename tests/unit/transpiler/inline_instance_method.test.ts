@@ -6,19 +6,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
-
-/** Extract lines in the _start section (from _start label to its return). */
-function getStartSection(tac: string): string {
-  const lines = tac.split("\n");
-  const startIdx = lines.findIndex((line) => line.includes("_start:"));
-  if (startIdx < 0) return "";
-  const endIdx = lines.findIndex(
-    (line, i) => i > startIdx && line.trim().startsWith("return"),
-  );
-  return lines
-    .slice(startIdx, endIdx !== -1 ? endIdx + 1 : undefined)
-    .join("\n");
-}
+import { getStartSection } from "./test_helpers.js";
 
 describe("inline instance method calls", () => {
   beforeAll(() => {

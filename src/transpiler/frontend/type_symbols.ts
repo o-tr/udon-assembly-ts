@@ -55,6 +55,78 @@ export class ArrayTypeSymbol extends TypeSymbol {
   }
 }
 
+/**
+ * Maps UdonType element values to the corresponding Udon native array type name.
+ * Only element types with a known Udon system array are included.
+ */
+const NATIVE_ARRAY_TYPE_NAMES: Partial<Record<UdonType, string>> = {
+  [UdonType.Single]: "SystemSingleArray",
+  [UdonType.Int32]: "SystemInt32Array",
+  [UdonType.Boolean]: "SystemBooleanArray",
+  [UdonType.String]: "SystemStringArray",
+  [UdonType.Byte]: "SystemByteArray",
+  [UdonType.SByte]: "SystemSByteArray",
+  [UdonType.Int16]: "SystemInt16Array",
+  [UdonType.UInt16]: "SystemUInt16Array",
+  [UdonType.UInt32]: "SystemUInt32Array",
+  [UdonType.Int64]: "SystemInt64Array",
+  [UdonType.UInt64]: "SystemUInt64Array",
+  [UdonType.Double]: "SystemDoubleArray",
+};
+
+/**
+ * Returns the Udon native array type name for a given element UdonType,
+ * or null if the element type has no corresponding native array.
+ */
+export function getNativeArrayTypeName(
+  elementUdonType: UdonType,
+): string | null {
+  return NATIVE_ARRAY_TYPE_NAMES[elementUdonType] ?? null;
+}
+
+/**
+ * Fixed-length typed native array backed by Udon system array types
+ * (e.g. SystemSingleArray, SystemInt32Array).
+ * Used when array length is known at compile time and no dynamic resize
+ * operations (push/pop/splice/concat) are used.
+ */
+export class NativeArrayTypeSymbol extends TypeSymbol {
+  constructor(public readonly elementType: TypeSymbol) {
+    super();
+  }
+
+  /** The Udon native array type name, e.g. "SystemSingleArray". */
+  get nativeUdonTypeName(): string {
+    const name = NATIVE_ARRAY_TYPE_NAMES[this.elementType.udonType];
+    if (!name) {
+      throw new Error(
+        `NativeArrayTypeSymbol created for unsupported element type: ${this.elementType.udonType}`,
+      );
+    }
+    return name;
+  }
+
+  /**
+   * Returns the Udon type name (e.g. "SystemSingleArray").
+   * Intentionally does NOT end with "[]" to avoid the endsWith("[]")
+   * DataList fallbacks in operands.ts and types.ts.
+   */
+  get name(): string {
+    return this.nativeUdonTypeName;
+  }
+
+  get udonType(): UdonType {
+    return UdonType.NativeArray;
+  }
+
+  isAssignableTo(other: TypeSymbol): boolean {
+    if (!(other instanceof NativeArrayTypeSymbol)) {
+      return false;
+    }
+    return this.elementType.isAssignableTo(other.elementType);
+  }
+}
+
 export class DataListTypeSymbol extends TypeSymbol {
   constructor(public readonly elementType: TypeSymbol) {
     super();

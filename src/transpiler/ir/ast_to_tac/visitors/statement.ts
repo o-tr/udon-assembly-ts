@@ -3,7 +3,9 @@ import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getNativeArrayTypeName,
   InterfaceTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -31,6 +33,7 @@ import {
 } from "../../../frontend/types.js";
 import { getVrcEventDefinition } from "../../../vrc/event_registry.js";
 import {
+  ArrayAccessInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -62,6 +65,7 @@ import {
   countTryCatchBlocks,
   MAX_RECURSION_STACK_DEPTH,
 } from "../helpers/inline.js";
+import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
@@ -248,7 +252,25 @@ export function visitVariableDeclaration(
         this.currentExpectedType = prev;
       }
     } else {
-      src = this.visitExpression(node.initializer);
+      // If the initializer is an array literal or new Array<T>(N), determine
+      // whether this variable is eligible for native array optimization.
+      // Signal to visitArrayLiteralExpression / visitCallExpression by setting
+      // currentNativeArrayVarName. The receiving visitor validates its own
+      // additional conditions (element count > 0, constant N, etc.).
+      if (
+        (node.initializer.kind === ASTNodeKind.ArrayLiteralExpression ||
+          node.initializer.kind === ASTNodeKind.CallExpression) &&
+        !this.nativeArrayIneligible.has(node.name) &&
+        node.type instanceof ArrayTypeSymbol &&
+        getNativeArrayTypeName(node.type.elementType.udonType) !== null
+      ) {
+        this.currentNativeArrayVarName = node.name;
+      }
+      try {
+        src = this.visitExpression(node.initializer);
+      } finally {
+        this.currentNativeArrayVarName = null;
+      }
     }
 
     if (
@@ -266,16 +288,21 @@ export function visitVariableDeclaration(
         }
       }
     }
-    // When declared type is ArrayTypeSymbol but initializer is new Array<T>()
-    // (CallExpression), use the DataList type for correct runtime operations.
-    // This does NOT apply to array literals [1, 2, 3] which also produce DataList
-    // but are handled differently in existing code paths.
-    if (
-      destType instanceof ArrayTypeSymbol &&
-      node.initializer?.kind === ASTNodeKind.CallExpression
-    ) {
+    // When declared type is ArrayTypeSymbol but initializer produces a NativeArrayTypeSymbol,
+    // update destType so the heap variable gets the correct typed native array type.
+    if (destType instanceof ArrayTypeSymbol) {
       const inferredType = this.getOperandType(src);
-      if (inferredType instanceof DataListTypeSymbol) {
+      if (
+        inferredType instanceof NativeArrayTypeSymbol &&
+        !this.nativeArrayIneligible.has(node.name)
+      ) {
+        destType = inferredType;
+      } else if (
+        node.initializer?.kind === ASTNodeKind.CallExpression &&
+        inferredType instanceof DataListTypeSymbol
+      ) {
+        // When declared type is ArrayTypeSymbol but initializer is new Array<T>()
+        // (CallExpression), use the DataList type for correct runtime operations.
         destType = inferredType;
       }
     }
@@ -438,6 +465,79 @@ export function visitForOfStatement(
   }
 
   const iterableType = this.getOperandType(iterableOperand);
+
+  // Native array fast path: emit a simple index loop using __get_Length__ and
+  // ArrayAccessInstruction (__Get__) without DataToken unwrap.
+  if (iterableType instanceof NativeArrayTypeSymbol) {
+    const elemType = iterableType.elementType;
+    const variableName =
+      typeof node.variable === "string" ? node.variable : null;
+    if (!variableName) {
+      // Destructured for...of on native arrays should have been excluded by
+      // analyzeNativeArrayIneligibility. If we reach here, there is a gap in
+      // the eligibility analysis — throw so it is caught during transpilation.
+      throw new Error(
+        "[native-array] Destructured for...of on a native array reached codegen — " +
+          "this is a bug in analyzeNativeArrayIneligibility. Please file an issue.",
+      );
+    } else {
+      if (!this.symbolTable.hasInCurrentScope(variableName)) {
+        this.symbolTable.addSymbol(variableName, elemType, false, false);
+      }
+      const elemVar = createVariable(variableName, elemType, { isLocal: true });
+      const idxVar = this.newTemp(PrimitiveTypes.int32);
+      const lenVar = this.newTemp(PrimitiveTypes.int32);
+
+      this.instructions.push(
+        new AssignmentInstruction(
+          idxVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(
+        new PropertyGetInstruction(lenVar, iterableOperand, "Length"),
+      );
+
+      const loopStart = this.newLabel("forof_start");
+      const loopEnd = this.newLabel("forof_end");
+      this.instructions.push(new LabelInstruction(loopStart));
+
+      const condVar = this.newTemp(PrimitiveTypes.boolean);
+      this.instructions.push(
+        new BinaryOpInstruction(condVar, idxVar, "<", lenVar),
+      );
+      this.instructions.push(new ConditionalJumpInstruction(condVar, loopEnd));
+
+      const elemTemp = this.newTemp(elemType);
+      this.instructions.push(
+        new ArrayAccessInstruction(elemTemp, iterableOperand, idxVar),
+      );
+      this.instructions.push(new AssignmentInstruction(elemVar, elemTemp));
+
+      const loopIncrement = this.newLabel("forof_native_continue");
+      this.loopContextStack.push({
+        breakLabel: loopEnd,
+        continueLabel: loopIncrement,
+      });
+      this.visitStatement(node.body);
+      this.loopContextStack.pop();
+
+      this.instructions.push(new LabelInstruction(loopIncrement));
+      const nextIdx = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new BinaryOpInstruction(
+          nextIdx,
+          idxVar,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      this.instructions.push(new AssignmentInstruction(idxVar, nextIdx));
+      this.instructions.push(new UnconditionalJumpInstruction(loopStart));
+      this.instructions.push(new LabelInstruction(loopEnd));
+      return;
+    }
+  }
 
   // Infer the element type from the iterable's operand type first, then
   // fall back to the AST-resolved type. The latter recovers the element
@@ -1708,6 +1808,10 @@ export function visitClassDeclaration(
     if (tryCounterBeforeMethod === undefined) {
       tryCounterBeforeMethod = this.tryCounter;
     }
+    // Pre-scan the method body to identify variables ineligible for native arrays.
+    this.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+      method.body.statements,
+    );
     this.visitBlockStatement(method.body);
     // Assert that countSelfCalls and code-gen agree on the number of self-calls.
     // Only meaningful for entry-point classes where JUMP-based dispatch is used

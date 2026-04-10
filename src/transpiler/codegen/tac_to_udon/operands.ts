@@ -1,5 +1,6 @@
 import {
   ArrayTypeSymbol,
+  NativeArrayTypeSymbol,
   type TypeSymbol,
 } from "../../frontend/type_symbols.js";
 import { UdonType } from "../../frontend/types.js";
@@ -23,6 +24,10 @@ import type { TACToUdonConverter } from "./converter.js";
  * ArrayTypeSymbol uses DataList in Udon, not the raw "Array" udonType.
  */
 function resolveHeapType(typeSymbol: TypeSymbol): string {
+  // Native array: use the specific Udon type name (e.g. "SystemSingleArray").
+  if (typeSymbol instanceof NativeArrayTypeSymbol) {
+    return typeSymbol.nativeUdonTypeName;
+  }
   if (
     typeSymbol instanceof ArrayTypeSymbol ||
     (typeSymbol.name ?? "").endsWith("[]")
@@ -38,6 +43,27 @@ export function pushOperand(
 ): void {
   const addr = this.getOperandAddress(operand);
   this.instructions.push(new PushInstruction(addr));
+}
+
+/**
+ * Allocate a primitive constant on the heap (if not already present) and push it.
+ * @param value - The constant value (number, boolean, string, etc.)
+ * @param typeName - The Udon type name (e.g. "Int32", "Boolean")
+ */
+export function pushConstant(
+  this: TACToUdonConverter,
+  value: unknown,
+  typeName: string,
+): void {
+  const key = this.getConstantKey(value, typeName);
+  if (!this.constantAddresses.has(key)) {
+    const addr = this.nextAddress++;
+    this.constantAddresses.set(key, addr);
+    this.constantTypes.set(key, typeName);
+  }
+  const addr = this.constantAddresses.get(key) as number;
+  const name = `__const_${addr}_System${typeName}`;
+  this.instructions.push(new PushInstruction(name));
 }
 
 export function getOperandAddress(
@@ -99,6 +125,10 @@ export function getOperandTypeName(
     case TACOperandKind.Constant:
     case TACOperandKind.Temporary: {
       const typeSymbol = (operand as unknown as { type: TypeSymbol }).type;
+      // Native array: return the typed Udon array name (e.g. "SystemSingleArray").
+      if (typeSymbol instanceof NativeArrayTypeSymbol) {
+        return typeSymbol.nativeUdonTypeName;
+      }
       // Current lowering policy represents TypeScript arrays as DataList in
       // generated UASM, even though native typed arrays exist in Udon.
       if (

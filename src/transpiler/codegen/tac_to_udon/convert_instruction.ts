@@ -1,4 +1,7 @@
+import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
 import {
+  type ArrayAccessInstruction as TACArrayAccessInstruction,
+  type ArrayAssignmentInstruction as TACArrayAssignmentInstruction,
   type AssignmentInstruction as TACAssignmentInstruction,
   type BinaryOpInstruction as TACBinaryOpInstruction,
   type CallInstruction as TACCallInstruction,
@@ -15,11 +18,12 @@ import {
   type UnaryOpInstruction as TACUnaryOpInstruction,
   type UnconditionalJumpInstruction as TACUnconditionalJumpInstruction,
 } from "../../ir/tac_instruction.js";
-import type {
-  ConstantOperand,
-  LabelOperand,
-  TemporaryOperand,
-  VariableOperand,
+import {
+  type ConstantOperand,
+  type LabelOperand,
+  TACOperandKind,
+  type TemporaryOperand,
+  type VariableOperand,
 } from "../../ir/tac_operand.js";
 import { resolveExternSignature } from "../extern_signatures.js";
 import {
@@ -31,6 +35,10 @@ import {
   LabelInstruction,
   PushInstruction,
 } from "../udon_instruction.js";
+import {
+  generateExternSignature,
+  mapTypeScriptToCSharp,
+} from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
 export function convertInstruction(
@@ -255,7 +263,42 @@ export function convertInstruction(
         | TemporaryOperand;
       const operandType = operandOp.type?.udonType ?? "Single";
 
-      if (unInst.operator === "!" && operandType !== "Boolean") {
+      if (unInst.operator === "!" && operandType === "String") {
+        // String truthiness: !str <==> str.Length == 0
+        // (length == 0 directly gives !str result, no separate negation needed)
+
+        // Step 1: Get string length → Int32 temp
+        this.pushOperand(unInst.operand);
+        const lenTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(lenTmpName, this.nextAddress++);
+        this.variableTypes.set(lenTmpName, "Int32");
+        this.instructions.push(new PushInstruction(lenTmpName));
+        const getLengthSig = "SystemString.__get_Length__SystemInt32";
+        this.externSignatures.add(getLengthSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(getLengthSig), true),
+        );
+
+        // Step 2: Compare length == 0 → dest (Boolean)
+        this.instructions.push(new PushInstruction(lenTmpName));
+        this.pushConstant(0, "Int32");
+        const destAddr = this.getOperandAddress(unInst.dest);
+        this.instructions.push(new PushInstruction(destAddr));
+        // The TAC dest inherits String type from the operand; override to Boolean
+        if (unInst.dest.kind === TACOperandKind.Temporary) {
+          this.tempTypes.set((unInst.dest as TemporaryOperand).id, "Boolean");
+        } else if (unInst.dest.kind === TACOperandKind.Variable) {
+          const varName = this.normalizeVariableName(
+            (unInst.dest as VariableOperand).name,
+          );
+          this.variableTypes.set(varName, "Boolean");
+        }
+        const eqSig = this.getExternForBinaryOp("==", "Int32");
+        this.externSignatures.add(eqSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(eqSig), true),
+        );
+      } else if (unInst.operator === "!" && operandType !== "Boolean") {
         // Need to coerce to Boolean first, then negate
         // Step 1: Convert to Boolean (needs intermediate temp)
         this.pushOperand(unInst.operand);
@@ -594,15 +637,62 @@ export function convertInstruction(
       break;
     }
 
-    case TACInstructionKind.ArrayAccess:
-    case TACInstructionKind.ArrayAssignment:
-      // These instructions should no longer be generated after the
-      // SystemArray → DataList migration. All array operations now use
-      // DataList get_Item/set_Item via MethodCallInstruction.
-      throw new Error(
-        "ArrayAccess/ArrayAssignment instructions should not be generated. " +
-          "All array operations must use DataList get_Item/set_Item.",
+    case TACInstructionKind.ArrayAccess: {
+      // Native typed-array element read: {ArrayType}.__Get__SystemInt32__{ElementType}
+      const arrAccess = inst as TACArrayAccessInstruction;
+      const arrType = (arrAccess.array as unknown as { type: unknown }).type;
+      if (!(arrType instanceof NativeArrayTypeSymbol)) {
+        throw new Error(
+          "ArrayAccess instruction requires a NativeArrayTypeSymbol operand. " +
+            "Use DataList get_Item/set_Item for all other arrays.",
+        );
+      }
+      const csharpElem = mapTypeScriptToCSharp(arrType.elementType.name);
+      const csharpArr = `${csharpElem}[]`;
+      const getExternSig = generateExternSignature(
+        csharpArr,
+        "Get",
+        ["System.Int32"],
+        csharpElem,
       );
+      this.pushOperand(arrAccess.array);
+      this.pushOperand(arrAccess.index);
+      const destAddr = this.getOperandAddress(arrAccess.dest);
+      this.instructions.push(new PushInstruction(destAddr));
+      this.externSignatures.add(getExternSig);
+      this.instructions.push(
+        new ExternInstruction(this.getExternSymbol(getExternSig), true),
+      );
+      break;
+    }
+
+    case TACInstructionKind.ArrayAssignment: {
+      // Native typed-array element write: {ArrayType}.__Set__SystemInt32_{ElementType}__SystemVoid
+      const arrAssign = inst as TACArrayAssignmentInstruction;
+      const arrType = (arrAssign.array as unknown as { type: unknown }).type;
+      if (!(arrType instanceof NativeArrayTypeSymbol)) {
+        throw new Error(
+          "ArrayAssignment instruction requires a NativeArrayTypeSymbol operand. " +
+            "Use DataList get_Item/set_Item for all other arrays.",
+        );
+      }
+      const csharpElem = mapTypeScriptToCSharp(arrType.elementType.name);
+      const csharpArr = `${csharpElem}[]`;
+      const setExternSig = generateExternSignature(
+        csharpArr,
+        "Set",
+        ["System.Int32", csharpElem],
+        "System.Void",
+      );
+      this.pushOperand(arrAssign.array);
+      this.pushOperand(arrAssign.index);
+      this.pushOperand(arrAssign.value);
+      this.externSignatures.add(setExternSig);
+      this.instructions.push(
+        new ExternInstruction(this.getExternSymbol(setExternSig), true),
+      );
+      break;
+    }
 
     case TACInstructionKind.Return: {
       const retInst = inst as TACReturnInstruction;

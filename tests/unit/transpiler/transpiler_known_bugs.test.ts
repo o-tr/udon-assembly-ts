@@ -280,7 +280,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("inline class with number[] field accessed after loop should unwrap via DataList", () => {
+    it("inline class with number[] field accessed after loop should unwrap via DataList", () => {
       // When an inline class has a number[] field and instances are created
       // in a loop, accessing the array field should unwrap the DataToken
       // via .DataList, not .Reference.
@@ -316,7 +316,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("string boolean coercion", () => {
-    it.fails("negating a string should not use SystemConvert.ToBoolean", () => {
+    it("negating a string should not use SystemConvert.ToBoolean", () => {
       // JS: !str is truthy/falsy based on emptiness (non-empty = true).
       // C#: Convert.ToBoolean("hello") throws FormatException.
       // The transpiler should emit a length check or null/empty check
@@ -343,7 +343,7 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
     });
 
-    it.fails("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
+    it("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
       // Pattern from Tile.parse: `if (!rankStr) { ... }`
       // Uses substring (fixed indices) instead of slice to avoid get_Length
       // side-effect from negative-index adjustment.
@@ -374,17 +374,17 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("array index assignment pre-population", () => {
-    it.fails("loop-based index assignment to empty array should use Add instead of set_Item", () => {
+    it("loop-based index assignment to empty array emits bounds-check-and-grow loop", () => {
       // Pattern from Tile.createCounts():
       //   const counts: number[] = [];
       //   for (let i = 0; i < 34; i++) { counts[i] = 0; }
       //
-      // The DataList starts empty. `counts[i] = 0` should use
-      // DataList.Add() (append) rather than DataList.set_Item() (update),
-      // since set_Item at a non-existent index throws IndexOutOfRange.
-      //
-      // Alternatively, the transpiler could detect that the loop fills
-      // sequentially from 0 and pre-populate the DataList.
+      // The DataList starts empty. The transpiler now emits a runtime
+      // bounds-check-and-grow loop before each set_Item: it calls Add to
+      // grow the DataList until Count > index, then set_Item is safe.
+      // Note: counts.length (which compiles to get_Count) is intentionally
+      // absent from this source so that __get_Count__ can only come from the
+      // bounds-check grow loop. counts[0] compiles to get_Item, not get_Count.
       const source = `
           class Main {
             Start(): void {
@@ -393,19 +393,54 @@ describe("known transpiler bugs", () => {
                 counts[i] = 0;
               }
               Debug.Log(counts[0]);
-              Debug.Log(counts.length);
             }
           }
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // After fix: empty array population should use Add (not bare set_Item)
+      // Grow loop: Add is called when the index is out of bounds
       expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
       );
-      expect(result.uasm).not.toContain(
+      // Bounds check: Count is read each iteration of the grow loop
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__get_Count__SystemInt32",
+      );
+      // Actual write: set_Item is called after the list is large enough
+      expect(result.uasm).toContain(
         "VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid",
       );
+    });
+
+    it("index assignment to pre-populated literal array uses native Set (fixed by native-array optimization)", () => {
+      // Previously: [1,2,3] with arr[1]=99 generated DataList with a
+      // bounds-check-and-grow loop (Add + get_Count + set_Item overhead).
+      // Now: constant-length array literals are lowered to native Udon typed
+      // arrays (SystemSingleArray), so index assignment uses __Set__ directly
+      // with no bounds-check overhead.
+      const source = `
+          class Main {
+            Start(): void {
+              const arr: number[] = [1, 2, 3];
+              arr[1] = 99;
+              Debug.Log(arr[1]);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Native array ctor and Set/Get — no DataList or DataToken overhead
+      expect(result.uasm).toContain(
+        "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
+      );
+      expect(result.uasm).toContain(
+        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+      );
+      expect(result.uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
+      expect(result.uasm).not.toContain("VRCSDK3DataDataList");
+      expect(result.uasm).not.toContain("VRCSDK3DataDataToken");
     });
   });
 });

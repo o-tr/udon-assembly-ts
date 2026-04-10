@@ -6,9 +6,11 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  getNativeArrayTypeName,
   getPromotedType,
   InterfaceTypeSymbol,
   mapCSharpTypeToTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -45,6 +47,8 @@ import {
   isPrimitiveFoldValue,
 } from "../../optimizer/passes/constant_folding.js";
 import {
+  ArrayAccessInstruction,
+  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -1074,6 +1078,41 @@ export function visitArrayLiteralExpression(
   const elementType = node.typeHint
     ? this.typeMapper.mapTypeScriptType(node.typeHint)
     : ObjectType;
+
+  // Native fixed-length array path: emit when the variable is eligible and
+  // all elements are non-spread, so the length is known at compile time.
+  if (
+    this.currentNativeArrayVarName !== null &&
+    node.elements.length > 0 &&
+    node.elements.every((e) => e.kind === "element") &&
+    getNativeArrayTypeName(elementType.udonType) !== null
+  ) {
+    const nativeType = new NativeArrayTypeSymbol(elementType);
+    const arrayResult = this.newTemp(nativeType);
+    const ctorSig = this.requireExternSignature(
+      nativeType.nativeUdonTypeName,
+      "ctor",
+      "method",
+      ["int"],
+      nativeType.nativeUdonTypeName,
+    );
+    const lengthConst = createConstant(
+      node.elements.length,
+      PrimitiveTypes.int32,
+    );
+    this.instructions.push(
+      new CallInstruction(arrayResult, ctorSig, [lengthConst]),
+    );
+    for (let i = 0; i < node.elements.length; i++) {
+      const value = this.visitExpression(node.elements[i].value);
+      const idxConst = createConstant(i, PrimitiveTypes.int32);
+      this.instructions.push(
+        new ArrayAssignmentInstruction(arrayResult, idxConst, value),
+      );
+    }
+    return arrayResult;
+  }
+
   const listResult = this.newTemp(new DataListTypeSymbol(elementType));
   const externSig = this.requireExternSignature(
     "DataList",
@@ -1382,6 +1421,24 @@ export function visitArrayAccessExpression(
   const array = this.visitExpression(node.array);
   const index = this.visitExpression(node.index);
   const arrayType = this.getOperandType(array);
+
+  // Native array path: emit ArrayAccessInstruction (no DataToken unwrap needed).
+  if (arrayType instanceof NativeArrayTypeSymbol) {
+    const result = this.newTemp(arrayType.elementType);
+    // Coerce index to Int32 (native array __Get__ expects SystemInt32).
+    let nativeIndex = index;
+    const nativeIndexType = this.getOperandType(index);
+    if (needsInt32IndexCoercion(nativeIndexType.udonType)) {
+      const intIndex = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(new CastInstruction(intIndex, index));
+      nativeIndex = intIndex;
+    }
+    this.instructions.push(
+      new ArrayAccessInstruction(result, array, nativeIndex),
+    );
+    return result;
+  }
+
   if (arrayType instanceof CollectionTypeSymbol) {
     const elementType =
       arrayType.valueType ?? arrayType.elementType ?? PrimitiveTypes.single;
@@ -1970,6 +2027,18 @@ export function visitPropertyAccessExpression(
     }
 
     const objectType = this.getOperandType(object);
+
+    // Native array .length → __get_Length__ (not DataList.Count).
+    if (
+      objectType instanceof NativeArrayTypeSymbol &&
+      node.property === "length"
+    ) {
+      const result = this.newTemp(PrimitiveTypes.int32);
+      this.instructions.push(
+        new PropertyGetInstruction(result, object, "Length"),
+      );
+      return result;
+    }
 
     // Early return for .length on arrays — always int32.
     // Arrays are backed by DataList, so use "Count" property.

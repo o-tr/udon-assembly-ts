@@ -41,6 +41,7 @@ export enum UdonType {
   DataList = "DataList",
   DataDictionary = "DataDictionary",
   DataToken = "DataToken",
+  NativeArray = "NativeArray",
 }
 
 /**

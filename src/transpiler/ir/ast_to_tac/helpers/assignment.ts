@@ -5,6 +5,7 @@ import {
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -20,6 +21,7 @@ import {
   type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
+  ArrayAssignmentInstruction,
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -64,6 +66,21 @@ export function assignToTarget(
       );
       return value;
     }
+    // Native array path: emit ArrayAssignmentInstruction (no DataToken wrapping).
+    if (arrayType instanceof NativeArrayTypeSymbol) {
+      // Coerce index to Int32 (native array __Set__ expects SystemInt32).
+      let nativeIndex = index;
+      const nativeIdxType = this.getOperandType(index);
+      if (needsInt32IndexCoercion(nativeIdxType.udonType)) {
+        const intIndex = this.newTemp(PrimitiveTypes.int32);
+        this.instructions.push(new CastInstruction(intIndex, index));
+        nativeIndex = intIndex;
+      }
+      this.instructions.push(
+        new ArrayAssignmentInstruction(array, nativeIndex, value),
+      );
+      return value;
+    }
     // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
     // is handled above and does not need DataToken wrapping.
@@ -74,6 +91,34 @@ export function assignToTarget(
       this.instructions.push(new CastInstruction(intIndex, index));
       coercedIndex = intIndex;
     }
+    // Bounds-check-and-grow loop: ensure Count > coercedIndex before set_Item.
+    // DataList.set_Item throws IndexOutOfRange if the index does not already
+    // exist, so we grow the list with Add until it is large enough.
+    // DataToken is a C# struct (value type) — DataList.Add copies the value,
+    // so reusing the same heap slot for defaultToken across iterations is safe.
+    const defaultToken = this.wrapDataToken(
+      createConstant(0, PrimitiveTypes.int32),
+    );
+    const dlgrowStart = this.newLabel("dlgrow_start");
+    const dlgrowEnd = this.newLabel("dlgrow_end");
+    this.instructions.push(new LabelInstruction(dlgrowStart));
+    const currentCount = this.newTemp(PrimitiveTypes.int32);
+    this.instructions.push(
+      new PropertyGetInstruction(currentCount, array, "Count"),
+    );
+    const needsGrow = this.newTemp(PrimitiveTypes.boolean);
+    this.instructions.push(
+      new BinaryOpInstruction(needsGrow, currentCount, "<=", coercedIndex),
+    );
+    this.instructions.push(
+      new ConditionalJumpInstruction(needsGrow, dlgrowEnd),
+    );
+    this.instructions.push(
+      new MethodCallInstruction(undefined, array, "Add", [defaultToken]),
+    );
+    this.instructions.push(new UnconditionalJumpInstruction(dlgrowStart));
+    this.instructions.push(new LabelInstruction(dlgrowEnd));
+
     const token = this.wrapDataToken(value);
     this.instructions.push(
       new MethodCallInstruction(undefined, array, "set_Item", [
@@ -348,6 +393,9 @@ export function getArrayElementType(
     if (type instanceof ArrayTypeSymbol) {
       return type.elementType;
     }
+    if (type instanceof NativeArrayTypeSymbol) {
+      return type.elementType;
+    }
   }
   return null;
 }
@@ -483,6 +531,17 @@ export function wrapDataToken(
     value = handle;
     valueType = PrimitiveTypes.int32;
   }
+  // Arrays are DataLists at the Udon VM level. Wrap via DataList constructor
+  // so DataToken stores the correct token type for later .DataList unwrap.
+  if (valueType.udonType === UdonType.Array) {
+    valueType = ExternTypes.dataList;
+  }
+  if (valueType.udonType === UdonType.NativeArray) {
+    throw new Error(
+      `[native-array] wrapDataToken called on NativeArrayTypeSymbol (${valueType.name}). ` +
+        "This is a bug in native array eligibility analysis.",
+    );
+  }
   const token = this.newTemp(ExternTypes.dataToken);
   const externSig = this.requireExternSignature(
     "DataToken",
@@ -537,6 +596,7 @@ export function unwrapDataToken(
         property = "Double";
         break;
       case UdonType.DataList:
+      case UdonType.Array:
         property = "DataList";
         break;
       case UdonType.DataDictionary:
