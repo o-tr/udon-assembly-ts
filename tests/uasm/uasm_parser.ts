@@ -138,5 +138,11 @@ export function parseUasm(text: string): UasmData {
     }
   }
 
+  // Post-loop fixup: resolve any extern references that preceded the data section
+  for (let i = 0; i < externs.length; i++) {
+    const resolved = externVarMap.get(externs[i]);
+    if (resolved) externs[i] = resolved;
+  }
+
   return { variables, exports, externs, instructionCount, syncMode, opcodes };
 }

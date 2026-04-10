@@ -148,7 +148,7 @@ public static class UdonSharpCompileRunner
         foreach (var source in sources)
         {
             // Find the MonoScript (already compiled during startup)
-            var monoScriptPath = $"Assets/{INPUT_SUBDIR}/{source.csFile}";
+            var monoScriptPath = $"Assets/{INPUT_SUBDIR}/{source.className}.cs";
             var monoScript = AssetDatabase.LoadAssetAtPath<MonoScript>(monoScriptPath);
             if (monoScript == null)
             {
