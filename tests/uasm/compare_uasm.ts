@@ -79,14 +79,21 @@ interface CompileResultEntry {
   error: string;
 }
 
+interface UdonSharpCompileResult {
+  uasms: Map<string, Map<string, string>>;
+  errors: Map<string, Map<string, string>>;
+}
+
 function runUdonSharpCompiler(
   cases: TestCase[],
   inputDir: string,
   outputDir: string,
-): Map<string, Map<string, string>> {
+): UdonSharpCompileResult {
   const uasmByName = new Map<string, Map<string, string>>();
+  const errorsByName = new Map<string, Map<string, string>>();
   const casesWithCs = cases.filter((c) => c.csFiles.length > 0);
-  if (casesWithCs.length === 0) return uasmByName;
+  if (casesWithCs.length === 0)
+    return { uasms: uasmByName, errors: errorsByName };
 
   // Write manifest
   const sources = casesWithCs.flatMap((tc) =>
@@ -116,56 +123,57 @@ function runUdonSharpCompiler(
     rmSync(assetsInputDir, { recursive: true, force: true });
   if (existsSync(assetsInputMeta)) rmSync(assetsInputMeta, { force: true });
   mkdirSync(assetsInputDir, { recursive: true });
-  const seenBaseNames = new Set<string>();
-  for (const tc of casesWithCs) {
-    for (const csFile of tc.csFiles) {
-      const baseName = path.basename(csFile);
-      if (seenBaseNames.has(baseName)) {
-        throw new Error(
-          `Duplicate .cs filename "${baseName}" from test case "${tc.name}". ` +
-            "UdonSharp requires unique class names across all test cases.",
-        );
-      }
-      seenBaseNames.add(baseName);
-      copyFileSync(csFile, path.join(assetsInputDir, baseName));
-    }
-  }
 
-  // Run Unity batch mode
   const logFile = path.join(tmpdir(), `uasm-compare-${Date.now()}.log`);
-  const unityArgs = [
-    "-batchmode",
-    "-nographics",
-    "-projectPath",
-    UNITY_PROJECT_PATH,
-    "-executeMethod",
-    "UdonSharpCompileRunner.CompileToUasm",
-    "-udonSharpInputDir",
-    inputDir,
-    "-udonSharpOutputDir",
-    outputDir,
-    "-logFile",
-    logFile,
-    "-quit",
-  ];
-
-  console.log("Running UdonSharp compiler (Unity batch mode)...");
   try {
-    execFileSync(UNITY_EDITOR_PATH, unityArgs, {
-      timeout: 300_000,
-    });
-  } catch (err: unknown) {
-    const spawnError = err as NodeJS.ErrnoException & { status?: number };
-    if (spawnError.code !== undefined && spawnError.status == null) throw err;
-    // Non-zero exit — Unity may still have written results; continue
-    console.warn(
-      `  [UdonSharp] Unity exited with status ${spawnError.status ?? "(unknown)"}, checking for output...`,
-    );
-  }
+    // Copy .cs files (inside try so cleanup runs even on duplicate-name throw)
+    const seenBaseNames = new Set<string>();
+    for (const tc of casesWithCs) {
+      for (const csFile of tc.csFiles) {
+        const baseName = path.basename(csFile);
+        if (seenBaseNames.has(baseName)) {
+          throw new Error(
+            `Duplicate .cs filename "${baseName}" from test case "${tc.name}". ` +
+              "UdonSharp requires unique class names across all test cases.",
+          );
+        }
+        seenBaseNames.add(baseName);
+        copyFileSync(csFile, path.join(assetsInputDir, baseName));
+      }
+    }
 
-  // Read results
-  const resultsPath = path.join(outputDir, "compile_results.json");
-  try {
+    // Run Unity batch mode
+    const unityArgs = [
+      "-batchmode",
+      "-nographics",
+      "-projectPath",
+      UNITY_PROJECT_PATH,
+      "-executeMethod",
+      "UdonSharpCompileRunner.CompileToUasm",
+      "-udonSharpInputDir",
+      inputDir,
+      "-udonSharpOutputDir",
+      outputDir,
+      "-logFile",
+      logFile,
+      "-quit",
+    ];
+
+    console.log("Running UdonSharp compiler (Unity batch mode)...");
+    try {
+      execFileSync(UNITY_EDITOR_PATH, unityArgs, {
+        timeout: 300_000,
+      });
+    } catch (err: unknown) {
+      const spawnError = err as NodeJS.ErrnoException & { status?: number };
+      if (spawnError.code !== undefined && spawnError.status == null) throw err;
+      console.warn(
+        `  [UdonSharp] Unity exited with status ${spawnError.status ?? "(unknown)"}, checking for output...`,
+      );
+    }
+
+    // Read results
+    const resultsPath = path.join(outputDir, "compile_results.json");
     if (!existsSync(resultsPath)) {
       const logContent = existsSync(logFile)
         ? readFileSync(logFile, "utf-8")
@@ -188,6 +196,10 @@ function runUdonSharpCompiler(
         console.error(
           `  [UdonSharp] ${r.name}/${r.className}: ERROR: ${r.error}`,
         );
+        if (!errorsByName.has(r.name)) {
+          errorsByName.set(r.name, new Map());
+        }
+        errorsByName.get(r.name)?.set(r.className, r.error);
         continue;
       }
       const uasmPath = path.join(outputDir, r.uasmFile);
@@ -200,10 +212,18 @@ function runUdonSharpCompiler(
       }
     }
 
-    return uasmByName;
+    return { uasms: uasmByName, errors: errorsByName };
   } finally {
     try {
       rmSync(logFile, { force: true });
+    } catch {
+      /* ignore */
+    }
+    // Clean up Assets/UdonSharpInput regardless of success/failure
+    try {
+      if (existsSync(assetsInputDir))
+        rmSync(assetsInputDir, { recursive: true, force: true });
+      if (existsSync(assetsInputMeta)) rmSync(assetsInputMeta, { force: true });
     } catch {
       /* ignore */
     }
@@ -434,6 +454,7 @@ console.log(
 
 // UdonSharp compilation (Unity required)
 let udonSharpUasms = new Map<string, Map<string, string>>();
+let udonSharpErrors = new Map<string, Map<string, string>>();
 if (UNITY_EDITOR_PATH) {
   const inputDir = path.join(UNITY_PROJECT_PATH, "UdonSharpInput");
   const outputDir = path.join(UNITY_PROJECT_PATH, "UdonSharpOutput");
@@ -444,7 +465,9 @@ if (UNITY_EDITOR_PATH) {
   }
 
   try {
-    udonSharpUasms = runUdonSharpCompiler(cases, inputDir, outputDir);
+    const result = runUdonSharpCompiler(cases, inputDir, outputDir);
+    udonSharpUasms = result.uasms;
+    udonSharpErrors = result.errors;
     console.log(`UdonSharp compiled ${udonSharpUasms.size} UASM(s)`);
   } catch (err) {
     console.error(`UdonSharp compilation failed: ${err}`);
@@ -460,9 +483,23 @@ console.log("Transpiling TypeScript...");
 const tasmUasms = transpileTs(cases);
 
 // Build reports
+function getUsError(
+  usText: string | null,
+  errMap: Map<string, string> | undefined,
+  className?: string,
+): string | null {
+  if (usText !== null) return null;
+  if (!UNITY_EDITOR_PATH) return null;
+  const err = className
+    ? errMap?.get(className)
+    : errMap?.values().next().value;
+  return err ?? "UASM not generated";
+}
+
 const reports: CaseReport[] = cases.flatMap((tc) => {
   const usMap = udonSharpUasms.get(tc.name) ?? new Map<string, string>();
   const tsMap = tasmUasms.get(tc.name) ?? new Map<string, string>();
+  const usErrMap = udonSharpErrors.get(tc.name);
 
   // Collect all class names from both sides
   const allClassNames = new Set([...usMap.keys(), ...tsMap.keys()]);
@@ -475,8 +512,7 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
       name: tc.name,
       udonSharpUasm: usText ? parseUasm(usText) : null,
       tasmUasm: tsText ? parseUasm(tsText) : null,
-      udonSharpError:
-        usText === null && UNITY_EDITOR_PATH ? "UASM not generated" : null,
+      udonSharpError: getUsError(usText, usErrMap),
       tasmError: tsText === null ? "UASM not generated" : null,
     };
   }
@@ -489,8 +525,7 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
       name: `${tc.name}/${className}`,
       udonSharpUasm: usText ? parseUasm(usText) : null,
       tasmUasm: tsText ? parseUasm(tsText) : null,
-      udonSharpError:
-        usText === null && UNITY_EDITOR_PATH ? "UASM not generated" : null,
+      udonSharpError: getUsError(usText, usErrMap, className),
       tasmError: tsText === null ? "UASM not generated" : null,
     };
   });
