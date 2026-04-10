@@ -131,6 +131,9 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+      expect(result.uasm).toContain(
+        "SystemStringArray.__Get__SystemInt32__SystemString",
+      );
     });
 
     it("does not use DataToken.get_Reference for number array literal for-of", () => {
@@ -148,6 +151,9 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).toBeDefined();
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
       );
     });
 
@@ -169,6 +175,9 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).toBeDefined();
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "SystemStringArray.__Get__SystemInt32__SystemString",
       );
     });
 

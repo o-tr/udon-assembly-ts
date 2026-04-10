@@ -3,6 +3,7 @@ import {
   ArrayTypeSymbol,
   InterfaceTypeSymbol,
   ObjectType,
+  PrimitiveTypeSymbol,
   PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
@@ -265,7 +266,7 @@ export function visitVariableStatement(
         typeHint = declaration.type.getText().replace(/\[\]$/, "");
       } else if (
         type instanceof ArrayTypeSymbol &&
-        type.elementType !== ObjectType
+        type.elementType instanceof PrimitiveTypeSymbol
       ) {
         typeHint = type.elementType.name;
       }
