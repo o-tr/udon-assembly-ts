@@ -15,8 +15,8 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -112,9 +112,14 @@ function runUdonSharpCompiler(
   // Copy .cs files into Assets/UdonSharpInput/ BEFORE Unity starts so they are
   // compiled during Unity's startup domain reload (AssetDatabase.Refresh() in
   // batch mode does NOT trigger a domain reload for new scripts).
-  const assetsInputDir = path.join(UNITY_PROJECT_PATH, "Assets", "UdonSharpInput");
+  const assetsInputDir = path.join(
+    UNITY_PROJECT_PATH,
+    "Assets",
+    "UdonSharpInput",
+  );
   const assetsInputMeta = `${assetsInputDir}.meta`;
-  if (existsSync(assetsInputDir)) rmSync(assetsInputDir, { recursive: true, force: true });
+  if (existsSync(assetsInputDir))
+    rmSync(assetsInputDir, { recursive: true, force: true });
   if (existsSync(assetsInputMeta)) rmSync(assetsInputMeta, { force: true });
   mkdirSync(assetsInputDir, { recursive: true });
   for (const tc of casesWithCs) {
@@ -184,7 +189,9 @@ function runUdonSharpCompiler(
 
   try {
     rmSync(logFile, { force: true });
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return uasmByName;
 }
@@ -303,10 +310,7 @@ function printReport(reports: CaseReport[]) {
       [...new Set(us.externs)],
       [...new Set(ts.externs)],
     );
-    if (
-      externsDiff.onlyInA.length === 0 &&
-      externsDiff.onlyInB.length === 0
-    ) {
+    if (externsDiff.onlyInA.length === 0 && externsDiff.onlyInB.length === 0) {
       console.log(`  Externs:  MATCH (${us.externs.length} unique signatures)`);
     } else {
       console.log("  Externs:  DIFF");
@@ -323,15 +327,23 @@ function printReport(reports: CaseReport[]) {
     const tsTypes = ts.variables.map((v) => v.type).sort();
     const typesDiff = setDiff(usTypes, tsTypes);
     if (typesDiff.onlyInA.length === 0 && typesDiff.onlyInB.length === 0) {
-      console.log(
-        `  Data vars: MATCH (${us.variables.length} vars, same types)`,
-      );
+      if (us.variables.length !== ts.variables.length) {
+        console.log(
+          `  Data vars: MATCH types, DIFF count  UdonSharp=${us.variables.length}  TASM=${ts.variables.length}`,
+        );
+      } else {
+        console.log(
+          `  Data vars: MATCH (${us.variables.length} vars, same types)`,
+        );
+      }
     } else {
       console.log(
         `  Data vars: DIFF  UdonSharp=${us.variables.length}  TASM=${ts.variables.length}`,
       );
       if (typesDiff.onlyInA.length > 0)
-        console.log(`    + only UdonSharp types: ${typesDiff.onlyInA.join(", ")}`);
+        console.log(
+          `    + only UdonSharp types: ${typesDiff.onlyInA.join(", ")}`,
+        );
       if (typesDiff.onlyInB.length > 0)
         console.log(`    + only TASM types: ${typesDiff.onlyInB.join(", ")}`);
     }
@@ -353,10 +365,7 @@ function printReport(reports: CaseReport[]) {
       [...new Set(us.opcodes)],
       [...new Set(ts.opcodes)],
     );
-    if (
-      opcodesDiff.onlyInA.length === 0 &&
-      opcodesDiff.onlyInB.length === 0
-    ) {
+    if (opcodesDiff.onlyInA.length === 0 && opcodesDiff.onlyInB.length === 0) {
       console.log("  Opcodes:  MATCH (same instruction types used)");
     } else {
       if (opcodesDiff.onlyInA.length > 0)
@@ -415,21 +424,38 @@ console.log("Transpiling TypeScript...");
 const tasmUasms = transpileTs(cases);
 
 // Build reports
-const reports: CaseReport[] = cases.map((tc) => {
-  // UdonSharp: one entry per case name (may have multiple classes, take first)
+const reports: CaseReport[] = cases.flatMap((tc) => {
   const usText = udonSharpUasms.get(tc.name) ?? null;
-
-  // TASM: one entry per class; for single-class cases use the first
   const tsMap = tasmUasms.get(tc.name) ?? new Map();
-  const tsText = tsMap.size > 0 ? [...tsMap.values()][0] : null;
 
-  return {
-    name: tc.name,
-    udonSharpUasm: usText ? parseUasm(usText) : null,
-    tasmUasm: tsText ? parseUasm(tsText) : null,
-    udonSharpError: usText === null && UNITY_EDITOR_PATH ? "UASM not generated" : null,
-    tasmError: tsText === null ? "UASM not generated" : null,
-  };
+  if (tsMap.size <= 1) {
+    // Single-class case (or no TS output)
+    const tsText = tsMap.size > 0 ? [...tsMap.values()][0] : null;
+    return {
+      name: tc.name,
+      udonSharpUasm: usText ? parseUasm(usText) : null,
+      tasmUasm: tsText ? parseUasm(tsText) : null,
+      udonSharpError:
+        usText === null && UNITY_EDITOR_PATH ? "UASM not generated" : null,
+      tasmError: tsText === null ? "UASM not generated" : null,
+    };
+  }
+
+  // Multi-class case: emit one report per class.
+  // UdonSharp comparison is skipped because the UdonSharp UASM map is keyed
+  // by case name (not class name), so we can't match class-to-class.
+  return [...tsMap.entries()].map(([className, tsText]) => ({
+    name: `${tc.name}/${className}`,
+    udonSharpUasm: null,
+    tasmUasm: parseUasm(tsText),
+    udonSharpError:
+      usText !== null
+        ? "multi-class: per-class comparison not supported"
+        : usText === null && UNITY_EDITOR_PATH
+          ? "UASM not generated"
+          : null,
+    tasmError: null,
+  }));
 });
 
 printReport(reports);

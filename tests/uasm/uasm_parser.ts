@@ -38,8 +38,16 @@ export function parseUasm(text: string): UasmData {
   let inData = false;
   let inCode = false;
 
-  for (const line of lines) {
-    if (!line || line.startsWith("//") || line.startsWith("#")) continue;
+  for (const rawLine of lines) {
+    if (!rawLine || rawLine.startsWith("//") || rawLine.startsWith("#"))
+      continue;
+    // Strip trailing comments outside of quoted strings
+    let line = rawLine;
+    const trailingComment = line.match(/^([^"]*(?:"[^"]*"[^"]*)*)\/\//);
+    if (trailingComment) {
+      line = trailingComment[1].trim();
+      if (!line) continue;
+    }
 
     if (line === ".data_start") {
       inData = true;
@@ -115,8 +123,7 @@ export function parseUasm(text: string): UasmData {
 
       // Extract extern signatures
       if (opcode === "EXTERN") {
-        const operandRaw =
-          commaIdx >= 0 ? line.slice(commaIdx + 1).trim() : "";
+        const operandRaw = commaIdx >= 0 ? line.slice(commaIdx + 1).trim() : "";
         // Handle both inline string: "SomeSig" and variable reference: __extern_N
         if (operandRaw.startsWith('"')) {
           const sig = operandRaw.replace(/^"(.*)"$/, "$1").trim();

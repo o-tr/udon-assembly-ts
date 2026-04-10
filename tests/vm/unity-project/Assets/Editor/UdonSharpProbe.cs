@@ -14,7 +14,7 @@ using UnityEngine;
 /// Usage (batch mode):
 ///   Unity -batchmode -nographics -projectPath <path>
 ///         -executeMethod UdonSharpProbe.Run
-///         -probeInputDir <dir>   (directory containing test.cs + probe_input.json)
+///         -probeInputDir <dir>   (directory containing *.cs + probe_input.json)
 ///         -probeOutputDir <dir>  (where probe_results.json will be written)
 ///         -logFile <log> -quit
 /// </summary>
@@ -74,11 +74,12 @@ public static class UdonSharpProbe
             Debug.LogException(e);
         }
 
-        // Step 2: Compile test.cs and attempt UASM extraction
-        var csSourcePath = Path.Combine(inputDir, "test.cs");
-        if (File.Exists(csSourcePath))
+        // Step 2: Compile any .cs files and attempt UASM extraction
+        var csFiles = Directory.GetFiles(inputDir, "*.cs");
+        var csSourcePath = csFiles.Length > 0 ? csFiles[0] : null;
+        if (csSourcePath != null)
         {
-            log.Add("=== Step 2: Compilation attempt ===");
+            log.Add($"=== Step 2: Compilation attempt ({Path.GetFileName(csSourcePath)}) ===");
             try
             {
                 CompileAndExtract(csSourcePath, result, log, errors);
@@ -96,7 +97,7 @@ public static class UdonSharpProbe
         }
         else
         {
-            log.Add($"No test.cs found at {csSourcePath}, skipping compilation step");
+            log.Add($"No .cs files found in {inputDir}, skipping compilation step");
         }
 
         result.errors = errors.ToArray();

@@ -1,7 +1,7 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class FibonacciTest extends UdonSharpBehaviour {

@@ -31,8 +31,8 @@ if (!UNITY_EDITOR_PATH) {
   process.exit(1);
 }
 
-// Locate a test.cs file from the sample directory
-const sampleCsPath = path.join(SAMPLES_DIR, "simple", "test.cs");
+// Locate a sample .cs file from the sample directory
+const sampleCsPath = path.join(SAMPLES_DIR, "simple", "UdonSharpTest.cs");
 
 const inputDir = path.join(UNITY_PROJECT_PATH, "ProbeInput");
 const outputDir = path.join(UNITY_PROJECT_PATH, "ProbeOutput");
@@ -43,12 +43,15 @@ for (const dir of [inputDir, outputDir]) {
   mkdirSync(dir, { recursive: true });
 }
 
-// Copy the test.cs to probe input
+// Copy the sample .cs to probe input (filename must match the class name for UdonSharp)
+const sampleCsName = path.basename(sampleCsPath);
 if (existsSync(sampleCsPath)) {
-  copyFileSync(sampleCsPath, path.join(inputDir, "test.cs"));
-  console.log(`Using test.cs from: ${sampleCsPath}`);
+  copyFileSync(sampleCsPath, path.join(inputDir, sampleCsName));
+  console.log(`Using ${sampleCsName} from: ${sampleCsPath}`);
 } else {
-  console.warn(`No test.cs found at ${sampleCsPath}, skipping compilation step`);
+  console.warn(
+    `No ${sampleCsName} found at ${sampleCsPath}, skipping compilation step`,
+  );
 }
 
 // Run Unity batch mode
@@ -127,10 +130,16 @@ const results: ProbeResults = JSON.parse(rawJson);
 
 console.log("\n=== UdonSharp Probe Results ===\n");
 console.log(`UdonSharp available:          ${results.udonSharpAvailable}`);
-console.log(`UdonSharp types found:        ${results.udonSharpTypes?.length ?? 0}`);
-console.log(`Compiler-related types:       ${results.compilerTypes?.length ?? 0}`);
+console.log(
+  `UdonSharp types found:        ${results.udonSharpTypes?.length ?? 0}`,
+);
+console.log(
+  `Compiler-related types:       ${results.compilerTypes?.length ?? 0}`,
+);
 console.log(`udonAssembly field exists:    ${results.udonAssemblyFieldExists}`);
-console.log(`udonAssembly field populated: ${results.udonAssemblyFieldPopulated}`);
+console.log(
+  `udonAssembly field populated: ${results.udonAssemblyFieldPopulated}`,
+);
 console.log(`IUdonProgram obtained:        ${results.iUdonProgramObtained}`);
 
 if (results.compilerTypes?.length > 0) {
@@ -162,9 +171,13 @@ if (results.udonAssemblyFieldPopulated) {
   console.log("✓ Phase 1A: Use udonAssembly field reading approach");
 } else if (results.iUdonProgramObtained) {
   console.log("→ Phase 1B: Implement IUdonProgram disassembler");
-  console.log("  IUdonProgram was obtained — design disassembler based on the dump above");
+  console.log(
+    "  IUdonProgram was obtained — design disassembler based on the dump above",
+  );
 } else if (!results.udonSharpAvailable) {
-  console.log("✗ UdonSharp not available — check SDK installation and asmdef references");
+  console.log(
+    "✗ UdonSharp not available — check SDK installation and asmdef references",
+  );
 } else {
   console.log("? UdonSharp is available but UASM extraction path is unclear");
   console.log("  Review the log above and check compiler type methods");
@@ -173,6 +186,8 @@ if (results.udonAssemblyFieldPopulated) {
 // Cleanup log file
 try {
   rmSync(logFile, { force: true });
-} catch { /* ignore */ }
+} catch {
+  /* ignore */
+}
 
 console.log(`\nFull results saved to: ${resultsPath}`);
