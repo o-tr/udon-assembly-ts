@@ -115,7 +115,7 @@ describe("string / for-of / null-check regressions", () => {
   });
 
   describe("Bug 2: inferred array for-of uses DataToken.get_Reference", () => {
-    it("string array literal for-of uses get_Reference", () => {
+    it("does not use DataToken.get_Reference for string array literal for-of", () => {
       const source = `
         class Main {
           Start(): void {
@@ -133,7 +133,7 @@ describe("string / for-of / null-check regressions", () => {
       );
     });
 
-    it("number array literal for-of uses get_Reference", () => {
+    it("does not use DataToken.get_Reference for number array literal for-of", () => {
       const source = `
         class Main {
           Start(): void {
@@ -151,7 +151,7 @@ describe("string / for-of / null-check regressions", () => {
       );
     });
 
-    it("inline class method for-of uses get_Reference", () => {
+    it("does not use DataToken.get_Reference for inline class method for-of", () => {
       const source = `
         class Evaluator {
           build(): void {

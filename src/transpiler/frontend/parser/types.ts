@@ -416,9 +416,9 @@ export function inferType(
       const arr = node as ts.ArrayLiteralExpression;
       let commonType: TypeSymbol | null = null;
       for (const elem of arr.elements) {
-        if (ts.isSpreadElement(elem)) continue;
+        if (ts.isSpreadElement(elem)) return new ArrayTypeSymbol(ObjectType);
         const elemType = this.inferType(elem);
-        if (elemType === ObjectType) continue;
+        if (elemType === ObjectType) return new ArrayTypeSymbol(ObjectType);
         if (commonType === null) {
           commonType = elemType;
         } else if (
