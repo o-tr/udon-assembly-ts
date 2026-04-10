@@ -396,12 +396,9 @@ public static class UdonSharpCompileRunner
                 }
 
                 // Try to wait for the async task via WaitForCompile
-                if (compilerType != null)
-                {
-                    var waitForCompile = compilerType.GetMethod("WaitForCompile",
-                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                    waitForCompile?.Invoke(null, null);
-                }
+                var waitForCompile = compilerType.GetMethod("WaitForCompile",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                waitForCompile?.Invoke(null, null);
 
                 Debug.Log("[UdonSharpCompileRunner] CompileAllCsPrograms() completed");
                 return true;

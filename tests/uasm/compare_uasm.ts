@@ -532,9 +532,8 @@ function getUsError(
 ): string | null {
   if (usText !== null) return null;
   if (!UNITY_EDITOR_PATH) return null;
-  const err = className
-    ? errMap?.get(className)
-    : errMap?.values().next().value;
+  if (!errMap) return "no compile result entry";
+  const err = className ? errMap.get(className) : errMap.values().next().value;
   return err ?? "UASM not generated";
 }
 
