@@ -143,6 +143,7 @@ function runUdonSharpCompiler(
     }
 
     // Run Unity batch mode
+    const UNITY_TIMEOUT_MS = 300_000;
     const unityArgs = [
       "-batchmode",
       "-nographics",
@@ -162,10 +163,18 @@ function runUdonSharpCompiler(
     console.log("Running UdonSharp compiler (Unity batch mode)...");
     try {
       execFileSync(UNITY_EDITOR_PATH, unityArgs, {
-        timeout: 300_000,
+        timeout: UNITY_TIMEOUT_MS,
       });
     } catch (err: unknown) {
-      const spawnError = err as NodeJS.ErrnoException & { status?: number };
+      const spawnError = err as NodeJS.ErrnoException & {
+        status?: number;
+        killed?: boolean;
+      };
+      if (spawnError.killed) {
+        throw new Error(
+          `Unity process timed out after ${UNITY_TIMEOUT_MS / 1000}s`,
+        );
+      }
       if (spawnError.code !== undefined && spawnError.status == null) throw err;
       console.warn(
         `  [UdonSharp] Unity exited with status ${spawnError.status ?? "(unknown)"}, checking for output...`,

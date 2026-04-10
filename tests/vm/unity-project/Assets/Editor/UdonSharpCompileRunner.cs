@@ -186,7 +186,7 @@ public static class UdonSharpCompileRunner
         // Step 2: Trigger compilation (needed even after startup compilation,
         // in case GetUASMStr was not populated during initial load)
         Debug.Log("[UdonSharpCompileRunner] Triggering UdonSharp compilation...");
-        TriggerCompilation(programAssetType);
+        var compilationSucceeded = TriggerCompilation(programAssetType);
 
         // Step 5: Extract UASM via UdonSharpEditorCache.GetUASMStr
         var results = new List<CompileResultEntry>();
@@ -200,6 +200,13 @@ public static class UdonSharpCompileRunner
                 uasmFile = $"{source.className}.uasm",
                 error = "",
             };
+
+            if (!compilationSucceeded)
+            {
+                entry.error = "All UdonSharp compilation approaches failed (see Unity log)";
+                results.Add(entry);
+                continue;
+            }
 
             if (!programAssets.TryGetValue($"{source.name}|{source.className}", out var asset))
             {
@@ -294,7 +301,7 @@ public static class UdonSharpCompileRunner
         return AssetDatabase.LoadAssetAtPath(assetPath, programAssetType);
     }
 
-    private static void TriggerCompilation(Type programAssetType)
+    private static bool TriggerCompilation(Type programAssetType)
     {
         // Use UdonSharpCompilerV1.CompileSync() which starts the async compile and waits for
         // completion. CompileSync calls WaitForCompile() after Compile(), and WaitForCompile()
@@ -319,7 +326,7 @@ public static class UdonSharpCompileRunner
                     }
                     compileSync.Invoke(null, paramInfos.Length > 0 ? new[] { options } : null);
                     Debug.Log("[UdonSharpCompileRunner] CompileSync() completed");
-                    return;
+                    return true;
                 }
                 catch (Exception e)
                 {
@@ -343,7 +350,7 @@ public static class UdonSharpCompileRunner
                     compile.Invoke(null, paramInfos.Length > 0 ? new[] { options } : null);
                     waitForCompile.Invoke(null, null);
                     Debug.Log("[UdonSharpCompileRunner] Compile() + WaitForCompile() completed");
-                    return;
+                    return true;
                 }
                 catch (Exception e)
                 {
@@ -389,7 +396,7 @@ public static class UdonSharpCompileRunner
                 }
 
                 Debug.Log("[UdonSharpCompileRunner] CompileAllCsPrograms() completed");
-                return;
+                return true;
             }
             catch (Exception e)
             {
@@ -398,6 +405,7 @@ public static class UdonSharpCompileRunner
         }
 
         Debug.LogWarning("[UdonSharpCompileRunner] All compilation approaches exhausted");
+        return false;
     }
 
     private static object TryCreateCompileOptions(Type optionsType)
