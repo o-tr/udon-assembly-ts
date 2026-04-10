@@ -41,6 +41,10 @@ import {
   type UpdateExpressionNode,
 } from "../../../frontend/types.js";
 import {
+  evaluateCastValue,
+  isPrimitiveFoldValue,
+} from "../../optimizer/passes/constant_folding.js";
+import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
@@ -63,10 +67,6 @@ import {
   type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
-import {
-  evaluateCastValue,
-  isPrimitiveFoldValue,
-} from "../../optimizer/passes/constant_folding.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { emitArrayConcat } from "../helpers/assignment.js";
 import {
@@ -2351,6 +2351,30 @@ const NUMERIC_UDON_TYPES = new Set([
   UdonType.Double,
 ]);
 
+const FLOAT_UDON_TYPES = new Set([UdonType.Single, UdonType.Double]);
+
+/** Range bounds for integer types where evaluateCastValue does not clamp. */
+const INTEGER_RANGE: Partial<Record<string, [number, number]>> = {
+  Byte: [0, 255],
+  SByte: [-128, 127],
+  Int16: [-32768, 32767],
+  UInt16: [0, 65535],
+  Int32: [-2147483648, 2147483647],
+  UInt32: [0, 4294967295],
+};
+
+function canFoldNumericLiteral(
+  value: number | string | boolean | bigint,
+  targetUdonType: string,
+): boolean {
+  if (typeof value !== "number") return true;
+  if (!Number.isFinite(value)) return false;
+  const range = INTEGER_RANGE[targetUdonType];
+  if (!range) return true;
+  const trunc = Math.trunc(value);
+  return trunc >= range[0] && trunc <= range[1];
+}
+
 export function visitAsExpression(
   this: ASTToTACConverter,
   node: AsExpressionNode,
@@ -2372,12 +2396,19 @@ export function visitAsExpression(
   ) {
     // Fold constant numeric casts at compile time (e.g. `0 as UdonInt`
     // becomes a direct %SystemInt32 constant instead of 3 extern calls).
-    if (operand.kind === TACOperandKind.Constant) {
+    // Skip float→float casts (e.g. Single→Double) because JS number (f64)
+    // does not round-trip through f32, causing a precision mismatch.
+    if (
+      operand.kind === TACOperandKind.Constant &&
+      !(
+        FLOAT_UDON_TYPES.has(srcType.udonType) &&
+        FLOAT_UDON_TYPES.has(targetTypeSymbol.udonType)
+      )
+    ) {
       const srcConst = operand as ConstantOperand;
       if (
-        srcConst.value !== null &&
         isPrimitiveFoldValue(srcConst.value) &&
-        (typeof srcConst.value !== "number" || Number.isFinite(srcConst.value))
+        canFoldNumericLiteral(srcConst.value, targetTypeSymbol.udonType)
       ) {
         const foldedValue = evaluateCastValue(srcConst.value, targetTypeSymbol);
         if (foldedValue !== null) {
