@@ -292,7 +292,15 @@ public static class UdonSharpCompileRunner
 
         // Save to AssetDatabase so it can be compiled
         var assetPath = $"Assets/{INPUT_SUBDIR}/{source.className}.asset";
-        AssetDatabase.CreateAsset(asset, assetPath);
+        try
+        {
+            AssetDatabase.CreateAsset(asset, assetPath);
+        }
+        catch
+        {
+            UnityEngine.Object.DestroyImmediate(asset);
+            throw;
+        }
         AssetDatabase.SaveAssets();
         createdAssets.Add(assetPath);
         Debug.Log($"[UdonSharpCompileRunner] Created program asset at {assetPath}");

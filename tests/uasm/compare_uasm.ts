@@ -63,7 +63,7 @@ function discoverTestCases(): TestCase[] {
           .filter((f) => f.endsWith(".cs"))
           .map((f) => path.join(sampleDir, f)),
         tsFiles: files
-          .filter((f) => f.endsWith(".ts"))
+          .filter((f) => f.endsWith(".ts") && !f.endsWith(".d.ts"))
           .map((f) => path.join(sampleDir, f)),
       };
     })
