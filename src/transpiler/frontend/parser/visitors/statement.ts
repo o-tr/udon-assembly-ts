@@ -3,6 +3,7 @@ import {
   ArrayTypeSymbol,
   InterfaceTypeSymbol,
   ObjectType,
+  PrimitiveTypeSymbol,
   PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
@@ -260,9 +261,15 @@ export function visitVariableStatement(
 
   if (declaration.initializer) {
     if (ts.isArrayLiteralExpression(declaration.initializer)) {
-      const typeHint = declaration.type
-        ? declaration.type.getText().replace(/\[\]$/, "")
-        : undefined;
+      let typeHint: string | undefined;
+      if (declaration.type) {
+        typeHint = declaration.type.getText().replace(/\[\]$/, "");
+      } else if (
+        type instanceof ArrayTypeSymbol &&
+        type.elementType instanceof PrimitiveTypeSymbol
+      ) {
+        typeHint = type.elementType.name;
+      }
       result.initializer = this.visitArrayLiteralExpression(
         declaration.initializer,
         typeHint,

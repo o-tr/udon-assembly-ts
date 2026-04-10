@@ -412,6 +412,24 @@ export function inferType(
       }
       return this.typeMapper.mapTypeScriptType("number");
     }
+    case ts.SyntaxKind.ArrayLiteralExpression: {
+      const arr = node as ts.ArrayLiteralExpression;
+      let commonType: TypeSymbol | null = null;
+      for (const elem of arr.elements) {
+        if (ts.isSpreadElement(elem)) return new ArrayTypeSymbol(ObjectType);
+        const elemType = this.inferType(elem);
+        if (elemType === ObjectType) return new ArrayTypeSymbol(ObjectType);
+        if (commonType === null) {
+          commonType = elemType;
+        } else if (
+          commonType.name !== elemType.name ||
+          commonType.udonType !== elemType.udonType
+        ) {
+          return new ArrayTypeSymbol(ObjectType);
+        }
+      }
+      return new ArrayTypeSymbol(commonType ?? ObjectType);
+    }
     default:
       return ObjectType;
   }

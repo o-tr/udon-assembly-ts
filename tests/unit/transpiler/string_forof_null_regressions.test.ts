@@ -115,7 +115,7 @@ describe("string / for-of / null-check regressions", () => {
   });
 
   describe("Bug 2: inferred array for-of uses DataToken.get_Reference", () => {
-    it.fails("string array literal for-of uses get_Reference", () => {
+    it("does not use DataToken.get_Reference for string array literal for-of", () => {
       const source = `
         class Main {
           Start(): void {
@@ -131,9 +131,12 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+      expect(result.uasm).toContain(
+        "SystemStringArray.__Get__SystemInt32__SystemString",
+      );
     });
 
-    it.fails("number array literal for-of uses get_Reference", () => {
+    it("does not use DataToken.get_Reference for number array literal for-of", () => {
       const source = `
         class Main {
           Start(): void {
@@ -149,9 +152,12 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+      expect(result.uasm).toContain(
+        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+      );
     });
 
-    it.fails("inline class method for-of uses get_Reference", () => {
+    it("does not use DataToken.get_Reference for inline class method for-of", () => {
       const source = `
         class Evaluator {
           build(): void {
@@ -169,6 +175,9 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).toBeDefined();
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "SystemStringArray.__Get__SystemInt32__SystemString",
       );
     });
 
