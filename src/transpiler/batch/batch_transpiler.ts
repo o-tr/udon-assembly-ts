@@ -1152,7 +1152,10 @@ export class BatchTranspiler {
       const entry = JSON.parse(
         fs.readFileSync(filePath, "utf8"),
       ) as OutputCacheEntry;
-      return entry.key === expectedKey ? entry : null;
+      if (entry.key !== expectedKey || typeof entry.uasm !== "string" || !entry.uasm) {
+        return null;
+      }
+      return entry;
     } catch {
       return null;
     }
