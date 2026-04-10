@@ -295,11 +295,13 @@ export const computeFingerprint = (
   return h | 0;
 };
 
-/** Single-pass 64-bit fingerprint: two seeded FNV-1a accumulators run over
- * the same instruction stream with different initial values (h1 = standard
- * FNV offset basis; h2 = 0x84222325 ^ 0x27d4eb2f). Collision probability
- * is substantially lower than a single 32-bit hash, though the two lanes
- * are not cryptographically independent. */
+/** Single-pass fingerprint: two seeded FNV-1a accumulators run over the same
+ * instruction stream with different initial values (h1 = standard FNV offset
+ * basis; h2 = 0x84222325 ^ 0x27d4eb2f). The two lanes are correlated (h2 is
+ * a deterministic function of h1), so effective collision resistance is
+ * ~48-52 bits, not the 64 bits of a truly independent pair. This is adequate
+ * because the values are fed into a SHA-256 outer key alongside many other
+ * fields; the FNV pair serves as a fast pre-filter, not a security boundary. */
 export const computeFingerprintPair = (
   insts: TACInstruction[],
 ): [number, number] => {

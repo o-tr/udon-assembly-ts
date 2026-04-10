@@ -431,10 +431,31 @@ export class BatchTranspiler {
     // When transpilerHash changed (or no prior cache), sweep stale output-cache
     // entries so the optcache directory does not grow unboundedly across upgrades.
     if (cache === null) this.sweepOutputCache(optCacheDir);
+    const activeSlotFiles = new Set<string>();
     // Carry forward entryPoints metadata for skipped (cached) entry points
     const entryPointsCache: Record<string, { usedFiles: string[] }> = {
       ...(cache?.entryPoints ?? {}),
     };
+
+    const reflect = options.reflect === true;
+    const optimize = options.optimize === true;
+    const useStringBuilder = options.useStringBuilder === true;
+
+    // Record slot files for ALL entry points (including skipped ones) so
+    // sweepUnusedSlotFiles does not delete cache files for cached entries.
+    for (const ep of registry.getEntryPoints()) {
+      activeSlotFiles.add(
+        this.outputCacheFilePath(
+          optCacheDir,
+          ep.name,
+          reflect,
+          optimize,
+          useStringBuilder,
+          ext,
+          heapLimit,
+        ),
+      );
+    }
 
     for (const entryPoint of registry.getEntryPoints()) {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
@@ -563,9 +584,6 @@ export class BatchTranspiler {
           syncModes.set(prop.name, prop.syncMode.toLowerCase());
         }
       }
-      const reflect = options.reflect === true;
-      const optimize = options.optimize === true;
-      const useStringBuilder = options.useStringBuilder === true;
       const cacheFilePath = this.outputCacheFilePath(
         optCacheDir,
         entryPoint.name,
@@ -719,6 +737,11 @@ export class BatchTranspiler {
     if (errorCollector.hasErrors()) {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
+
+    // Remove output-cache slot files that were not used in this run (e.g. from
+    // a prior build with different options). This prevents unbounded growth of
+    // .transpiler-optcache/ when build flags cycle in CI.
+    this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
 
     // Union trackedFiles (which already includes prior usedFiles) with new
     // entryPointsCache usedFiles so freshly-discovered transitive dependencies
@@ -1104,8 +1127,8 @@ export class BatchTranspiler {
 
   private computeOutputCacheKey(
     // Two seeded FNV-1a fingerprints (correlated, not independent) combined
-    // into a 64-bit value; collision probability is substantially lower than
-    // a single 32-bit hash but higher than a true 64-bit independent pair.
+    // into ~48-52 effective bits of collision resistance. Adequate here because
+    // these values are fed into a SHA-256 outer key alongside many other fields.
     tacFp1: number,
     tacFp2: number,
     exposedLabels: Set<string>,
@@ -1152,7 +1175,11 @@ export class BatchTranspiler {
       const entry = JSON.parse(
         fs.readFileSync(filePath, "utf8"),
       ) as OutputCacheEntry;
-      if (entry.key !== expectedKey || typeof entry.uasm !== "string" || !entry.uasm) {
+      if (
+        entry.key !== expectedKey ||
+        typeof entry.uasm !== "string" ||
+        !entry.uasm
+      ) {
         return null;
       }
       return entry;
@@ -1176,6 +1203,28 @@ export class BatchTranspiler {
             fs.unlinkSync(filePath);
           }
         } catch {
+          try {
+            fs.unlinkSync(filePath);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    } catch {
+      /* Non-fatal */
+    }
+  }
+
+  private sweepUnusedSlotFiles(
+    optCacheDir: string,
+    activeSlotFiles: Set<string>,
+  ): void {
+    try {
+      if (!fs.existsSync(optCacheDir)) return;
+      for (const file of fs.readdirSync(optCacheDir)) {
+        if (!file.endsWith(".json")) continue;
+        const filePath = path.join(optCacheDir, file);
+        if (!activeSlotFiles.has(filePath)) {
           try {
             fs.unlinkSync(filePath);
           } catch {
