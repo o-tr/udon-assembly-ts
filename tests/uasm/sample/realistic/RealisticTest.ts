@@ -24,7 +24,7 @@ export class RealisticTest extends UdonSharpBehaviour {
       Debug.Log("New high score!");
     }
 
-    const msg: string = "Score: " + this.score.toString();
+    const msg: string = `Score: ${this.score.toString()}`;
     Debug.Log(msg);
   }
 

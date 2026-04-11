@@ -9,7 +9,9 @@ export class DiamondSimpTest extends UdonSharpBehaviour {
 
   Start(): void {
     this.score = 75 as UdonInt;
+    // biome-ignore lint/complexity/noUselessTernary: intentional — tests diamond simplification of `cond ? true : false` pattern
     const passed: boolean = this.score >= (60 as UdonInt) ? true : false;
+    // biome-ignore lint/complexity/noUselessTernary: intentional — tests diamond simplification of `cond ? true : false` pattern
     const failed: boolean = this.score < (60 as UdonInt) ? true : false;
     Debug.Log(passed);
     Debug.Log(failed);

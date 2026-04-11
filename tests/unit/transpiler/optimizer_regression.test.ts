@@ -18,7 +18,7 @@ import { PrimitiveTypes } from "../../../src/transpiler/frontend/type_symbols";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import {
-  AssignmentInstruction,
+  type AssignmentInstruction,
   BinaryOpInstruction,
   ReturnInstruction,
   TACInstructionKind,
@@ -46,8 +46,8 @@ function countUasmInstructions(uasm: string): number {
   const lines = uasm.split("\n").map((l) => l.trim());
   let inCode = false;
   let count = 0;
-  for (const raw of lines) {
-    const line = stripTrailingComment(raw);
+  for (const trimmed of lines) {
+    const line = stripTrailingComment(trimmed);
     if (line === ".code_start") {
       inCode = true;
       continue;
@@ -87,9 +87,9 @@ describe("optimizer regression tests", () => {
           private mode: UdonInt = 0 as UdonInt;
           Start(): void {
             this.mode = 1 as UdonInt;
-            if (this.mode == (1 as UdonInt)) {
+            if (this.mode === (1 as UdonInt)) {
               Debug.Log("mode one");
-            } else if (this.mode == (2 as UdonInt)) {
+            } else if (this.mode === (2 as UdonInt)) {
               Debug.Log("mode two");
             } else {
               Debug.Log("other");
@@ -98,7 +98,9 @@ describe("optimizer regression tests", () => {
         }
       `;
       const transpiler = new TypeScriptToUdonTranspiler();
-      expect(() => transpiler.transpile(source, { optimize: true })).not.toThrow();
+      expect(() =>
+        transpiler.transpile(source, { optimize: true }),
+      ).not.toThrow();
     });
   });
 
@@ -130,7 +132,7 @@ describe("optimizer regression tests", () => {
               this.highScore = this.score;
               Debug.Log("New high score!");
             }
-            const msg: string = "Score: " + this.score.toString();
+            const msg: string = \`Score: \${this.score.toString()}\`;
             Debug.Log(msg);
           }
           ResetGame(): void {
@@ -306,12 +308,7 @@ describe("optimizer regression tests", () => {
           "/",
           createConstant(5, PrimitiveTypes.int32),
         ),
-        new BinaryOpInstruction(
-          t3,
-          t1,
-          "+",
-          t2,
-        ),
+        new BinaryOpInstruction(t3, t1, "+", t2),
         new ReturnInstruction(t3),
       ];
 
@@ -320,15 +317,19 @@ describe("optimizer regression tests", () => {
 
       // After full optimization, the chain should fold to a single constant 40.
       // There should be no BinaryOp instructions remaining.
-      const hasBinaryOp = optimized.some((inst) => inst.kind === TACInstructionKind.BinaryOp);
+      const hasBinaryOp = optimized.some(
+        (inst) => inst.kind === TACInstructionKind.BinaryOp,
+      );
       expect(hasBinaryOp).toBe(false);
 
       // The return value should ultimately resolve to the constant 40.
-      const retInst = optimized.find((inst) => inst.kind === TACInstructionKind.Return) as
-        | ReturnInstruction
-        | undefined;
-      expect(retInst).toBeDefined();
-      const retValue = retInst!.value!;
+      const retInst = optimized.find(
+        (inst) => inst.kind === TACInstructionKind.Return,
+      ) as ReturnInstruction | undefined;
+      if (!retInst?.value) {
+        return expect.fail("missing return instruction or return value");
+      }
+      const retValue = retInst.value;
       if (retValue.kind === TACOperandKind.Constant) {
         expect((retValue as ConstantOperand).value).toBe(40);
       } else if (retValue.kind === TACOperandKind.Temporary) {
@@ -342,10 +343,13 @@ describe("optimizer regression tests", () => {
               TACOperandKind.Temporary &&
             ((inst as AssignmentInstruction).dest as TemporaryOperand).id ===
               retTempId &&
-            (inst as AssignmentInstruction).src.kind === TACOperandKind.Constant,
+            (inst as AssignmentInstruction).src.kind ===
+              TACOperandKind.Constant,
         ) as AssignmentInstruction | undefined;
-        expect(assignInst).toBeDefined();
-        expect((assignInst!.src as ConstantOperand).value).toBe(40);
+        if (!assignInst) {
+          return expect.fail(`no constant assignment for temp ${retTempId}`);
+        }
+        expect((assignInst.src as ConstantOperand).value).toBe(40);
       } else {
         expect.fail(
           `expected return operand to be Constant or Temporary, got ${retValue.kind}`,

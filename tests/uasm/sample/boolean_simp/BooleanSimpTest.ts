@@ -8,7 +8,7 @@ export class BooleanSimpTest extends UdonSharpBehaviour {
     const flag = true as boolean;
     const a: boolean = flag && true;
     const b: boolean = flag || false;
-    const c: boolean = !(flag == (false as boolean));
+    const c: boolean = !(flag === (false as boolean));
     Debug.Log(a);
     Debug.Log(b);
     Debug.Log(c);

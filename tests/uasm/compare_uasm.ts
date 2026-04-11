@@ -259,10 +259,7 @@ interface TasmTranspileResult {
   errors: Map<string, string>;
 }
 
-function transpileTs(
-  cases: TestCase[],
-  optimize = false,
-): TasmTranspileResult {
+function transpileTs(cases: TestCase[], optimize = false): TasmTranspileResult {
   // uasms: caseName -> (className -> uasmText), errors: caseName -> errorMessage
   const result = new Map<string, Map<string, string>>();
   const errors = new Map<string, string>();
@@ -356,9 +353,7 @@ function printPairDiff(
   // Exports diff
   const exportsDiff = setDiff(us.exports, ts.exports);
   if (exportsDiff.onlyInA.length === 0 && exportsDiff.onlyInB.length === 0) {
-    console.log(
-      `  Exports (vs ${tsLabel}):  MATCH (${us.exports.join(", ")})`,
-    );
+    console.log(`  Exports (vs ${tsLabel}):  MATCH (${us.exports.join(", ")})`);
   } else {
     console.log(
       `  Exports (vs ${tsLabel}):  DIFF  only-UdonSharp=[${exportsDiff.onlyInA.join(", ")}]  only-${tsLabel}=[${exportsDiff.onlyInB.join(", ")}]`,
@@ -413,7 +408,9 @@ function printPairDiff(
         `    + only UdonSharp types: ${typesDiff.onlyInA.join(", ")}`,
       );
     if (typesDiff.onlyInB.length > 0)
-      console.log(`    + only ${tsLabel} types: ${typesDiff.onlyInB.join(", ")}`);
+      console.log(
+        `    + only ${tsLabel} types: ${typesDiff.onlyInB.join(", ")}`,
+      );
   }
 
   // Code size

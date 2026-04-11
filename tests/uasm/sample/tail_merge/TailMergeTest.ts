@@ -9,9 +9,9 @@ export class TailMergeTest extends UdonSharpBehaviour {
 
   Start(): void {
     this.mode = 1 as UdonInt;
-    if (this.mode == (1 as UdonInt)) {
+    if (this.mode === (1 as UdonInt)) {
       Debug.Log("mode one");
-    } else if (this.mode == (2 as UdonInt)) {
+    } else if (this.mode === (2 as UdonInt)) {
       Debug.Log("mode two");
     } else {
       Debug.Log("other");

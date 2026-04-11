@@ -8,10 +8,11 @@ export class DeadCodeTest extends UdonSharpBehaviour {
   Start(): void {
     const x: UdonInt = 10 as UdonInt;
     const y: UdonInt = 20 as UdonInt;
-    const z: UdonInt = (x + y) as UdonInt;
+    const _z: UdonInt = (x + y) as UdonInt;
     const w: UdonInt = (x * (2 as UdonInt)) as UdonInt;
     Debug.Log(w);
     return;
+    // biome-ignore lint/correctness/noUnreachable: intentional — tests dead code elimination of unreachable code
     Debug.Log("unreachable");
   }
 }
