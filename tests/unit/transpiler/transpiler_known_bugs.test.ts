@@ -78,6 +78,10 @@ function getDataSection(uasm: string): string[] {
   return lines.slice(startIdx, endIdx + 1);
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 describe("known transpiler bugs", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
@@ -965,16 +969,30 @@ describe("known transpiler bugs", () => {
         const indexVarMatch = getItemLine.match(/get_Item\(([^)]+)\)/);
         expect(indexVarMatch?.[1]).toBeDefined();
         const indexVar = indexVarMatch?.[1].trim() ?? "";
+        const escapedIndexVar = escapeRegex(indexVar);
 
-        const guardWindow = tacLines
-          .slice(Math.max(0, cacheGetIdx - 16), cacheGetIdx)
-          .join("\n");
-        const guardPattern = new RegExp(
-          `${indexVar}\\s*(<|<=|>|>=|==|!=)\\s*.*Item__cache\\.Count|Item__cache\\.Count\\s*(<|<=|>|>=|==|!=)\\s*${indexVar}`,
+        const guardWindowLines = tacLines.slice(
+          Math.max(0, cacheGetIdx - 16),
+          cacheGetIdx,
         );
+        const countVars = guardWindowLines
+          .map(
+            (line) =>
+              line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/)?.[1],
+          )
+          .filter((v): v is string => !!v);
+        expect(countVars.length).toBeGreaterThan(0);
+
+        const hasIndexAwareGuard = countVars.some((countVar) => {
+          const escapedCountVar = escapeRegex(countVar);
+          const guardPattern = new RegExp(
+            `\\b${escapedIndexVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedCountVar}\\b|\\b${escapedCountVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedIndexVar}\\b`,
+          );
+          return guardWindowLines.some((line) => guardPattern.test(line));
+        });
 
         // TODO: convert to regular `it(...)` once the bug is fixed.
-        expect(guardWindow).toMatch(guardPattern);
+        expect(hasIndexAwareGuard).toBe(true);
       },
     );
   });
@@ -984,8 +1002,10 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("flyweight cache typed unwrap stability", () => {
-    it("cache-returned inline instance should use String/Boolean accessors without Reference fallback", () => {
-      const source = `
+    it.fails(
+      "cache-returned inline instance should use String/Boolean accessors without Reference fallback",
+      () => {
+        const source = `
         class Tile {
           constructor(public label: string, public isRed: boolean) {}
           getLabel(): string {
@@ -1010,22 +1030,66 @@ describe("known transpiler bugs", () => {
           }
         }
       `;
-      const result = new TypeScriptToUdonTranspiler().transpile(source);
+        const result = new TypeScriptToUdonTranspiler().transpile(source);
+        const tacLines = result.tac.split("\n");
 
-      expect(result.uasm).toContain(
-        "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
-      );
-      expect(result.uasm).toContain(
-        "VRCSDK3DataDataToken.__get_String__SystemString",
-      );
-      expect(result.uasm).toContain(
-        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
-      );
-      expect(result.uasm).not.toContain(
-        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
-      );
-      expect(result.uasm).not.toContain("dispatch miss");
-    });
+        expect(result.uasm).toContain(
+          "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+        );
+        expect(result.uasm).toContain(
+          "VRCSDK3DataDataToken.__get_String__SystemString",
+        );
+        expect(result.uasm).toContain(
+          "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+        );
+        expect(result.uasm).not.toContain(
+          "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+        );
+        expect(result.uasm).not.toContain("dispatch miss");
+
+        const soaGetIndices = tacLines
+          .map((line, idx) =>
+            line.includes("__soa_Tile_label.get_Item(") ||
+            line.includes("__soa_Tile_isRed.get_Item(")
+              ? idx
+              : -1,
+          )
+          .filter((idx) => idx >= 0);
+        expect(soaGetIndices.length).toBeGreaterThan(0);
+
+        for (const soaGetIdx of soaGetIndices) {
+          const getItemLine = tacLines[soaGetIdx];
+          const handleVar = getItemLine.match(/get_Item\(([^)]+)\)/)?.[1]?.trim();
+          expect(handleVar).toBeDefined();
+          const escapedHandleVar = escapeRegex(handleVar ?? "");
+
+          const guardWindowLines = tacLines.slice(
+            Math.max(0, soaGetIdx - 20),
+            soaGetIdx,
+          );
+          const countVars = guardWindowLines
+            .map(
+              (line) =>
+                line.match(
+                  /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*__soa_Tile_(label|isRed)\.Count$/,
+                )?.[1],
+            )
+            .filter((v): v is string => !!v);
+          expect(countVars.length).toBeGreaterThan(0);
+
+          const hasHandleGuard = countVars.some((countVar) => {
+            const escapedCountVar = escapeRegex(countVar);
+            const guardPattern = new RegExp(
+              `\\b${escapedHandleVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedCountVar}\\b|\\b${escapedCountVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedHandleVar}\\b`,
+            );
+            return guardWindowLines.some((line) => guardPattern.test(line));
+          });
+          expect(hasHandleGuard).toBe(true);
+        }
+
+        // TODO: convert to regular `it(...)` once the bug is fixed.
+      },
+    );
 
     it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
       const source = `
