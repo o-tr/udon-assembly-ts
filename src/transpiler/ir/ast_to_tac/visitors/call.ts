@@ -347,6 +347,123 @@ function getOrPopulateImplementorNames(
   return converter.implementorNamesCache.get(typeName) ?? null;
 }
 
+/**
+ * SoA fast path for method dispatch: when ALL candidate instances belong to a
+ * single SoA class, load fields from per-field DataLists using the runtime
+ * handle as index, inline the method body, then write back modified fields.
+ * This avoids per-instance handle comparison which always misses for SoA
+ * instances (whose handles are dynamic counter values, not static constants).
+ */
+function trySoAMethodDispatch(
+  converter: ASTToTACConverter,
+  object: TACOperand,
+  candidateInstances: Array<[number, { prefix: string; className: string }]>,
+  propAccess: PropertyAccessExpressionNode,
+  rawArgs: ASTNode[],
+  evaluatedArgs: TACOperand[],
+  isVoid: boolean,
+): TACOperand | null {
+  if (candidateInstances.length === 0) return null;
+  const soaClassName = candidateInstances[0][1].className;
+  const allSameClass = candidateInstances.every(
+    ([, i]) => i.className === soaClassName,
+  );
+  if (
+    !allSameClass ||
+    !converter.soaClasses.has(soaClassName) ||
+    !converter.soaFieldLists.has(soaClassName)
+  ) {
+    return null;
+  }
+
+  const fieldLists = converter.soaFieldLists.get(soaClassName);
+  if (!fieldLists) return null;
+  const prefix = candidateInstances[0][1].prefix;
+
+  // Save state for rollback if inlining fails
+  const savedInstructionCount = converter.instructions.length;
+  const savedTempCounter = converter.tempCounter;
+  const savedLabelCounter = converter.labelCounter;
+  const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
+  const savedAllInlineInstances = new Map(converter.allInlineInstances);
+
+  // Re-evaluate args with expected parameter types
+  const soaTypedArgs = evaluateArgsWithExpectedTypes(
+    converter,
+    soaClassName,
+    propAccess.property,
+    rawArgs,
+  );
+  const soaDispatchArgs = soaTypedArgs ?? evaluatedArgs;
+
+  const hdlVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(new CopyInstruction(hdlVar, object));
+
+  // Sync the instance handle so that bare `this` references inside the
+  // inlined method body read the correct runtime handle, not the stale
+  // value left over from the last constructor invocation.
+  converter.instructions.push(
+    new CopyInstruction(
+      createVariable(`${prefix}__handle`, PrimitiveTypes.int32),
+      object,
+    ),
+  );
+
+  // Prologue: load all SoA fields from DataLists → scratch variables
+  for (const [fieldName, listVar] of fieldLists) {
+    const scratchVar = converter.mapInlineProperty(
+      soaClassName,
+      prefix,
+      fieldName,
+    );
+    if (scratchVar) {
+      const token = converter.newTemp(ExternTypes.dataToken);
+      converter.instructions.push(
+        new MethodCallInstruction(token, listVar, "get_Item", [hdlVar]),
+      );
+      const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
+      converter.instructions.push(new CopyInstruction(scratchVar, unwrapped));
+    }
+  }
+
+  // Inline the method body
+  const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
+    soaClassName,
+    prefix,
+    propAccess.property,
+    soaDispatchArgs,
+  );
+  if (!inlineRes) {
+    // Rollback on failure
+    converter.instructions.length = savedInstructionCount;
+    converter.tempCounter = savedTempCounter;
+    converter.labelCounter = savedLabelCounter;
+    converter.inlineInstanceMap = savedInlineInstanceMap;
+    converter.allInlineInstances = savedAllInlineInstances;
+    return null;
+  }
+
+  // Epilogue: write back all fields from scratch variables → DataLists
+  for (const [fieldName, listVar] of fieldLists) {
+    const scratchVar = converter.mapInlineProperty(
+      soaClassName,
+      prefix,
+      fieldName,
+    );
+    if (scratchVar) {
+      const token = converter.wrapDataToken(scratchVar);
+      converter.instructions.push(
+        new MethodCallInstruction(undefined, listVar, "set_Item", [
+          hdlVar,
+          token,
+        ]),
+      );
+    }
+  }
+
+  return isVoid ? VOID_RETURN : inlineRes;
+}
+
 function tryUntrackedInlineDispatch(
   converter: ASTToTACConverter,
   object: TACOperand,
@@ -473,6 +590,18 @@ function tryUntrackedInlineDispatch(
     resolvedUntrackedReturnType?.name === "SystemVoid" ||
     resolvedUntrackedReturnType?.name === "void";
   if (!resolvedUntrackedReturnType) return null;
+
+  // SoA fast path: avoid per-instance handle comparison for SoA classes
+  const soaResult = trySoAMethodDispatch(
+    converter,
+    object,
+    candidateInstances,
+    propAccess,
+    rawArgs,
+    evaluatedArgs,
+    isVoid,
+  );
+  if (soaResult != null) return soaResult;
 
   const savedInstructionCount = converter.instructions.length;
   const savedTempCounter = converter.tempCounter;
@@ -721,6 +850,18 @@ function tryD3MethodDispatch(
     : methodReturnType;
   const isVoid =
     resolvedRetType?.name === "SystemVoid" || resolvedRetType?.name === "void";
+
+  // SoA fast path: avoid per-instance handle comparison for SoA classes
+  const soaResult = trySoAMethodDispatch(
+    converter,
+    object,
+    dispInstances,
+    propAccess,
+    rawArgs,
+    evaluatedArgs,
+    isVoid,
+  );
+  if (soaResult != null) return soaResult;
 
   // Save state for rollback.
   const savedInstructionCount = converter.instructions.length;

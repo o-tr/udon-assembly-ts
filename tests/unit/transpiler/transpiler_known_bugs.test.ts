@@ -652,7 +652,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("SoA D3 method dispatch", () => {
-    it.fails("method call on SoA class instance from for-of loop should not produce dispatch miss", () => {
+    it("method call on SoA class instance from for-of loop should not produce dispatch miss", () => {
       const source = `
         class Item {
           value: number;
@@ -682,11 +682,12 @@ describe("known transpiler bugs", () => {
       // After fix: SoA fast path should be used instead of per-instance
       // handle comparison that always misses for dynamic SoA handles.
       expect(result.uasm).not.toContain("dispatch miss");
-      // Should still read from SoA DataLists
-      expect(result.uasm).toContain("__soa_Item_label");
+      // SoA fast path prologue/epilogue should read/write DataLists
+      expect(result.tac).toContain("__soa_Item_label.get_Item");
+      expect(result.tac).toContain("__soa_Item_label.set_Item");
     });
 
-    it.fails("method call on SoA class instance returned from cache should not produce dispatch miss", () => {
+    it("method call on SoA class instance returned from cache should not produce dispatch miss", () => {
       const source = `
         class Tile {
           kind: number;
@@ -721,8 +722,9 @@ describe("known transpiler bugs", () => {
       // After fix: the returned Tile instance from cache should be
       // dispatchable via SoA fast path.
       expect(result.uasm).not.toContain("dispatch miss");
-      // Should read SoA fields for the inlined toString() body
-      expect(result.uasm).toContain("__soa_Tile_kind");
+      // SoA fast path prologue/epilogue should read/write DataLists
+      expect(result.tac).toContain("__soa_Tile_kind.get_Item");
+      expect(result.tac).toContain("__soa_Tile_kind.set_Item");
     });
   });
 
