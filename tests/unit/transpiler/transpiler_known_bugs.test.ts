@@ -97,7 +97,7 @@ describe("known transpiler bugs", () => {
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // After fix: must call get_Length to adjust the negative index
+      // Negative index requires get_Length to compute length + offset
       expect(result.uasm).toContain("__get_Length__");
 
       // Should contain Addition for length + (-1) adjustment
@@ -118,7 +118,7 @@ describe("known transpiler bugs", () => {
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // After fix: must call get_Length to adjust the negative start index
+      // Negative start index requires get_Length to compute length + offset
       expect(result.uasm).toContain("__get_Length__");
 
       // Should contain Addition for length + (-2) adjustment
@@ -248,8 +248,8 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
       const dataSection = getDataSection(result.uasm);
 
-      // After fix: The array variable "nums" should use %VRCSDK3DataDataList
-      // in the data section, not %SystemArray
+      // The array variable "nums" uses %VRCSDK3DataDataList in the data
+      // section, not %SystemArray
       const numsLines = dataSection.filter((l) => l.includes("nums"));
       expect(numsLines.length).toBeGreaterThan(0);
       const hasSystemArray = numsLines.some((l) => l.includes("%SystemArray"));
@@ -586,8 +586,10 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // After fix: the temp for !count should be declared as %SystemBoolean,
-      // not %SystemInt32 or %SystemSingle.
+      // The declared type of `negated` is inferred as `boolean` by the parser,
+      // so the variable is allocated as %SystemBoolean in the data section even
+      // though the UnaryOp intermediate temp is Int32. JUMP_IF_FALSE therefore
+      // receives a Boolean push, avoiding HeapTypeMismatchException.
       const dataLines = result.uasm.split("\n");
       const startIdx = dataLines.findIndex((l) => l.includes(".data_start"));
       const endIdx = dataLines.findIndex((l) => l.includes(".data_end"));
