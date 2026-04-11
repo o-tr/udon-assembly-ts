@@ -735,7 +735,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("DataToken.get_Reference for unknown-typed Map values", () => {
-    it.fails("Map<string, unknown>.get() should not use get_Reference", () => {
+    it("Map<string, unknown>.get() should not use get_Reference", () => {
       // When a Map's value type is `unknown`, the transpiler maps it to
       // ObjectType. unwrapDataToken's default case falls back to .Reference,
       // but the DataToken actually stores a typed value (e.g. String) that
@@ -780,7 +780,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("Map<string, any>.get() should not use get_Reference", () => {
+    it("Map<string, any>.get() should not use get_Reference", () => {
       const source = `
         class Main {
           Start(): void {
@@ -799,6 +799,53 @@ describe("known transpiler bugs", () => {
       // The Map.get() path via DataDictionary.get_Item must still be present
       expect(result.uasm).toContain(
         "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+      );
+    });
+
+    it("Map<string, any>.get() result variable should be DataToken-typed in data section", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, any> = new Map<string, any>();
+            m.set("key", 42);
+            const val = m.get("key");
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
+
+      // The variable 'val' should be typed as DataToken (not SystemObject)
+      // because unwrapDataToken returns the DataToken operand as-is
+      // (rather than unwrapping to a typed temporary), preserving its
+      // original DataToken type.
+      const valLine = dataSection.find((l) => l.trimStart().startsWith("val:"));
+      expect(valLine).toBeDefined();
+      expect(valLine).toContain("%VRCSDK3DataDataToken");
+    });
+
+    it("Map<string, string>.get() should still use typed unwrap (regression guard)", () => {
+      // When the value type is known (e.g. string), unwrapDataToken must
+      // still use the typed accessor (.String), not skip the unwrap.
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, string> = new Map<string, string>();
+            m.set("key", "hello");
+            const val: string = m.get("key");
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Typed Map should use .String accessor, not .Reference
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
       );
     });
   });
