@@ -378,14 +378,20 @@ function trySoAMethodDispatch(
 
   const fieldLists = converter.soaFieldLists.get(soaClassName);
   if (!fieldLists) return null;
-  const prefix = candidateInstances[0][1].prefix;
 
   // Save state for rollback if inlining fails
+  const savedInstanceCounter = converter.instanceCounter;
   const savedInstructionCount = converter.instructions.length;
   const savedTempCounter = converter.tempCounter;
   const savedLabelCounter = converter.labelCounter;
   const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
   const savedAllInlineInstances = new Map(converter.allInlineInstances);
+
+  // Use a unique scratch prefix for this dispatch site. Reusing a prefix
+  // from candidateInstances is unsafe: the prologue would overwrite scratch
+  // variables that may still be referenced by tracked instances or by an
+  // outer SoA dispatch on the same class (nested call scenario).
+  const scratchPrefix = `__soa_mdisp_${soaClassName}_${converter.instanceCounter++}`;
 
   // Re-evaluate args with expected parameter types
   const soaTypedArgs = evaluateArgsWithExpectedTypes(
@@ -404,16 +410,27 @@ function trySoAMethodDispatch(
   // value left over from the last constructor invocation.
   converter.instructions.push(
     new CopyInstruction(
-      createVariable(`${prefix}__handle`, PrimitiveTypes.int32),
+      createVariable(`${scratchPrefix}__handle`, PrimitiveTypes.int32),
       object,
     ),
   );
+
+  // Collect scratch variable names for dirty-detection after inlining.
+  const scratchNames = new Set<string>();
+  for (const [fieldName] of fieldLists) {
+    const sv = converter.mapInlineProperty(
+      soaClassName,
+      scratchPrefix,
+      fieldName,
+    );
+    if (sv) scratchNames.add(sv.name);
+  }
 
   // Prologue: load all SoA fields from DataLists → scratch variables
   for (const [fieldName, listVar] of fieldLists) {
     const scratchVar = converter.mapInlineProperty(
       soaClassName,
-      prefix,
+      scratchPrefix,
       fieldName,
     );
     if (scratchVar) {
@@ -427,14 +444,16 @@ function trySoAMethodDispatch(
   }
 
   // Inline the method body
+  const instrBeforeInline = converter.instructions.length;
   const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
     soaClassName,
-    prefix,
+    scratchPrefix,
     propAccess.property,
     soaDispatchArgs,
   );
   if (!inlineRes) {
     // Rollback on failure
+    converter.instanceCounter = savedInstanceCounter;
     converter.instructions.length = savedInstructionCount;
     converter.tempCounter = savedTempCounter;
     converter.labelCounter = savedLabelCounter;
@@ -443,21 +462,40 @@ function trySoAMethodDispatch(
     return null;
   }
 
-  // Epilogue: write back all fields from scratch variables → DataLists
-  for (const [fieldName, listVar] of fieldLists) {
-    const scratchVar = converter.mapInlineProperty(
-      soaClassName,
-      prefix,
-      fieldName,
-    );
-    if (scratchVar) {
-      const token = converter.wrapDataToken(scratchVar);
-      converter.instructions.push(
-        new MethodCallInstruction(undefined, listVar, "set_Item", [
-          hdlVar,
-          token,
-        ]),
+  // Epilogue: write back fields only if the inlined body actually wrote to
+  // any scratch variable. Read-only methods (getLabel, toString, etc.) skip
+  // the write-back, avoiding unnecessary set_Item extern round-trips.
+  let needsWriteBack = false;
+  for (let i = instrBeforeInline; i < converter.instructions.length; i++) {
+    const inst = converter.instructions[i];
+    if ("dest" in inst) {
+      const dest = (inst as { dest: TACOperand }).dest;
+      if (
+        dest &&
+        dest.kind === TACOperandKind.Variable &&
+        scratchNames.has((dest as VariableOperand).name)
+      ) {
+        needsWriteBack = true;
+        break;
+      }
+    }
+  }
+  if (needsWriteBack) {
+    for (const [fieldName, listVar] of fieldLists) {
+      const scratchVar = converter.mapInlineProperty(
+        soaClassName,
+        scratchPrefix,
+        fieldName,
       );
+      if (scratchVar) {
+        const token = converter.wrapDataToken(scratchVar);
+        converter.instructions.push(
+          new MethodCallInstruction(undefined, listVar, "set_Item", [
+            hdlVar,
+            token,
+          ]),
+        );
+      }
     }
   }
 

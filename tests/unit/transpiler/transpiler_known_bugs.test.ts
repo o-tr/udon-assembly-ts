@@ -682,9 +682,10 @@ describe("known transpiler bugs", () => {
       // After fix: SoA fast path should be used instead of per-instance
       // handle comparison that always misses for dynamic SoA handles.
       expect(result.uasm).not.toContain("dispatch miss");
-      // SoA fast path prologue/epilogue should read/write DataLists
+      // SoA fast path prologue should load fields from DataLists
       expect(result.tac).toContain("__soa_Item_label.get_Item");
-      expect(result.tac).toContain("__soa_Item_label.set_Item");
+      // getLabel() is read-only — no field write-back expected
+      expect(result.tac).not.toContain("__soa_Item_label.set_Item");
     });
 
     it("method call on SoA class instance returned from cache should not produce dispatch miss", () => {
@@ -722,9 +723,10 @@ describe("known transpiler bugs", () => {
       // After fix: the returned Tile instance from cache should be
       // dispatchable via SoA fast path.
       expect(result.uasm).not.toContain("dispatch miss");
-      // SoA fast path prologue/epilogue should read/write DataLists
+      // SoA fast path prologue should load fields from DataLists
       expect(result.tac).toContain("__soa_Tile_kind.get_Item");
-      expect(result.tac).toContain("__soa_Tile_kind.set_Item");
+      // toString() is read-only — no field write-back expected
+      expect(result.tac).not.toContain("__soa_Tile_kind.set_Item");
     });
   });
 
