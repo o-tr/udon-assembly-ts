@@ -51,6 +51,18 @@
  *         at runtime because the DataToken stores a typed value (String, Int, etc.)
  *         that cannot be accessed via .Reference.
  *         (root cause #11 residual in vm-test-failures-investigation.md)
+ *
+ * Bug 10: DataList.get_Item bounds safety on dynamic cache reads — cache-style
+ *         reads (`cache[index]`) currently emit raw get_Item with no guard tied
+ *         to the requested index. This can throw at runtime when index/handle
+ *         drift occurs in complex inline/flyweight flows.
+ *         (root cause #18 in vm-test-failures-investigation.md)
+ *
+ * Bug 11: Flyweight cache typed unwrap stability — cache-returned inline
+ *         instances with string/boolean fields must keep typed DataToken
+ *         accessors (.String/.Boolean) and never fall back to .Reference in
+ *         mixed dispatch/untracked paths.
+ *         (root cause #19/#20 in vm-test-failures-investigation.md)
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -909,6 +921,156 @@ describe("known transpiler bugs", () => {
       );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 10: DataList.get_Item bounds safety (known issue, reproduction test)
+  // ---------------------------------------------------------------------------
+
+  describe("DataList.get_Item bounds safety", () => {
+    it.fails(
+      "dynamic cache index reads should emit index-aware Count guard before get_Item",
+      () => {
+        const source = `
+          class Item {
+            constructor(public value: number) {}
+            static cache: Item[] = [];
+            static seed(): void {
+              for (let i: number = 0; i < 3; i++) {
+                Item.cache.push(new Item(i));
+              }
+            }
+            static at(index: number): Item {
+              return Item.cache[index];
+            }
+          }
+          class Main {
+            Start(): void {
+              Item.seed();
+              const it = Item.at(1);
+              Debug.Log(it.value);
+            }
+          }
+        `;
+        const result = new TypeScriptToUdonTranspiler().transpile(source);
+        const tacLines = result.tac.split("\n");
+        const cacheGetIdx = tacLines.findIndex((l) =>
+          l.includes("Item__cache.get_Item("),
+        );
+        expect(cacheGetIdx).toBeGreaterThan(0);
+
+        const getItemLine = tacLines[cacheGetIdx];
+        const indexVarMatch = getItemLine.match(/get_Item\(([^)]+)\)/);
+        expect(indexVarMatch?.[1]).toBeDefined();
+        const indexVar = indexVarMatch?.[1].trim() ?? "";
+
+        const guardWindow = tacLines
+          .slice(Math.max(0, cacheGetIdx - 16), cacheGetIdx)
+          .join("\n");
+        const guardPattern = new RegExp(
+          `${indexVar}\\s*(<|<=|>|>=|==|!=)\\s*.*Item__cache\\.Count|Item__cache\\.Count\\s*(<|<=|>|>=|==|!=)\\s*${indexVar}`,
+        );
+
+        // TODO: convert to regular `it(...)` once the bug is fixed.
+        expect(guardWindow).toMatch(guardPattern);
+      },
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 11: Flyweight cache typed unwrap stability
+  // ---------------------------------------------------------------------------
+
+  describe("flyweight cache typed unwrap stability", () => {
+    it("cache-returned inline instance should use String/Boolean accessors without Reference fallback", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          getLabel(): string {
+            return this.label;
+          }
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 3; i++) {
+              Tile.cache.push(new Tile("tile" + i, i === 0));
+            }
+          }
+          static parse(_s: string): Tile {
+            return Tile.cache[1];
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const t = Tile.parse("1m");
+            Debug.Log(t.getLabel());
+            Debug.Log(t.isRed);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
+
+    it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class LRUCache {
+          private cache: Map<string, string> = new Map<string, string>();
+          private maxSize: UdonInt;
+          constructor(maxSize: UdonInt) {
+            this.maxSize = maxSize;
+          }
+          get(key: string): string {
+            if (!this.cache.has(key)) return "";
+            const value = this.cache.get(key)!;
+            this.cache.delete(key);
+            this.cache.set(key, value);
+            if (this.cache.size != this.maxSize) {
+              Debug.Log("neq");
+            }
+            if (this.cache.size > this.maxSize) {
+              Debug.Log("gt");
+            }
+            return value;
+          }
+          seed(): void {
+            this.cache.set("a", "hello");
+          }
+        }
+        class Main {
+          Start(): void {
+            const c = new LRUCache(2 as UdonInt);
+            c.seed();
+            Debug.Log(c.get("a"));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
     });
   });
