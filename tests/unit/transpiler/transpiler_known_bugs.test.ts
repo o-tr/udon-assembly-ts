@@ -504,7 +504,7 @@ describe("known transpiler bugs", () => {
       expect(jumpContext).toContain("PUSH, flag");
     });
 
-    it.fails("integer variable in if-condition should be coerced to boolean", () => {
+    it("integer variable in if-condition should be coerced to boolean", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
@@ -517,19 +517,38 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: JUMP_IF_FALSE should be preceded by a != 0 comparison
       // that produces a Boolean result.
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      // Must have an inequality/equality comparison to produce Boolean
-      expect(jumpContext).toMatch(
+      // The extern signature appears in the data section, not inline in code.
+      expect(result.uasm).toMatch(
         /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
       );
+
+      // The PUSH before JUMP_IF_FALSE must reference a %SystemBoolean temp
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      for (const ctx of contexts) {
+        const jifIdx = ctx.findIndex((l) => l.includes("JUMP_IF_FALSE"));
+        let pushLine: string | undefined;
+        for (let k = jifIdx - 1; k >= 0; k--) {
+          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
+            pushLine = ctx[k];
+            break;
+          }
+        }
+        expect(pushLine).toBeDefined();
+        const varName = pushLine?.trim().replace("PUSH, ", "");
+        const dataEntry = dataSection.find((l) =>
+          l.trimStart().startsWith(`${varName}:`),
+        );
+        expect(dataEntry).toBeDefined();
+        expect(dataEntry).toContain("%SystemBoolean");
+      }
     });
 
-    it.fails("string variable in if-condition should be coerced to boolean via length check", () => {
+    it("string variable in if-condition should be coerced to boolean via length check", () => {
       const source = `
         class Main {
           Start(): void {
@@ -541,16 +560,35 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: should check str.Length != 0 for JS truthiness semantics
       expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
+      expect(result.uasm).toMatch(/op_Inequality|op_Equality/);
+
+      // The PUSH before JUMP_IF_FALSE must reference a %SystemBoolean temp
       const contexts = getJumpIfFalseContexts(result.uasm);
       expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
+      for (const ctx of contexts) {
+        const jifIdx = ctx.findIndex((l) => l.includes("JUMP_IF_FALSE"));
+        let pushLine: string | undefined;
+        for (let k = jifIdx - 1; k >= 0; k--) {
+          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
+            pushLine = ctx[k];
+            break;
+          }
+        }
+        expect(pushLine).toBeDefined();
+        const varName = pushLine?.trim().replace("PUSH, ", "");
+        const dataEntry = dataSection.find((l) =>
+          l.trimStart().startsWith(`${varName}:`),
+        );
+        expect(dataEntry).toBeDefined();
+        expect(dataEntry).toContain("%SystemBoolean");
+      }
     });
 
-    it.fails("integer ternary condition should be coerced to boolean", () => {
+    it("integer ternary condition should be coerced to boolean", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
@@ -562,14 +600,33 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: the ternary condition should have a != 0 comparison
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      expect(jumpContext).toMatch(
+      expect(result.uasm).toMatch(
         /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
       );
+
+      // The PUSH before JUMP_IF_FALSE must reference a %SystemBoolean temp
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      for (const ctx of contexts) {
+        const jifIdx = ctx.findIndex((l) => l.includes("JUMP_IF_FALSE"));
+        let pushLine: string | undefined;
+        for (let k = jifIdx - 1; k >= 0; k--) {
+          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
+            pushLine = ctx[k];
+            break;
+          }
+        }
+        expect(pushLine).toBeDefined();
+        const varName = pushLine?.trim().replace("PUSH, ", "");
+        const dataEntry = dataSection.find((l) =>
+          l.trimStart().startsWith(`${varName}:`),
+        );
+        expect(dataEntry).toBeDefined();
+        expect(dataEntry).toContain("%SystemBoolean");
+      }
     });
 
     it("logical NOT on integer should produce Boolean-typed result", () => {
@@ -617,7 +674,7 @@ describe("known transpiler bugs", () => {
       }
     });
 
-    it.fails("inline class instance in if-condition should be coerced to boolean", () => {
+    it("inline class instance in if-condition should be coerced to boolean", () => {
       // No for-loop or other conditionals — the only JUMP_IF_FALSE in the
       // output corresponds to `if (r)`, so contexts[0] is unambiguous.
       const source = `
@@ -637,13 +694,32 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: the inline handle (Int32) should be compared against
       // null or 0 to produce a Boolean before JUMP_IF_FALSE.
+      expect(result.uasm).toMatch(/op_Inequality|op_Equality/);
+
+      // The PUSH before JUMP_IF_FALSE must reference a %SystemBoolean temp
       const contexts = getJumpIfFalseContexts(result.uasm);
       expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
+      for (const ctx of contexts) {
+        const jifIdx = ctx.findIndex((l) => l.includes("JUMP_IF_FALSE"));
+        let pushLine: string | undefined;
+        for (let k = jifIdx - 1; k >= 0; k--) {
+          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
+            pushLine = ctx[k];
+            break;
+          }
+        }
+        expect(pushLine).toBeDefined();
+        const varName = pushLine?.trim().replace("PUSH, ", "");
+        const dataEntry = dataSection.find((l) =>
+          l.trimStart().startsWith(`${varName}:`),
+        );
+        expect(dataEntry).toBeDefined();
+        expect(dataEntry).toContain("%SystemBoolean");
+      }
     });
   });
 

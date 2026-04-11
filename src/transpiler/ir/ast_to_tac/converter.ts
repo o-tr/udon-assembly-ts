@@ -46,6 +46,7 @@ import {
   visitUpdateExpression,
   wrapDataToken,
 } from "./helpers/assignment.js";
+import { coerceToBoolean } from "./helpers/coerce_boolean.js";
 import {
   emitDataDictionaryEntries,
   emitDataDictionaryKeys,
@@ -813,6 +814,7 @@ export class ASTToTACConverter {
   templateLiteralValueToString = templateLiteralValueToString;
 
   coerceSwitchOperand = coerceSwitchOperand;
+  coerceToBoolean = coerceToBoolean;
   isSwitchComparableType = isSwitchComparableType;
 
   requireExternSignature = requireExternSignature;
