@@ -341,6 +341,7 @@ function printPairDiff(
   ts: UasmData,
   tsLabel: string,
 ) {
+  console.log(`  ── ${label} ──`);
   // Sync mode
   if (us.syncMode || ts.syncMode) {
     if (us.syncMode?.toLowerCase() === ts.syncMode?.toLowerCase()) {
