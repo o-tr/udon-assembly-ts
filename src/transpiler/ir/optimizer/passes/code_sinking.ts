@@ -29,7 +29,9 @@ export const sinkCode = (
   // Build a map from liveness key to all instruction indices that use it
   const useLocations = new Map<string, Set<number>>();
   for (let i = 0; i < instructions.length; i++) {
-    forEachUsedOperand(instructions[i], (op) => {
+    const inst = instructions[i];
+    if (!inst) continue;
+    forEachUsedOperand(inst, (op) => {
       const key = livenessKey(op);
       if (!key) return;
       const set = useLocations.get(key) ?? new Set();
@@ -49,7 +51,9 @@ export const sinkCode = (
   // Build def index map: liveness key -> definition index
   const defIndex = new Map<string, number>();
   for (let i = 0; i < instructions.length; i++) {
-    const def = getDefinedOperandForReuse(instructions[i]);
+    const inst = instructions[i];
+    if (!inst) continue;
+    const def = getDefinedOperandForReuse(inst);
     const key = def ? livenessKey(def) : null;
     if (key) defIndex.set(key, i);
   }
@@ -206,20 +210,14 @@ export const sinkCode = (
   const result: TACInstruction[] = [];
   const emitted = new Set<number>(sinkTargets.keys());
   for (let i = 0; i < instructions.length; i++) {
-    const current = instructions[i];
-    if (!current) continue;
-    // Skip already-emitted and sunk instructions
-    if (emitted.has(i)) continue;
-
     // Insert sunk instructions after any labels at the target block start
     const pending = insertions.get(i);
     if (pending) {
       // Find where labels end at the target block start
       let labelEnd = i;
-      while (
-        labelEnd < instructions.length &&
-        instructions[labelEnd].kind === TACInstructionKind.Label
-      ) {
+      while (labelEnd < instructions.length) {
+        const labelInst = instructions[labelEnd];
+        if (!labelInst || labelInst.kind !== TACInstructionKind.Label) break;
         labelEnd++;
       }
       if (labelEnd > i) {
@@ -237,10 +235,18 @@ export const sinkCode = (
       }
       // No leading labels: emit pending then the block-start instruction
       result.push(...pending);
-      result.push(current);
+      const currentInst = instructions[i];
+      if (currentInst && !emitted.has(i)) {
+        result.push(currentInst);
+      }
       continue;
     }
 
+    // Skip already-emitted and sunk instructions
+    if (emitted.has(i)) continue;
+
+    const current = instructions[i];
+    if (!current) continue;
     result.push(current);
   }
 

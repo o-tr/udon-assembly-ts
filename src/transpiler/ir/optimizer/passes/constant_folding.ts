@@ -3,7 +3,7 @@ import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
-  type CallInstruction,
+  CallInstruction,
   CastInstruction,
   type TACInstruction,
   TACInstructionKind,
@@ -67,6 +67,8 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
 
   for (const inst of instructions) {
     if (inst.kind === TACInstructionKind.Label) {
+      // Labels are control-flow merge points; clear tracked temp constants
+      // conservatively to avoid cross-path miscompilation.
       temporaryConstants.clear();
       result.push(inst);
       continue;
@@ -98,7 +100,21 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
 
     if (inst.kind === TACInstructionKind.Call) {
       const callInst = inst as CallInstruction;
-      const pureExternFolded = tryFoldPureExternCall(callInst);
+      const resolvedArgs = callInst.args.map(
+        (arg) => getResolvedConstant(arg) ?? arg,
+      );
+      const callInput = resolvedArgs.some(
+        (arg, idx) => arg !== callInst.args[idx],
+      )
+        ? new CallInstruction(
+            callInst.dest,
+            callInst.func,
+            resolvedArgs,
+            callInst.isTailCall,
+          )
+        : callInst;
+
+      const pureExternFolded = tryFoldPureExternCall(callInput);
       if (pureExternFolded) {
         result.push(pureExternFolded);
         trackFromFoldedAssignment(pureExternFolded);
@@ -106,7 +122,7 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
         continue;
       }
 
-      const valueTypeFolded = tryFoldValueTypeConstructor(callInst);
+      const valueTypeFolded = tryFoldValueTypeConstructor(callInput);
       if (valueTypeFolded) {
         result.push(valueTypeFolded);
         trackFromFoldedAssignment(valueTypeFolded);
@@ -115,7 +131,12 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
       }
 
       invalidateDefinedTemporary(inst);
-      result.push(inst);
+      if (callInput !== callInst) {
+        result.push(callInput);
+        changed = true;
+      } else {
+        result.push(inst);
+      }
       continue;
     }
 

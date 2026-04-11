@@ -25,9 +25,6 @@ export const simplifyJumps = (
 
   const labelAlias = new Map<string, string>();
   const pickCanonicalLabel = (labels: string[]): string => {
-    if (labels.includes("_start")) {
-      return "_start";
-    }
     if (exposedLabels) {
       for (const label of labels) {
         if (exposedLabels.has(label)) {
@@ -128,7 +125,8 @@ export const simplifyJumps = (
       const labelInst = inst as LabelInstruction;
       if (labelInst.label.kind === TACOperandKind.Label) {
         const name = (labelInst.label as LabelOperand).name;
-        if (canonicalLabel(name) !== name) {
+        const isExposedAlias = exposedLabels?.has(name) ?? false;
+        if (canonicalLabel(name) !== name && !isExposedAlias) {
           changed = true;
           continue;
         }
