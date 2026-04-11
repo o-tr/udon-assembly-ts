@@ -159,6 +159,7 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
           !isPrimitiveFoldValue(leftConst.value) ||
           !isPrimitiveFoldValue(rightConst.value)
         ) {
+          invalidateDefinedTemporary(inst);
           result.push(inst);
           continue;
         }
@@ -174,6 +175,7 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
           leftConst.type.udonType !== "Int32" &&
           leftConst.type.udonType !== "UInt32"
         ) {
+          invalidateDefinedTemporary(inst);
           result.push(inst);
           continue;
         }
@@ -234,6 +236,7 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
       // Check if operand is constant (including constants coming from folded temporaries)
       if (constOp) {
         if (constOp.value === null || !isPrimitiveFoldValue(constOp.value)) {
+          invalidateDefinedTemporary(inst);
           result.push(inst);
           continue;
         }
