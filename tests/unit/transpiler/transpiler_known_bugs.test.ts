@@ -57,6 +57,15 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
+/** Extract data section lines from UASM (lines between .data_start and .data_end) */
+function getDataSection(uasm: string): string[] {
+  const lines = uasm.split("\n");
+  const startIdx = lines.findIndex((l) => l.includes(".data_start"));
+  const endIdx = lines.findIndex((l) => l.includes(".data_end"));
+  if (startIdx < 0 || endIdx < 0) return [];
+  return lines.slice(startIdx, endIdx + 1);
+}
+
 describe("known transpiler bugs", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
@@ -227,15 +236,6 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("array type data section declaration", () => {
-    /** Extract data section lines from UASM (lines between .data_start and .data_end) */
-    function getDataSection(uasm: string): string[] {
-      const lines = uasm.split("\n");
-      const startIdx = lines.findIndex((l) => l.includes(".data_start"));
-      const endIdx = lines.findIndex((l) => l.includes(".data_end"));
-      if (startIdx < 0 || endIdx < 0) return [];
-      return lines.slice(startIdx, endIdx + 1);
-    }
-
     it("number[] variable should not declare as %SystemArray in data section", () => {
       const source = `
           class Main {
@@ -591,10 +591,7 @@ describe("known transpiler bugs", () => {
       // so the variable is allocated as %SystemBoolean in the data section even
       // though the UnaryOp intermediate temp is Int32. JUMP_IF_FALSE therefore
       // receives a Boolean push, avoiding HeapTypeMismatchException.
-      const dataLines = result.uasm.split("\n");
-      const startIdx = dataLines.findIndex((l) => l.includes(".data_start"));
-      const endIdx = dataLines.findIndex((l) => l.includes(".data_end"));
-      const dataSection = dataLines.slice(startIdx, endIdx + 1);
+      const dataSection = getDataSection(result.uasm);
 
       // All temps used in JUMP_IF_FALSE must be %SystemBoolean.
       // The PUSH immediately before JUMP_IF_FALSE is the condition operand.
