@@ -816,9 +816,7 @@ describe("known transpiler bugs", () => {
       // because unwrapDataToken returns the DataToken operand as-is
       // (rather than unwrapping to a typed temporary), preserving its
       // original DataToken type.
-      const valLine = dataSection.find((l) =>
-        l.trimStart().startsWith("val:"),
-      );
+      const valLine = dataSection.find((l) => l.trimStart().startsWith("val:"));
       expect(valLine).toBeDefined();
       expect(valLine).toContain("%VRCSDK3DataDataToken");
     });
