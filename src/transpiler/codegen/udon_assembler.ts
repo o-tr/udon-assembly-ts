@@ -671,7 +671,11 @@ export class UdonAssembler {
         // Labels appear on their own line
         const labelName = (inst as LabelInstruction).name;
         const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
-        if (canonicalLabel !== labelName) {
+        const preserveAliasLabel =
+          labelName === "_start" ||
+          isVrcEventLabel(labelName) ||
+          exportLabels?.has(labelName);
+        if (canonicalLabel !== labelName && !preserveAliasLabel) {
           continue;
         }
         if (labelName === "_start") {
