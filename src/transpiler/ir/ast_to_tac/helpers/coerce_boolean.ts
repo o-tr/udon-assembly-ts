@@ -73,6 +73,11 @@ export function coerceToBoolean(
   }
 
   // Numeric → value != 0
+  // NOTE: For Single/Double, IEEE 754 `NaN != 0` is true, so NaN is treated
+  // as truthy here. JS semantics say NaN is falsy (!!NaN === false). A strict
+  // fix would prepend a !Single.IsNaN(value) guard, but that adds an extra
+  // EXTERN call on every float condition. Since NaN-as-condition is extremely
+  // rare in VRChat scripts, we accept this divergence for now.
   if (isNumericUdonType(udonType)) {
     const boolTemp = this.newTemp(PrimitiveTypes.boolean);
     this.instructions.push(
