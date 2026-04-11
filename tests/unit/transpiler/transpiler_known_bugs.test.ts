@@ -16,18 +16,18 @@
  *         use VRCSDK3DataDataList.
  *         (root cause #13 in vm-test-failures-investigation.md)
  *
- * Bug 4: SoA inline field DataToken unwrap — when an inline class field holds a
+ * Bug 4 (FIXED): SoA inline field DataToken unwrap — when an inline class field holds a
  *         DataDictionary/DataList (e.g. Map<K,V>), the SoA field type resolves as
  *         ClassTypeSymbol (udonType="Object") instead of preserving the collection
  *         type, causing unwrapDataToken to use .Reference.
  *         (root cause #11 continuation in vm-test-failures-investigation.md)
  *
- * Bug 5: String boolean coercion — `!str` on a string variable generates
+ * Bug 5 (FIXED): String boolean coercion — `!str` on a string variable generates
  *         SystemConvert.ToBoolean(string) which throws at runtime for any value
  *         other than "True"/"False". JS truthy semantics require non-empty check.
  *         (root cause #15 in vm-test-failures-investigation.md)
  *
- * Bug 6: Array index assignment on empty DataList — `arr[i] = value` in a loop
+ * Bug 6 (FIXED): Array index assignment on empty DataList — `arr[i] = value` in a loop
  *         generates DataList.set_Item but the DataList was never pre-populated,
  *         causing an IndexOutOfRange at runtime.
  *         (root cause #13 continuation in vm-test-failures-investigation.md)
@@ -503,231 +503,152 @@ describe("known transpiler bugs", () => {
       expect(jumpContext).toContain("PUSH, flag");
     });
 
-    it.fails(
-      "integer variable in if-condition should be coerced to boolean",
-      () => {
-        const source = `
-          import { UdonInt } from "../../stubs";
-          class Main {
-            Start(): void {
-              const count: UdonInt = 5;
-              if (count) {
-                Debug.Log("truthy");
-              }
-            }
-          }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-        // After fix: JUMP_IF_FALSE should be preceded by a != 0 comparison
-        // that produces a Boolean result.
-        const contexts = getJumpIfFalseContexts(result.uasm);
-        expect(contexts.length).toBeGreaterThan(0);
-        const jumpContext = contexts[0].join("\n");
-        // Must have an inequality/equality comparison to produce Boolean
-        expect(jumpContext).toMatch(
-          /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
-        );
-      },
-    );
-
-    it.fails(
-      "string variable in if-condition should be coerced to boolean via length check",
-      () => {
-        const source = `
-          class Main {
-            Start(): void {
-              const name: string = "hello";
-              if (name) {
-                Debug.Log("truthy");
-              }
-            }
-          }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-        // After fix: should check str.Length != 0 for JS truthiness semantics
-        expect(result.uasm).toContain(
-          "SystemString.__get_Length__SystemInt32",
-        );
-        const contexts = getJumpIfFalseContexts(result.uasm);
-        expect(contexts.length).toBeGreaterThan(0);
-        const jumpContext = contexts[0].join("\n");
-        expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
-      },
-    );
-
-    it.fails(
-      "integer ternary condition should be coerced to boolean",
-      () => {
-        const source = `
-          import { UdonInt } from "../../stubs";
-          class Main {
-            Start(): void {
-              const count: UdonInt = 5;
-              const msg: string = count ? "yes" : "no";
-              Debug.Log(msg);
-            }
-          }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-        // After fix: the ternary condition should have a != 0 comparison
-        const contexts = getJumpIfFalseContexts(result.uasm);
-        expect(contexts.length).toBeGreaterThan(0);
-        const jumpContext = contexts[0].join("\n");
-        expect(jumpContext).toMatch(
-          /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
-        );
-      },
-    );
-
-    it.fails(
-      "logical NOT on integer should produce Boolean-typed result",
-      () => {
-        const source = `
-          import { UdonInt } from "../../stubs";
-          class Main {
-            Start(): void {
-              const count: UdonInt = 5;
-              const negated = !count;
-              if (negated) {
-                Debug.Log("falsy");
-              }
-            }
-          }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-        // After fix: the temp for !count should be declared as %SystemBoolean,
-        // not %SystemInt32 or %SystemSingle.
-        // Extract data section and find the negated variable
-        const dataLines = result.uasm.split("\n");
-        const startIdx = dataLines.findIndex((l) => l.includes(".data_start"));
-        const endIdx = dataLines.findIndex((l) => l.includes(".data_end"));
-        const dataSection = dataLines.slice(startIdx, endIdx + 1);
-
-        // All temps used in JUMP_IF_FALSE must be %SystemBoolean
-        const contexts = getJumpIfFalseContexts(result.uasm);
-        for (const ctx of contexts) {
-          const pushLine = ctx.find((l) =>
-            l.includes("PUSH") && !l.includes("EXTERN"),
-          );
-          if (pushLine) {
-            const varName = pushLine.trim().replace("PUSH, ", "");
-            const dataEntry = dataSection.find((l) => l.includes(`${varName}:`));
-            if (dataEntry) {
-              expect(dataEntry).toContain("%SystemBoolean");
+    it.fails("integer variable in if-condition should be coerced to boolean", () => {
+      const source = `
+        import { UdonInt } from "../../stubs";
+        class Main {
+          Start(): void {
+            const count: UdonInt = 5;
+            if (count) {
+              Debug.Log("truthy");
             }
           }
         }
-      },
-    );
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    it.fails(
-      "inline class instance in if-condition should be coerced to boolean",
-      () => {
-        const source = `
-          class Result {
-            value: number;
-            constructor(value: number) {
-              this.value = value;
+      // After fix: JUMP_IF_FALSE should be preceded by a != 0 comparison
+      // that produces a Boolean result.
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      const jumpContext = contexts[0].join("\n");
+      // Must have an inequality/equality comparison to produce Boolean
+      expect(jumpContext).toMatch(
+        /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
+      );
+    });
+
+    it.fails("string variable in if-condition should be coerced to boolean via length check", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const name: string = "hello";
+            if (name) {
+              Debug.Log("truthy");
             }
           }
-          class Main {
-            Start(): void {
-              const results: Result[] = [];
-              for (let i: number = 0; i < 3; i++) {
-                results.push(new Result(i));
-              }
-              const r = results[0];
-              if (r) {
-                Debug.Log("exists");
-              }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // After fix: should check str.Length != 0 for JS truthiness semantics
+      expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      const jumpContext = contexts[0].join("\n");
+      expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
+    });
+
+    it.fails("integer ternary condition should be coerced to boolean", () => {
+      const source = `
+        import { UdonInt } from "../../stubs";
+        class Main {
+          Start(): void {
+            const count: UdonInt = 5;
+            const msg: string = count ? "yes" : "no";
+            Debug.Log(msg);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // After fix: the ternary condition should have a != 0 comparison
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      const jumpContext = contexts[0].join("\n");
+      expect(jumpContext).toMatch(
+        /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
+      );
+    });
+
+    it("logical NOT on integer should produce Boolean-typed result", () => {
+      const source = `
+        import { UdonInt } from "../../stubs";
+        class Main {
+          Start(): void {
+            const count: UdonInt = 5;
+            const negated = !count;
+            if (negated) {
+              Debug.Log("falsy");
             }
           }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // After fix: the inline handle (Int32) should be compared against
-        // null or 0 to produce a Boolean before JUMP_IF_FALSE.
-        const contexts = getJumpIfFalseContexts(result.uasm);
-        expect(contexts.length).toBeGreaterThan(0);
-        const jumpContext = contexts[0].join("\n");
-        expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
-      },
-    );
-  });
+      // After fix: the temp for !count should be declared as %SystemBoolean,
+      // not %SystemInt32 or %SystemSingle.
+      const dataLines = result.uasm.split("\n");
+      const startIdx = dataLines.findIndex((l) => l.includes(".data_start"));
+      const endIdx = dataLines.findIndex((l) => l.includes(".data_end"));
+      const dataSection = dataLines.slice(startIdx, endIdx + 1);
 
-  // ---------------------------------------------------------------------------
-  // Bug 9: DataToken.get_Reference for Map<string, unknown>
-  // ---------------------------------------------------------------------------
-
-  describe("DataToken.get_Reference for unknown-typed Map values", () => {
-    it.fails(
-      "Map<string, unknown>.get() should not use get_Reference",
-      () => {
-        // When a Map's value type is `unknown`, the transpiler maps it to
-        // ObjectType. unwrapDataToken's default case falls back to .Reference,
-        // but the DataToken actually stores a typed value (e.g. String) that
-        // cannot be accessed via .Reference at runtime.
-        const source = `
-          class LRUCache {
-            private cache: Map<string, unknown> = new Map<string, unknown>();
-
-            get(key: string): unknown {
-              return this.cache.get(key);
-            }
-
-            set(key: string, value: unknown): void {
-              this.cache.set(key, value);
-            }
-
-            has(key: string): boolean {
-              return this.cache.has(key);
-            }
+      // All temps used in JUMP_IF_FALSE must be %SystemBoolean.
+      // The PUSH immediately before JUMP_IF_FALSE is the condition operand.
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      for (const ctx of contexts) {
+        const jifIdx = ctx.findIndex((l) => l.includes("JUMP_IF_FALSE"));
+        // Search backwards from JUMP_IF_FALSE for the immediately preceding PUSH
+        let pushLine: string | undefined;
+        for (let k = jifIdx - 1; k >= 0; k--) {
+          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
+            pushLine = ctx[k];
+            break;
           }
-          class Main {
-            Start(): void {
-              const cache = new LRUCache();
-              cache.set("a", "hello");
-              Debug.Log(cache.has("a"));
-              const val = cache.get("a");
-              Debug.Log(val);
-            }
-          }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-        // After fix: should NOT use .Reference for DataToken unwrap when
-        // the stored value is a known primitive type. A runtime TokenType
-        // dispatch or type-hint propagation should be used instead.
-        expect(result.uasm).not.toContain(
-          "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+        }
+        expect(pushLine).toBeDefined();
+        const varName = pushLine?.trim().replace("PUSH, ", "");
+        const dataEntry = dataSection.find((l) =>
+          l.trimStart().startsWith(`${varName}:`),
         );
-      },
-    );
+        expect(dataEntry).toBeDefined();
+        expect(dataEntry).toContain("%SystemBoolean");
+      }
+    });
 
-    it.fails(
-      "Map<string, any>.get() should not use get_Reference",
-      () => {
-        const source = `
-          class Main {
-            Start(): void {
-              const m: Map<string, any> = new Map<string, any>();
-              m.set("key", 42);
-              const val = m.get("key");
-              Debug.Log(val);
+    it.fails("inline class instance in if-condition should be coerced to boolean", () => {
+      const source = `
+        class Result {
+          value: number;
+          constructor(value: number) {
+            this.value = value;
+          }
+        }
+        class Main {
+          Start(): void {
+            const results: Result[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              results.push(new Result(i));
+            }
+            const r = results[0];
+            if (r) {
+              Debug.Log("exists");
             }
           }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        expect(result.uasm).not.toContain(
-          "VRCSDK3DataDataToken.__get_Reference__SystemObject",
-        );
-      },
-    );
+      // After fix: the inline handle (Int32) should be compared against
+      // null or 0 to produce a Boolean before JUMP_IF_FALSE.
+      // Use the last JUMP_IF_FALSE context to target the `if (r)` branch,
+      // not the for-loop guard.
+      const contexts = getJumpIfFalseContexts(result.uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      const jumpContext = contexts[contexts.length - 1].join("\n");
+      expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -735,81 +656,142 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("SoA D3 method dispatch", () => {
-    it.fails(
-      "method call on SoA class instance from for-of loop should not produce dispatch miss",
-      () => {
-        const source = `
-          class Item {
-            value: number;
-            label: string;
-            constructor(value: number, label: string) {
-              this.value = value;
-              this.label = label;
+    it.fails("method call on SoA class instance from for-of loop should not produce dispatch miss", () => {
+      const source = `
+        class Item {
+          value: number;
+          label: string;
+          constructor(value: number, label: string) {
+            this.value = value;
+            this.label = label;
+          }
+          getLabel(): string {
+            return this.label;
+          }
+        }
+        class Main {
+          Start(): void {
+            const items: Item[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              items.push(new Item(i, "item" + i));
             }
-            getLabel(): string {
-              return this.label;
+            for (const item of items) {
+              Debug.Log(item.getLabel());
             }
           }
-          class Main {
-            Start(): void {
-              const items: Item[] = [];
-              for (let i: number = 0; i < 3; i++) {
-                items.push(new Item(i, "item" + i));
-              }
-              for (const item of items) {
-                Debug.Log(item.getLabel());
-              }
-            }
-          }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // After fix: SoA fast path should be used instead of per-instance
-        // handle comparison that always misses for dynamic SoA handles.
-        expect(result.uasm).not.toContain("dispatch miss");
-        // Should still read from SoA DataLists
-        expect(result.uasm).toContain("__soa_Item_label");
-      },
-    );
+      // After fix: SoA fast path should be used instead of per-instance
+      // handle comparison that always misses for dynamic SoA handles.
+      expect(result.uasm).not.toContain("dispatch miss");
+      // Should still read from SoA DataLists
+      expect(result.uasm).toContain("__soa_Item_label");
+    });
 
-    it.fails(
-      "method call on SoA class instance returned from cache should not produce dispatch miss",
-      () => {
-        const source = `
-          class Tile {
-            kind: number;
-            code: number;
-            constructor(kind: number, code: number) {
-              this.kind = kind;
-              this.code = code;
-            }
-            toString(): string {
-              return this.kind + ":" + this.code;
-            }
-            static cache: Tile[] = [];
-            static init(): void {
-              for (let i: number = 0; i < 9; i++) {
-                Tile.cache.push(new Tile(0, i));
-              }
-            }
-            static get(index: number): Tile {
-              return Tile.cache[index];
+    it.fails("method call on SoA class instance returned from cache should not produce dispatch miss", () => {
+      const source = `
+        class Tile {
+          kind: number;
+          code: number;
+          constructor(kind: number, code: number) {
+            this.kind = kind;
+            this.code = code;
+          }
+          toString(): string {
+            return this.kind + ":" + this.code;
+          }
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 9; i++) {
+              Tile.cache.push(new Tile(0, i));
             }
           }
-          class Main {
-            Start(): void {
-              Tile.init();
-              const t = Tile.get(3);
-              Debug.Log(t.toString());
-            }
+          static get(index: number): Tile {
+            return Tile.cache[index];
           }
-        `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const t = Tile.get(3);
+            Debug.Log(t.toString());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // After fix: the returned Tile instance from cache should be
-        // dispatchable via SoA fast path.
-        expect(result.uasm).not.toContain("dispatch miss");
-      },
-    );
+      // After fix: the returned Tile instance from cache should be
+      // dispatchable via SoA fast path.
+      expect(result.uasm).not.toContain("dispatch miss");
+      // Should read SoA fields for the inlined toString() body
+      expect(result.uasm).toContain("__soa_Tile_kind");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 9: DataToken.get_Reference for Map<string, unknown>
+  // ---------------------------------------------------------------------------
+
+  describe("DataToken.get_Reference for unknown-typed Map values", () => {
+    it.fails("Map<string, unknown>.get() should not use get_Reference", () => {
+      // When a Map's value type is `unknown`, the transpiler maps it to
+      // ObjectType. unwrapDataToken's default case falls back to .Reference,
+      // but the DataToken actually stores a typed value (e.g. String) that
+      // cannot be accessed via .Reference at runtime.
+      const source = `
+        class LRUCache {
+          private cache: Map<string, unknown> = new Map<string, unknown>();
+
+          get(key: string): unknown {
+            return this.cache.get(key);
+          }
+
+          set(key: string, value: unknown): void {
+            this.cache.set(key, value);
+          }
+
+          has(key: string): boolean {
+            return this.cache.has(key);
+          }
+        }
+        class Main {
+          Start(): void {
+            const cache = new LRUCache();
+            cache.set("a", "hello");
+            Debug.Log(cache.has("a"));
+            const val = cache.get("a");
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // After fix: should NOT use .Reference for DataToken unwrap when
+      // the stored value is a known primitive type. A runtime TokenType
+      // dispatch or type-hint propagation should be used instead.
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
+    it.fails("Map<string, any>.get() should not use get_Reference", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, any> = new Map<string, any>();
+            m.set("key", 42);
+            const val = m.get("key");
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
   });
 });
