@@ -146,10 +146,15 @@ describe("optimizer regression tests", () => {
       const transpiler = new TypeScriptToUdonTranspiler();
       const result = transpiler.transpile(source, { optimize: true });
       expect(result.uasm).toContain(".export _start");
-      expect(result.uasm).toContain(".export __0_AddScore");
-      expect(result.uasm).toContain(".export ResetGame");
-      expect(result.uasm).toContain(".export GetScore");
-      expect(result.uasm).toContain(".export GetHighScore");
+      const expectedPublicExports = [
+        "__0_AddScore",
+        "ResetGame",
+        "GetScore",
+        "GetHighScore",
+      ];
+      for (const label of expectedPublicExports) {
+        expect(result.uasm).toContain(`.export ${label}`);
+      }
     });
   });
 
