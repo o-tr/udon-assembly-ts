@@ -147,6 +147,9 @@ describe("optimizer regression tests", () => {
       const result = transpiler.transpile(source, { optimize: true });
       expect(result.uasm).toContain(".export _start");
       expect(result.uasm).toContain(".export __0_AddScore");
+      expect(result.uasm).toContain(".export ResetGame");
+      expect(result.uasm).toContain(".export GetScore");
+      expect(result.uasm).toContain(".export GetHighScore");
     });
   });
 
