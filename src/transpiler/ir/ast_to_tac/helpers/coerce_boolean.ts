@@ -39,7 +39,11 @@ export function coerceToBoolean(
     return operand;
   }
 
-  // Constant folding: evaluate truthiness at compile time
+  // Constant folding: evaluate truthiness at compile time.
+  // NOTE: The number branch folds NaN to false (matching JS !!NaN === false),
+  // but the runtime numeric path below emits `value != 0` which treats NaN as
+  // truthy (IEEE 754: NaN != 0 → true). This is an intentional divergence;
+  // see the runtime comment for rationale.
   if (operand.kind === TACOperandKind.Constant) {
     const value = (operand as ConstantOperand).value;
     let truthy: boolean;
@@ -84,6 +88,20 @@ export function coerceToBoolean(
       new BinaryOpInstruction(boolTemp, operand, "!=", createConstant(0, type)),
     );
     return boolTemp;
+  }
+
+  // Udon value-type structs (Vector3, Quaternion, Color, …) are C# structs
+  // that can never be null. They have no null-comparison extern, so emitting
+  // `value != null` would produce a runtime error. Treat as always-truthy.
+  if (
+    udonType === UdonType.Vector2 ||
+    udonType === UdonType.Vector3 ||
+    udonType === UdonType.Vector4 ||
+    udonType === UdonType.Quaternion ||
+    udonType === UdonType.Color ||
+    udonType === UdonType.DataToken
+  ) {
+    return createConstant(true, PrimitiveTypes.boolean);
   }
 
   // Object / Class / other → value != null
