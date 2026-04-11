@@ -62,8 +62,11 @@ function prepareProbeDirs(): { inputDir: string; outputDir: string } {
   return { inputDir, outputDir };
 }
 
-function runUnityProbe(inputDir: string, outputDir: string): string {
-  const logFile = path.join(tmpdir(), `uasm-probe-${Date.now()}.log`);
+function runUnityProbe(
+  inputDir: string,
+  outputDir: string,
+  logFile: string,
+): void {
   const unityArgs = [
     "-batchmode",
     "-nographics",
@@ -96,8 +99,6 @@ function runUnityProbe(inputDir: string, outputDir: string): string {
     }
     // Unity exited with non-zero (may still have written results)
   }
-
-  return logFile;
 }
 
 function readProbeResults(outputDir: string, logFile: string): ProbeResults {
@@ -211,9 +212,9 @@ if (!UNITY_EDITOR_PATH) {
 }
 
 const { inputDir, outputDir } = prepareProbeDirs();
-let logFile = "";
+const logFile = path.join(tmpdir(), `uasm-probe-${Date.now()}.log`);
 try {
-  logFile = runUnityProbe(inputDir, outputDir);
+  runUnityProbe(inputDir, outputDir, logFile);
   const results = readProbeResults(outputDir, logFile);
   printProbeReport(results);
 
@@ -228,7 +229,7 @@ try {
   console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;
 } finally {
-  if (logFile) cleanupLogFile(logFile);
+  cleanupLogFile(logFile);
   // Clean up probe input directory (output kept for inspection)
   try {
     rmSync(inputDir, { recursive: true, force: true });
