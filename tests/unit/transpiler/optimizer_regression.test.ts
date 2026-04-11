@@ -8,9 +8,8 @@
  *   [GAP]     — optimization is insufficient compared to expected behavior
  *   [PASS]    — optimization works correctly (green baseline for comparison)
  *
- * Tests use it.fails() to document known failures. When a bug is fixed,
- * the corresponding test will start passing and it.fails() will flag it —
- * at that point, switch it back to a normal it().
+ * These cases were added after real optimizer regressions/bugs and should
+ * remain green to prevent future regressions.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
@@ -75,7 +74,7 @@ describe("optimizer regression tests", () => {
   // [BUG] tail_merge crash on if/else-if/else with instance field access
   // ─────────────────────────────────────────────────────────────────────────
   describe("[BUG] tail_merge crash", () => {
-    it.fails("does not crash on if/else-if/else with property access and Debug.Log", () => {
+    it("does not crash on if/else-if/else with property access and Debug.Log", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -108,7 +107,7 @@ describe("optimizer regression tests", () => {
   // [BUG] _start export missing after optimization
   // ─────────────────────────────────────────────────────────────────────────
   describe("[BUG] _start export pruned by optimizer", () => {
-    it.fails("always exports _start even when optimization prunes methods", () => {
+    it("always exports _start even when optimization prunes methods", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -154,7 +153,7 @@ describe("optimizer regression tests", () => {
   // [REGRESS] diamond_simp: SSA reconstruction inflates instruction count
   // ─────────────────────────────────────────────────────────────────────────
   describe("[REGRESS] diamond simplification SSA inflation", () => {
-    it.fails("optimization should not increase instruction count for ternary patterns", () => {
+    it("optimization should not increase instruction count for ternary patterns", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -187,7 +186,7 @@ describe("optimizer regression tests", () => {
   // [REGRESS] loop optimization: SSA overhead increases instructions
   // ─────────────────────────────────────────────────────────────────────────
   describe("[REGRESS] loop optimization SSA overhead", () => {
-    it.fails("optimization should not increase instruction count for fibonacci loop", () => {
+    it("optimization should not increase instruction count for fibonacci loop", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -217,7 +216,7 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThanOrEqual(baselineCount);
     });
 
-    it.fails("optimization should not increase instruction count for simple loop unroll", () => {
+    it("optimization should not increase instruction count for simple loop unroll", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -244,7 +243,7 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThanOrEqual(baselineCount);
     });
 
-    it.fails("optimization should not increase instruction count for LICM pattern", () => {
+    it("optimization should not increase instruction count for LICM pattern", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -279,7 +278,7 @@ describe("optimizer regression tests", () => {
   // [GAP] constant folding: chain of constant arithmetic should fully fold
   // ─────────────────────────────────────────────────────────────────────────
   describe("[GAP] constant folding chain", () => {
-    it.fails("folds a chain of constant arithmetic to a single value at TAC level", () => {
+    it("folds a chain of constant arithmetic to a single value at TAC level", () => {
       // t0 = 2 + 3   → 5
       // t1 = t0 * 4  → 20
       // t2 = 100 / 5 → 20
@@ -357,7 +356,7 @@ describe("optimizer regression tests", () => {
       }
     });
 
-    it.fails("end-to-end: constant arithmetic chain produces fewer externs when optimized", () => {
+    it("end-to-end: constant arithmetic chain produces fewer externs when optimized", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
