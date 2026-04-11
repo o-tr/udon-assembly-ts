@@ -774,6 +774,7 @@ export function visitShortCircuitAnd(
   const endLabel = this.newLabel("and_end");
 
   const left = this.visitExpression(node.left);
+  const coercedLeft = this.coerceToBoolean(left);
   const result = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
     new AssignmentInstruction(
@@ -781,10 +782,10 @@ export function visitShortCircuitAnd(
       createConstant(false, PrimitiveTypes.boolean),
     ),
   );
-  this.instructions.push(new ConditionalJumpInstruction(left, endLabel));
+  this.instructions.push(new ConditionalJumpInstruction(coercedLeft, endLabel));
 
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -798,8 +799,9 @@ export function visitShortCircuitOr(
   const endLabel = this.newLabel("or_end");
 
   const left = this.visitExpression(node.left);
+  const coercedLeft = this.coerceToBoolean(left);
   this.instructions.push(
-    new ConditionalJumpInstruction(left, shortCircuitLabel),
+    new ConditionalJumpInstruction(coercedLeft, shortCircuitLabel),
   );
 
   this.instructions.push(
@@ -812,7 +814,7 @@ export function visitShortCircuitOr(
 
   this.instructions.push(new LabelInstruction(shortCircuitLabel));
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -822,7 +824,12 @@ export function visitUnaryExpression(
   node: UnaryExpressionNode,
 ): TACOperand {
   const operand = this.visitExpression(node.operand);
-  const resultType = this.getOperandType(operand);
+  // Logical NOT always produces Boolean regardless of operand type.
+  // This ensures coerceToBoolean sees Boolean and skips redundant coercion.
+  const resultType =
+    node.operator === "!"
+      ? PrimitiveTypes.boolean
+      : this.getOperandType(operand);
   const result = this.newTemp(resultType);
 
   this.instructions.push(
@@ -835,7 +842,7 @@ export function visitConditionalExpression(
   this: ASTToTACConverter,
   node: ConditionalExpressionNode,
 ): TACOperand {
-  const condition = this.visitExpression(node.condition);
+  const condition = this.coerceToBoolean(this.visitExpression(node.condition));
   const falseLabel = this.newLabel("cond_false");
   const endLabel = this.newLabel("cond_end");
 
