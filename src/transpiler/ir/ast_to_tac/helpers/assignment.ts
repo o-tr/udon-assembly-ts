@@ -564,6 +564,13 @@ export function unwrapDataToken(
     return token;
   }
 
+  // When the target type is ObjectType (unknown/any/object), we cannot
+  // determine the correct DataToken accessor at compile time. Return
+  // the DataToken as-is to avoid a .Reference crash on non-reference tokens.
+  if (targetType === ObjectType) {
+    return token;
+  }
+
   // Inline class instances are stored as Int32 handles in DataToken.
   // Must unwrap via .Int, not .Reference, to avoid Udon VM errors.
   let property = "Reference";
