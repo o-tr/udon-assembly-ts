@@ -505,7 +505,7 @@ describe("known transpiler bugs", () => {
 
     it.fails("integer variable in if-condition should be coerced to boolean", () => {
       const source = `
-        import { UdonInt } from "../../stubs";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
           Start(): void {
             const count: UdonInt = 5;
@@ -551,7 +551,7 @@ describe("known transpiler bugs", () => {
 
     it.fails("integer ternary condition should be coerced to boolean", () => {
       const source = `
-        import { UdonInt } from "../../stubs";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
           Start(): void {
             const count: UdonInt = 5;
@@ -573,7 +573,7 @@ describe("known transpiler bugs", () => {
 
     it("logical NOT on integer should produce Boolean-typed result", () => {
       const source = `
-        import { UdonInt } from "../../stubs";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
           Start(): void {
             const count: UdonInt = 5;
@@ -620,6 +620,8 @@ describe("known transpiler bugs", () => {
     });
 
     it.fails("inline class instance in if-condition should be coerced to boolean", () => {
+      // No for-loop or other conditionals — the only JUMP_IF_FALSE in the
+      // output corresponds to `if (r)`, so contexts[0] is unambiguous.
       const source = `
         class Result {
           value: number;
@@ -629,11 +631,7 @@ describe("known transpiler bugs", () => {
         }
         class Main {
           Start(): void {
-            const results: Result[] = [];
-            for (let i: number = 0; i < 3; i++) {
-              results.push(new Result(i));
-            }
-            const r = results[0];
+            const r = new Result(42);
             if (r) {
               Debug.Log("exists");
             }
@@ -644,11 +642,9 @@ describe("known transpiler bugs", () => {
 
       // After fix: the inline handle (Int32) should be compared against
       // null or 0 to produce a Boolean before JUMP_IF_FALSE.
-      // Use the last JUMP_IF_FALSE context to target the `if (r)` branch,
-      // not the for-loop guard.
       const contexts = getJumpIfFalseContexts(result.uasm);
       expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[contexts.length - 1].join("\n");
+      const jumpContext = contexts[0].join("\n");
       expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
     });
   });
@@ -776,6 +772,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+      // The Map.get() path via DataDictionary.get_Item must still be present
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+      );
     });
 
     it.fails("Map<string, any>.get() should not use get_Reference", () => {
@@ -793,6 +793,10 @@ describe("known transpiler bugs", () => {
 
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // The Map.get() path via DataDictionary.get_Item must still be present
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
       );
     });
   });
