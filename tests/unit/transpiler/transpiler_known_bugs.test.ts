@@ -816,12 +816,11 @@ describe("known transpiler bugs", () => {
       // because unwrapDataToken returns the DataToken operand as-is
       // (rather than unwrapping to a typed temporary), preserving its
       // original DataToken type.
-      const valLines = dataSection.filter((l) => l.includes("val"));
-      expect(valLines.length).toBeGreaterThan(0);
-      const hasDataToken = valLines.some((l) =>
-        l.includes("%VRCSDK3DataDataToken"),
+      const valLine = dataSection.find((l) =>
+        l.trimStart().startsWith("val:"),
       );
-      expect(hasDataToken).toBe(true);
+      expect(valLine).toBeDefined();
+      expect(valLine).toContain("%VRCSDK3DataDataToken");
     });
 
     it("Map<string, string>.get() should still use typed unwrap (regression guard)", () => {
