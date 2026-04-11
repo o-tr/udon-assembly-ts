@@ -618,11 +618,6 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
       tsMap.size > 0 ? (tsMap.keys().next().value ?? null) : null;
     const tsOptClassName =
       tsOptMap.size > 0 ? (tsOptMap.keys().next().value ?? null) : null;
-    if (usClassName && tsClassName && usClassName !== tsClassName) {
-      console.warn(
-        `  [compare] "${tc.name}": class name mismatch — UdonSharp="${usClassName}" vs TASM="${tsClassName}"`,
-      );
-    }
     const usText = usClassName ? (usMap.get(usClassName) ?? null) : null;
     const tsText = tsClassName ? (tsMap.get(tsClassName) ?? null) : null;
     const tsOptText = tsOptClassName

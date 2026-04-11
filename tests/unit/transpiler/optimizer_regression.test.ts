@@ -6,6 +6,7 @@
  *   [BUG]     — optimizer crashes or produces incorrect output
  *   [REGRESS] — optimization makes output worse than baseline (no optimization)
  *   [GAP]     — optimization is insufficient compared to expected behavior
+ *   [PASS]    — optimization works correctly (green baseline for comparison)
  *
  * Tests use it.fails() to document known failures. When a bug is fixed,
  * the corresponding test will start passing and it.fails() will flag it —
@@ -20,24 +21,33 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   ReturnInstruction,
+  TACInstructionKind,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
   type ConstantOperand,
   createConstant,
   createTemporary,
   TACOperandKind,
+  type TemporaryOperand,
 } from "../../../src/transpiler/ir/tac_operand";
 
 beforeAll(() => {
   buildExternRegistryFromFiles([]);
 });
 
+/** Strip trailing comments outside of quoted strings */
+function stripTrailingComment(raw: string): string {
+  const m = raw.match(/^([^"]*(?:"[^"]*"[^"]*)*)\/\//);
+  return m ? m[1].trim() : raw;
+}
+
 /** Count instruction lines in UASM code section (PUSH, EXTERN, JUMP, etc.) */
 function countUasmInstructions(uasm: string): number {
   const lines = uasm.split("\n").map((l) => l.trim());
   let inCode = false;
   let count = 0;
-  for (const line of lines) {
+  for (const raw of lines) {
+    const line = stripTrailingComment(raw);
     if (line === ".code_start") {
       inCode = true;
       continue;
@@ -47,10 +57,12 @@ function countUasmInstructions(uasm: string): number {
       continue;
     }
     if (!inCode) continue;
-    // Skip labels, directives, empty lines, comments
-    if (line.endsWith(":") && !line.includes(",")) continue;
-    if (line.startsWith(".")) continue;
+    // Skip empty lines, full-line comments
     if (!line || line.startsWith("//") || line.startsWith("#")) continue;
+    // Skip labels (e.g. "_start:") — strip comments first so "label: // ..." is handled
+    if (line.endsWith(":") && !line.includes(",")) continue;
+    // Skip directives
+    if (line.startsWith(".")) continue;
     // NOP is excluded from instruction count (same as uasm_parser)
     if (line === "NOP") continue;
     count++;
@@ -118,7 +130,8 @@ describe("optimizer regression tests", () => {
               this.highScore = this.score;
               Debug.Log("New high score!");
             }
-            Debug.Log("Score: " + this.score.toString());
+            const msg: string = "Score: " + this.score.toString();
+            Debug.Log(msg);
           }
           ResetGame(): void {
             this.score = 0 as UdonInt;
@@ -307,27 +320,35 @@ describe("optimizer regression tests", () => {
 
       // After full optimization, the chain should fold to a single constant 40.
       // There should be no BinaryOp instructions remaining.
-      const hasBinaryOp = optimized.some((inst) => inst.kind === "BinaryOp");
+      const hasBinaryOp = optimized.some((inst) => inst.kind === TACInstructionKind.BinaryOp);
       expect(hasBinaryOp).toBe(false);
 
-      // The return value should be a constant 40
-      const retInst = optimized.find((inst) => inst.kind === "Return") as
+      // The return value should ultimately resolve to the constant 40.
+      const retInst = optimized.find((inst) => inst.kind === TACInstructionKind.Return) as
         | ReturnInstruction
         | undefined;
       expect(retInst).toBeDefined();
-      if (retInst?.value?.kind === TACOperandKind.Constant) {
-        expect((retInst.value as ConstantOperand).value).toBe(40);
-      } else if (retInst?.value?.kind === TACOperandKind.Temporary) {
-        // The return may reference a temporary that holds the folded value.
-        // Check that the assignment to that temp is a constant 40.
+      const retValue = retInst!.value!;
+      if (retValue.kind === TACOperandKind.Constant) {
+        expect((retValue as ConstantOperand).value).toBe(40);
+      } else if (retValue.kind === TACOperandKind.Temporary) {
+        // The return references a temporary — find the assignment that
+        // defines this specific temporary and verify its constant value.
+        const retTempId = (retValue as TemporaryOperand).id;
         const assignInst = optimized.find(
           (inst) =>
-            inst.kind === "Assignment" &&
+            inst.kind === TACInstructionKind.Assignment &&
+            (inst as AssignmentInstruction).dest.kind ===
+              TACOperandKind.Temporary &&
+            ((inst as AssignmentInstruction).dest as TemporaryOperand).id ===
+              retTempId &&
             (inst as AssignmentInstruction).src.kind === TACOperandKind.Constant,
         ) as AssignmentInstruction | undefined;
         expect(assignInst).toBeDefined();
-        expect((assignInst?.src as ConstantOperand | undefined)?.value).toBe(
-          40,
+        expect((assignInst!.src as ConstantOperand).value).toBe(40);
+      } else {
+        expect.fail(
+          `expected return operand to be Constant or Temporary, got ${retValue.kind}`,
         );
       }
     });
@@ -369,9 +390,9 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // [GAP] algebraic simplification: x+0, x*1, x*0 should simplify
+  // [PASS] algebraic simplification: x+0, x*1, x*0 correctly simplified
   // ─────────────────────────────────────────────────────────────────────────
-  describe("[GAP] algebraic simplification with field access", () => {
+  describe("[PASS] algebraic simplification with field access", () => {
     it("optimization should produce fewer instructions than baseline for identity operations", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
