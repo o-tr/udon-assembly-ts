@@ -785,7 +785,7 @@ export function visitShortCircuitAnd(
   this.instructions.push(new ConditionalJumpInstruction(coercedLeft, endLabel));
 
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -814,7 +814,7 @@ export function visitShortCircuitOr(
 
   this.instructions.push(new LabelInstruction(shortCircuitLabel));
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -824,7 +824,12 @@ export function visitUnaryExpression(
   node: UnaryExpressionNode,
 ): TACOperand {
   const operand = this.visitExpression(node.operand);
-  const resultType = this.getOperandType(operand);
+  // Logical NOT always produces Boolean regardless of operand type.
+  // This ensures coerceToBoolean sees Boolean and skips redundant coercion.
+  const resultType =
+    node.operator === "!"
+      ? PrimitiveTypes.boolean
+      : this.getOperandType(operand);
   const result = this.newTemp(resultType);
 
   this.instructions.push(
