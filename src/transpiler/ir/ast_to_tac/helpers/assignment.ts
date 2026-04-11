@@ -4,9 +4,11 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
+  ObjectTypeSymbol,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
@@ -564,10 +566,17 @@ export function unwrapDataToken(
     return token;
   }
 
-  // When the target type is ObjectType (unknown/any/object), we cannot
-  // determine the correct DataToken accessor at compile time. Return
-  // the DataToken as-is to avoid a .Reference crash on non-reference tokens.
-  if (targetType === ObjectType) {
+  // When the target type cannot determine the correct DataToken accessor
+  // at compile time, return the DataToken as-is to avoid a .Reference
+  // crash on non-reference tokens. This covers:
+  //   - ObjectTypeSymbol: unknown/any/object (erased top type)
+  //   - GenericTypeParameterSymbol: unresolved generic params (T, K, V)
+  //   - DataToken: target already IS a DataToken, no unwrap needed
+  if (
+    targetType instanceof ObjectTypeSymbol ||
+    targetType instanceof GenericTypeParameterSymbol ||
+    targetType.udonType === UdonType.DataToken
+  ) {
     return token;
   }
 
