@@ -104,7 +104,7 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // [BUG] _start export missing after optimization
+  // [BUG] exported entry labels missing after optimization
   // ─────────────────────────────────────────────────────────────────────────
   describe("[BUG] _start export pruned by optimizer", () => {
     it("always exports _start even when optimization prunes methods", () => {
@@ -146,6 +146,15 @@ describe("optimizer regression tests", () => {
       const transpiler = new TypeScriptToUdonTranspiler();
       const result = transpiler.transpile(source, { optimize: true });
       expect(result.uasm).toContain(".export _start");
+      const expectedPublicExports = [
+        "__0_AddScore",
+        "ResetGame",
+        "GetScore",
+        "GetHighScore",
+      ];
+      for (const label of expectedPublicExports) {
+        expect(result.uasm).toContain(`.export ${label}`);
+      }
     });
   });
 
