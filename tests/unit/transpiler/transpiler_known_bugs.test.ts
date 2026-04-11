@@ -470,12 +470,13 @@ describe("known transpiler bugs", () => {
 
   describe("non-boolean truthy coercion for JUMP_IF_FALSE", () => {
     /** Extract the UASM lines immediately before each JUMP_IF_FALSE */
+    const CONTEXT_LINES = 10;
     function getJumpIfFalseContexts(uasm: string): string[][] {
       const lines = uasm.split("\n");
       const contexts: string[][] = [];
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].includes("JUMP_IF_FALSE")) {
-          contexts.push(lines.slice(Math.max(0, i - 6), i + 1));
+          contexts.push(lines.slice(Math.max(0, i - CONTEXT_LINES), i + 1));
         }
       }
       return contexts;
