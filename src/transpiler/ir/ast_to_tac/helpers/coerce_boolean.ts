@@ -45,10 +45,12 @@ export function coerceToBoolean(
     let truthy: boolean;
     if (value === null || value === undefined) {
       truthy = false;
+    } else if (typeof value === "boolean") {
+      truthy = value;
     } else if (typeof value === "string") {
       truthy = value.length > 0;
     } else if (typeof value === "number") {
-      truthy = value !== 0;
+      truthy = value !== 0 && !Number.isNaN(value);
     } else if (typeof value === "bigint") {
       truthy = value !== 0n;
     } else {
