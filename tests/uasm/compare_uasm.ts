@@ -42,8 +42,10 @@ interface CaseReport {
   name: string;
   udonSharpUasm: UasmData | null;
   tasmUasm: UasmData | null;
+  tasmOptimizedUasm: UasmData | null;
   udonSharpError: string | null;
   tasmError: string | null;
+  tasmOptimizedError: string | null;
 }
 
 // ─── Discovery ───────────────────────────────────────────────────────────────
@@ -257,7 +259,10 @@ interface TasmTranspileResult {
   errors: Map<string, string>;
 }
 
-function transpileTs(cases: TestCase[]): TasmTranspileResult {
+function transpileTs(
+  cases: TestCase[],
+  optimize = false,
+): TasmTranspileResult {
   // uasms: caseName -> (className -> uasmText), errors: caseName -> errorMessage
   const result = new Map<string, Map<string, string>>();
   const errors = new Map<string, string>();
@@ -284,6 +289,7 @@ function transpileTs(cases: TestCase[]): TasmTranspileResult {
         outputDir,
         excludeDirs: [],
         outputExtension: "uasm",
+        optimize,
       });
 
       const outputs = new Map<string, string>();
@@ -300,7 +306,9 @@ function transpileTs(cases: TestCase[]): TasmTranspileResult {
       result.set(tc.name, outputs);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`  [TASM] ${tc.name}: transpilation error: ${msg}`);
+      console.error(
+        `  [TASM${optimize ? " optimized" : ""}] ${tc.name}: transpilation error: ${msg}`,
+      );
       result.set(tc.name, new Map());
       errors.set(tc.name, msg);
     } finally {
@@ -323,11 +331,130 @@ function setDiff<T>(a: T[], b: T[]): { onlyInA: T[]; onlyInB: T[]; both: T[] } {
   };
 }
 
+function formatMetrics(label: string, d: UasmData): string {
+  return `  [${label}] vars=${d.variables.length}  instructions=${d.instructionCount}  externs=${d.externs.length}  exports=${d.exports.length}`;
+}
+
+function printPairDiff(
+  label: string,
+  us: UasmData,
+  ts: UasmData,
+  tsLabel: string,
+) {
+  // Sync mode
+  if (us.syncMode || ts.syncMode) {
+    if (us.syncMode?.toLowerCase() === ts.syncMode?.toLowerCase()) {
+      console.log(`  SyncMode (vs ${tsLabel}): MATCH (${us.syncMode})`);
+    } else {
+      console.log(
+        `  SyncMode (vs ${tsLabel}): DIFF  UdonSharp=${us.syncMode ?? "(none)"}  ${tsLabel}=${ts.syncMode ?? "(none)"}`,
+      );
+    }
+  }
+
+  // Exports diff
+  const exportsDiff = setDiff(us.exports, ts.exports);
+  if (exportsDiff.onlyInA.length === 0 && exportsDiff.onlyInB.length === 0) {
+    console.log(
+      `  Exports (vs ${tsLabel}):  MATCH (${us.exports.join(", ")})`,
+    );
+  } else {
+    console.log(
+      `  Exports (vs ${tsLabel}):  DIFF  only-UdonSharp=[${exportsDiff.onlyInA.join(", ")}]  only-${tsLabel}=[${exportsDiff.onlyInB.join(", ")}]`,
+    );
+  }
+
+  // Externs diff
+  const externsDiff = setDiff(
+    [...new Set(us.externs)],
+    [...new Set(ts.externs)],
+  );
+  if (externsDiff.onlyInA.length === 0 && externsDiff.onlyInB.length === 0) {
+    if (us.externs.length !== ts.externs.length) {
+      console.log(
+        `  Externs (vs ${tsLabel}):  MATCH signatures, DIFF count  UdonSharp=${us.externs.length}  ${tsLabel}=${ts.externs.length}`,
+      );
+    } else {
+      console.log(
+        `  Externs (vs ${tsLabel}):  MATCH (${us.externs.length} unique signatures)`,
+      );
+    }
+  } else {
+    console.log(`  Externs (vs ${tsLabel}):  DIFF`);
+    for (const sig of externsDiff.onlyInA)
+      console.log(`    + only UdonSharp: ${sig}`);
+    for (const sig of externsDiff.onlyInB)
+      console.log(`    + only ${tsLabel}:      ${sig}`);
+    if (externsDiff.both.length > 0)
+      console.log(`    = shared: ${externsDiff.both.length} signatures`);
+  }
+
+  // Data section diff (by type only)
+  const usTypes = [...new Set(us.variables.map((v) => v.type))].sort();
+  const tsTypes = [...new Set(ts.variables.map((v) => v.type))].sort();
+  const typesDiff = setDiff(usTypes, tsTypes);
+  if (typesDiff.onlyInA.length === 0 && typesDiff.onlyInB.length === 0) {
+    if (us.variables.length !== ts.variables.length) {
+      console.log(
+        `  Data vars (vs ${tsLabel}): MATCH types, DIFF count  UdonSharp=${us.variables.length}  ${tsLabel}=${ts.variables.length}`,
+      );
+    } else {
+      console.log(
+        `  Data vars (vs ${tsLabel}): MATCH (${us.variables.length} vars, same types)`,
+      );
+    }
+  } else {
+    console.log(
+      `  Data vars (vs ${tsLabel}): DIFF  UdonSharp=${us.variables.length}  ${tsLabel}=${ts.variables.length}`,
+    );
+    if (typesDiff.onlyInA.length > 0)
+      console.log(
+        `    + only UdonSharp types: ${typesDiff.onlyInA.join(", ")}`,
+      );
+    if (typesDiff.onlyInB.length > 0)
+      console.log(`    + only ${tsLabel} types: ${typesDiff.onlyInB.join(", ")}`);
+  }
+
+  // Code size
+  const instrDelta = ts.instructionCount - us.instructionCount;
+  const instrLabel =
+    instrDelta === 0
+      ? "SAME"
+      : instrDelta > 0
+        ? `${tsLabel} +${instrDelta} more`
+        : `${tsLabel} ${instrDelta} fewer`;
+  console.log(
+    `  Code size (vs ${tsLabel}): UdonSharp=${us.instructionCount}  ${tsLabel}=${ts.instructionCount}  (${instrLabel})`,
+  );
+
+  // Opcode sequence diff
+  const opcodesDiff = setDiff(
+    [...new Set(us.opcodes)],
+    [...new Set(ts.opcodes)],
+  );
+  if (opcodesDiff.onlyInA.length === 0 && opcodesDiff.onlyInB.length === 0) {
+    console.log(
+      `  Opcodes (vs ${tsLabel}):  MATCH (same instruction types used)`,
+    );
+  } else {
+    if (opcodesDiff.onlyInA.length > 0)
+      console.log(
+        `  Opcodes (vs ${tsLabel}):  only UdonSharp uses: ${opcodesDiff.onlyInA.join(", ")}`,
+      );
+    if (opcodesDiff.onlyInB.length > 0)
+      console.log(
+        `  Opcodes (vs ${tsLabel}):  only ${tsLabel} uses: ${opcodesDiff.onlyInB.join(", ")}`,
+      );
+  }
+}
+
 function printReport(reports: CaseReport[]) {
-  const SEP = "─".repeat(60);
-  console.log(`\n${"═".repeat(60)}`);
-  console.log("  UASM Comparison Report: UdonSharp vs udon-assembly-ts");
-  console.log(`${"═".repeat(60)}\n`);
+  const SEP = "─".repeat(72);
+  console.log(`\n${"═".repeat(72)}`);
+  console.log(
+    "  UASM Comparison Report: UdonSharp vs TASM (baseline) vs TASM (optimized)",
+  );
+  console.log(`${"═".repeat(72)}\n`);
 
   for (const r of reports) {
     console.log(`${SEP}`);
@@ -335,137 +462,54 @@ function printReport(reports: CaseReport[]) {
     console.log(SEP);
 
     if (r.udonSharpError) {
-      console.log(`  [UdonSharp] ERROR: ${r.udonSharpError}`);
+      console.log(`  [UdonSharp]       ERROR: ${r.udonSharpError}`);
     }
     if (r.tasmError) {
-      console.log(`  [TASM]      ERROR: ${r.tasmError}`);
+      console.log(`  [TASM]            ERROR: ${r.tasmError}`);
+    }
+    if (r.tasmOptimizedError) {
+      console.log(`  [TASM optimized]  ERROR: ${r.tasmOptimizedError}`);
     }
 
     const us = r.udonSharpUasm;
     const ts = r.tasmUasm;
+    const tsOpt = r.tasmOptimizedUasm;
 
-    if (us) {
+    if (us) console.log(formatMetrics("UdonSharp      ", us));
+    if (ts) console.log(formatMetrics("TASM           ", ts));
+    if (tsOpt) console.log(formatMetrics("TASM optimized ", tsOpt));
+
+    // Optimization delta (baseline vs optimized)
+    if (ts && tsOpt) {
+      const varsDelta = tsOpt.variables.length - ts.variables.length;
+      const instrDelta = tsOpt.instructionCount - ts.instructionCount;
+      const externsDelta = tsOpt.externs.length - ts.externs.length;
       console.log(
-        `  [UdonSharp] vars=${us.variables.length}  instructions=${us.instructionCount}  externs=${us.externs.length}  exports=${us.exports.length}`,
+        `  [Optimization effect] vars: ${varsDelta >= 0 ? "+" : ""}${varsDelta}  instructions: ${instrDelta >= 0 ? "+" : ""}${instrDelta}  externs: ${externsDelta >= 0 ? "+" : ""}${externsDelta}`,
       );
     }
-    if (ts) {
-      console.log(
-        `  [TASM]      vars=${ts.variables.length}  instructions=${ts.instructionCount}  externs=${ts.externs.length}  exports=${ts.exports.length}`,
-      );
+
+    // Compare UdonSharp vs TASM baseline
+    if (us && ts) {
+      console.log();
+      printPairDiff("vs baseline", us, ts, "TASM");
     }
 
-    if (!us || !ts) {
-      console.log("  (skipping diff — one side missing)\n");
+    // Compare UdonSharp vs TASM optimized
+    if (us && tsOpt) {
+      console.log();
+      printPairDiff("vs optimized", us, tsOpt, "TASM-opt");
+    }
+
+    if (!us && !ts && !tsOpt) {
+      console.log("  (no output from any side)\n");
       continue;
-    }
-
-    // Sync mode
-    if (us.syncMode || ts.syncMode) {
-      if (us.syncMode?.toLowerCase() === ts.syncMode?.toLowerCase()) {
-        console.log(`  SyncMode: MATCH (${us.syncMode})`);
-      } else {
-        console.log(
-          `  SyncMode: DIFF  UdonSharp=${us.syncMode ?? "(none)"}  TASM=${ts.syncMode ?? "(none)"}`,
-        );
-      }
-    }
-
-    // Exports diff
-    const exportsDiff = setDiff(us.exports, ts.exports);
-    if (exportsDiff.onlyInA.length === 0 && exportsDiff.onlyInB.length === 0) {
-      console.log(`  Exports:  MATCH (${us.exports.join(", ")})`);
-    } else {
-      console.log(
-        `  Exports:  DIFF  only-UdonSharp=[${exportsDiff.onlyInA.join(", ")}]  only-TASM=[${exportsDiff.onlyInB.join(", ")}]`,
-      );
-    }
-
-    // Externs diff
-    const externsDiff = setDiff(
-      [...new Set(us.externs)],
-      [...new Set(ts.externs)],
-    );
-    if (externsDiff.onlyInA.length === 0 && externsDiff.onlyInB.length === 0) {
-      if (us.externs.length !== ts.externs.length) {
-        console.log(
-          `  Externs:  MATCH signatures, DIFF count  UdonSharp=${us.externs.length}  TASM=${ts.externs.length}`,
-        );
-      } else {
-        console.log(
-          `  Externs:  MATCH (${us.externs.length} unique signatures)`,
-        );
-      }
-    } else {
-      console.log("  Externs:  DIFF");
-      for (const sig of externsDiff.onlyInA)
-        console.log(`    + only UdonSharp: ${sig}`);
-      for (const sig of externsDiff.onlyInB)
-        console.log(`    + only TASM:      ${sig}`);
-      if (externsDiff.both.length > 0)
-        console.log(`    = shared: ${externsDiff.both.length} signatures`);
-    }
-
-    // Data section diff (by type only)
-    const usTypes = [...new Set(us.variables.map((v) => v.type))].sort();
-    const tsTypes = [...new Set(ts.variables.map((v) => v.type))].sort();
-    const typesDiff = setDiff(usTypes, tsTypes);
-    if (typesDiff.onlyInA.length === 0 && typesDiff.onlyInB.length === 0) {
-      if (us.variables.length !== ts.variables.length) {
-        console.log(
-          `  Data vars: MATCH types, DIFF count  UdonSharp=${us.variables.length}  TASM=${ts.variables.length}`,
-        );
-      } else {
-        console.log(
-          `  Data vars: MATCH (${us.variables.length} vars, same types)`,
-        );
-      }
-    } else {
-      console.log(
-        `  Data vars: DIFF  UdonSharp=${us.variables.length}  TASM=${ts.variables.length}`,
-      );
-      if (typesDiff.onlyInA.length > 0)
-        console.log(
-          `    + only UdonSharp types: ${typesDiff.onlyInA.join(", ")}`,
-        );
-      if (typesDiff.onlyInB.length > 0)
-        console.log(`    + only TASM types: ${typesDiff.onlyInB.join(", ")}`);
-    }
-
-    // Code size
-    const instrDelta = ts.instructionCount - us.instructionCount;
-    const instrLabel =
-      instrDelta === 0
-        ? "SAME"
-        : instrDelta > 0
-          ? `TASM +${instrDelta} more`
-          : `TASM ${instrDelta} fewer`;
-    console.log(
-      `  Code size: UdonSharp=${us.instructionCount}  TASM=${ts.instructionCount}  (${instrLabel})`,
-    );
-
-    // Opcode sequence diff
-    const opcodesDiff = setDiff(
-      [...new Set(us.opcodes)],
-      [...new Set(ts.opcodes)],
-    );
-    if (opcodesDiff.onlyInA.length === 0 && opcodesDiff.onlyInB.length === 0) {
-      console.log("  Opcodes:  MATCH (same instruction types used)");
-    } else {
-      if (opcodesDiff.onlyInA.length > 0)
-        console.log(
-          `  Opcodes:  only UdonSharp uses: ${opcodesDiff.onlyInA.join(", ")}`,
-        );
-      if (opcodesDiff.onlyInB.length > 0)
-        console.log(
-          `  Opcodes:  only TASM uses: ${opcodesDiff.onlyInB.join(", ")}`,
-        );
     }
 
     console.log();
   }
 
-  console.log(`${"═".repeat(60)}\n`);
+  console.log(`${"═".repeat(72)}\n`);
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -518,11 +562,16 @@ if (UNITY_EDITOR_PATH) {
   );
 }
 
-// TS transpilation
-console.log("Transpiling TypeScript...");
-const tasmResult = transpileTs(cases);
+// TS transpilation (baseline + optimized)
+console.log("Transpiling TypeScript (baseline)...");
+const tasmResult = transpileTs(cases, false);
 const tasmUasms = tasmResult.uasms;
 const tasmErrors = tasmResult.errors;
+
+console.log("Transpiling TypeScript (optimized)...");
+const tasmOptResult = transpileTs(cases, true);
+const tasmOptUasms = tasmOptResult.uasms;
+const tasmOptErrors = tasmOptResult.errors;
 
 // Build reports
 function getUsError(
@@ -548,13 +597,16 @@ function getTsError(
 const reports: CaseReport[] = cases.flatMap((tc) => {
   const usMap = udonSharpUasms.get(tc.name) ?? new Map<string, string>();
   const tsMap = tasmUasms.get(tc.name) ?? new Map<string, string>();
+  const tsOptMap = tasmOptUasms.get(tc.name) ?? new Map<string, string>();
   const usErrMap = udonSharpErrors.get(tc.name);
   const tsErr = tasmErrors.get(tc.name);
+  const tsOptErr = tasmOptErrors.get(tc.name);
 
   // Collect all class names from results, errors, and declared files
   const allClassNames = new Set([
     ...usMap.keys(),
     ...tsMap.keys(),
+    ...tsOptMap.keys(),
     ...(usErrMap?.keys() ?? []),
   ]);
 
@@ -564,6 +616,8 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
       usMap.size > 0 ? (usMap.keys().next().value ?? null) : null;
     const tsClassName =
       tsMap.size > 0 ? (tsMap.keys().next().value ?? null) : null;
+    const tsOptClassName =
+      tsOptMap.size > 0 ? (tsOptMap.keys().next().value ?? null) : null;
     if (usClassName && tsClassName && usClassName !== tsClassName) {
       console.warn(
         `  [compare] "${tc.name}": class name mismatch — UdonSharp="${usClassName}" vs TASM="${tsClassName}"`,
@@ -571,12 +625,17 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
     }
     const usText = usClassName ? (usMap.get(usClassName) ?? null) : null;
     const tsText = tsClassName ? (tsMap.get(tsClassName) ?? null) : null;
+    const tsOptText = tsOptClassName
+      ? (tsOptMap.get(tsOptClassName) ?? null)
+      : null;
     return {
       name: tc.name,
       udonSharpUasm: usText ? parseUasm(usText) : null,
       tasmUasm: tsText ? parseUasm(tsText) : null,
+      tasmOptimizedUasm: tsOptText ? parseUasm(tsOptText) : null,
       udonSharpError: getUsError(usText, usErrMap),
       tasmError: getTsError(tsText, tsErr),
+      tasmOptimizedError: getTsError(tsOptText, tsOptErr),
     };
   }
 
@@ -584,12 +643,15 @@ const reports: CaseReport[] = cases.flatMap((tc) => {
   return [...allClassNames].map((className) => {
     const usText = usMap.get(className) ?? null;
     const tsText = tsMap.get(className) ?? null;
+    const tsOptText = tsOptMap.get(className) ?? null;
     return {
       name: `${tc.name}/${className}`,
       udonSharpUasm: usText ? parseUasm(usText) : null,
       tasmUasm: tsText ? parseUasm(tsText) : null,
+      tasmOptimizedUasm: tsOptText ? parseUasm(tsOptText) : null,
       udonSharpError: getUsError(usText, usErrMap, className),
       tasmError: getTsError(tsText, tsErr),
+      tasmOptimizedError: getTsError(tsOptText, tsOptErr),
     };
   });
 });
