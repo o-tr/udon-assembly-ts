@@ -5,8 +5,8 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class ControlFlowSwitchInIfChain extends UdonSharpBehaviour {
   Start(): void {
-    const mode = 2;
-    const level = 1;
+    const mode: number = 2;
+    const level: number = 1;
     let result = -1;
 
     if (level > 0) {

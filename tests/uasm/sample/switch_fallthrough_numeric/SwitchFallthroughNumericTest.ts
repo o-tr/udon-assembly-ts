@@ -5,7 +5,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class SwitchFallthroughNumericTest extends UdonSharpBehaviour {
   Start(): void {
-    const value = 2;
+    const value: number = 2;
     let label = "";
 
     switch (value) {

@@ -5,7 +5,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class SwitchNegativeCase extends UdonSharpBehaviour {
   Start(): void {
-    const value = -1;
+    const value: number = -1;
     let label = "";
 
     switch (value) {

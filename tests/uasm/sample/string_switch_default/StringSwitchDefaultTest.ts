@@ -5,7 +5,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class StringSwitchDefaultTest extends UdonSharpBehaviour {
   Start(): void {
-    const command = "pause";
+    const command: string = "pause";
     let status = "";
 
     switch (command) {

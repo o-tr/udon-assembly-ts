@@ -10,9 +10,9 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class DictionaryIterationOrder extends UdonSharpBehaviour {
   Start(): void {
     const dict = new DataDictionary();
-    dict.SetValue(new DataToken("b"), new DataToken(20));
-    dict.SetValue(new DataToken("a"), new DataToken(10));
-    dict.SetValue(new DataToken("c"), new DataToken(30));
+    dict.SetValue(new DataToken("b"), new DataToken(20.5));
+    dict.SetValue(new DataToken("a"), new DataToken(10.25));
+    dict.SetValue(new DataToken("c"), new DataToken(30.75));
 
     const keys = dict.GetKeys();
     let keyLengthTotal = 0;

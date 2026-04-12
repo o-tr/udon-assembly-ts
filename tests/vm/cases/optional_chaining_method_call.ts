@@ -4,9 +4,17 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class OptionalChainingMethodCall extends UdonSharpBehaviour {
+  private getNullableText(): string | null {
+    return null;
+  }
+
+  private getPresentText(): string | null {
+    return "filled";
+  }
+
   Start(): void {
-    const firstText: string | null = "filled";
-    const secondText: string | null = null;
+    const firstText = this.getPresentText();
+    const secondText = this.getNullableText();
 
     const first = firstText?.toString() ?? "empty";
     const second = secondText?.toString() ?? "empty";
