@@ -485,28 +485,30 @@ const latticeVariableToTacOperand = (v: VariableOperand): TACOperand => {
 /**
  * When lattice gives no constant: preserve operand identity only while `current`
  * still denotes the same lattice slot as `original` (after copy-chain walks).
+ * Only used for Variable / Temporary roots from `resolveLatticeOperandCompact`.
  */
 const resolveNonConstantOperand = (
-  original: TACOperand,
+  original: VariableOperand | TemporaryOperand,
   current: VariableOperand,
 ): TACOperand => {
   if (original.kind === TACOperandKind.Temporary) {
-    const key = temporaryLatticeKey((original as TemporaryOperand).id);
+    const key = temporaryLatticeKey(original.id);
     return current.name === key
       ? original
       : latticeVariableToTacOperand(current);
   }
-  if (original.kind === TACOperandKind.Variable) {
-    return (original as VariableOperand).name === current.name
-      ? original
-      : latticeVariableToTacOperand(current);
-  }
-  return latticeVariableToTacOperand(current);
+  return original.name === current.name
+    ? original
+    : latticeVariableToTacOperand(current);
 };
 
 /**
  * Copy-source name → destinations that currently have KIND_COPY from that
- * source. Built once per invalidation pass; avoids O(V) scans per BFS step.
+ * source. Rebuilt at the start of each `invalidateCopyAliasesOfRoot` call from
+ * the lattice snapshot then (not cached across successive calls in one
+ * `transferCompactLattice` step — e.g. CoW `MethodCall` may call invalidation
+ * twice with a partially updated lattice between). O(V) once per call; BFS then
+ * looks up successors in O(out-degree) instead of scanning all names per node.
  */
 const buildReverseCopyIndex = (
   lattice: CompactLattice,
@@ -535,6 +537,7 @@ const buildReverseCopyIndex = (
  * transitively along forward copy edges only (dest COPY where payload names the
  * invalidated slot). Does not walk “backward” to unrelated sibling copies of
  * a shared source. Caller must `setOverdefined(rootName)` after this returns.
+ * Each invocation rebuilds the reverse-copy index from the lattice at entry.
  */
 const invalidateCopyAliasesOfRoot = (
   lattice: CompactLattice,
@@ -572,7 +575,10 @@ const resolveLatticeOperandCompact = (
     return operand;
   }
 
-  const original = operand;
+  const original: VariableOperand | TemporaryOperand =
+    operand.kind === TACOperandKind.Variable
+      ? (operand as VariableOperand)
+      : (operand as TemporaryOperand);
   let current: VariableOperand =
     operand.kind === TACOperandKind.Variable
       ? (operand as VariableOperand)
