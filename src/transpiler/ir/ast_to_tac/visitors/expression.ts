@@ -1423,8 +1423,8 @@ export function visitIdentifier(
 
 /**
  * When true, emit runtime Count + bounds checks before DataList.get_Item.
- * Non-negative numeric literals skip (Bug 6); negative literals and `-K` need the guard
- * so Udon matches JS (undefined) instead of throwing on get_Item.
+ * Non-negative numeric literals skip (Bug 6); unary `+K` with K ≥ 0 matches that fast path.
+ * Everything else (including negative literals, `-K`, dynamic indices) needs the guard.
  */
 function needsDataListReadBoundsGuard(indexNode: ASTNode): boolean {
   if (indexNode.kind === ASTNodeKind.Literal) {
@@ -1436,12 +1436,11 @@ function needsDataListReadBoundsGuard(indexNode: ASTNode): boolean {
   }
   if (indexNode.kind === ASTNodeKind.UnaryExpression) {
     const u = indexNode as UnaryExpressionNode;
-    if (
-      u.operator === "-" &&
-      u.operand.kind === ASTNodeKind.Literal &&
-      typeof (u.operand as LiteralNode).value === "number"
-    ) {
-      return true;
+    if (u.operator === "+" && u.operand.kind === ASTNodeKind.Literal) {
+      const lit = u.operand as LiteralNode;
+      if (typeof lit.value === "number" && lit.value >= 0) {
+        return false;
+      }
     }
   }
   return true;
