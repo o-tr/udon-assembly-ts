@@ -129,7 +129,11 @@ export function temporaryLatticeKey(id: number): string {
   return `${SCCP_TEMP_LATTICE_PREFIX}sccp_tmp_${id}`;
 }
 
-/** Inverse of {@link temporaryLatticeKey} for lattice slot names; otherwise null. */
+/**
+ * Inverse of {@link temporaryLatticeKey} for lattice slot names; otherwise null.
+ * The `sccp_tmp_<n>` decimal integer must not exceed {@link Number.MAX_SAFE_INTEGER};
+ * larger values would not round-trip through `Number()` (temp id space stays far below).
+ */
 export function parseTemporaryLatticeKey(name: string): number | null {
   if (!name.startsWith(SCCP_TEMP_LATTICE_PREFIX)) return null;
   const rest = name.slice(SCCP_TEMP_LATTICE_PREFIX.length);
