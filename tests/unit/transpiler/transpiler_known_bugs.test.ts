@@ -52,10 +52,9 @@
  *         that cannot be accessed via .Reference.
  *         (root cause #11 residual in vm-test-failures-investigation.md)
  *
- * Bug 10: DataList.get_Item bounds safety on dynamic cache reads — cache-style
- *         reads (`cache[index]`) currently emit raw get_Item with no guard tied
- *         to the requested index. This can throw at runtime when index/handle
- *         drift occurs in complex inline/flyweight flows.
+ * Bug 10 (FIXED): DataList.get_Item bounds safety on dynamic cache reads —
+ *         non-literal indices now emit Count + (index < Count) + ifFalse before
+ *         get_Item, with null DataToken fallback when out of bounds.
  *         (root cause #18 in vm-test-failures-investigation.md)
  *
  * Bug 11: Flyweight cache typed unwrap stability — cache-returned inline
@@ -1000,11 +999,11 @@ describe("known transpiler bugs", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Bug 10: DataList.get_Item bounds safety (known issue, reproduction test)
+  // Bug 10: DataList.get_Item bounds safety
   // ---------------------------------------------------------------------------
 
   describe("DataList.get_Item bounds safety", () => {
-    it.fails("dynamic cache index reads should emit index-aware Count guard before get_Item", () => {
+    it("dynamic cache index reads should emit index-aware Count guard before get_Item", () => {
       const source = `
           class Item {
             constructor(public value: number) {}
@@ -1039,7 +1038,6 @@ describe("known transpiler bugs", () => {
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
       );
 
-      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(hasIndexAwareGuard).toBe(true);
     });
   });

@@ -1421,6 +1421,58 @@ export function visitIdentifier(
   });
 }
 
+/** When false, index is a numeric literal — skip runtime Count guard (see Bug 6/10). */
+function needsDataListReadBoundsGuard(indexNode: ASTNode): boolean {
+  if (indexNode.kind === ASTNodeKind.Literal) {
+    const lit = indexNode as LiteralNode;
+    return typeof lit.value !== "number";
+  }
+  return true;
+}
+
+/**
+ * DataList-backed bracket read: optional Count + (index < Count) guard before get_Item.
+ * Guard sequence must stay label-free until after the branch (Bug 10 TAC test).
+ */
+function emitDataListBracketRead(
+  converter: ASTToTACConverter,
+  array: TACOperand,
+  coercedIndex: TACOperand,
+  indexNode: ASTNode,
+): TACOperand {
+  const tokenResult = converter.newTemp(ExternTypes.dataToken);
+  if (!needsDataListReadBoundsGuard(indexNode)) {
+    converter.instructions.push(
+      new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+    );
+    return tokenResult;
+  }
+
+  const countTemp = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new PropertyGetInstruction(countTemp, array, "Count"),
+  );
+  const inBounds = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(inBounds, coercedIndex, "<", countTemp),
+  );
+  const skipLabel = converter.newLabel("dlrd_oob");
+  const mergeLabel = converter.newLabel("dlrd_merge");
+  converter.instructions.push(
+    new ConditionalJumpInstruction(inBounds, skipLabel),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
+  converter.instructions.push(new LabelInstruction(skipLabel));
+  const nullVal = createConstant(null, ObjectType);
+  const nullToken = converter.wrapDataToken(nullVal);
+  converter.instructions.push(new CopyInstruction(tokenResult, nullToken));
+  converter.instructions.push(new LabelInstruction(mergeLabel));
+  return tokenResult;
+}
+
 export function visitArrayAccessExpression(
   this: ASTToTACConverter,
   node: ArrayAccessExpressionNode,
@@ -1472,9 +1524,11 @@ export function visitArrayAccessExpression(
       arrayType instanceof DataListTypeSymbol
         ? arrayType.elementType
         : ObjectType;
-    const tokenResult = this.newTemp(ExternTypes.dataToken);
-    this.instructions.push(
-      new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+    const tokenResult = emitDataListBracketRead(
+      this,
+      array,
+      coercedIndex,
+      node.index,
     );
     if (arrayType instanceof DataListTypeSymbol) {
       return this.unwrapDataToken(tokenResult, elementType);
@@ -1509,9 +1563,11 @@ export function visitArrayAccessExpression(
     this.instructions.push(new CastInstruction(intIndex, index));
     coercedIndex = intIndex;
   }
-  const tokenResult = this.newTemp(ExternTypes.dataToken);
-  this.instructions.push(
-    new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+  const tokenResult = emitDataListBracketRead(
+    this,
+    array,
+    coercedIndex,
+    node.index,
   );
   return this.unwrapDataToken(tokenResult, resolvedElementType);
 }
