@@ -58,10 +58,9 @@
  *         drift occurs in complex inline/flyweight flows.
  *         (root cause #18 in vm-test-failures-investigation.md)
  *
- * Bug 11: Flyweight cache typed unwrap stability — cache-returned inline
- *         instances with string/boolean fields must keep typed DataToken
- *         accessors (.String/.Boolean) and never fall back to .Reference in
- *         mixed dispatch/untracked paths.
+ * Bug 11 (FIXED): Flyweight cache typed unwrap stability — SoA DataList get_Item
+ *         now emits Count / index < Count / ifFalse guards (plus OOB get_Item(0))
+ *         before field loads in SoA method dispatch and untracked property reads.
  *         (root cause #19/#20 in vm-test-failures-investigation.md)
  */
 
@@ -1049,7 +1048,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("flyweight cache typed unwrap stability", () => {
-    it.fails("cache-returned inline instance should use String/Boolean accessors without Reference fallback", () => {
+    it("cache-returned inline instance should use String/Boolean accessors without Reference fallback", () => {
       const source = `
         class Tile {
           constructor(public label: string, public isRed: boolean) {}
@@ -1110,8 +1109,6 @@ describe("known transpiler bugs", () => {
         );
         expect(hasHandleGuard).toBe(true);
       }
-
-      // TODO: convert to regular `it(...)` once the bug is fixed.
     });
 
     it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
