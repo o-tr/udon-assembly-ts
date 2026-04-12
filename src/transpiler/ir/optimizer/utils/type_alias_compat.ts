@@ -12,6 +12,9 @@ import {
   type TypeSymbol,
 } from "../../../frontend/type_symbols.js";
 
+/** U+001E Record Separator — not used in Udon/TS type names; avoids nested-key boundary collisions with `|`. */
+const RS = "\x1e";
+
 /**
  * Stable string key for a TypeSymbol, used by reuseTemporaries / reuseLocalVariables
  * to avoid merging distinct structural types that share the same `udonType`.
@@ -21,13 +24,13 @@ export function structuralTypeKey(t: TypeSymbol | undefined | null): string {
     return "?";
   }
   if (t instanceof NativeArrayTypeSymbol) {
-    return `NA|${structuralTypeKey(t.elementType)}`;
+    return `NA${RS}${structuralTypeKey(t.elementType)}`;
   }
   if (t instanceof DataListTypeSymbol) {
-    return `DL|${structuralTypeKey(t.elementType)}`;
+    return `DL${RS}${structuralTypeKey(t.elementType)}`;
   }
   if (t instanceof ArrayTypeSymbol) {
-    return `AR|${t.dimensions}|${structuralTypeKey(t.elementType)}`;
+    return `AR${RS}${t.dimensions}${RS}${structuralTypeKey(t.elementType)}`;
   }
   if (t instanceof CollectionTypeSymbol) {
     return [
@@ -36,12 +39,12 @@ export function structuralTypeKey(t: TypeSymbol | undefined | null): string {
       structuralTypeKey(t.elementType),
       structuralTypeKey(t.keyType),
       structuralTypeKey(t.valueType),
-    ].join("|");
+    ].join(RS);
   }
   if (t instanceof ClassTypeSymbol) {
-    return `Cls|${String(t.udonType)}|${t.name}`;
+    return `Cls${RS}${String(t.udonType)}${RS}${t.name}`;
   }
-  return `${String(t.udonType)}|${t.name}`;
+  return `${String(t.udonType)}${RS}${t.name}`;
 }
 
 /**

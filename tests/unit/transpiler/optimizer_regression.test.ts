@@ -542,7 +542,7 @@ describe("optimizer regression tests", () => {
   // [PASS] native Int32Array: indexed write must not widen to SystemSingleArray
   // ─────────────────────────────────────────────────────────────────────────
   describe("[PASS] Int32 native array index mutation with optimizer", () => {
-    it("array_index_mutation should stay on Int32Array path", () => {
+    it("explicit UdonInt[] literal index write stays on SystemInt32Array path", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
