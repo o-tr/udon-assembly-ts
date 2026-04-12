@@ -3,10 +3,11 @@
  * via UASM comparison between UdonSharp (C#) and udon-assembly-ts.
  *
  * Each test is tagged with the category:
- *   [BUG]     — optimizer crashes or produces incorrect output
- *   [REGRESS] — optimization makes output worse than baseline (no optimization)
- *   [GAP]     — optimization is insufficient compared to expected behavior
- *   [PASS]    — optimization works correctly (green baseline for comparison)
+ *   [BUG]        — optimizer crashes or produces incorrect output
+ *   [REGRESS]    — optimization makes output worse than baseline (no optimization)
+ *   [GAP]        — optimization is insufficient compared to expected behavior
+ *   [PASS]       — optimization works correctly (green baseline for comparison)
+ *   [KNOWN FAIL] — known UdonSharp parity gap; uses it.fails; flip to it(...) when fixed
  *
  * These cases were added after real optimizer regressions/bugs and should
  * remain green to prevent future regressions.
@@ -284,7 +285,7 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // [KNOWN FAIL] compare:uasm 未改善ケース（fix時に it.fails を外す）
+  // [KNOWN FAIL] compare:uasm — cases not yet improved (remove it.fails when fixed)
   // ─────────────────────────────────────────────────────────────────────────
   describe("[KNOWN FAIL] UdonSharp parity gaps", () => {
     it.fails("array_index_mutation should stay on Int32Array path (why: still widened to SingleArray)", () => {
@@ -308,6 +309,7 @@ describe("optimizer regression tests", () => {
       const optimized = transpiler.transpile(source, { optimize: true });
       const optimizedCount = countUasmInstructions(optimized.uasm);
 
+      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(optimized.uasm).toContain(
         "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );
@@ -338,6 +340,7 @@ describe("optimizer regression tests", () => {
       const optimized = transpiler.transpile(source, { optimize: true });
       const optimizedCount = countUasmInstructions(optimized.uasm);
 
+      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(optimized.uasm).toContain(
         "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );
@@ -370,6 +373,7 @@ describe("optimizer regression tests", () => {
       const optimized = transpiler.transpile(source, { optimize: true });
       const optimizedCount = countUasmInstructions(optimized.uasm);
 
+      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(optimized.uasm).not.toContain("__asm_restrict_eq_extern");
       expect(optimized.uasm).not.toContain(
         "SystemBoolean.__op_UnaryNegation__SystemBoolean__SystemBoolean",
