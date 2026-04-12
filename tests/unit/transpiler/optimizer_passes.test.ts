@@ -1003,9 +1003,7 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).not.toContain("UnityEngineMathf.__Atan2");
-    expect(text).toMatch(
-      /t0 = 0\.785398163397448|return 0\.785398163397448/,
-    );
+    expect(text).toMatch(/t0 = 0\.785398163397448|return 0\.785398163397448/);
   });
 
   it("folds String.Concat with constants", () => {

@@ -492,8 +492,10 @@ const resolveNonConstantOperand = (
     : latticeVariableToTacOperand(current);
 
 /**
- * After a mutation on `rootName`, mark COPY-derived aliases overdefined so they
- * cannot resolve back through the mutated slot (transitive).
+ * Before `rootName` is set overdefined, mark COPY-derived aliases overdefined
+ * so they cannot resolve through the slot being redefined (transitive along
+ * copy edges, including walking backward along COPY chains to cover the alias
+ * component). Caller must `setOverdefined(rootName)` after this returns.
  */
 const invalidateCopyAliasesOfRoot = (
   lattice: CompactLattice,
@@ -518,6 +520,17 @@ const invalidateCopyAliasesOfRoot = (
         queue.push(destName);
       }
     });
+    const idN = varIds.tryGetId(n);
+    if (idN !== -1 && lattice.kinds[idN] === KIND_COPY) {
+      const payload = lattice.payloads.get(idN);
+      if (payload) {
+        const srcName = (payload as VariableOperand).name;
+        if (!seen.has(srcName)) {
+          seen.add(srcName);
+          queue.push(srcName);
+        }
+      }
+    }
   }
 };
 
@@ -638,8 +651,8 @@ const transferCompactLattice = (
     const set = inst as PropertySetInstruction;
     const name = latticeNameForOperand(set.object);
     if (name !== null) {
-      lattice.setOverdefined(name);
       invalidateCopyAliasesOfRoot(lattice, varIds, name);
+      lattice.setOverdefined(name);
     }
     return;
   }
@@ -648,8 +661,8 @@ const transferCompactLattice = (
     const assign = inst as ArrayAssignmentInstruction;
     const name = latticeNameForOperand(assign.array);
     if (name !== null) {
-      lattice.setOverdefined(name);
       invalidateCopyAliasesOfRoot(lattice, varIds, name);
+      lattice.setOverdefined(name);
     }
     return;
   }
@@ -659,8 +672,8 @@ const transferCompactLattice = (
     if (isCopyOnWriteCandidateType(getOperandType(call.object))) {
       const name = latticeNameForOperand(call.object);
       if (name !== null) {
-        lattice.setOverdefined(name);
         invalidateCopyAliasesOfRoot(lattice, varIds, name);
+        lattice.setOverdefined(name);
       }
     }
     // fall through to clear any defined variable via getDefinedOperandForReuse
@@ -670,6 +683,7 @@ const transferCompactLattice = (
   if (defined) {
     const name = latticeNameForOperand(defined);
     if (name !== null) {
+      invalidateCopyAliasesOfRoot(lattice, varIds, name);
       lattice.setOverdefined(name);
     }
   }
