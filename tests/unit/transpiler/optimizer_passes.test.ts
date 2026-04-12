@@ -106,6 +106,25 @@ describe("optimizer passes", () => {
       expect(result.changed).toBe(false);
     });
 
+    it("sccpAndPrune removes conditional jump when temporary holds constant true", () => {
+      const t0 = createTemporary(0, PrimitiveTypes.boolean);
+      const endif = createLabel("endif");
+      const instructions = [
+        new AssignmentInstruction(
+          t0,
+          createConstant(true, PrimitiveTypes.boolean),
+        ),
+        new ConditionalJumpInstruction(t0, endif),
+        new ReturnInstruction(createConstant(1, PrimitiveTypes.int32)),
+        new LabelInstruction(endif),
+        new ReturnInstruction(createConstant(0, PrimitiveTypes.int32)),
+      ];
+      const result = sccpAndPrune(instructions);
+      expect(
+        result.instructions.some((i) => i.kind === "ConditionalJump"),
+      ).toBe(false);
+    });
+
     it("CFG-consuming pass with cachedCFG produces identical results", () => {
       const a = createVariable("a", PrimitiveTypes.int32);
       const b = createVariable("b", PrimitiveTypes.int32);
@@ -226,7 +245,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = false");
+    expect(text).toMatch(/t0 = false|return false/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -931,7 +950,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 1");
+    expect(text).toMatch(/t0 = 1|return 1/);
     expect(text).not.toContain("call");
   });
 
@@ -953,7 +972,7 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).not.toContain("UnityEngineMathf.__Atan2");
-    expect(text).toContain("t0 =");
+    expect(text).toMatch(/t0 =|return 0\.785398163397448/);
   });
 
   it("folds String.Concat with constants", () => {
@@ -973,7 +992,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain('t0 = "Hello World"');
+    expect(text).toMatch(/t0 = "Hello World"|return "Hello World"/);
     expect(text).not.toContain("call");
   });
 
@@ -993,7 +1012,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 1");
+    expect(text).toMatch(/t0 = 1|return 1/);
     expect(text).not.toContain("call");
   });
 
@@ -1167,7 +1186,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 0");
+    expect(text).toMatch(/t0 = 0|return 0/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1187,7 +1206,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 0");
+    expect(text).toMatch(/t0 = 0|return 0/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1272,7 +1291,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toContain("t0 = 0");
+    expect(text).toMatch(/t0 = 0|return 0/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1595,7 +1614,7 @@ describe("optimizer passes", () => {
     ];
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
-    expect(text).toContain("t0 = true");
+    expect(text).toMatch(/t0 = true|return true/);
   });
 
   it("folds int-to-float-to-double cast chain", () => {

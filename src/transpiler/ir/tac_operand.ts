@@ -118,6 +118,15 @@ export function createLabel(name: string): LabelOperand {
 }
 
 /**
+ * Stable key for SCCP / optimizer lattice maps for temporaries.
+ * Disjoint from user source names (e.g. a local named `t0`) and from
+ * {@link operandToString} display (`t0`).
+ */
+export function temporaryLatticeKey(id: number): string {
+  return `__sccp_tmp_${id}`;
+}
+
+/**
  * Convert operand to string for display
  */
 export function operandToString(operand: TACOperand): string {

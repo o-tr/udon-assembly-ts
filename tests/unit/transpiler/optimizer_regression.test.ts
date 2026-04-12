@@ -350,7 +350,7 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThanOrEqual(59);
     });
 
-    it.fails("early_return_guard should not inject __asm_restrict_eq_extern (why: optimized still emits guard artifact)", () => {
+    it("early_return_guard should not inject __asm_restrict_eq_extern (why: optimized still emits guard artifact)", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
