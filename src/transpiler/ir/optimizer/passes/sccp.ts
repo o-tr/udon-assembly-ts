@@ -505,6 +505,32 @@ const resolveNonConstantOperand = (
 };
 
 /**
+ * Copy-source name → destinations that currently have KIND_COPY from that
+ * source. Built once per invalidation pass; avoids O(V) scans per BFS step.
+ */
+const buildReverseCopyIndex = (
+  lattice: CompactLattice,
+  varIds: VariableIdMap,
+): Map<string, Set<string>> => {
+  const reverse = new Map<string, Set<string>>();
+  varIds.forEachName((destName) => {
+    const id = varIds.tryGetId(destName);
+    if (id === -1) return;
+    if (lattice.kinds[id] !== KIND_COPY) return;
+    const payload = lattice.payloads.get(id);
+    if (!payload) return;
+    const srcName = (payload as VariableOperand).name;
+    let set = reverse.get(srcName);
+    if (!set) {
+      set = new Set<string>();
+      reverse.set(srcName, set);
+    }
+    set.add(destName);
+  });
+  return reverse;
+};
+
+/**
  * Before `rootName` is set overdefined, mark COPY-derived aliases overdefined
  * transitively along forward copy edges only (dest COPY where payload names the
  * invalidated slot). Does not walk “backward” to unrelated sibling copies of
@@ -515,24 +541,21 @@ const invalidateCopyAliasesOfRoot = (
   varIds: VariableIdMap,
   rootName: string,
 ): void => {
+  const reverse = buildReverseCopyIndex(lattice, varIds);
   const queue: string[] = [rootName];
   const seen = new Set<string>([rootName]);
   let head = 0;
   while (head < queue.length) {
     const n = queue[head++] as string;
-    varIds.forEachName((destName) => {
-      const id = varIds.tryGetId(destName);
-      if (id === -1) return;
-      if (lattice.kinds[id] !== KIND_COPY) return;
-      const payload = lattice.payloads.get(id);
-      if (!payload) return;
-      if ((payload as VariableOperand).name !== n) return;
+    const dests = reverse.get(n);
+    if (dests === undefined) continue;
+    for (const destName of dests) {
       lattice.setOverdefined(destName);
       if (!seen.has(destName)) {
         seen.add(destName);
         queue.push(destName);
       }
-    });
+    }
   }
 };
 
