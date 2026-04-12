@@ -26,7 +26,9 @@ import type {
   VariableOperand,
 } from "../../tac_operand.js";
 import {
+  createTemporary,
   createVariable,
+  parseTemporaryLatticeKey,
   TACOperandKind,
   temporaryLatticeKey,
 } from "../../tac_operand.js";
@@ -461,32 +463,64 @@ const resolveLatticeConstantCompact = (
   return null;
 };
 
+/**
+ * Map a lattice VariableOperand (possibly synthetic `__sccp_tmp_*`) back to
+ * VariableOperand or TemporaryOperand for emitted IR.
+ */
+const latticeVariableToTacOperand = (v: VariableOperand): TACOperand => {
+  const tid = parseTemporaryLatticeKey(v.name);
+  if (tid !== null) {
+    return createTemporary(tid, v.type);
+  }
+  return v;
+};
+
 const resolveLatticeOperandCompact = (
   operand: TACOperand,
   lattice: CompactLattice,
   varIds: VariableIdMap,
 ): TACOperand => {
   if (operand.kind === TACOperandKind.Constant) return operand;
-  const startName = latticeNameForOperand(operand);
-  if (startName === null) return operand;
+  if (
+    operand.kind !== TACOperandKind.Variable &&
+    operand.kind !== TACOperandKind.Temporary
+  ) {
+    return operand;
+  }
+
+  const original = operand;
+  let current: VariableOperand =
+    operand.kind === TACOperandKind.Variable
+      ? (operand as VariableOperand)
+      : createVariable(
+          temporaryLatticeKey((operand as TemporaryOperand).id),
+          (operand as TemporaryOperand).type,
+        );
 
   let steps = lattice.payloadCount + 1;
-  let currentName = startName;
   while (steps-- > 0) {
-    const id = varIds.tryGetId(currentName);
-    if (id === -1) return operand;
+    const id = varIds.tryGetId(current.name);
+    if (id === -1) {
+      return original;
+    }
     const kind = lattice.kinds[id];
-    if (kind === KIND_UNKNOWN || kind === KIND_OVERDEFINED) return operand;
+    if (kind === KIND_UNKNOWN || kind === KIND_OVERDEFINED) {
+      return latticeVariableToTacOperand(current);
+    }
     if (kind === KIND_CONSTANT) {
       const payload = lattice.payloads.get(id);
-      return payload ? (payload as ConstantOperand) : operand;
+      return payload
+        ? (payload as ConstantOperand)
+        : latticeVariableToTacOperand(current);
     }
     // KIND_COPY
     const payload = lattice.payloads.get(id);
-    if (!payload) return operand;
-    currentName = (payload as VariableOperand).name;
+    if (!payload) {
+      return latticeVariableToTacOperand(current);
+    }
+    current = payload as VariableOperand;
   }
-  return operand;
+  return latticeVariableToTacOperand(current);
 };
 
 const transferCompactLattice = (
@@ -704,9 +738,11 @@ const replaceInstructionWithLatticeMap = (
     }
     case TACInstructionKind.PropertySet: {
       const set = inst as PropertySetInstruction;
-      const object = replace(set.object);
+      // Do not copy-propagate the receiver: mutating through a forwarded alias
+      // would collapse CoW patterns (Copy then PropertySet on the copy).
+      const object = set.object;
       const value = replace(set.value);
-      if (object !== set.object || value !== set.value) {
+      if (value !== set.value) {
         return new (set.constructor as typeof PropertySetInstruction)(
           object,
           set.property,
@@ -743,14 +779,10 @@ const replaceInstructionWithLatticeMap = (
     }
     case TACInstructionKind.ArrayAssignment: {
       const assign = inst as ArrayAssignmentInstruction;
-      const array = replace(assign.array);
+      const array = assign.array;
       const index = replace(assign.index);
       const value = replace(assign.value);
-      if (
-        array !== assign.array ||
-        index !== assign.index ||
-        value !== assign.value
-      ) {
+      if (index !== assign.index || value !== assign.value) {
         return new (assign.constructor as typeof ArrayAssignmentInstruction)(
           array,
           index,

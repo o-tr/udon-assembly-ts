@@ -285,6 +285,41 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // [PASS] early return: optimized output must not add restrict init artifacts
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("[PASS] early return guard", () => {
+    it("should not inject __asm_restrict_eq_extern when optimized", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class EarlyReturnGuardTest extends UdonSharpBehaviour {
+          private isReady = false;
+
+          Start(): void {
+            if (!this.isReady) {
+              Debug.Log("skip");
+              return;
+            }
+            Debug.Log("run");
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      expect(optimized.uasm).not.toContain("__asm_restrict_eq_extern");
+      expect(optimized.uasm).not.toContain(
+        "SystemBoolean.__op_UnaryNegation__SystemBoolean__SystemBoolean",
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(14);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // [KNOWN FAIL] compare:uasm — cases not yet improved (remove it.fails when fixed)
   // ─────────────────────────────────────────────────────────────────────────
   describe("[KNOWN FAIL] UdonSharp parity gaps", () => {
@@ -348,37 +383,6 @@ describe("optimizer regression tests", () => {
         /SystemSingleArray|SystemConvert\.__ToDouble__SystemSingle__SystemDouble|SystemMath\.__Truncate__SystemDouble__SystemDouble|SystemConvert\.__ToInt32__SystemDouble__SystemInt32/,
       );
       expect(optimizedCount).toBeLessThanOrEqual(59);
-    });
-
-    it("early_return_guard should not inject __asm_restrict_eq_extern (why: optimized still emits guard artifact)", () => {
-      const source = `
-        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
-        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
-
-        @UdonBehaviour()
-        export class EarlyReturnGuardTest extends UdonSharpBehaviour {
-          private isReady = false;
-
-          Start(): void {
-            if (!this.isReady) {
-              Debug.Log("skip");
-              return;
-            }
-            Debug.Log("run");
-          }
-        }
-      `;
-      const transpiler = new TypeScriptToUdonTranspiler();
-      const optimized = transpiler.transpile(source, { optimize: true });
-      const optimizedCount = countUasmInstructions(optimized.uasm);
-
-      // TODO: convert to regular `it(...)` once the bug is fixed.
-      expect(optimized.uasm).not.toContain("__asm_restrict_eq_extern");
-      expect(optimized.uasm).not.toContain(
-        "SystemBoolean.__op_UnaryNegation__SystemBoolean__SystemBoolean",
-      );
-      expect(optimizedCount).toBeLessThanOrEqual(14);
     });
   });
 

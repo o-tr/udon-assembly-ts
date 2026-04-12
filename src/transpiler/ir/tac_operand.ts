@@ -126,6 +126,12 @@ export function temporaryLatticeKey(id: number): string {
   return `__sccp_tmp_${id}`;
 }
 
+/** Inverse of {@link temporaryLatticeKey} for lattice slot names; otherwise null. */
+export function parseTemporaryLatticeKey(name: string): number | null {
+  const m = /^__sccp_tmp_(\d+)$/.exec(name);
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * Convert operand to string for display
  */
