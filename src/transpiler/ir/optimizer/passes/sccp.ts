@@ -86,6 +86,13 @@ class VariableIdMap {
     return this.nameToId.get(name) ?? -1;
   }
 
+  /** Iterate all registered lattice slot names (for alias invalidation scans). */
+  forEachName(fn: (name: string) => void): void {
+    for (const name of this.nameToId.keys()) {
+      fn(name);
+    }
+  }
+
   get size(): number {
     return this._size;
   }
@@ -475,6 +482,45 @@ const latticeVariableToTacOperand = (v: VariableOperand): TACOperand => {
   return v;
 };
 
+/** When lattice gives no constant: preserve Temporary operand identity (no fresh createTemporary). */
+const resolveNonConstantOperand = (
+  original: TACOperand,
+  current: VariableOperand,
+): TACOperand =>
+  original.kind === TACOperandKind.Temporary
+    ? original
+    : latticeVariableToTacOperand(current);
+
+/**
+ * After a mutation on `rootName`, mark COPY-derived aliases overdefined so they
+ * cannot resolve back through the mutated slot (transitive).
+ */
+const invalidateCopyAliasesOfRoot = (
+  lattice: CompactLattice,
+  varIds: VariableIdMap,
+  rootName: string,
+): void => {
+  const queue: string[] = [rootName];
+  const seen = new Set<string>([rootName]);
+  let head = 0;
+  while (head < queue.length) {
+    const n = queue[head++] as string;
+    varIds.forEachName((destName) => {
+      const id = varIds.tryGetId(destName);
+      if (id === -1) return;
+      if (lattice.kinds[id] !== KIND_COPY) return;
+      const payload = lattice.payloads.get(id);
+      if (!payload) return;
+      if ((payload as VariableOperand).name !== n) return;
+      lattice.setOverdefined(destName);
+      if (!seen.has(destName)) {
+        seen.add(destName);
+        queue.push(destName);
+      }
+    });
+  }
+};
+
 const resolveLatticeOperandCompact = (
   operand: TACOperand,
   lattice: CompactLattice,
@@ -501,22 +547,24 @@ const resolveLatticeOperandCompact = (
   while (steps-- > 0) {
     const id = varIds.tryGetId(current.name);
     if (id === -1) {
+      // All operands reachable via copy chains are pre-registered; −1 only
+      // means the *initial* operand never appeared in any instruction.
       return original;
     }
     const kind = lattice.kinds[id];
     if (kind === KIND_UNKNOWN || kind === KIND_OVERDEFINED) {
-      return latticeVariableToTacOperand(current);
+      return resolveNonConstantOperand(original, current);
     }
     if (kind === KIND_CONSTANT) {
       const payload = lattice.payloads.get(id);
       return payload
         ? (payload as ConstantOperand)
-        : latticeVariableToTacOperand(current);
+        : resolveNonConstantOperand(original, current);
     }
     // KIND_COPY
     const payload = lattice.payloads.get(id);
     if (!payload) {
-      return latticeVariableToTacOperand(current);
+      return resolveNonConstantOperand(original, current);
     }
     current = payload as VariableOperand;
   }
@@ -591,6 +639,7 @@ const transferCompactLattice = (
     const name = latticeNameForOperand(set.object);
     if (name !== null) {
       lattice.setOverdefined(name);
+      invalidateCopyAliasesOfRoot(lattice, varIds, name);
     }
     return;
   }
@@ -600,6 +649,7 @@ const transferCompactLattice = (
     const name = latticeNameForOperand(assign.array);
     if (name !== null) {
       lattice.setOverdefined(name);
+      invalidateCopyAliasesOfRoot(lattice, varIds, name);
     }
     return;
   }
@@ -610,6 +660,7 @@ const transferCompactLattice = (
       const name = latticeNameForOperand(call.object);
       if (name !== null) {
         lattice.setOverdefined(name);
+        invalidateCopyAliasesOfRoot(lattice, varIds, name);
       }
     }
     // fall through to clear any defined variable via getDefinedOperandForReuse

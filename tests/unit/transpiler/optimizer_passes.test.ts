@@ -144,6 +144,16 @@ describe("optimizer passes", () => {
         );
       });
       expect(returnsOne).toBe(true);
+      const returnsZero = out.some((inst) => {
+        if (inst.kind !== TACInstructionKind.Return) return false;
+        const v = (inst as ReturnInstruction).value;
+        return (
+          v !== undefined &&
+          v.kind === TACOperandKind.Constant &&
+          (v as ConstantOperand).value === 0
+        );
+      });
+      expect(returnsZero).toBe(false);
     });
 
     it("CFG-consuming pass with cachedCFG produces identical results", () => {
@@ -993,7 +1003,9 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).not.toContain("UnityEngineMathf.__Atan2");
-    expect(text).toMatch(/t0 =|return 0\.785398163397448/);
+    expect(text).toMatch(
+      /t0 = 0\.785398163397448|return 0\.785398163397448/,
+    );
   });
 
   it("folds String.Concat with constants", () => {
