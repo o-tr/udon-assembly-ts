@@ -464,7 +464,7 @@ const resolveLatticeConstantCompact = (
 };
 
 /**
- * Map a lattice VariableOperand (possibly synthetic `__sccp_tmp_*`) back to
+ * Map a lattice VariableOperand (possibly synthetic temp lattice name) back to
  * VariableOperand or TemporaryOperand for emitted IR.
  */
 const latticeVariableToTacOperand = (v: VariableOperand): TACOperand => {
@@ -708,12 +708,10 @@ const replaceInstructionWithLatticeMap = (
     }
     case TACInstructionKind.MethodCall: {
       const call = inst as MethodCallInstruction;
-      const object = replace(call.object);
+      // Do not copy-propagate the receiver: may be a CoW temp or mutation target.
+      const object = call.object;
       const args = call.args.map((arg) => replace(arg));
-      if (
-        object !== call.object ||
-        args.some((arg, idx) => arg !== call.args[idx])
-      ) {
+      if (args.some((arg, idx) => arg !== call.args[idx])) {
         return new (call.constructor as typeof MethodCallInstruction)(
           call.dest,
           object,

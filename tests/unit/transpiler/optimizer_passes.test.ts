@@ -39,6 +39,7 @@ import {
   PropertyGetInstruction,
   PropertySetInstruction,
   ReturnInstruction,
+  TACInstructionKind,
   UnaryOpInstruction,
   UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
@@ -48,6 +49,7 @@ import {
   createLabel,
   createTemporary,
   createVariable,
+  type LabelOperand,
   TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
 
@@ -120,9 +122,28 @@ describe("optimizer passes", () => {
         new ReturnInstruction(createConstant(0, PrimitiveTypes.int32)),
       ];
       const result = sccpAndPrune(instructions);
+      const out = result.instructions;
       expect(
-        result.instructions.some((i) => i.kind === "ConditionalJump"),
+        out.some((i) => i.kind === TACInstructionKind.ConditionalJump),
       ).toBe(false);
+      for (const inst of out) {
+        if (inst.kind === TACInstructionKind.UnconditionalJump) {
+          const lab = (inst as UnconditionalJumpInstruction).label;
+          if (lab.kind === TACOperandKind.Label) {
+            expect((lab as LabelOperand).name).not.toBe("endif");
+          }
+        }
+      }
+      const returnsOne = out.some((inst) => {
+        if (inst.kind !== TACInstructionKind.Return) return false;
+        const v = (inst as ReturnInstruction).value;
+        return (
+          v !== undefined &&
+          v.kind === TACOperandKind.Constant &&
+          (v as ConstantOperand).value === 1
+        );
+      });
+      expect(returnsOne).toBe(true);
     });
 
     it("CFG-consuming pass with cachedCFG produces identical results", () => {
