@@ -40,9 +40,12 @@ import {
   rewriteOperands,
   rewriteProducerDest,
 } from "../utils/instructions.js";
-import { sameUdonType } from "../utils/operands.js";
 import { pureExternEvaluators } from "../utils/pure_extern.js";
 import { numberSetEqual, stringSetEqual } from "../utils/sets.js";
+import {
+  structuralTypeKey,
+  typesStructurallyEqualForTempAlias,
+} from "../utils/type_alias_compat.js";
 import { getOperandType } from "./constant_folding.js";
 
 export const copyOnWriteTemporaries = (
@@ -324,7 +327,10 @@ export const copyOnWriteTemporaries = (
       if (
         dest.kind === TACOperandKind.Temporary &&
         resolvedSrc.kind === TACOperandKind.Temporary &&
-        getOperandType(dest).udonType === getOperandType(resolvedSrc).udonType
+        typesStructurallyEqualForTempAlias(
+          getOperandType(dest),
+          getOperandType(resolvedSrc),
+        )
       ) {
         setAlias(dest as TemporaryOperand, resolvedSrc as TemporaryOperand);
         changed = true;
@@ -514,7 +520,10 @@ export const eliminateSingleUseTemporaries = (
             if (
               nextDest.kind === TACOperandKind.Variable &&
               isEligibleLocalVariable(nextDest as VariableOperand) &&
-              sameUdonType(destTemp, nextDest)
+              typesStructurallyEqualForTempAlias(
+                getOperandType(destTemp),
+                getOperandType(nextDest),
+              )
             ) {
               const rewritten = rewriteProducerDest(inst, nextDest);
               result.push(rewritten);
@@ -547,7 +556,7 @@ export const reuseTemporaries = (
     const collectTemp = (operand: TACOperand | undefined) => {
       if (!operand || operand.kind !== TACOperandKind.Temporary) return;
       const temp = operand as TemporaryOperand;
-      const typeKey = String(temp.type?.udonType ?? "Object");
+      const typeKey = structuralTypeKey(temp.type);
       const existing = tempTypes.get(temp.id);
       if (existing !== undefined) {
         if (existing !== typeKey) ineligible.add(temp.id);
@@ -776,7 +785,7 @@ export const reuseLocalVariables = (
         return;
       }
 
-      const typeKey = String(variable.type?.udonType ?? "Object");
+      const typeKey = structuralTypeKey(variable.type);
       const existingType = varTypes.get(name);
       if (existingType !== undefined && existingType !== typeKey) {
         eligibility.set(name, false);

@@ -537,4 +537,32 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThan(baselineCount);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // [PASS] native Int32Array: indexed write must not widen to SystemSingleArray
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("[PASS] Int32 native array index mutation with optimizer", () => {
+    it("array_index_mutation should stay on Int32Array path", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class ArrayIndexMutationTest extends UdonSharpBehaviour {
+          Start(): void {
+            const xs: UdonInt[] = [1, 2, 3];
+            xs[1] = (5 as UdonInt);
+            Debug.Log(xs[0]);
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const result = transpiler.transpile(source, { optimize: true });
+      expect(result.uasm).toContain("SystemInt32Array.__Set__");
+      expect(result.uasm).not.toContain("SystemSingleArray.__Set__");
+      expect(result.uasm).not.toContain("SystemSingleArray.__Get__");
+    });
+  });
 });
