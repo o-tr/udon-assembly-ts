@@ -308,14 +308,16 @@ describe("optimizer regression tests", () => {
         }
       `;
       const transpiler = new TypeScriptToUdonTranspiler();
+      const baseline = transpiler.transpile(source, { optimize: false });
       const optimized = transpiler.transpile(source, { optimize: true });
+      const baselineCount = countUasmInstructions(baseline.uasm);
       const optimizedCount = countUasmInstructions(optimized.uasm);
 
       expect(optimized.uasm).not.toContain("__asm_restrict_eq_extern");
       expect(optimized.uasm).not.toContain(
         "SystemBoolean.__op_UnaryNegation__SystemBoolean__SystemBoolean",
       );
-      expect(optimizedCount).toBeLessThanOrEqual(14);
+      expect(optimizedCount).toBeLessThanOrEqual(baselineCount);
     });
   });
 

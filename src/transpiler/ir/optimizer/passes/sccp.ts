@@ -509,6 +509,9 @@ const resolveNonConstantOperand = (
  * `transferCompactLattice` step — e.g. CoW `MethodCall` may call invalidation
  * twice with a partially updated lattice between). O(V) once per call; BFS then
  * looks up successors in O(out-degree) instead of scanning all names per node.
+ * Worst-case SCCP transfer work scales with O(V) × invalidations per inst
+ * (e.g. CoW MethodCall may invalidate twice), i.e. O(V × instructions) per pass
+ * if register counts grow large.
  */
 const buildReverseCopyIndex = (
   lattice: CompactLattice,
@@ -553,9 +556,9 @@ const invalidateCopyAliasesOfRoot = (
     const dests = reverse.get(n);
     if (dests === undefined) continue;
     for (const destName of dests) {
-      lattice.setOverdefined(destName);
       if (!seen.has(destName)) {
         seen.add(destName);
+        lattice.setOverdefined(destName);
         queue.push(destName);
       }
     }
