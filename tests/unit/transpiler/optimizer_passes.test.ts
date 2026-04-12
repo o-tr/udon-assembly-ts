@@ -56,6 +56,12 @@ import {
 const stringify = (insts: { toString(): string }[]) =>
   insts.map((inst) => inst.toString()).join("\n");
 
+/** Full-line match on stringified TAC (avoids substring false positives like "return arr"). */
+const expectTacLine = (text: string, line: RegExp): void => {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  expect(lines.some((l) => line.test(l))).toBe(true);
+};
+
 describe("optimizer passes", () => {
   describe("PassResult.changed contract", () => {
     it("constantFolding returns changed: false on already-folded input", () => {
@@ -276,7 +282,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = false|return false/);
+    expectTacLine(text, /^(t0 = false|return false)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -963,7 +969,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -981,7 +987,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = 1|return 1/);
+    expectTacLine(text, /^(t0 = 1|return 1)$/);
     expect(text).not.toContain("call");
   });
 
@@ -1003,7 +1009,10 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
 
     expect(text).not.toContain("UnityEngineMathf.__Atan2");
-    expect(text).toMatch(/t0 = 0\.785398163397448|return 0\.785398163397448/);
+    expectTacLine(
+      text,
+      /^(t0 = 0\.7853981633974483|return 0\.7853981633974483)$/,
+    );
   });
 
   it("folds String.Concat with constants", () => {
@@ -1023,7 +1032,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = "Hello World"|return "Hello World"/);
+    expectTacLine(text, /^(t0 = "Hello World"|return "Hello World")$/);
     expect(text).not.toContain("call");
   });
 
@@ -1043,7 +1052,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = 1|return 1/);
+    expectTacLine(text, /^(t0 = 1|return 1)$/);
     expect(text).not.toContain("call");
   });
 
@@ -1217,7 +1226,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = 0|return 0/);
+    expectTacLine(text, /^(t0 = 0|return 0)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1237,7 +1246,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = 0|return 0/);
+    expectTacLine(text, /^(t0 = 0|return 0)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1257,7 +1266,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1277,7 +1286,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1292,7 +1301,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1307,7 +1316,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1322,7 +1331,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = 0|return 0/);
+    expectTacLine(text, /^(t0 = 0|return 0)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1342,7 +1351,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1362,7 +1371,7 @@ describe("optimizer passes", () => {
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
 
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1560,7 +1569,7 @@ describe("optimizer passes", () => {
       0,
     );
     const text = stringify(optimized);
-    expect(text).toMatch(/t0 = val|return val/);
+    expectTacLine(text, /^(t0 = val|return val)$/);
   });
 
   it("does not forward PropertyGet across MethodCall", () => {
@@ -1632,7 +1641,7 @@ describe("optimizer passes", () => {
     ];
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
-    expect(text).toMatch(/t0 = a|return a/);
+    expectTacLine(text, /^(t0 = a|return a)$/);
     expect(optimized.filter((inst) => inst.kind === "BinaryOp").length).toBe(0);
   });
 
@@ -1645,7 +1654,7 @@ describe("optimizer passes", () => {
     ];
     const optimized = new TACOptimizer().optimize(instructions);
     const text = stringify(optimized);
-    expect(text).toMatch(/t0 = true|return true/);
+    expectTacLine(text, /^(t0 = true|return true)$/);
   });
 
   it("folds int-to-float-to-double cast chain", () => {
@@ -1714,7 +1723,7 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
     expect(text).not.toContain("ifFalse");
     expect(text).not.toContain("goto");
-    expect(text).toMatch(/t0 = cond|return cond/);
+    expectTacLine(text, /^(t0 = cond|return cond)$/);
   });
 
   it("simplifies diamond pattern with false/true to negation of condition", () => {

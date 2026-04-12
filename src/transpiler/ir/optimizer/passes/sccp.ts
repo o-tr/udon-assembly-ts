@@ -482,20 +482,33 @@ const latticeVariableToTacOperand = (v: VariableOperand): TACOperand => {
   return v;
 };
 
-/** When lattice gives no constant: preserve Temporary operand identity (no fresh createTemporary). */
+/**
+ * When lattice gives no constant: preserve operand identity only while `current`
+ * still denotes the same lattice slot as `original` (after copy-chain walks).
+ */
 const resolveNonConstantOperand = (
   original: TACOperand,
   current: VariableOperand,
-): TACOperand =>
-  original.kind === TACOperandKind.Temporary
-    ? original
-    : latticeVariableToTacOperand(current);
+): TACOperand => {
+  if (original.kind === TACOperandKind.Temporary) {
+    const key = temporaryLatticeKey((original as TemporaryOperand).id);
+    return current.name === key
+      ? original
+      : latticeVariableToTacOperand(current);
+  }
+  if (original.kind === TACOperandKind.Variable) {
+    return (original as VariableOperand).name === current.name
+      ? original
+      : latticeVariableToTacOperand(current);
+  }
+  return latticeVariableToTacOperand(current);
+};
 
 /**
  * Before `rootName` is set overdefined, mark COPY-derived aliases overdefined
- * so they cannot resolve through the slot being redefined (transitive along
- * copy edges, including walking backward along COPY chains to cover the alias
- * component). Caller must `setOverdefined(rootName)` after this returns.
+ * transitively along forward copy edges only (dest COPY where payload names the
+ * invalidated slot). Does not walk “backward” to unrelated sibling copies of
+ * a shared source. Caller must `setOverdefined(rootName)` after this returns.
  */
 const invalidateCopyAliasesOfRoot = (
   lattice: CompactLattice,
@@ -520,17 +533,6 @@ const invalidateCopyAliasesOfRoot = (
         queue.push(destName);
       }
     });
-    const idN = varIds.tryGetId(n);
-    if (idN !== -1 && lattice.kinds[idN] === KIND_COPY) {
-      const payload = lattice.payloads.get(idN);
-      if (payload) {
-        const srcName = (payload as VariableOperand).name;
-        if (!seen.has(srcName)) {
-          seen.add(srcName);
-          queue.push(srcName);
-        }
-      }
-    }
   }
 };
 
