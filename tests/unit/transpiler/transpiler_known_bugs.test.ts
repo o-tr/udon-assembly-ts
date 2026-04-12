@@ -106,17 +106,49 @@ function detectIndexAwareGuardBeforeGetItem(
   }
   const guardScanLines = tacLines.slice(blockStart, getItemIdx);
 
-  const countVars = guardScanLines
-    .map((line) => line.match(countAssignmentPattern)?.[1])
-    .filter((v): v is string => !!v);
-  if (countVars.length === 0) return false;
-
-  return countVars.some((countVar) => {
-    const escapedCountVar = escapeRegex(countVar);
-    const guardPattern = new RegExp(
-      `\\b${escapedIndexVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedCountVar}\\b|\\b${escapedCountVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedIndexVar}\\b`,
+  const countAssignments = guardScanLines
+    .map((line, i) => ({
+      i,
+      countVar: line.trim().match(countAssignmentPattern)?.[1],
+    }))
+    .filter(
+      (entry): entry is { i: number; countVar: string } => !!entry.countVar,
     );
-    return guardScanLines.some((line) => guardPattern.test(line));
+  if (countAssignments.length === 0) return false;
+
+  const countVars = [
+    ...new Set(countAssignments.map((entry) => entry.countVar)),
+  ];
+  return countVars.some((countVar) => {
+    const assignIndices = countAssignments
+      .filter((entry) => entry.countVar === countVar)
+      .map((entry) => entry.i);
+    if (assignIndices.length === 0) return false;
+
+    const escapedCountVar = escapeRegex(countVar);
+    const comparisonPattern = new RegExp(
+      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedIndexVar})$`,
+    );
+    return assignIndices.some((assignIdx) => {
+      const afterAssign = guardScanLines.slice(assignIdx + 1);
+
+      for (let i = 0; i < afterAssign.length; i++) {
+        const comparisonMatch = afterAssign[i].trim().match(comparisonPattern);
+        if (!comparisonMatch?.[1]) continue;
+
+        const cmpTemp = comparisonMatch[1];
+        const escapedCmpTemp = escapeRegex(cmpTemp);
+        const branchPattern = new RegExp(
+          `^(ifFalse|ifTrue|if)\\s+${escapedCmpTemp}\\s+goto\\b`,
+        );
+        const hasGuardBranch = afterAssign
+          .slice(i + 1)
+          .some((line) => branchPattern.test(line.trim()));
+        if (hasGuardBranch) return true;
+      }
+
+      return false;
+    });
   });
 }
 
