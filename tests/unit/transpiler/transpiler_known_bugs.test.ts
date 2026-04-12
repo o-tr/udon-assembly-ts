@@ -52,10 +52,10 @@
  *         that cannot be accessed via .Reference.
  *         (root cause #11 residual in vm-test-failures-investigation.md)
  *
- * Bug 10: DataList.get_Item bounds safety on dynamic cache reads — cache-style
- *         reads (`cache[index]`) currently emit raw get_Item with no guard tied
- *         to the requested index. This can throw at runtime when index/handle
- *         drift occurs in complex inline/flyweight flows.
+ * Bug 10 (FIXED): DataList.get_Item bounds safety on dynamic cache reads —
+ *         non-literal indices emit Count + (index >= 0) + (index < Count) + ifFalse
+ *         before get_Item; negative numeric / unary-minus literals use the same guard.
+ *         Null DataToken fallback when out of bounds.
  *         (root cause #18 in vm-test-failures-investigation.md)
  *
  * Bug 11 (FIXED): Flyweight cache typed unwrap stability — SoA DataList get_Item
@@ -81,10 +81,38 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** `indexVar >= 0` / `0 <= indexVar` assignment must be followed by ifFalse/if on that temp. */
+function hasLowerBoundGuardBranch(
+  guardScanLines: string[],
+  indexVar: string,
+): boolean {
+  const escapedIndexVar = escapeRegex(indexVar);
+  const lowerAssignRe = new RegExp(
+    `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*>=\\s*0|0\\s*<=\\s*${escapedIndexVar})`,
+  );
+  for (let i = 0; i < guardScanLines.length; i++) {
+    const m = guardScanLines[i].trim().match(lowerAssignRe);
+    if (!m?.[1]) continue;
+    const lbTemp = m[1];
+    const branchPattern = new RegExp(
+      `^(ifFalse|ifTrue|if)\\s+${escapeRegex(lbTemp)}\\s+goto\\b`,
+    );
+    if (
+      guardScanLines
+        .slice(i + 1)
+        .some((line) => branchPattern.test(line.trim()))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function detectIndexAwareGuardBeforeGetItem(
   tacLines: string[],
   getItemIdx: number,
   countAssignmentPattern: RegExp,
+  requireLowerBound = false,
 ): boolean {
   if (getItemIdx <= 0 || getItemIdx >= tacLines.length) return false;
 
@@ -128,7 +156,7 @@ function detectIndexAwareGuardBeforeGetItem(
   const countVars = [
     ...new Set(countAssignments.map((entry) => entry.countVar)),
   ];
-  return countVars.some((countVar) => {
+  const matched = countVars.some((countVar) => {
     const assignIndices = countAssignments
       .filter((entry) => entry.countVar === countVar)
       .map((entry) => entry.i);
@@ -136,7 +164,7 @@ function detectIndexAwareGuardBeforeGetItem(
 
     const escapedCountVar = escapeRegex(countVar);
     const comparisonPattern = new RegExp(
-      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedIndexVar})$`,
+      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=)\\s*${escapedIndexVar})$`,
     );
     return assignIndices.some((assignIdx) => {
       const afterAssign = guardScanLines.slice(assignIdx + 1);
@@ -159,6 +187,11 @@ function detectIndexAwareGuardBeforeGetItem(
       return false;
     });
   });
+  if (!matched) return false;
+  if (requireLowerBound) {
+    return hasLowerBoundGuardBranch(guardScanLines, indexVar);
+  }
+  return true;
 }
 
 describe("known transpiler bugs", () => {
@@ -1009,11 +1042,11 @@ describe("known transpiler bugs", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Bug 10: DataList.get_Item bounds safety (known issue, reproduction test)
+  // Bug 10: DataList.get_Item bounds safety
   // ---------------------------------------------------------------------------
 
   describe("DataList.get_Item bounds safety", () => {
-    it.fails("dynamic cache index reads should emit index-aware Count guard before get_Item", () => {
+    it("dynamic cache index reads should emit index-aware Count guard before get_Item", () => {
       const source = `
           class Item {
             constructor(public value: number) {}
@@ -1046,10 +1079,50 @@ describe("known transpiler bugs", () => {
         tacLines,
         cacheGetIdx,
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+        true,
       );
 
-      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(hasIndexAwareGuard).toBe(true);
+    });
+
+    it("primitive number[] cache with negative literal and unary-minus indices emit guards", () => {
+      const source = `
+          class Item {
+            static cache: number[] = [];
+            static seed(): void {
+              for (let i: number = 0; i < 3; i++) {
+                Item.cache.push(i);
+              }
+            }
+            static at(index: number): number {
+              return Item.cache[index];
+            }
+          }
+          class Main {
+            Start(): void {
+              Item.seed();
+              Debug.Log(Item.at(-1));
+              Debug.Log(Item.at(-(1)));
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+      const getIndices = tacLines
+        .map((l, idx) => (l.includes("Item__cache.get_Item(") ? idx : -1))
+        .filter((idx) => idx >= 0);
+      expect(getIndices.length).toBeGreaterThanOrEqual(2);
+
+      for (const idx of getIndices) {
+        expect(
+          detectIndexAwareGuardBeforeGetItem(
+            tacLines,
+            idx,
+            /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+            true,
+          ),
+        ).toBe(true);
+      }
     });
   });
 
