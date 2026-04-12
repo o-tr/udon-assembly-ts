@@ -10,7 +10,10 @@ export class StringConcatDeepMixed extends UdonSharpBehaviour {
     const score = 12;
     const okText = ok ? "yes" : "no";
 
-    const message = `id=${id},ok=${okText},score=${score}`;
+    // Keep each template under stringBuilderThreshold (6) parts so lowering
+    // uses System.String.Concat, not System.Text.StringBuilder (VM lacks that type).
+    const head = `id=${id},ok=${okText}`;
+    const message = `${head},score=${score}`;
     const extended = `${message}|tag=${"run"}`;
 
     Debug.Log(message);

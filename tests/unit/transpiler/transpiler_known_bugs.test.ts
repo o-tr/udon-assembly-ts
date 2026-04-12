@@ -82,6 +82,33 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** `indexVar >= 0` / `0 <= indexVar` assignment must be followed by ifFalse/if on that temp. */
+function hasLowerBoundGuardBranch(
+  guardScanLines: string[],
+  indexVar: string,
+): boolean {
+  const escapedIndexVar = escapeRegex(indexVar);
+  const lowerAssignRe = new RegExp(
+    `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*>=\\s*0|0\\s*<=\\s*${escapedIndexVar})`,
+  );
+  for (let i = 0; i < guardScanLines.length; i++) {
+    const m = guardScanLines[i].trim().match(lowerAssignRe);
+    if (!m?.[1]) continue;
+    const lbTemp = m[1];
+    const branchPattern = new RegExp(
+      `^(ifFalse|ifTrue|if)\\s+${escapeRegex(lbTemp)}\\s+goto\\b`,
+    );
+    if (
+      guardScanLines
+        .slice(i + 1)
+        .some((line) => branchPattern.test(line.trim()))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function detectIndexAwareGuardBeforeGetItem(
   tacLines: string[],
   getItemIdx: number,
@@ -153,10 +180,7 @@ function detectIndexAwareGuardBeforeGetItem(
   });
   if (!matched) return false;
   if (requireLowerBound) {
-    const lowerRe = new RegExp(
-      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*>=\\s*0|0\\s*<=\\s*${escapedIndexVar})`,
-    );
-    return guardScanLines.some((line) => lowerRe.test(line.trim()));
+    return hasLowerBoundGuardBranch(guardScanLines, indexVar);
   }
   return true;
 }
@@ -1050,6 +1074,46 @@ describe("known transpiler bugs", () => {
       );
 
       expect(hasIndexAwareGuard).toBe(true);
+    });
+
+    it("primitive number[] cache with negative literal and unary-minus indices emit guards", () => {
+      const source = `
+          class Item {
+            static cache: number[] = [];
+            static seed(): void {
+              for (let i: number = 0; i < 3; i++) {
+                Item.cache.push(i);
+              }
+            }
+            static at(index: number): number {
+              return Item.cache[index];
+            }
+          }
+          class Main {
+            Start(): void {
+              Item.seed();
+              Debug.Log(Item.at(-1));
+              Debug.Log(Item.at(-(1)));
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+      const getIndices = tacLines
+        .map((l, idx) => (l.includes("Item__cache.get_Item(") ? idx : -1))
+        .filter((idx) => idx >= 0);
+      expect(getIndices.length).toBeGreaterThanOrEqual(2);
+
+      for (const idx of getIndices) {
+        expect(
+          detectIndexAwareGuardBeforeGetItem(
+            tacLines,
+            idx,
+            /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+            true,
+          ),
+        ).toBe(true);
+      }
     });
   });
 
