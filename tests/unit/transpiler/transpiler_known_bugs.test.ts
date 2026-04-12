@@ -82,6 +82,37 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function detectIndexAwareGuardBeforeGetItem(
+  tacLines: string[],
+  getItemIdx: number,
+  countAssignmentPattern: RegExp,
+): boolean {
+  if (getItemIdx <= 0 || getItemIdx >= tacLines.length) return false;
+
+  const getItemLine = tacLines[getItemIdx];
+  const indexVarMatch = getItemLine.match(/get_Item\(([^)]+)\)/);
+  const indexVar = indexVarMatch?.[1]?.trim();
+  if (!indexVar) return false;
+  const escapedIndexVar = escapeRegex(indexVar);
+
+  // Scan all prior TAC lines in the same body so the bug-fixed signal
+  // does not depend on a fragile fixed-size look-back window.
+  const guardScanLines = tacLines.slice(0, getItemIdx);
+
+  const countVars = guardScanLines
+    .map((line) => line.match(countAssignmentPattern)?.[1])
+    .filter((v): v is string => !!v);
+  if (countVars.length === 0) return false;
+
+  return countVars.some((countVar) => {
+    const escapedCountVar = escapeRegex(countVar);
+    const guardPattern = new RegExp(
+      `\\b${escapedIndexVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedCountVar}\\b|\\b${escapedCountVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedIndexVar}\\b`,
+    );
+    return guardScanLines.some((line) => guardPattern.test(line));
+  });
+}
+
 describe("known transpiler bugs", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
@@ -963,33 +994,11 @@ describe("known transpiler bugs", () => {
       );
       expect(cacheGetIdx).toBeGreaterThan(0);
 
-      const getItemLine = tacLines[cacheGetIdx];
-      const indexVarMatch = getItemLine.match(/get_Item\(([^)]+)\)/);
-      expect(indexVarMatch?.[1]).toBeDefined();
-      const indexVar = indexVarMatch?.[1].trim() ?? "";
-      const escapedIndexVar = escapeRegex(indexVar);
-
-      const guardWindowLines = tacLines.slice(
-        Math.max(0, cacheGetIdx - 16),
+      const hasIndexAwareGuard = detectIndexAwareGuardBeforeGetItem(
+        tacLines,
         cacheGetIdx,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
       );
-      const countVars = guardWindowLines
-        .map(
-          (line) =>
-            line.match(
-              /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
-            )?.[1],
-        )
-        .filter((v): v is string => !!v);
-      expect(countVars.length).toBeGreaterThan(0);
-
-      const hasIndexAwareGuard = countVars.some((countVar) => {
-        const escapedCountVar = escapeRegex(countVar);
-        const guardPattern = new RegExp(
-          `\\b${escapedIndexVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedCountVar}\\b|\\b${escapedCountVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedIndexVar}\\b`,
-        );
-        return guardWindowLines.some((line) => guardPattern.test(line));
-      });
 
       // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(hasIndexAwareGuard).toBe(true);
@@ -1055,32 +1064,11 @@ describe("known transpiler bugs", () => {
       expect(soaGetIndices.length).toBeGreaterThan(0);
 
       for (const soaGetIdx of soaGetIndices) {
-        const getItemLine = tacLines[soaGetIdx];
-        const handleVar = getItemLine.match(/get_Item\(([^)]+)\)/)?.[1]?.trim();
-        expect(handleVar).toBeDefined();
-        const escapedHandleVar = escapeRegex(handleVar ?? "");
-
-        const guardWindowLines = tacLines.slice(
-          Math.max(0, soaGetIdx - 20),
+        const hasHandleGuard = detectIndexAwareGuardBeforeGetItem(
+          tacLines,
           soaGetIdx,
+          /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*__soa_Tile_(label|isRed)\.Count$/,
         );
-        const countVars = guardWindowLines
-          .map(
-            (line) =>
-              line.match(
-                /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*__soa_Tile_(label|isRed)\.Count$/,
-              )?.[1],
-          )
-          .filter((v): v is string => !!v);
-        expect(countVars.length).toBeGreaterThan(0);
-
-        const hasHandleGuard = countVars.some((countVar) => {
-          const escapedCountVar = escapeRegex(countVar);
-          const guardPattern = new RegExp(
-            `\\b${escapedHandleVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedCountVar}\\b|\\b${escapedCountVar}\\b\\s*(<|<=|>|>=|==|!=)\\s*\\b${escapedHandleVar}\\b`,
-          );
-          return guardWindowLines.some((line) => guardPattern.test(line));
-        });
         expect(hasHandleGuard).toBe(true);
       }
 
