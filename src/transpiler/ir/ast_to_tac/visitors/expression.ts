@@ -1476,12 +1476,16 @@ function emitDataListBracketRead(
   );
   const skipLabel = converter.newLabel("dlrd_oob");
   const mergeLabel = converter.newLabel("dlrd_merge");
-  converter.instructions.push(new ConditionalJumpInstruction(geZero, skipLabel));
+  converter.instructions.push(
+    new ConditionalJumpInstruction(geZero, skipLabel),
+  );
   const ltCount = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(
     new BinaryOpInstruction(ltCount, coercedIndex, "<", countTemp),
   );
-  converter.instructions.push(new ConditionalJumpInstruction(ltCount, skipLabel));
+  converter.instructions.push(
+    new ConditionalJumpInstruction(ltCount, skipLabel),
+  );
   converter.instructions.push(
     new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
   );

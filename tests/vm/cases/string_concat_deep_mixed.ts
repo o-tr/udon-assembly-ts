@@ -10,7 +10,7 @@ export class StringConcatDeepMixed extends UdonSharpBehaviour {
     const score = 12;
     const okText = ok ? "yes" : "no";
 
-    const message = "id=" + id + ",ok=" + okText + ",score=" + score;
+    const message = `id=${id},ok=${okText},score=${score}`;
     const extended = `${message}|tag=${"run"}`;
 
     Debug.Log(message);
