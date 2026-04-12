@@ -284,6 +284,101 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // [KNOWN FAIL] compare:uasm 未改善ケース（fix時に it.fails を外す）
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("[KNOWN FAIL] UdonSharp parity gaps", () => {
+    it.fails("array_index_mutation should stay on Int32Array path (why: still widened to SingleArray)", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class ArrayIndexMutationTest extends UdonSharpBehaviour {
+          Start(): void {
+            const values: number[] = [1, 2, 3, 4];
+            values[1] = values[0] + values[2];
+            values[3] = values[1] * 2;
+            Debug.Log(values[1]);
+            Debug.Log(values[3]);
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      expect(optimized.uasm).toContain(
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
+      );
+      expect(optimized.uasm).not.toMatch(
+        /SystemSingleArray|SystemConvert\.__ToDouble__SystemSingle__SystemDouble|SystemMath\.__Truncate__SystemDouble__SystemDouble|SystemConvert\.__ToInt32__SystemDouble__SystemInt32/,
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(63);
+    });
+
+    it.fails("array_reassign_then_read should avoid float-conversion array pipeline (why: still SingleArray-based)", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class ArrayReassignThenReadTest extends UdonSharpBehaviour {
+          Start(): void {
+            const values = [2, 4, 6];
+            values[0] = values[1] + 1;
+            values[2] = values[0] + values[1];
+            Debug.Log(values[0]);
+            Debug.Log(values[2]);
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      expect(optimized.uasm).toContain(
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
+      );
+      expect(optimized.uasm).not.toMatch(
+        /SystemSingleArray|SystemConvert\.__ToDouble__SystemSingle__SystemDouble|SystemMath\.__Truncate__SystemDouble__SystemDouble|SystemConvert\.__ToInt32__SystemDouble__SystemInt32/,
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(59);
+    });
+
+    it.fails("early_return_guard should not inject __asm_restrict_eq_extern (why: optimized still emits guard artifact)", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class EarlyReturnGuardTest extends UdonSharpBehaviour {
+          private isReady = false;
+
+          Start(): void {
+            if (!this.isReady) {
+              Debug.Log("skip");
+              return;
+            }
+            Debug.Log("run");
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      expect(optimized.uasm).not.toContain("__asm_restrict_eq_extern");
+      expect(optimized.uasm).not.toContain(
+        "SystemBoolean.__op_UnaryNegation__SystemBoolean__SystemBoolean",
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(14);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // [GAP] constant folding: chain of constant arithmetic should fully fold
   // ─────────────────────────────────────────────────────────────────────────
   describe("[GAP] constant folding chain", () => {
