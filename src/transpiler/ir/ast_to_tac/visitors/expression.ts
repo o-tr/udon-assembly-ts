@@ -1447,7 +1447,8 @@ function needsDataListReadBoundsGuard(indexNode: ASTNode): boolean {
 }
 
 /**
- * DataList-backed bracket read: optional Count + (index >= 0) + (index < Count) before get_Item.
+ * DataList-backed bracket read: (index >= 0) then Count + (index < Count) before get_Item.
+ * Lower-bound first avoids a redundant Count read when index is negative (P2).
  * Two ifFalse jumps (no labels between Count and get_Item) — matches Bug 10 TAC detector.
  */
 function emitDataListBracketRead(
@@ -1464,10 +1465,6 @@ function emitDataListBracketRead(
     return tokenResult;
   }
 
-  const countTemp = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new PropertyGetInstruction(countTemp, array, "Count"),
-  );
   const zero = createConstant(0, PrimitiveTypes.int32);
   const geZero = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(
@@ -1477,6 +1474,10 @@ function emitDataListBracketRead(
   const mergeLabel = converter.newLabel("dlrd_merge");
   converter.instructions.push(
     new ConditionalJumpInstruction(geZero, skipLabel),
+  );
+  const countTemp = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new PropertyGetInstruction(countTemp, array, "Count"),
   );
   const ltCount = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(

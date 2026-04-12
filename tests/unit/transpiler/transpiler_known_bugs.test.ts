@@ -155,7 +155,7 @@ function detectIndexAwareGuardBeforeGetItem(
 
     const escapedCountVar = escapeRegex(countVar);
     const comparisonPattern = new RegExp(
-      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedIndexVar})$`,
+      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=)\\s*${escapedIndexVar})$`,
     );
     return assignIndices.some((assignIdx) => {
       const afterAssign = guardScanLines.slice(assignIdx + 1);
