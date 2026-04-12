@@ -95,9 +95,16 @@ function detectIndexAwareGuardBeforeGetItem(
   if (!indexVar) return false;
   const escapedIndexVar = escapeRegex(indexVar);
 
-  // Scan all prior TAC lines in the same body so the bug-fixed signal
-  // does not depend on a fragile fixed-size look-back window.
-  const guardScanLines = tacLines.slice(0, getItemIdx);
+  // Scope the scan to the enclosing TAC label block to avoid accidental
+  // matches from unrelated earlier blocks/method fragments.
+  let blockStart = 0;
+  for (let i = getItemIdx - 1; i >= 0; i--) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*:$/.test(tacLines[i].trim())) {
+      blockStart = i + 1;
+      break;
+    }
+  }
+  const guardScanLines = tacLines.slice(blockStart, getItemIdx);
 
   const countVars = guardScanLines
     .map((line) => line.match(countAssignmentPattern)?.[1])
