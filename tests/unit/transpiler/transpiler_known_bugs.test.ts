@@ -51,6 +51,18 @@
  *         at runtime because the DataToken stores a typed value (String, Int, etc.)
  *         that cannot be accessed via .Reference.
  *         (root cause #11 residual in vm-test-failures-investigation.md)
+ *
+ * Bug 10: DataList.get_Item bounds safety on dynamic cache reads — cache-style
+ *         reads (`cache[index]`) currently emit raw get_Item with no guard tied
+ *         to the requested index. This can throw at runtime when index/handle
+ *         drift occurs in complex inline/flyweight flows.
+ *         (root cause #18 in vm-test-failures-investigation.md)
+ *
+ * Bug 11: Flyweight cache typed unwrap stability — cache-returned inline
+ *         instances with string/boolean fields must keep typed DataToken
+ *         accessors (.String/.Boolean) and never fall back to .Reference in
+ *         mixed dispatch/untracked paths.
+ *         (root cause #19/#20 in vm-test-failures-investigation.md)
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -64,6 +76,80 @@ function getDataSection(uasm: string): string[] {
   const endIdx = lines.findIndex((l) => l.includes(".data_end"));
   if (startIdx < 0 || endIdx < 0) return [];
   return lines.slice(startIdx, endIdx + 1);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function detectIndexAwareGuardBeforeGetItem(
+  tacLines: string[],
+  getItemIdx: number,
+  countAssignmentPattern: RegExp,
+): boolean {
+  if (getItemIdx <= 0 || getItemIdx >= tacLines.length) return false;
+
+  const getItemLine = tacLines[getItemIdx];
+  const indexVarMatch = getItemLine.match(/get_Item\(([^)]+)\)/);
+  const indexVar = indexVarMatch?.[1]?.trim();
+  if (!indexVar) return false;
+  const escapedIndexVar = escapeRegex(indexVar);
+
+  // Scope the scan to the enclosing TAC label block to avoid accidental
+  // matches from unrelated earlier blocks/method fragments.
+  let blockStart = 0;
+  for (let i = getItemIdx - 1; i >= 0; i--) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*:$/.test(tacLines[i].trim())) {
+      blockStart = i + 1;
+      break;
+    }
+  }
+  const guardScanLines = tacLines.slice(blockStart, getItemIdx);
+
+  const countAssignments = guardScanLines
+    .map((line, i) => ({
+      i,
+      countVar: line.trim().match(countAssignmentPattern)?.[1],
+    }))
+    .filter(
+      (entry): entry is { i: number; countVar: string } => !!entry.countVar,
+    );
+  if (countAssignments.length === 0) return false;
+
+  const countVars = [
+    ...new Set(countAssignments.map((entry) => entry.countVar)),
+  ];
+  return countVars.some((countVar) => {
+    const assignIndices = countAssignments
+      .filter((entry) => entry.countVar === countVar)
+      .map((entry) => entry.i);
+    if (assignIndices.length === 0) return false;
+
+    const escapedCountVar = escapeRegex(countVar);
+    const comparisonPattern = new RegExp(
+      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=|==|!=)\\s*${escapedIndexVar})$`,
+    );
+    return assignIndices.some((assignIdx) => {
+      const afterAssign = guardScanLines.slice(assignIdx + 1);
+
+      for (let i = 0; i < afterAssign.length; i++) {
+        const comparisonMatch = afterAssign[i].trim().match(comparisonPattern);
+        if (!comparisonMatch?.[1]) continue;
+
+        const cmpTemp = comparisonMatch[1];
+        const escapedCmpTemp = escapeRegex(cmpTemp);
+        const branchPattern = new RegExp(
+          `^(ifFalse|ifTrue|if)\\s+${escapedCmpTemp}\\s+goto\\b`,
+        );
+        const hasGuardBranch = afterAssign
+          .slice(i + 1)
+          .some((line) => branchPattern.test(line.trim()));
+        if (hasGuardBranch) return true;
+      }
+
+      return false;
+    });
+  });
 }
 
 describe("known transpiler bugs", () => {
@@ -909,6 +995,169 @@ describe("known transpiler bugs", () => {
       );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 10: DataList.get_Item bounds safety (known issue, reproduction test)
+  // ---------------------------------------------------------------------------
+
+  describe("DataList.get_Item bounds safety", () => {
+    it.fails("dynamic cache index reads should emit index-aware Count guard before get_Item", () => {
+      const source = `
+          class Item {
+            constructor(public value: number) {}
+            static cache: Item[] = [];
+            static seed(): void {
+              for (let i: number = 0; i < 3; i++) {
+                Item.cache.push(new Item(i));
+              }
+            }
+            static at(index: number): Item {
+              return Item.cache[index];
+            }
+          }
+          class Main {
+            Start(): void {
+              Item.seed();
+              const it = Item.at(1);
+              Debug.Log(it.value);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+      const cacheGetIdx = tacLines.findIndex((l) =>
+        l.includes("Item__cache.get_Item("),
+      );
+      expect(cacheGetIdx).toBeGreaterThan(0);
+
+      const hasIndexAwareGuard = detectIndexAwareGuardBeforeGetItem(
+        tacLines,
+        cacheGetIdx,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+      );
+
+      // TODO: convert to regular `it(...)` once the bug is fixed.
+      expect(hasIndexAwareGuard).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 11: Flyweight cache typed unwrap stability
+  // ---------------------------------------------------------------------------
+
+  describe("flyweight cache typed unwrap stability", () => {
+    it.fails("cache-returned inline instance should use String/Boolean accessors without Reference fallback", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          getLabel(): string {
+            return this.label;
+          }
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 3; i++) {
+              Tile.cache.push(new Tile("tile" + i, i === 0));
+            }
+          }
+          static parse(_s: string): Tile {
+            return Tile.cache[1];
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const t = Tile.parse("1m");
+            Debug.Log(t.getLabel());
+            Debug.Log(t.isRed);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).not.toContain("dispatch miss"); // guard against codegen fallback label emitted on unresolved dispatch
+
+      const soaGetIndices = tacLines
+        .map((line, idx) =>
+          line.includes("__soa_Tile_label.get_Item(") ||
+          line.includes("__soa_Tile_isRed.get_Item(")
+            ? idx
+            : -1,
+        )
+        .filter((idx) => idx >= 0);
+      expect(soaGetIndices.length).toBeGreaterThan(0);
+
+      for (const soaGetIdx of soaGetIndices) {
+        const hasHandleGuard = detectIndexAwareGuardBeforeGetItem(
+          tacLines,
+          soaGetIdx,
+          /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*__soa_Tile_(label|isRed)\.Count$/,
+        );
+        expect(hasHandleGuard).toBe(true);
+      }
+
+      // TODO: convert to regular `it(...)` once the bug is fixed.
+    });
+
+    it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class LRUCache {
+          private cache: Map<string, string> = new Map<string, string>();
+          private maxSize: UdonInt;
+          constructor(maxSize: UdonInt) {
+            this.maxSize = maxSize;
+          }
+          get(key: string): string {
+            if (!this.cache.has(key)) return "";
+            const value = this.cache.get(key)!;
+            this.cache.delete(key);
+            this.cache.set(key, value);
+            if (this.cache.size != this.maxSize) {
+              Debug.Log("neq");
+            }
+            if (this.cache.size > this.maxSize) {
+              Debug.Log("gt");
+            }
+            return value;
+          }
+          seed(): void {
+            this.cache.set("a", "hello");
+          }
+        }
+        class Main {
+          Start(): void {
+            const c = new LRUCache(2 as UdonInt);
+            c.seed();
+            Debug.Log(c.get("a"));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
     });
   });
