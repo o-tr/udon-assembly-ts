@@ -86,6 +86,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
+import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
@@ -1935,11 +1936,7 @@ export function visitPropertyAccessExpression(
                 const hdlVar = this.newTemp(PrimitiveTypes.int32);
                 this.instructions.push(new CopyInstruction(hdlVar, object));
                 const token = this.newTemp(ExternTypes.dataToken);
-                this.instructions.push(
-                  new MethodCallInstruction(token, fieldList, "get_Item", [
-                    hdlVar,
-                  ]),
-                );
+                emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
                 return this.unwrapDataToken(token, untrackedPropType);
               }
               // SoA class property not in soaFieldLists — the fallthrough

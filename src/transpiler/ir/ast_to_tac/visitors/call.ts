@@ -73,6 +73,7 @@ import {
   resolveClassNode,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
+import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
@@ -435,9 +436,7 @@ function trySoAMethodDispatch(
     );
     if (scratchVar) {
       const token = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
-        new MethodCallInstruction(token, listVar, "get_Item", [hdlVar]),
-      );
+      emitBoundedDataListGetItem(converter, listVar, hdlVar, token);
       const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
       converter.instructions.push(new CopyInstruction(scratchVar, unwrapped));
     }
