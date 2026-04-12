@@ -14,8 +14,12 @@ import type { ASTToTACConverter } from "../converter.js";
  * Emit `DataList.get_Item` with a bounds-guard TAC shape that matches
  * `detectIndexAwareGuardBeforeGetItem` in regression tests:
  * `Count` → `index < Count` → `ifFalse` → in-bounds `get_Item(index)`;
- * OOB falls through to a second `Count` / `0 < Count` / `ifFalse` block
- * before `get_Item(0)` (sentinel row after SoA init).
+ * OOB path: `0 < countTemp` → `ifFalse` → `get_Item(0)` using the sentinel row
+ * (SoA init always `Add`s index 0, so `Count >= 1` before any SoA field read).
+ *
+ * If `Count == 0`, `ifFalse ok2 goto merge` skips `get_Item(0)` and `destToken` is
+ * never written — unreachable for SoA field lists after `emitSoaInitGuard`, which
+ * reserves index 0 and leaves `Count >= 1`.
  */
 export function emitBoundedDataListGetItem(
   converter: ASTToTACConverter,
@@ -39,13 +43,11 @@ export function emitBoundedDataListGetItem(
   );
   converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
   converter.instructions.push(new LabelInstruction(oobLabel));
-  const count2 = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new PropertyGetInstruction(count2, listVar, "Count"),
-  );
   const ok2 = converter.newTemp(PrimitiveTypes.boolean);
   const zero = createConstant(0, PrimitiveTypes.int32);
-  converter.instructions.push(new BinaryOpInstruction(ok2, zero, "<", count2));
+  converter.instructions.push(
+    new BinaryOpInstruction(ok2, zero, "<", countTemp),
+  );
   converter.instructions.push(new ConditionalJumpInstruction(ok2, mergeLabel));
   converter.instructions.push(
     new MethodCallInstruction(destToken, listVar, "get_Item", [zero]),

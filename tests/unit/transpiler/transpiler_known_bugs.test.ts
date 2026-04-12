@@ -103,16 +103,26 @@ function detectIndexAwareGuardBeforeGetItem(
       break;
     }
   }
-  const guardScanLines = tacLines.slice(blockStart, getItemIdx);
+  const collectCountAssignments = (
+    lines: string[],
+  ): { i: number; countVar: string }[] =>
+    lines
+      .map((line, i) => ({
+        i,
+        countVar: line.trim().match(countAssignmentPattern)?.[1],
+      }))
+      .filter(
+        (entry): entry is { i: number; countVar: string } => !!entry.countVar,
+      );
 
-  const countAssignments = guardScanLines
-    .map((line, i) => ({
-      i,
-      countVar: line.trim().match(countAssignmentPattern)?.[1],
-    }))
-    .filter(
-      (entry): entry is { i: number; countVar: string } => !!entry.countVar,
-    );
+  let guardScanLines = tacLines.slice(blockStart, getItemIdx);
+  let countAssignments = collectCountAssignments(guardScanLines);
+  // OOB `get_Item(0)` often follows a label while `.Count` was read earlier in
+  // the same helper; allow matching that assignment by scanning from TAC start.
+  if (countAssignments.length === 0) {
+    guardScanLines = tacLines.slice(0, getItemIdx);
+    countAssignments = collectCountAssignments(guardScanLines);
+  }
   if (countAssignments.length === 0) return false;
 
   const countVars = [
