@@ -53,8 +53,9 @@
  *         (root cause #11 residual in vm-test-failures-investigation.md)
  *
  * Bug 10 (FIXED): DataList.get_Item bounds safety on dynamic cache reads —
- *         non-literal indices now emit Count + (index < Count) + ifFalse before
- *         get_Item, with null DataToken fallback when out of bounds.
+ *         non-literal indices emit Count + (index >= 0) + (index < Count) + ifFalse
+ *         before get_Item; negative numeric / unary-minus literals use the same guard.
+ *         Null DataToken fallback when out of bounds.
  *         (root cause #18 in vm-test-failures-investigation.md)
  *
  * Bug 11: Flyweight cache typed unwrap stability — cache-returned inline
@@ -85,6 +86,7 @@ function detectIndexAwareGuardBeforeGetItem(
   tacLines: string[],
   getItemIdx: number,
   countAssignmentPattern: RegExp,
+  requireLowerBound = false,
 ): boolean {
   if (getItemIdx <= 0 || getItemIdx >= tacLines.length) return false;
 
@@ -118,7 +120,7 @@ function detectIndexAwareGuardBeforeGetItem(
   const countVars = [
     ...new Set(countAssignments.map((entry) => entry.countVar)),
   ];
-  return countVars.some((countVar) => {
+  const matched = countVars.some((countVar) => {
     const assignIndices = countAssignments
       .filter((entry) => entry.countVar === countVar)
       .map((entry) => entry.i);
@@ -149,6 +151,14 @@ function detectIndexAwareGuardBeforeGetItem(
       return false;
     });
   });
+  if (!matched) return false;
+  if (requireLowerBound) {
+    const lowerRe = new RegExp(
+      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*>=\\s*0|0\\s*<=\\s*${escapedIndexVar})`,
+    );
+    return guardScanLines.some((line) => lowerRe.test(line.trim()));
+  }
+  return true;
 }
 
 describe("known transpiler bugs", () => {
@@ -1036,6 +1046,7 @@ describe("known transpiler bugs", () => {
         tacLines,
         cacheGetIdx,
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+        true,
       );
 
       expect(hasIndexAwareGuard).toBe(true);

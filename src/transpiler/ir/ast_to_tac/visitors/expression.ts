@@ -1421,18 +1421,35 @@ export function visitIdentifier(
   });
 }
 
-/** When false, index is a numeric literal — skip runtime Count guard (see Bug 6/10). */
+/**
+ * When true, emit runtime Count + bounds checks before DataList.get_Item.
+ * Non-negative numeric literals skip (Bug 6); negative literals and `-K` need the guard
+ * so Udon matches JS (undefined) instead of throwing on get_Item.
+ */
 function needsDataListReadBoundsGuard(indexNode: ASTNode): boolean {
   if (indexNode.kind === ASTNodeKind.Literal) {
     const lit = indexNode as LiteralNode;
-    return typeof lit.value !== "number";
+    if (typeof lit.value === "number") {
+      return lit.value < 0;
+    }
+    return true;
+  }
+  if (indexNode.kind === ASTNodeKind.UnaryExpression) {
+    const u = indexNode as UnaryExpressionNode;
+    if (
+      u.operator === "-" &&
+      u.operand.kind === ASTNodeKind.Literal &&
+      typeof (u.operand as LiteralNode).value === "number"
+    ) {
+      return true;
+    }
   }
   return true;
 }
 
 /**
- * DataList-backed bracket read: optional Count + (index < Count) guard before get_Item.
- * Guard sequence must stay label-free until after the branch (Bug 10 TAC test).
+ * DataList-backed bracket read: optional Count + (index >= 0) + (index < Count) before get_Item.
+ * Two ifFalse jumps (no labels between Count and get_Item) — matches Bug 10 TAC detector.
  */
 function emitDataListBracketRead(
   converter: ASTToTACConverter,
@@ -1452,15 +1469,19 @@ function emitDataListBracketRead(
   converter.instructions.push(
     new PropertyGetInstruction(countTemp, array, "Count"),
   );
-  const inBounds = converter.newTemp(PrimitiveTypes.boolean);
+  const zero = createConstant(0, PrimitiveTypes.int32);
+  const geZero = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(
-    new BinaryOpInstruction(inBounds, coercedIndex, "<", countTemp),
+    new BinaryOpInstruction(geZero, coercedIndex, ">=", zero),
   );
   const skipLabel = converter.newLabel("dlrd_oob");
   const mergeLabel = converter.newLabel("dlrd_merge");
+  converter.instructions.push(new ConditionalJumpInstruction(geZero, skipLabel));
+  const ltCount = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(
-    new ConditionalJumpInstruction(inBounds, skipLabel),
+    new BinaryOpInstruction(ltCount, coercedIndex, "<", countTemp),
   );
+  converter.instructions.push(new ConditionalJumpInstruction(ltCount, skipLabel));
   converter.instructions.push(
     new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
   );
