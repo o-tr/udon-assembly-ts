@@ -10,13 +10,12 @@ const SOURCE = `
 
   @UdonBehaviour()
   export class ComparisonOrderTest extends UdonSharpBehaviour {
-    private pick(v: UdonInt): UdonInt {
-      return v;
-    }
+    public lhsValue: UdonInt = 1 as UdonInt;
+    public rhsValue: UdonInt = 2 as UdonInt;
 
     Start(): void {
-      const lhs: UdonInt = this.pick(1 as UdonInt);
-      const rhs: UdonInt = this.pick(2 as UdonInt);
+      const lhs: UdonInt = this.lhsValue;
+      const rhs: UdonInt = this.rhsValue;
       const lt = lhs < rhs;
       const gt = lhs > rhs;
       const le = lhs <= rhs;
@@ -61,32 +60,85 @@ function parsePushOperand(line: string): string {
   return match[1];
 }
 
-function findComparisonArgs(uasm: string, signature: string): [string, string] {
-  const externSymbol = findExternSymbolBySignature(uasm, signature);
-  const lines = uasm
+function parseUasmLines(uasm: string): string[] {
+  return uasm
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
 
+function findExternIndexBySignature(uasm: string, signature: string): {
+  lines: string[];
+  externLine: string;
+  externIndex: number;
+} {
+  const externSymbol = findExternSymbolBySignature(uasm, signature);
+  const lines = parseUasmLines(uasm);
   const externLine = `EXTERN, ${externSymbol}`;
-  const externIndex = lines.indexOf(externLine);
-  if (externIndex < 0) {
+  const externIndices = lines
+    .map((line, index) => (line === externLine ? index : -1))
+    .filter((index) => index >= 0);
+  if (externIndices.length === 0) {
     throw new Error(`extern call not found: ${externLine}`);
   }
-
-  const pushes: string[] = [];
-  for (let i = externIndex - 1; i >= 0 && pushes.length < 3; i -= 1) {
-    if (!lines[i].startsWith("PUSH, ")) continue;
-    pushes.unshift(parsePushOperand(lines[i]));
-  }
-
-  if (pushes.length !== 3) {
+  if (externIndices.length !== 1) {
     throw new Error(
-      `expected 3 PUSH operands before ${externLine}, got ${pushes.length}`,
+      `expected exactly 1 extern call for ${externLine}, got ${externIndices.length}`,
     );
   }
+  const externIndex = externIndices[0];
+  return { lines, externLine, externIndex };
+}
 
+function findComparisonArgs(uasm: string, signature: string): [string, string] {
+  const { lines, externLine, externIndex } = findExternIndexBySignature(
+    uasm,
+    signature,
+  );
+
+  if (externIndex < 3) {
+    throw new Error(`not enough instructions before ${externLine}`);
+  }
+
+  const pushLines = [
+    lines[externIndex - 3],
+    lines[externIndex - 2],
+    lines[externIndex - 1],
+  ];
+  for (const pushLine of pushLines) {
+    if (!pushLine.startsWith("PUSH, ")) {
+      throw new Error(
+        `expected contiguous PUSH instructions before ${externLine}, got: ${pushLines.join(" | ")}`,
+      );
+    }
+  }
+
+  const pushes = pushLines.map(parsePushOperand);
   return [pushes[0], pushes[1]];
+}
+
+function resolveOperandAtExtern(
+  uasm: string,
+  signature: string,
+  sourceSymbol: string,
+): string {
+  const { lines, externIndex } = findExternIndexBySignature(uasm, signature);
+  let current = sourceSymbol;
+
+  while (true) {
+    let nextSymbol: string | null = null;
+    for (let i = externIndex - 3; i >= 0; i -= 1) {
+      if (lines[i] !== `PUSH, ${current}`) continue;
+      if (!lines[i + 1]?.startsWith("PUSH, ")) continue;
+      if (lines[i + 2] !== "COPY") continue;
+      nextSymbol = parsePushOperand(lines[i + 1]);
+      break;
+    }
+    if (!nextSymbol) {
+      return current;
+    }
+    current = nextSymbol;
+  }
 }
 
 describe("comparison operator codegen regression", () => {
@@ -104,11 +156,17 @@ describe("comparison operator codegen regression", () => {
       const gtArgs = findComparisonArgs(uasm, OP_SIGNATURES.gt);
       const leArgs = findComparisonArgs(uasm, OP_SIGNATURES.le);
       const geArgs = findComparisonArgs(uasm, OP_SIGNATURES.ge);
+      const lhsOperand = resolveOperandAtExtern(uasm, OP_SIGNATURES.lt, "lhsValue");
+      const rhsOperand = resolveOperandAtExtern(uasm, OP_SIGNATURES.lt, "rhsValue");
 
-      expect(ltArgs[0]).not.toBe(ltArgs[1]);
-      expect(gtArgs).toEqual(ltArgs);
-      expect(leArgs).toEqual(ltArgs);
-      expect(geArgs).toEqual(ltArgs);
+      expect(ltArgs[0]).toBe(lhsOperand);
+      expect(ltArgs[1]).toBe(rhsOperand);
+      expect(gtArgs[0]).toBe(lhsOperand);
+      expect(gtArgs[1]).toBe(rhsOperand);
+      expect(leArgs[0]).toBe(lhsOperand);
+      expect(leArgs[1]).toBe(rhsOperand);
+      expect(geArgs[0]).toBe(lhsOperand);
+      expect(geArgs[1]).toBe(rhsOperand);
     });
   }
 });
