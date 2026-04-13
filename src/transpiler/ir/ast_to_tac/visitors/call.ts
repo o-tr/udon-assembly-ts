@@ -10,6 +10,7 @@ import {
   ExternTypes,
   getNativeArrayTypeName,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   mapCSharpTypeToTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
@@ -179,11 +180,6 @@ const resolveMapValueType = (
   }
   return fallback ?? ObjectType;
 };
-
-const isPlainObjectType = (type: TypeSymbol | null | undefined): boolean =>
-  !!type &&
-  type.name === ObjectType.name &&
-  type.udonType === ObjectType.udonType;
 
 const resolveMapGetResultType = (
   converter: ASTToTACConverter,
@@ -4026,14 +4022,6 @@ function visitMapMethodCall(
 ): TACOperand | null {
   const keyType = resolveMapKeyType(mapType);
   const valueType = resolveMapValueType(mapType);
-  const unwrapToken = (
-    token: TACOperand,
-    targetType: TypeSymbol,
-  ): TACOperand =>
-    targetType.name === ExternTypes.dataToken.name ||
-    isPlainObjectType(targetType)
-      ? token
-      : converter.unwrapDataToken(token, targetType);
 
   switch (propAccess.property) {
     case "set": {
@@ -4065,7 +4053,7 @@ function visitMapMethodCall(
           keyToken,
         ]),
       );
-      return unwrapToken(valueToken, getResultType);
+      return converter.unwrapDataToken(valueToken, getResultType);
     }
     case "has": {
       if (rawArgs.length !== 1) {
@@ -4198,8 +4186,8 @@ function visitMapMethodCall(
         ]),
       );
 
-      const keyValue = unwrapToken(keyToken, keyType);
-      const valueValue = unwrapToken(valueToken, valueType);
+      const keyValue = converter.unwrapDataToken(keyToken, keyType);
+      const valueValue = converter.unwrapDataToken(valueToken, valueType);
 
       if (paramVars[0]) {
         converter.emitCopyWithTracking(paramVars[0], valueValue);

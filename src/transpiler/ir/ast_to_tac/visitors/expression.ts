@@ -9,6 +9,7 @@ import {
   getNativeArrayTypeName,
   getPromotedType,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   mapCSharpTypeToTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
@@ -234,10 +235,7 @@ function resolvePropertyTypeFromType(
   return null;
 }
 
-const isPlainObjectType = (type: TypeSymbol | null | undefined): boolean =>
-  !!type &&
-  type.name === ObjectType.name &&
-  type.udonType === ObjectType.udonType;
+// isPlainObjectType is imported from type_symbols.js
 
 export function resolveTypeFromNode(
   converter: ASTToTACConverter,
@@ -455,9 +453,9 @@ function resolveIteratorValueTypeFromNextCall(
   ) {
     switch (iterableAccess.property) {
       case "keys":
-        return collectionType.keyType ?? ObjectType;
+        return (collectionType.keyType as TypeSymbol | undefined) ?? null;
       case "values":
-        return collectionType.valueType ?? ObjectType;
+        return (collectionType.valueType as TypeSymbol | undefined) ?? null;
       case "entries":
         return ExternTypes.dataToken;
       default:
@@ -469,7 +467,7 @@ function resolveIteratorValueTypeFromNextCall(
     isSetCollectionType(collectionType) &&
     (iterableAccess.property === "keys" || iterableAccess.property === "values")
   ) {
-    return collectionType.elementType ?? ObjectType;
+    return (collectionType.elementType as TypeSymbol | undefined) ?? null;
   }
 
   return null;
@@ -2227,9 +2225,13 @@ export function visitPropertyAccessExpression(
       const tokenKey = operandTrackingKey(object);
       if (tokenKey) {
         const hintedValueType = this.dataTokenValueHints.get(tokenKey);
-        if (hintedValueType && !isPlainObjectType(hintedValueType)) {
-          this.dataTokenValueHints.delete(tokenKey);
-          return this.unwrapDataToken(object, hintedValueType);
+        if (hintedValueType) {
+          if (object.kind === TACOperandKind.Temporary) {
+            this.dataTokenValueHints.delete(tokenKey);
+          }
+          if (!isPlainObjectType(hintedValueType)) {
+            return this.unwrapDataToken(object, hintedValueType);
+          }
         }
       }
       const iteratorValueType = resolveIteratorValueTypeFromNextCall(
