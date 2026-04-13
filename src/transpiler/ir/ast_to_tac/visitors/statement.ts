@@ -65,6 +65,7 @@ import {
   countTryCatchBlocks,
   MAX_RECURSION_STACK_DEPTH,
 } from "../helpers/inline.js";
+import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
@@ -880,8 +881,7 @@ export function visitForOfStatement(
         }
 
         // elementVar is Object (from array access); copy to Int32 for comparison
-        const handleVar = this.newTemp(PrimitiveTypes.int32);
-        this.emitCopyWithTracking(handleVar, elementVar, true);
+        const handleVar = normalizeOperandToInt32(this, elementVar);
 
         // Reset classId to sentinel so an unmatched instanceId doesn't
         // silently reuse the previous iteration's stale value.

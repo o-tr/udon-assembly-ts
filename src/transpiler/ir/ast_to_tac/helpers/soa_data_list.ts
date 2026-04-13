@@ -9,6 +9,7 @@ import {
 } from "../../tac_instruction.js";
 import { createConstant, type TACOperand } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /**
  * Emit `DataList.get_Item` with a bounds-guard TAC shape that matches
@@ -27,19 +28,20 @@ export function emitBoundedDataListGetItem(
   indexVar: TACOperand,
   destToken: TACOperand,
 ): void {
+  const intIndexVar = normalizeOperandToInt32(converter, indexVar);
   const countTemp = converter.newTemp(PrimitiveTypes.int32);
   converter.instructions.push(
     new PropertyGetInstruction(countTemp, listVar, "Count"),
   );
   const okTemp = converter.newTemp(PrimitiveTypes.boolean);
   converter.instructions.push(
-    new BinaryOpInstruction(okTemp, indexVar, "<", countTemp),
+    new BinaryOpInstruction(okTemp, intIndexVar, "<", countTemp),
   );
   const oobLabel = converter.newLabel("soa_get_oob");
   const mergeLabel = converter.newLabel("soa_get_merge");
   converter.instructions.push(new ConditionalJumpInstruction(okTemp, oobLabel));
   converter.instructions.push(
-    new MethodCallInstruction(destToken, listVar, "get_Item", [indexVar]),
+    new MethodCallInstruction(destToken, listVar, "get_Item", [intIndexVar]),
   );
   converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
   converter.instructions.push(new LabelInstruction(oobLabel));

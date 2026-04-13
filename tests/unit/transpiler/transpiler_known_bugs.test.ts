@@ -1344,6 +1344,99 @@ describe("known transpiler bugs", () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Bug 12: LessThan guard operand Int32 normalization
+  // ---------------------------------------------------------------------------
+
+  describe("LessThan guard operand Int32 normalization", () => {
+    it("SoA property read from any-typed receiver casts handle to Int32 before index<Count guard", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[1];
+            Debug.Log(boxed.code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // any/object receiver must be normalized to Int32 before SoA DataList index comparison.
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+    });
+
+    it("SoA method dispatch from any-typed receiver casts handle to Int32", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+          toLabel(): string {
+            return "t" + this.code;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[2];
+            Debug.Log(boxed.toLabel());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
+
+    it("for-of path with boxed loop variable keeps Int32 normalization for SoA access", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+          toLabel(): string {
+            return "t" + this.code;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            for (const t of tiles) {
+              const boxed: any = t;
+              Debug.Log(boxed.code);
+              Debug.Log(boxed.toLabel());
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
+  });
+
   describe("tile-like DataToken accessor mismatch regressions", () => {
     const buildTileLikeSource = (body: string): string => `
       class Tile {
@@ -1411,5 +1504,42 @@ describe("known transpiler bugs", () => {
         expect(result.tac).not.toContain(INT32_ZERO_SENTINEL_CTOR);
       });
     }
+  });
+
+  describe("as string cast extern coverage", () => {
+    it("should emit Convert.ToString for int-as-string assertions", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            const n: UdonInt = 42 as UdonInt;
+            const s = n as string;
+            Debug.Log(s);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToString__SystemInt32__SystemString",
+      );
+    });
+
+    it("should not emit Transform-specific Convert.ToString extern for type assertions", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const t: Transform = null as unknown as Transform;
+            const s = t as string;
+            Debug.Log(s);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToString__UnityEngineTransform__SystemString",
+      );
+    });
   });
 });

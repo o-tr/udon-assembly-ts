@@ -1,4 +1,5 @@
 import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
+import { UdonType } from "../../frontend/types.js";
 import {
   type ArrayAccessInstruction as TACArrayAccessInstruction,
   type ArrayAssignmentInstruction as TACArrayAssignmentInstruction,
@@ -70,8 +71,8 @@ export function convertInstruction(
         | VariableOperand
         | ConstantOperand
         | TemporaryOperand;
-      const leftType = leftOp.type?.udonType ?? "Single";
-      const rightType = rightOp.type?.udonType ?? "Single";
+      const leftType = leftOp.type?.udonType ?? UdonType.Single;
+      const rightType = rightOp.type?.udonType ?? UdonType.Single;
 
       // Shift operators require Int32 right operand; skip promotion for those.
       const isShift = binInst.operator === "<<" || binInst.operator === ">>";
@@ -87,21 +88,29 @@ export function convertInstruction(
           (leftOp as ConstantOperand).value === null) ||
           (rightOp.kind === TACOperandKind.Constant &&
             (rightOp as ConstantOperand).value === null));
-      // Coerce operands to a common promoted type if numeric types differ
-      const promotedType =
-        !isShift &&
-        leftType !== rightType &&
-        this.isNumericType(leftType) &&
-        this.isNumericType(rightType)
-          ? this.getPromotedNumericType(leftType, rightType)
-          : isNullComparison
-            ? "Object"
-            : leftType;
+      let promotedType = leftType;
+      if (isNullComparison) {
+        promotedType = UdonType.Object;
+      } else if (!isShift && leftType !== rightType) {
+        const leftIsNum = this.isNumericType(leftType);
+        const rightIsNum = this.isNumericType(rightType);
+        if (leftIsNum && rightIsNum) {
+          promotedType = this.getPromotedNumericType(
+            leftType,
+            rightType,
+          ) as UdonType;
+        } else {
+          // Keep left type when operands are mixed/non-numeric so extern
+          // selection stays consistent with the uncoerced left operand.
+          promotedType = leftType;
+        }
+      }
 
       if (
         !isShift &&
         this.isNumericType(leftType) &&
         this.isNumericType(rightType) &&
+        promotedType !== UdonType.Object &&
         (promotedType !== leftType || promotedType !== rightType)
       ) {
         // Helper: coerce a single operand, returning the push-able name
@@ -137,7 +146,7 @@ export function convertInstruction(
         } else {
           this.pushOperand(binInst.right);
         }
-      } else if (isShift && rightType !== "Int32") {
+      } else if (isShift && rightType !== UdonType.Int32) {
         // Shift operators require Int32 right operand; coerce if needed.
         // NOTE: This block pushes [left, coerced-right] onto the stack,
         // matching the operand layout expected by the needsResultConversion
@@ -145,10 +154,13 @@ export function convertInstruction(
         this.pushOperand(binInst.left);
         const shiftTmpName = `__tcoerce_${this.nextAddress}`;
         this.variableAddresses.set(shiftTmpName, this.nextAddress++);
-        this.variableTypes.set(shiftTmpName, "Int32");
+        this.variableTypes.set(shiftTmpName, UdonType.Int32);
         this.pushOperand(binInst.right);
         this.instructions.push(new PushInstruction(shiftTmpName));
-        const shiftSig = this.getConvertExternSignature(rightType, "Int32");
+        const shiftSig = this.getConvertExternSignature(
+          rightType,
+          UdonType.Int32,
+        );
         this.externSignatures.add(shiftSig);
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(shiftSig), true),
@@ -360,7 +372,13 @@ export function convertInstruction(
       const sourceType = this.getOperandUdonType(castInst.src);
       const targetType = this.getOperandUdonType(castInst.dest);
 
-      if (sourceType === targetType) {
+      if (
+        sourceType === targetType ||
+        targetType === UdonType.Object ||
+        targetType === "SystemObject" ||
+        targetType === "System.Object" ||
+        targetType === "object"
+      ) {
         this.pushOperand(castInst.src);
         const destAddr = this.getOperandAddress(castInst.dest);
         this.instructions.push(new PushInstruction(destAddr));
