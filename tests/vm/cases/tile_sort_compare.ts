@@ -20,22 +20,13 @@ class Tile {
 @UdonBehaviour()
 export class TileSortCompare extends UdonSharpBehaviour {
   Start(): void {
-    const cmp1 = Tile.compare(
-      new Tile(1 as UdonInt),
-      new Tile(2 as UdonInt),
-    );
+    const cmp1 = Tile.compare(new Tile(1 as UdonInt), new Tile(2 as UdonInt));
     Debug.Log(cmp1 < (0 as UdonInt) ? "LT" : "GE");
 
-    const cmp2 = Tile.compare(
-      new Tile(2 as UdonInt),
-      new Tile(1 as UdonInt),
-    );
+    const cmp2 = Tile.compare(new Tile(2 as UdonInt), new Tile(1 as UdonInt));
     Debug.Log(cmp2 > (0 as UdonInt) ? "GT" : "LE");
 
-    const cmp3 = Tile.compare(
-      new Tile(5 as UdonInt),
-      new Tile(5 as UdonInt),
-    );
+    const cmp3 = Tile.compare(new Tile(5 as UdonInt), new Tile(5 as UdonInt));
     Debug.Log(cmp3 === (0 as UdonInt) ? "EQ" : "NE");
 
     // Also assert <= / >= branches on the same compare values.
