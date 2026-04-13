@@ -731,7 +731,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("DataToken.get_Reference for unknown-typed Map values", () => {
-    it.fails("Map<string, unknown>.get() should not use get_Reference", () => {
+    it("Map<string, unknown>.get() should not use get_Reference", () => {
       // When a Map's value type is `unknown`, the transpiler maps it to
       // ObjectType. unwrapDataToken's default case falls back to .Reference,
       // but the DataToken actually stores a typed value (e.g. String) that
@@ -776,7 +776,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("Map<string, any>.get() should not use get_Reference", () => {
+    it("Map<string, any>.get() should not use get_Reference", () => {
       const source = `
         class Main {
           Start(): void {
@@ -795,6 +795,50 @@ describe("known transpiler bugs", () => {
       // The Map.get() path via DataDictionary.get_Item must still be present
       expect(result.uasm).toContain(
         "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+      );
+    });
+
+    it("Map<string, unknown>.get() cast to string should unwrap via String", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, unknown> = new Map<string, unknown>();
+            m.set("key", "hello");
+            const val = m.get("key") as string;
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
+    it("Map<string, unknown>.keys().next().value should not use get_Reference", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, unknown> = new Map<string, unknown>();
+            m.set("a", "hello");
+            const firstKey = m.keys().next().value;
+            if (firstKey !== undefined) {
+              m.delete(firstKey);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
     });
   });

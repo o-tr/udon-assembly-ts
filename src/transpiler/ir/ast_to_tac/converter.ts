@@ -330,6 +330,11 @@ export class ASTToTACConverter {
   inSerializeFieldInitializer = false;
   pendingTopLevelInits: VariableDeclarationNode[] = [];
   currentExpectedType: TypeSymbol | undefined = undefined;
+  /**
+   * Best-effort hint for DataToken `.value` unwrap target types.
+   * Keyed by TAC operand tracking key (temporary/variable name).
+   */
+  dataTokenValueHints: Map<string, TypeSymbol> = new Map();
   /** Variable names ineligible for native array optimization in the current method body. */
   nativeArrayIneligible: Set<string> = new Set();
   /**
@@ -414,6 +419,7 @@ export class ASTToTACConverter {
     this.nextInstanceId = 1;
     this.pendingTopLevelInits = [];
     this.currentExpectedType = undefined;
+    this.dataTokenValueHints = new Map();
     this.currentInlineBaseClass = undefined;
     this.currentInlineConstructorClassName = undefined;
     this.currentInlineInitializerState = undefined;
