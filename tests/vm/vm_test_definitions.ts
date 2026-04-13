@@ -240,6 +240,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "lru_numeric_compare_regression",
     sourceFile: "lru_numeric_compare_regression.ts",
   },
+  {
+    name: "tile_sort_compare",
+    sourceFile: "tile_sort_compare.ts",
+    expectedLogs: ["LT", "GT", "EQ", "LE", "GE"],
+  },
   { name: "numeric_cast_chain", sourceFile: "numeric_cast_chain.ts" },
   // --- Multi-part string concat ---
   {

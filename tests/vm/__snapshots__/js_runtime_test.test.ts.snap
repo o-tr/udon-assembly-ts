@@ -1045,6 +1045,16 @@ exports[`JS Runtime Equivalence Tests > JS: ternary_and_shortcircuit 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: tile_sort_compare 1`] = `
+[
+  "LT",
+  "GT",
+  "EQ",
+  "LE",
+  "GE",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: try_catch_basic 1`] = `
 [
   "before",
