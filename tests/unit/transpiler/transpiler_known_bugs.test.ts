@@ -1241,4 +1241,68 @@ describe("known transpiler bugs", () => {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Bug 12: LessThan guard operand Int32 normalization
+  // ---------------------------------------------------------------------------
+
+  describe("LessThan guard operand Int32 normalization", () => {
+    it("SoA property read from any-typed receiver casts handle to Int32 before index<Count guard", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[1];
+            Debug.Log(boxed.code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // any/object receiver must be normalized to Int32 before SoA DataList index comparison.
+      expect(result.tac).toMatch(/= cast boxed\b/);
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+    });
+
+    it("SoA method dispatch from any-typed receiver casts handle to Int32", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+          toLabel(): string {
+            return "t" + this.code;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[2];
+            Debug.Log(boxed.toLabel());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/= cast boxed\b/);
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
+  });
 });

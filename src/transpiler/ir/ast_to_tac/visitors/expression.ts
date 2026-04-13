@@ -86,6 +86,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
+import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
@@ -2014,8 +2015,7 @@ export function visitPropertyAccessExpression(
               const fieldLists = this.soaFieldLists.get(soaClassName);
               const fieldList = fieldLists?.get(node.property);
               if (fieldList) {
-                const hdlVar = this.newTemp(PrimitiveTypes.int32);
-                this.instructions.push(new CopyInstruction(hdlVar, object));
+                const hdlVar = normalizeOperandToInt32(this, object);
                 const token = this.newTemp(ExternTypes.dataToken);
                 emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
                 return this.unwrapDataToken(token, untrackedPropType);
@@ -2039,8 +2039,7 @@ export function visitPropertyAccessExpression(
               untrackedPropType,
               { isLocal: true },
             );
-            const hdlVar = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(new CopyInstruction(hdlVar, object));
+            const hdlVar = normalizeOperandToInt32(this, object);
             const dispEnd = this.newLabel("uninst_prop_end");
             for (const [instId, info] of dispInstances) {
               const dispNext = this.newLabel("uninst_prop_next");
@@ -2543,40 +2542,56 @@ export function visitAsExpression(
   const srcType = this.getOperandType(operand);
   // Use CastInstruction for numeric type conversions (e.g. float→int);
   // use COPY for same-type or reference-type casts.
-  if (
-    srcType.udonType !== targetTypeSymbol.udonType &&
-    NUMERIC_UDON_TYPES.has(srcType.udonType) &&
-    NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType)
-  ) {
-    // Fold constant numeric casts at compile time (e.g. `0 as UdonInt`
-    // becomes a direct %SystemInt32 constant instead of 3 extern calls).
-    // Skip float→float casts (e.g. Single→Double) because JS number (f64)
-    // does not round-trip through f32, causing a precision mismatch.
+  if (srcType.udonType !== targetTypeSymbol.udonType) {
     if (
-      operand.kind === TACOperandKind.Constant &&
-      !(
-        FLOAT_UDON_TYPES.has(srcType.udonType) &&
-        FLOAT_UDON_TYPES.has(targetTypeSymbol.udonType)
-      )
+      NUMERIC_UDON_TYPES.has(srcType.udonType) &&
+      NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType)
     ) {
-      const srcConst = operand as ConstantOperand;
+      // Fold constant numeric casts at compile time (e.g. `0 as UdonInt`
+      // becomes a direct %SystemInt32 constant instead of 3 extern calls).
+      // Skip float→float casts (e.g. Single→Double) because JS number (f64)
+      // does not round-trip through f32, causing a precision mismatch.
       if (
-        isPrimitiveFoldValue(srcConst.value) &&
-        canFoldNumericLiteral(srcConst.value, targetTypeSymbol.udonType)
+        operand.kind === TACOperandKind.Constant &&
+        !(
+          FLOAT_UDON_TYPES.has(srcType.udonType) &&
+          FLOAT_UDON_TYPES.has(targetTypeSymbol.udonType)
+        )
       ) {
-        const foldedValue = evaluateCastValue(srcConst.value, targetTypeSymbol);
-        if (foldedValue !== null) {
-          this.instructions.push(
-            new AssignmentInstruction(
-              result,
-              createConstant(foldedValue, targetTypeSymbol),
-            ),
-          );
-          return result;
+        const srcConst = operand as ConstantOperand;
+        if (
+          isPrimitiveFoldValue(srcConst.value) &&
+          canFoldNumericLiteral(srcConst.value, targetTypeSymbol.udonType)
+        ) {
+          const foldedValue = evaluateCastValue(srcConst.value, targetTypeSymbol);
+          if (foldedValue !== null) {
+            this.instructions.push(
+              new AssignmentInstruction(
+                result,
+                createConstant(foldedValue, targetTypeSymbol),
+              ),
+            );
+            return result;
+          }
         }
       }
+      this.instructions.push(new CastInstruction(result, operand));
+    } else if (
+      (srcType.udonType === UdonType.Object || srcType.udonType === UdonType.DataToken) &&
+      (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) || 
+       targetTypeSymbol.udonType === UdonType.Boolean || 
+       targetTypeSymbol.udonType === UdonType.String)
+    ) {
+      // Type assertion from erased type -> unwrap token
+      const unwrapped = this.unwrapDataToken(operand, targetTypeSymbol);
+      if (unwrapped !== operand) {
+        this.emitCopyWithTracking(result, unwrapped);
+      } else {
+        this.emitCopyWithTracking(result, operand);
+      }
+    } else {
+      this.emitCopyWithTracking(result, operand);
     }
-    this.instructions.push(new CastInstruction(result, operand));
   } else {
     this.emitCopyWithTracking(result, operand);
   }

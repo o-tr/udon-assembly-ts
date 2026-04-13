@@ -73,6 +73,7 @@ import {
   resolveClassNode,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
+import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
@@ -403,8 +404,7 @@ function trySoAMethodDispatch(
   );
   const soaDispatchArgs = soaTypedArgs ?? evaluatedArgs;
 
-  const hdlVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new CopyInstruction(hdlVar, object));
+  const hdlVar = normalizeOperandToInt32(converter, object);
 
   // Sync the instance handle so that bare `this` references inside the
   // inlined method body read the correct runtime handle, not the stale
@@ -412,7 +412,7 @@ function trySoAMethodDispatch(
   converter.instructions.push(
     new CopyInstruction(
       createVariable(`${scratchPrefix}__handle`, PrimitiveTypes.int32),
-      object,
+      hdlVar,
     ),
   );
 
@@ -657,8 +657,7 @@ function tryUntrackedInlineDispatch(
   const dispatchResult = isVoid
     ? undefined
     : converter.newTemp(resolvedUntrackedReturnType);
-  const handleVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new CopyInstruction(handleVar, object));
+  const handleVar = normalizeOperandToInt32(converter, object);
   const endLabel = converter.newLabel("untracked_call_end");
 
   // Track inline return info across branches for inline-like return types.
@@ -922,8 +921,7 @@ function tryD3MethodDispatch(
   const dispatchResult = isVoid
     ? undefined
     : converter.newTemp(resolvedRetType ?? ObjectType);
-  const handleVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new CopyInstruction(handleVar, object));
+  const handleVar = normalizeOperandToInt32(converter, object);
   const endLabel = converter.newLabel("d3_method_end");
 
   // Track inline return info across branches.

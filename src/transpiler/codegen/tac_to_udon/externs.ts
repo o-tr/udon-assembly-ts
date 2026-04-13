@@ -174,6 +174,8 @@ export function getConvertMethodName(
       return "ToDouble";
     case "Boolean":
       return "ToBoolean";
+    case "String":
+      return "ToString";
     default:
       throw new Error(`Unsupported cast target type: ${targetType}`);
   }
