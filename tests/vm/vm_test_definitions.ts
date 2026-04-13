@@ -245,6 +245,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "lru_numeric_compare_regression.ts",
   },
   {
+    name: "tile_sort_compare",
+    sourceFile: "tile_sort_compare.ts",
+    expectedLogs: ["LT", "GT", "EQ", "LE", "GE"],
+  },
+  {
     name: "lru_cache_map_get_regression",
     sourceFile: "lru_cache_map_get_regression.ts",
     expectedLogs: ["True", "True", "2", "False", "True", "3", "0"],
