@@ -29,7 +29,9 @@ export const sinkCode = (
   // Build a map from liveness key to all instruction indices that use it
   const useLocations = new Map<string, Set<number>>();
   for (let i = 0; i < instructions.length; i++) {
-    forEachUsedOperand(instructions[i], (op) => {
+    const inst = instructions[i];
+    if (!inst) continue;
+    forEachUsedOperand(inst, (op) => {
       const key = livenessKey(op);
       if (!key) return;
       const set = useLocations.get(key) ?? new Set();
@@ -49,7 +51,9 @@ export const sinkCode = (
   // Build def index map: liveness key -> definition index
   const defIndex = new Map<string, number>();
   for (let i = 0; i < instructions.length; i++) {
-    const def = getDefinedOperandForReuse(instructions[i]);
+    const inst = instructions[i];
+    if (!inst) continue;
+    const def = getDefinedOperandForReuse(inst);
     const key = def ? livenessKey(def) : null;
     if (key) defIndex.set(key, i);
   }
@@ -66,6 +70,7 @@ export const sinkCode = (
 
     // Get the terminator instruction to check if its operands are used
     const terminator = instructions[block.end];
+    if (!terminator) continue;
     const terminatorUsedKeys = new Set<string>();
     forEachUsedOperand(terminator, (op) => {
       const key = livenessKey(op);
@@ -74,6 +79,7 @@ export const sinkCode = (
 
     for (let i = block.start; i <= block.end; i++) {
       const inst = instructions[i];
+      if (!inst) continue;
       if (!isPureProducer(inst)) continue;
 
       const def = getDefinedOperandForReuse(inst);
@@ -126,7 +132,9 @@ export const sinkCode = (
             break;
           }
           for (let j = i + 1; j <= block.end; j++) {
-            const jDef = getDefinedOperandForReuse(instructions[j]);
+            const jInst = instructions[j];
+            if (!jInst) continue;
+            const jDef = getDefinedOperandForReuse(jInst);
             if (jDef && livenessKey(jDef) === opKey) {
               operandsAvailable = false;
               break;
@@ -145,7 +153,9 @@ export const sinkCode = (
         // Check the operand isn't being sunk too (can't sink both at once)
         let definedBeforeInBlock = false;
         for (let j = block.start; j < i; j++) {
-          const jDef = getDefinedOperandForReuse(instructions[j]);
+          const jInst = instructions[j];
+          if (!jInst) continue;
+          const jDef = getDefinedOperandForReuse(jInst);
           if (jDef && livenessKey(jDef) === opKey) {
             // Check if this definition is also being sunk
             if (sinkTargets.has(j)) {
@@ -189,8 +199,10 @@ export const sinkCode = (
   const insertions = new Map<number, TACInstruction[]>();
   for (const [instIdx, blockId] of sinkTargets) {
     const targetBlock = cfg.blocks[blockId];
+    const sunkInstruction = instructions[instIdx];
+    if (!targetBlock || !sunkInstruction) continue;
     const list = insertions.get(targetBlock.start) ?? [];
-    list.push(instructions[instIdx]);
+    list.push(sunkInstruction);
     insertions.set(targetBlock.start, list);
   }
 
@@ -198,23 +210,21 @@ export const sinkCode = (
   const result: TACInstruction[] = [];
   const emitted = new Set<number>(sinkTargets.keys());
   for (let i = 0; i < instructions.length; i++) {
-    // Skip already-emitted and sunk instructions
-    if (emitted.has(i)) continue;
-
     // Insert sunk instructions after any labels at the target block start
     const pending = insertions.get(i);
     if (pending) {
       // Find where labels end at the target block start
       let labelEnd = i;
-      while (
-        labelEnd < instructions.length &&
-        instructions[labelEnd].kind === TACInstructionKind.Label
-      ) {
+      while (labelEnd < instructions.length) {
+        const labelInst = instructions[labelEnd];
+        if (!labelInst || labelInst.kind !== TACInstructionKind.Label) break;
         labelEnd++;
       }
       if (labelEnd > i) {
         for (let j = i; j < labelEnd; j++) {
-          result.push(instructions[j]);
+          const labelInst = instructions[j];
+          if (!labelInst) continue;
+          result.push(labelInst);
           emitted.add(j);
         }
         // Insert sunk instructions after labels
@@ -225,11 +235,19 @@ export const sinkCode = (
       }
       // No leading labels: emit pending then the block-start instruction
       result.push(...pending);
-      result.push(instructions[i]);
+      const currentInst = instructions[i];
+      if (currentInst && !emitted.has(i)) {
+        result.push(currentInst);
+      }
       continue;
     }
 
-    result.push(instructions[i]);
+    // Skip already-emitted and sunk instructions
+    if (emitted.has(i)) continue;
+
+    const current = instructions[i];
+    if (!current) continue;
+    result.push(current);
   }
 
   return { instructions: result, changed: true, structurallyChanged: true };

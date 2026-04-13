@@ -2,12 +2,12 @@ import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   AssignmentInstruction,
-  type BinaryOpInstruction,
-  type CallInstruction,
-  type CastInstruction,
+  BinaryOpInstruction,
+  CallInstruction,
+  CastInstruction,
   type TACInstruction,
   TACInstructionKind,
-  type UnaryOpInstruction,
+  UnaryOpInstruction,
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
@@ -15,8 +15,10 @@ import {
   createConstant,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
 } from "../../tac_operand.js";
 import type { PassResult } from "../pass_types.js";
+import { getDefinedOperandForReuse } from "../utils/instructions.js";
 import {
   type PureExternValue,
   pureExternEvaluators,
@@ -28,56 +30,157 @@ import {
  */
 export const constantFolding = (instructions: TACInstruction[]): PassResult => {
   const result: TACInstruction[] = [];
+  const temporaryConstants = new Map<number, ConstantOperand>();
   let changed = false;
 
+  const getResolvedConstant = (operand: TACOperand): ConstantOperand | null => {
+    if (operand.kind === TACOperandKind.Constant) {
+      return operand as ConstantOperand;
+    }
+    if (operand.kind === TACOperandKind.Temporary) {
+      return temporaryConstants.get((operand as TemporaryOperand).id) ?? null;
+    }
+    return null;
+  };
+
+  const trackTemporaryConstant = (
+    operand: TACOperand,
+    constant: ConstantOperand,
+  ): void => {
+    if (operand.kind !== TACOperandKind.Temporary) return;
+    temporaryConstants.set((operand as TemporaryOperand).id, constant);
+  };
+
+  const invalidateDefinedTemporary = (inst: TACInstruction): void => {
+    const defined = getDefinedOperandForReuse(inst);
+    if (defined?.kind === TACOperandKind.Temporary) {
+      temporaryConstants.delete((defined as TemporaryOperand).id);
+    }
+  };
+
+  const trackFromFoldedAssignment = (inst: TACInstruction): void => {
+    if (inst.kind !== TACInstructionKind.Assignment) return;
+    const assignment = inst as AssignmentInstruction;
+    if (assignment.src.kind !== TACOperandKind.Constant) return;
+    trackTemporaryConstant(assignment.dest, assignment.src as ConstantOperand);
+  };
+
   for (const inst of instructions) {
+    if (inst.kind === TACInstructionKind.Label) {
+      // Labels are control-flow merge points; clear tracked temp constants
+      // conservatively to avoid cross-path miscompilation.
+      temporaryConstants.clear();
+      result.push(inst);
+      continue;
+    }
+
+    if (
+      inst.kind === TACInstructionKind.Assignment ||
+      inst.kind === TACInstructionKind.Copy
+    ) {
+      const assignment = inst as AssignmentInstruction;
+      const srcConst = getResolvedConstant(assignment.src);
+      if (srcConst) {
+        trackTemporaryConstant(assignment.dest, srcConst);
+        if (
+          inst.kind === TACInstructionKind.Copy ||
+          assignment.src !== srcConst
+        ) {
+          result.push(new AssignmentInstruction(assignment.dest, srcConst));
+          changed = true;
+        } else {
+          result.push(inst);
+        }
+      } else {
+        invalidateDefinedTemporary(inst);
+        result.push(inst);
+      }
+      continue;
+    }
+
     if (inst.kind === TACInstructionKind.Call) {
       const callInst = inst as CallInstruction;
-      const folded = tryFoldPureExternCall(callInst);
-      if (folded) {
-        result.push(folded);
+      const resolvedArgs = callInst.args.map(
+        (arg) => getResolvedConstant(arg) ?? arg,
+      );
+      const callInput = resolvedArgs.some(
+        (arg, idx) => arg !== callInst.args[idx],
+      )
+        ? new CallInstruction(
+            callInst.dest,
+            callInst.func,
+            resolvedArgs,
+            callInst.isTailCall,
+          )
+        : callInst;
+
+      const pureExternFolded = tryFoldPureExternCall(callInput);
+      if (pureExternFolded) {
+        result.push(pureExternFolded);
+        trackFromFoldedAssignment(pureExternFolded);
         changed = true;
         continue;
       }
+
+      const valueTypeFolded = tryFoldValueTypeConstructor(callInput);
+      if (valueTypeFolded) {
+        result.push(valueTypeFolded);
+        trackFromFoldedAssignment(valueTypeFolded);
+        changed = true;
+        continue;
+      }
+
+      invalidateDefinedTemporary(inst);
+      if (callInput !== callInst) {
+        result.push(callInput);
+        changed = true;
+      } else {
+        result.push(inst);
+      }
+      continue;
     }
 
     if (inst.kind === TACInstructionKind.Cast) {
       const castInst = inst as CastInstruction;
-      const folded = tryFoldCastInstruction(castInst);
+      const srcConst = getResolvedConstant(castInst.src);
+      const castInput =
+        srcConst && srcConst !== castInst.src
+          ? new CastInstruction(castInst.dest, srcConst)
+          : castInst;
+      const folded = tryFoldCastInstruction(castInput);
       if (folded) {
         result.push(folded);
+        trackFromFoldedAssignment(folded);
         changed = true;
         continue;
       }
-    }
 
-    if (inst.kind === TACInstructionKind.Call) {
-      const callInst = inst as CallInstruction;
-      const folded = tryFoldValueTypeConstructor(callInst);
-      if (folded) {
-        result.push(folded);
+      invalidateDefinedTemporary(inst);
+      if (castInput !== castInst) {
+        result.push(castInput);
         changed = true;
-        continue;
+      } else {
+        result.push(inst);
       }
+      continue;
     }
 
     if (inst.kind === TACInstructionKind.BinaryOp) {
       const binOp = inst as BinaryOpInstruction;
+      const leftConst = getResolvedConstant(binOp.left);
+      const rightConst = getResolvedConstant(binOp.right);
+      const leftOperand = leftConst ?? binOp.left;
+      const rightOperand = rightConst ?? binOp.right;
 
-      // Check if both operands are constants
-      if (
-        binOp.left.kind === TACOperandKind.Constant &&
-        binOp.right.kind === TACOperandKind.Constant
-      ) {
-        const leftConst = binOp.left as ConstantOperand;
-        const rightConst = binOp.right as ConstantOperand;
-
+      // Check if both operands are constants (including constants coming from folded temporaries)
+      if (leftConst && rightConst) {
         if (
           leftConst.value === null ||
           rightConst.value === null ||
           !isPrimitiveFoldValue(leftConst.value) ||
           !isPrimitiveFoldValue(rightConst.value)
         ) {
+          invalidateDefinedTemporary(inst);
           result.push(inst);
           continue;
         }
@@ -93,6 +196,7 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
           leftConst.type.udonType !== "Int32" &&
           leftConst.type.udonType !== "UInt32"
         ) {
+          invalidateDefinedTemporary(inst);
           result.push(inst);
           continue;
         }
@@ -121,19 +225,39 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
             ? leftConst.type
             : PrimitiveTypes.boolean;
           const constantOperand = createConstant(foldedValue, foldedType);
+          trackTemporaryConstant(binOp.dest, constantOperand);
           result.push(new AssignmentInstruction(binOp.dest, constantOperand));
           changed = true;
           continue;
         }
       }
-    } else if (inst.kind === TACInstructionKind.UnaryOp) {
+
+      invalidateDefinedTemporary(inst);
+      if (leftOperand !== binOp.left || rightOperand !== binOp.right) {
+        result.push(
+          new BinaryOpInstruction(
+            binOp.dest,
+            leftOperand,
+            binOp.operator,
+            rightOperand,
+          ),
+        );
+        changed = true;
+      } else {
+        result.push(inst);
+      }
+      continue;
+    }
+
+    if (inst.kind === TACInstructionKind.UnaryOp) {
       const unOp = inst as UnaryOpInstruction;
+      const constOp = getResolvedConstant(unOp.operand);
+      const operand = constOp ?? unOp.operand;
 
-      // Check if operand is constant
-      if (unOp.operand.kind === TACOperandKind.Constant) {
-        const constOp = unOp.operand as ConstantOperand;
-
+      // Check if operand is constant (including constants coming from folded temporaries)
+      if (constOp) {
         if (constOp.value === null || !isPrimitiveFoldValue(constOp.value)) {
+          invalidateDefinedTemporary(inst);
           result.push(inst);
           continue;
         }
@@ -144,13 +268,24 @@ export const constantFolding = (instructions: TACInstruction[]): PassResult => {
         if (foldedValue !== null) {
           // Replace with assignment of constant
           const constantOperand = createConstant(foldedValue, constOp.type);
+          trackTemporaryConstant(unOp.dest, constantOperand);
           result.push(new AssignmentInstruction(unOp.dest, constantOperand));
           changed = true;
           continue;
         }
       }
+
+      invalidateDefinedTemporary(inst);
+      if (operand !== unOp.operand) {
+        result.push(new UnaryOpInstruction(unOp.dest, unOp.operator, operand));
+        changed = true;
+      } else {
+        result.push(inst);
+      }
+      continue;
     }
 
+    invalidateDefinedTemporary(inst);
     // Keep instruction as-is
     result.push(inst);
   }

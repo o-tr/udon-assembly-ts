@@ -22,9 +22,16 @@ import type {
   ConstantValue,
   LabelOperand,
   TACOperand,
+  TemporaryOperand,
   VariableOperand,
 } from "../../tac_operand.js";
-import { TACOperandKind } from "../../tac_operand.js";
+import {
+  createTemporary,
+  createVariable,
+  parseTemporaryLatticeKey,
+  TACOperandKind,
+  temporaryLatticeKey,
+} from "../../tac_operand.js";
 import { buildCFG } from "../analysis/cfg.js";
 import type { CFGPassOptions, PassResult } from "../pass_types.js";
 import {
@@ -77,6 +84,13 @@ class VariableIdMap {
 
   tryGetId(name: string): number {
     return this.nameToId.get(name) ?? -1;
+  }
+
+  /** Iterate all registered lattice slot names (for alias invalidation scans). */
+  forEachName(fn: (name: string) => void): void {
+    for (const name of this.nameToId.keys()) {
+      fn(name);
+    }
   }
 
   get size(): number {
@@ -415,6 +429,17 @@ const meetIntoGlobal = (
   return false;
 };
 
+/** Lattice slot name for Variable or Temporary; null for other operand kinds. */
+const latticeNameForOperand = (op: TACOperand): string | null => {
+  if (op.kind === TACOperandKind.Variable) {
+    return (op as VariableOperand).name;
+  }
+  if (op.kind === TACOperandKind.Temporary) {
+    return temporaryLatticeKey((op as TemporaryOperand).id);
+  }
+  return null;
+};
+
 const resolveLatticeConstantCompact = (
   operand: TACOperand,
   lattice: CompactLattice,
@@ -423,12 +448,13 @@ const resolveLatticeConstantCompact = (
   if (operand.kind === TACOperandKind.Constant) {
     return operand as ConstantOperand;
   }
-  if (operand.kind !== TACOperandKind.Variable) return null;
+  const startName = latticeNameForOperand(operand);
+  if (startName === null) return null;
 
   let steps = lattice.payloadCount + 1;
-  let current = operand as VariableOperand;
+  let currentName = startName;
   while (steps-- > 0) {
-    const id = varIds.tryGetId(current.name);
+    const id = varIds.tryGetId(currentName);
     if (id === -1) return null;
     const kind = lattice.kinds[id];
     if (kind === KIND_UNKNOWN || kind === KIND_OVERDEFINED) return null;
@@ -439,9 +465,104 @@ const resolveLatticeConstantCompact = (
     // KIND_COPY
     const payload = lattice.payloads.get(id);
     if (!payload) return null;
-    current = payload as VariableOperand;
+    currentName = (payload as VariableOperand).name;
   }
   return null;
+};
+
+/**
+ * Map a lattice VariableOperand (possibly synthetic temp lattice name) back to
+ * VariableOperand or TemporaryOperand for emitted IR.
+ */
+const latticeVariableToTacOperand = (v: VariableOperand): TACOperand => {
+  const tid = parseTemporaryLatticeKey(v.name);
+  if (tid !== null) {
+    return createTemporary(tid, v.type);
+  }
+  return v;
+};
+
+/**
+ * When lattice gives no constant: preserve operand identity only while `current`
+ * still denotes the same lattice slot as `original` (after copy-chain walks).
+ * Only used for Variable / Temporary roots from `resolveLatticeOperandCompact`.
+ */
+const resolveNonConstantOperand = (
+  original: VariableOperand | TemporaryOperand,
+  current: VariableOperand,
+): TACOperand => {
+  if (original.kind === TACOperandKind.Temporary) {
+    const key = temporaryLatticeKey(original.id);
+    return current.name === key
+      ? original
+      : latticeVariableToTacOperand(current);
+  }
+  return original.name === current.name
+    ? original
+    : latticeVariableToTacOperand(current);
+};
+
+/**
+ * Copy-source name → destinations that currently have KIND_COPY from that
+ * source. Rebuilt at the start of each `invalidateCopyAliasesOfRoot` call from
+ * the lattice snapshot then (not cached across successive calls in one
+ * `transferCompactLattice` step — e.g. CoW `MethodCall` may call invalidation
+ * twice with a partially updated lattice between). O(V) once per call; BFS then
+ * looks up successors in O(out-degree) instead of scanning all names per node.
+ * Worst-case SCCP transfer work scales with O(V) × invalidations per inst
+ * (e.g. CoW MethodCall may invalidate twice), i.e. O(V × instructions) per pass
+ * if register counts grow large.
+ */
+const buildReverseCopyIndex = (
+  lattice: CompactLattice,
+  varIds: VariableIdMap,
+): Map<string, Set<string>> => {
+  const reverse = new Map<string, Set<string>>();
+  varIds.forEachName((destName) => {
+    const id = varIds.tryGetId(destName);
+    if (id === -1) return;
+    if (lattice.kinds[id] !== KIND_COPY) return;
+    const payload = lattice.payloads.get(id);
+    if (!payload) return;
+    const srcName = (payload as VariableOperand).name;
+    let set = reverse.get(srcName);
+    if (!set) {
+      set = new Set<string>();
+      reverse.set(srcName, set);
+    }
+    set.add(destName);
+  });
+  return reverse;
+};
+
+/**
+ * Before `rootName` is set overdefined, mark COPY-derived aliases overdefined
+ * transitively along forward copy edges only (dest COPY where payload names the
+ * invalidated slot). Does not walk “backward” to unrelated sibling copies of
+ * a shared source. Caller must `setOverdefined(rootName)` after this returns.
+ * Each invocation rebuilds the reverse-copy index from the lattice at entry.
+ */
+const invalidateCopyAliasesOfRoot = (
+  lattice: CompactLattice,
+  varIds: VariableIdMap,
+  rootName: string,
+): void => {
+  const reverse = buildReverseCopyIndex(lattice, varIds);
+  const queue: string[] = [rootName];
+  const seen = new Set<string>([rootName]);
+  let head = 0;
+  while (head < queue.length) {
+    const n = queue[head++] as string;
+    const dests = reverse.get(n);
+    if (dests === undefined) continue;
+    for (const destName of dests) {
+      if (!seen.has(destName)) {
+        seen.add(destName);
+        lattice.setOverdefined(destName);
+        queue.push(destName);
+      }
+    }
+  }
 };
 
 const resolveLatticeOperandCompact = (
@@ -449,24 +570,52 @@ const resolveLatticeOperandCompact = (
   lattice: CompactLattice,
   varIds: VariableIdMap,
 ): TACOperand => {
-  if (operand.kind !== TACOperandKind.Variable) return operand;
+  if (operand.kind === TACOperandKind.Constant) return operand;
+  if (
+    operand.kind !== TACOperandKind.Variable &&
+    operand.kind !== TACOperandKind.Temporary
+  ) {
+    return operand;
+  }
+
+  const original: VariableOperand | TemporaryOperand =
+    operand.kind === TACOperandKind.Variable
+      ? (operand as VariableOperand)
+      : (operand as TemporaryOperand);
+  let current: VariableOperand =
+    operand.kind === TACOperandKind.Variable
+      ? (operand as VariableOperand)
+      : createVariable(
+          temporaryLatticeKey((operand as TemporaryOperand).id),
+          (operand as TemporaryOperand).type,
+        );
+
   let steps = lattice.payloadCount + 1;
-  let current = operand as VariableOperand;
   while (steps-- > 0) {
     const id = varIds.tryGetId(current.name);
-    if (id === -1) return current;
+    if (id === -1) {
+      // All operands reachable via copy chains are pre-registered; −1 only
+      // means the *initial* operand never appeared in any instruction.
+      return original;
+    }
     const kind = lattice.kinds[id];
-    if (kind === KIND_UNKNOWN || kind === KIND_OVERDEFINED) return current;
+    if (kind === KIND_UNKNOWN || kind === KIND_OVERDEFINED) {
+      return resolveNonConstantOperand(original, current);
+    }
     if (kind === KIND_CONSTANT) {
       const payload = lattice.payloads.get(id);
-      return payload ? (payload as ConstantOperand) : current;
+      return payload
+        ? (payload as ConstantOperand)
+        : resolveNonConstantOperand(original, current);
     }
     // KIND_COPY
     const payload = lattice.payloads.get(id);
-    if (!payload) return current;
+    if (!payload) {
+      return resolveNonConstantOperand(original, current);
+    }
     current = payload as VariableOperand;
   }
-  return current;
+  return latticeVariableToTacOperand(current);
 };
 
 const transferCompactLattice = (
@@ -479,74 +628,98 @@ const transferCompactLattice = (
     inst.kind === TACInstructionKind.Copy
   ) {
     const { dest, src } = inst as unknown as InstWithDestSrc;
-    if (dest.kind === TACOperandKind.Variable) {
-      const destName = (dest as VariableOperand).name;
-      const resolvedConst = resolveLatticeConstantCompact(src, lattice, varIds);
-      if (resolvedConst) {
-        lattice.setConstant(destName, resolvedConst);
-      } else if (src.kind === TACOperandKind.Variable) {
-        const srcVar = src as VariableOperand;
-        const srcInfo = lattice.get(srcVar.name);
-        if (srcInfo.kind === "overdefined") {
-          lattice.setOverdefined(destName);
-          return;
-        }
-        // Check if adding dest -> copy(src) would create a cycle
-        let isCycle = false;
-        let steps = lattice.payloadCount + 1;
-        let cur: VariableOperand | null = srcVar;
-        while (cur && steps-- > 0) {
-          if (cur.name === destName) {
-            isCycle = true;
-            break;
-          }
-          const info = lattice.get(cur.name);
-          if (info.kind !== "copy") break;
-          cur = info.operand;
-        }
-        if (steps < 0) isCycle = true;
-        if (isCycle) {
-          lattice.setOverdefined(destName);
-        } else {
-          lattice.setCopy(destName, srcVar);
-        }
-      } else {
+    if (
+      dest.kind !== TACOperandKind.Variable &&
+      dest.kind !== TACOperandKind.Temporary
+    ) {
+      return;
+    }
+    const destName = latticeNameForOperand(dest);
+    if (destName === null) return;
+
+    const resolvedConst = resolveLatticeConstantCompact(src, lattice, varIds);
+    if (resolvedConst) {
+      lattice.setConstant(destName, resolvedConst);
+    } else if (
+      src.kind === TACOperandKind.Variable ||
+      src.kind === TACOperandKind.Temporary
+    ) {
+      const srcVar: VariableOperand =
+        src.kind === TACOperandKind.Variable
+          ? (src as VariableOperand)
+          : createVariable(
+              temporaryLatticeKey((src as TemporaryOperand).id),
+              (src as TemporaryOperand).type,
+            );
+      const srcInfo = lattice.get(srcVar.name);
+      if (srcInfo.kind === "overdefined") {
         lattice.setOverdefined(destName);
+        return;
       }
+      // Check if adding dest -> copy(src) would create a cycle
+      let isCycle = false;
+      let steps = lattice.payloadCount + 1;
+      let cur: VariableOperand | null = srcVar;
+      while (cur && steps-- > 0) {
+        if (cur.name === destName) {
+          isCycle = true;
+          break;
+        }
+        const info = lattice.get(cur.name);
+        if (info.kind !== "copy") break;
+        cur = info.operand;
+      }
+      if (steps < 0) isCycle = true;
+      if (isCycle) {
+        lattice.setOverdefined(destName);
+      } else {
+        lattice.setCopy(destName, srcVar);
+      }
+    } else {
+      lattice.setOverdefined(destName);
     }
     return;
   }
 
   if (inst.kind === TACInstructionKind.PropertySet) {
     const set = inst as PropertySetInstruction;
-    if (set.object.kind === TACOperandKind.Variable) {
-      lattice.setOverdefined((set.object as VariableOperand).name);
+    const name = latticeNameForOperand(set.object);
+    if (name !== null) {
+      invalidateCopyAliasesOfRoot(lattice, varIds, name);
+      lattice.setOverdefined(name);
     }
     return;
   }
 
   if (inst.kind === TACInstructionKind.ArrayAssignment) {
     const assign = inst as ArrayAssignmentInstruction;
-    if (assign.array.kind === TACOperandKind.Variable) {
-      lattice.setOverdefined((assign.array as VariableOperand).name);
+    const name = latticeNameForOperand(assign.array);
+    if (name !== null) {
+      invalidateCopyAliasesOfRoot(lattice, varIds, name);
+      lattice.setOverdefined(name);
     }
     return;
   }
 
   if (inst.kind === TACInstructionKind.MethodCall) {
     const call = inst as MethodCallInstruction;
-    if (
-      call.object.kind === TACOperandKind.Variable &&
-      isCopyOnWriteCandidateType(getOperandType(call.object))
-    ) {
-      lattice.setOverdefined((call.object as VariableOperand).name);
+    if (isCopyOnWriteCandidateType(getOperandType(call.object))) {
+      const name = latticeNameForOperand(call.object);
+      if (name !== null) {
+        invalidateCopyAliasesOfRoot(lattice, varIds, name);
+        lattice.setOverdefined(name);
+      }
     }
     // fall through to clear any defined variable via getDefinedOperandForReuse
   }
 
   const defined = getDefinedOperandForReuse(inst);
-  if (defined && defined.kind === TACOperandKind.Variable) {
-    lattice.setOverdefined((defined as VariableOperand).name);
+  if (defined) {
+    const name = latticeNameForOperand(defined);
+    if (name !== null) {
+      invalidateCopyAliasesOfRoot(lattice, varIds, name);
+      lattice.setOverdefined(name);
+    }
   }
 };
 
@@ -634,12 +807,10 @@ const replaceInstructionWithLatticeMap = (
     }
     case TACInstructionKind.MethodCall: {
       const call = inst as MethodCallInstruction;
-      const object = replace(call.object);
+      // Do not copy-propagate the receiver: may be a CoW temp or mutation target.
+      const object = call.object;
       const args = call.args.map((arg) => replace(arg));
-      if (
-        object !== call.object ||
-        args.some((arg, idx) => arg !== call.args[idx])
-      ) {
+      if (args.some((arg, idx) => arg !== call.args[idx])) {
         return new (call.constructor as typeof MethodCallInstruction)(
           call.dest,
           object,
@@ -664,9 +835,11 @@ const replaceInstructionWithLatticeMap = (
     }
     case TACInstructionKind.PropertySet: {
       const set = inst as PropertySetInstruction;
-      const object = replace(set.object);
+      // Do not copy-propagate the receiver: mutating through a forwarded alias
+      // would collapse CoW patterns (Copy then PropertySet on the copy).
+      const object = set.object;
       const value = replace(set.value);
-      if (object !== set.object || value !== set.value) {
+      if (value !== set.value) {
         return new (set.constructor as typeof PropertySetInstruction)(
           object,
           set.property,
@@ -703,14 +876,10 @@ const replaceInstructionWithLatticeMap = (
     }
     case TACInstructionKind.ArrayAssignment: {
       const assign = inst as ArrayAssignmentInstruction;
-      const array = replace(assign.array);
+      const array = assign.array;
       const index = replace(assign.index);
       const value = replace(assign.value);
-      if (
-        array !== assign.array ||
-        index !== assign.index ||
-        value !== assign.value
-      ) {
+      if (index !== assign.index || value !== assign.value) {
         return new (assign.constructor as typeof ArrayAssignmentInstruction)(
           array,
           index,
@@ -742,16 +911,18 @@ export const sccpAndPrune = (
   const cfg = options?.cachedCFG ?? buildCFG(instructions);
   if (cfg.blocks.length === 0) return { instructions, changed: false };
 
-  // Pre-scan: build variable ID map
+  // Pre-scan: build variable ID map (includes synthetic temp lattice keys)
   const varIds = new VariableIdMap();
   for (const inst of instructions) {
     const defined = getDefinedOperandForReuse(inst);
-    if (defined && defined.kind === TACOperandKind.Variable) {
-      varIds.register((defined as VariableOperand).name);
+    const defName = defined ? latticeNameForOperand(defined) : null;
+    if (defName !== null) {
+      varIds.register(defName);
     }
     forEachUsedOperand(inst, (op) => {
-      if (op.kind === TACOperandKind.Variable) {
-        varIds.register((op as VariableOperand).name);
+      const n = latticeNameForOperand(op);
+      if (n !== null) {
+        varIds.register(n);
       }
     });
   }
@@ -776,8 +947,9 @@ export const sccpAndPrune = (
     const usedInBlock = new Set<number>();
     for (let i = block.start; i <= block.end; i++) {
       forEachUsedOperand(instructions[i], (op) => {
-        if (op.kind === TACOperandKind.Variable) {
-          const id = varIds.tryGetId((op as VariableOperand).name);
+        const n = latticeNameForOperand(op);
+        if (n !== null) {
+          const id = varIds.tryGetId(n);
           if (id !== -1) usedInBlock.add(id);
         }
       });

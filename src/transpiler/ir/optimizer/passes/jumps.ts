@@ -17,10 +17,23 @@ import { buildCFG } from "../analysis/cfg.js";
 import type { PassResult } from "../pass_types.js";
 import { isTruthyConstant } from "./boolean_simplification.js";
 
-export const simplifyJumps = (instructions: TACInstruction[]): PassResult => {
+export const simplifyJumps = (
+  instructions: TACInstruction[],
+  exposedLabels?: Set<string>,
+): PassResult => {
   if (instructions.length === 0) return { instructions, changed: false };
 
   const labelAlias = new Map<string, string>();
+  const pickCanonicalLabel = (labels: string[]): string => {
+    if (exposedLabels) {
+      for (const label of labels) {
+        if (exposedLabels.has(label)) {
+          return label;
+        }
+      }
+    }
+    return labels[labels.length - 1];
+  };
   for (let i = 0; i < instructions.length; i += 1) {
     const inst = instructions[i];
     if (inst.kind !== TACInstructionKind.Label) continue;
@@ -37,7 +50,7 @@ export const simplifyJumps = (instructions: TACInstruction[]): PassResult => {
       j += 1;
     }
     if (names.length > 0) {
-      const canonical = names[names.length - 1];
+      const canonical = pickCanonicalLabel(names);
       for (const name of names) {
         labelAlias.set(name, canonical);
       }
@@ -112,7 +125,8 @@ export const simplifyJumps = (instructions: TACInstruction[]): PassResult => {
       const labelInst = inst as LabelInstruction;
       if (labelInst.label.kind === TACOperandKind.Label) {
         const name = (labelInst.label as LabelOperand).name;
-        if (canonicalLabel(name) !== name) {
+        const isExposedAlias = exposedLabels?.has(name) ?? false;
+        if (canonicalLabel(name) !== name && !isExposedAlias) {
           changed = true;
           continue;
         }

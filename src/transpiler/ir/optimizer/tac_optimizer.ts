@@ -466,6 +466,8 @@ export class TACOptimizer {
             `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${ssaBlockLimit}`,
           );
         } else {
+          const preSSAInstructions = next;
+          const preSSALen = preSSAInstructions.length;
           const ssa = buildSSA(next, { cachedCFG: getCFG() });
           const ssaPre = performPRE(ssa.instructions, { useSSA: true });
           const ssaGvn = globalValueNumbering(ssaPre.instructions, {
@@ -474,11 +476,16 @@ export class TACOptimizer {
           const ssaDecon = deconstructSSA(ssaGvn.instructions, {
             edgeLabelSeed,
           });
-          // SSA construction/deconstruction always restructures instructions
-          // (phi-node insertion + variable renaming), so mark as changed and
-          // invalidate the CFG regardless of individual pass reports.
-          anyPassChanged = true;
-          next = ssaDecon.instructions;
+          const postSSAInstructions = ssaDecon.instructions;
+          if (postSSAInstructions.length > preSSALen) {
+            next = preSSAInstructions;
+          } else {
+            next = postSSAInstructions;
+            if (next !== preSSAInstructions) {
+              anyPassChanged = true;
+            }
+          }
+          prevLen = next.length;
           cachedCFG = null;
         }
       }
@@ -501,7 +508,7 @@ export class TACOptimizer {
       // Remove jumps that fall through to the next label
       run(eliminateFallthroughJumps(next));
       // Remove redundant jumps and thread jump chains
-      run(simplifyJumps(next));
+      run(simplifyJumps(next, exposedLabels));
       if (runExpensivePasses) {
         // Hoist loop-invariant code
         run(performLICM(next, { cachedCFG: getCFG() }));
@@ -569,7 +576,27 @@ export class TACOptimizer {
 
     // Final label integrity check after all passes
     optimized = this.ensureLabelIntegrity(optimized);
+    optimized = this.ensureExposedEntryLabels(optimized, exposedLabels);
 
     return optimized;
+  }
+
+  private ensureExposedEntryLabels(
+    instructions: TACInstruction[],
+    exposedLabels?: Set<string>,
+  ): TACInstruction[] {
+    if (!exposedLabels?.has("_start")) return instructions;
+
+    const hasStartLabel = instructions.some((inst) => {
+      if (inst.kind !== TACInstructionKind.Label) return false;
+      const label = (inst as LabelInstruction).label;
+      return (
+        label.kind === TACOperandKind.Label &&
+        (label as LabelOperand).name === "_start"
+      );
+    });
+
+    if (hasStartLabel) return instructions;
+    return [new LabelInstruction(createLabel("_start")), ...instructions];
   }
 }

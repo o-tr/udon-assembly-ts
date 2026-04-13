@@ -117,6 +117,30 @@ export function createLabel(name: string): LabelOperand {
   };
 }
 
+/** Prefix impossible in normal TypeScript identifiers (U+E000 PUA). */
+const SCCP_TEMP_LATTICE_PREFIX = "\uE000";
+
+/**
+ * Stable key for SCCP / optimizer lattice maps for temporaries.
+ * Disjoint from user source names (including `__sccp_tmp_<n>`) and from
+ * {@link operandToString} display (`t0`).
+ */
+export function temporaryLatticeKey(id: number): string {
+  return `${SCCP_TEMP_LATTICE_PREFIX}sccp_tmp_${id}`;
+}
+
+/**
+ * Inverse of {@link temporaryLatticeKey} for lattice slot names; otherwise null.
+ * The `sccp_tmp_<n>` decimal integer must not exceed {@link Number.MAX_SAFE_INTEGER};
+ * larger values would not round-trip through `Number()` (temp id space stays far below).
+ */
+export function parseTemporaryLatticeKey(name: string): number | null {
+  if (!name.startsWith(SCCP_TEMP_LATTICE_PREFIX)) return null;
+  const rest = name.slice(SCCP_TEMP_LATTICE_PREFIX.length);
+  const m = /^sccp_tmp_(\d+)$/.exec(rest);
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * Convert operand to string for display
  */

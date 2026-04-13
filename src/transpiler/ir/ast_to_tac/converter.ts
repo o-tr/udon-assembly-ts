@@ -46,6 +46,7 @@ import {
   visitUpdateExpression,
   wrapDataToken,
 } from "./helpers/assignment.js";
+import { coerceToBoolean } from "./helpers/coerce_boolean.js";
 import {
   emitDataDictionaryEntries,
   emitDataDictionaryKeys,
@@ -256,6 +257,9 @@ export class ASTToTACConverter {
   /** Per-class, per-field DataList variable for SoA storage.
    *  Key: className → fieldName → VariableOperand (DataList). */
   soaFieldLists: Map<string, Map<string, VariableOperand>> = new Map();
+  /** Per-class, per-field declared type for SoA storage.
+   *  Key: className → fieldName → TypeSymbol. */
+  soaFieldTypes: Map<string, Map<string, TypeSymbol>> = new Map();
   /** Per-class runtime counter variable (Int32).
    *  Handle = counter value at construction time. */
   soaCounterVars: Map<string, VariableOperand> = new Map();
@@ -404,6 +408,7 @@ export class ASTToTACConverter {
     this.allInlineInstances = new Map();
     this.soaClasses = new Set();
     this.soaFieldLists = new Map();
+    this.soaFieldTypes = new Map();
     this.soaCounterVars = new Map();
     this.soaInitialized = new Set();
     this.implementorNamesCache = new Map();
@@ -813,6 +818,7 @@ export class ASTToTACConverter {
   templateLiteralValueToString = templateLiteralValueToString;
 
   coerceSwitchOperand = coerceSwitchOperand;
+  coerceToBoolean = coerceToBoolean;
   isSwitchComparableType = isSwitchComparableType;
 
   requireExternSignature = requireExternSignature;
