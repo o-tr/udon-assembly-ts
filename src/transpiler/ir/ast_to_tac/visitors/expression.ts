@@ -2688,9 +2688,10 @@ export function visitAsExpression(
         this.instructions.push(new CastInstruction(result, operand));
       }
     } else if (
-      NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
-      targetTypeSymbol.udonType === UdonType.Boolean ||
-      targetTypeSymbol.udonType === UdonType.String
+      srcType.udonType !== UdonType.Object &&
+      (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
+        targetTypeSymbol.udonType === UdonType.Boolean ||
+        targetTypeSymbol.udonType === UdonType.String)
     ) {
       this.instructions.push(new CastInstruction(result, operand));
     } else {
