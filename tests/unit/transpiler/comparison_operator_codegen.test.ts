@@ -95,6 +95,9 @@ function findExternIndexBySignature(
   return { lines, externLine, externIndex };
 }
 
+// This helper intentionally assumes a codegen-specific PUSH-PUSH-PUSH layout
+// immediately before each comparison EXTERN. Keeping this strict makes the test
+// fail loudly if UASM structure changes (e.g. non-contiguous argument pushes).
 function findComparisonArgs(uasm: string, signature: string): [string, string] {
   const { lines, externLine, externIndex } = findExternIndexBySignature(
     uasm,
@@ -122,6 +125,14 @@ function findComparisonArgs(uasm: string, signature: string): [string, string] {
   return [pushes[0], pushes[1]];
 }
 
+// resolveOperandAtExtern traces COPY aliases backward from a comparison EXTERN:
+// 1) findExternIndexBySignature gets `lines` and `externIndex`.
+// 2) Starting at `externIndex - 3`, scan backward for PUSH-PUSH-COPY where the
+//    first push is "PUSH, <current>", the second starts with "PUSH, ", and the
+//    third line is "COPY".
+// 3) parsePushOperand extracts the second PUSH operand as the next symbol.
+// 4) Repeat until no prior chain exists, then return the resolved symbol.
+// Index checks of `i + 1` / `i + 2` enforce the exact PUSH-PUSH-COPY pattern.
 function resolveOperandAtExtern(
   uasm: string,
   signature: string,
@@ -129,8 +140,19 @@ function resolveOperandAtExtern(
 ): string {
   const { lines, externIndex } = findExternIndexBySignature(uasm, signature);
   let current = sourceSymbol;
+  const visited = new Set<string>();
+  const maxIterations = lines.length + 1;
+  let iterations = 0;
 
-  while (true) {
+  while (iterations < maxIterations) {
+    if (visited.has(current)) {
+      throw new Error(
+        `cyclic COPY chain detected while resolving ${sourceSymbol}`,
+      );
+    }
+    visited.add(current);
+    iterations += 1;
+
     let nextSymbol: string | null = null;
     for (let i = externIndex - 3; i >= 0; i -= 1) {
       if (lines[i] !== `PUSH, ${current}`) continue;
@@ -144,6 +166,10 @@ function resolveOperandAtExtern(
     }
     current = nextSymbol;
   }
+
+  throw new Error(
+    `COPY chain exceeded ${maxIterations} steps while resolving ${sourceSymbol}`,
+  );
 }
 
 describe("comparison operator codegen regression", () => {
