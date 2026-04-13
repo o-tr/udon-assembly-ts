@@ -158,10 +158,13 @@ export function convertInstruction(
         this.pushOperand(binInst.left);
         const shiftTmpName = `__tcoerce_${this.nextAddress}`;
         this.variableAddresses.set(shiftTmpName, this.nextAddress++);
-        this.variableTypes.set(shiftTmpName, "Int32");
+        this.variableTypes.set(shiftTmpName, UdonType.Int32);
         this.pushOperand(binInst.right);
         this.instructions.push(new PushInstruction(shiftTmpName));
-        const shiftSig = this.getConvertExternSignature(rightType, "Int32");
+        const shiftSig = this.getConvertExternSignature(
+          rightType,
+          UdonType.Int32,
+        );
         this.externSignatures.add(shiftSig);
         this.instructions.push(
           new ExternInstruction(this.getExternSymbol(shiftSig), true),
