@@ -6,14 +6,16 @@ const SOURCE = `
   import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
   import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
   import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
-  import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+  import { Debug, Mathf, Time } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
   @UdonBehaviour()
   export class ComparisonOrderTest extends UdonSharpBehaviour {
-    public lhsValue: UdonInt = 1 as UdonInt;
-    public rhsValue: UdonInt = 2 as UdonInt;
+    public lhsValue: UdonInt = 0 as UdonInt;
+    public rhsValue: UdonInt = 0 as UdonInt;
 
     Start(): void {
+      this.lhsValue = Mathf.FloorToInt(Time.time);
+      this.rhsValue = Mathf.FloorToInt(Time.deltaTime);
       const lhs: UdonInt = this.lhsValue;
       const rhs: UdonInt = this.rhsValue;
       const lt = lhs < rhs;
@@ -67,7 +69,10 @@ function parseUasmLines(uasm: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-function findExternIndexBySignature(uasm: string, signature: string): {
+function findExternIndexBySignature(
+  uasm: string,
+  signature: string,
+): {
   lines: string[];
   externLine: string;
   externIndex: number;
@@ -156,8 +161,16 @@ describe("comparison operator codegen regression", () => {
       const gtArgs = findComparisonArgs(uasm, OP_SIGNATURES.gt);
       const leArgs = findComparisonArgs(uasm, OP_SIGNATURES.le);
       const geArgs = findComparisonArgs(uasm, OP_SIGNATURES.ge);
-      const lhsOperand = resolveOperandAtExtern(uasm, OP_SIGNATURES.lt, "lhsValue");
-      const rhsOperand = resolveOperandAtExtern(uasm, OP_SIGNATURES.lt, "rhsValue");
+      const lhsOperand = resolveOperandAtExtern(
+        uasm,
+        OP_SIGNATURES.lt,
+        "lhsValue",
+      );
+      const rhsOperand = resolveOperandAtExtern(
+        uasm,
+        OP_SIGNATURES.lt,
+        "rhsValue",
+      );
 
       expect(ltArgs[0]).toBe(lhsOperand);
       expect(ltArgs[1]).toBe(rhsOperand);
