@@ -95,7 +95,10 @@ export function convertInstruction(
         const leftIsNum = this.isNumericType(leftType);
         const rightIsNum = this.isNumericType(rightType);
         if (leftIsNum && rightIsNum) {
-          promotedType = this.getPromotedNumericType(leftType, rightType) as UdonType;
+          promotedType = this.getPromotedNumericType(
+            leftType,
+            rightType,
+          ) as UdonType;
         } else if (leftIsNum) {
           promotedType = leftType;
         } else if (rightIsNum) {
@@ -107,6 +110,9 @@ export function convertInstruction(
 
       if (
         !isShift &&
+        this.isNumericType(leftType) &&
+        this.isNumericType(rightType) &&
+        promotedType !== UdonType.Object &&
         (promotedType !== leftType || promotedType !== rightType)
       ) {
         // Helper: coerce a single operand, returning the push-able name
@@ -120,27 +126,11 @@ export function convertInstruction(
           this.variableTypes.set(tmpName, promotedType);
           this.pushOperand(operand);
           this.instructions.push(new PushInstruction(tmpName));
-          
-          if (
-            promotedType === UdonType.Object || 
-            (promotedType as string) === "SystemObject" || 
-            (promotedType as string) === "System.Object" ||
-            (promotedType as string) === "object"
-          ) {
-            this.instructions.push(new CopyInstruction());
-          } else if (promotedType === UdonType.DataToken || (promotedType as string) === "DataToken") {
-            const ctorSig = `VRCSDK3DataDataToken.__ctor__System${srcType}__VRCSDK3DataDataToken`;
-            this.externSignatures.add(ctorSig);
-            this.instructions.push(
-              new ExternInstruction(this.getExternSymbol(ctorSig), true),
-            );
-          } else {
-            const sig = this.getConvertExternSignature(srcType, promotedType);
-            this.externSignatures.add(sig);
-            this.instructions.push(
-              new ExternInstruction(this.getExternSymbol(sig), true),
-            );
-          }
+          const sig = this.getConvertExternSignature(srcType, promotedType);
+          this.externSignatures.add(sig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(sig), true),
+          );
           return tmpName;
         };
 
@@ -382,10 +372,10 @@ export function convertInstruction(
       const targetType = this.getOperandUdonType(castInst.dest);
 
       if (
-        sourceType === targetType || 
-        targetType === UdonType.Object || 
-        targetType === "SystemObject" || 
-        targetType === "System.Object" || 
+        sourceType === targetType ||
+        targetType === UdonType.Object ||
+        targetType === "SystemObject" ||
+        targetType === "System.Object" ||
         targetType === "object"
       ) {
         this.pushOperand(castInst.src);
@@ -463,15 +453,6 @@ export function convertInstruction(
             new ExternInstruction(this.getExternSymbol(toTargetSig), true),
           );
         }
-      } else if (targetType === UdonType.DataToken || targetType === "DataToken") {
-        this.pushOperand(castInst.src);
-        const destAddr = this.getOperandAddress(castInst.dest);
-        this.instructions.push(new PushInstruction(destAddr));
-        const ctorSig = `VRCSDK3DataDataToken.__ctor__System${sourceType}__VRCSDK3DataDataToken`;
-        this.externSignatures.add(ctorSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(ctorSig), true),
-        );
       } else {
         // Simple conversion: push source, push dest, EXTERN
         this.pushOperand(castInst.src);

@@ -2658,7 +2658,10 @@ export function visitAsExpression(
           isPrimitiveFoldValue(srcConst.value) &&
           canFoldNumericLiteral(srcConst.value, targetTypeSymbol.udonType)
         ) {
-          const foldedValue = evaluateCastValue(srcConst.value, targetTypeSymbol);
+          const foldedValue = evaluateCastValue(
+            srcConst.value,
+            targetTypeSymbol,
+          );
           if (foldedValue !== null) {
             this.instructions.push(
               new AssignmentInstruction(
@@ -2672,18 +2675,24 @@ export function visitAsExpression(
       }
       this.instructions.push(new CastInstruction(result, operand));
     } else if (
-      (srcType.udonType === UdonType.Object || srcType.udonType === UdonType.DataToken) &&
-      (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) || 
-       targetTypeSymbol.udonType === UdonType.Boolean || 
-       targetTypeSymbol.udonType === UdonType.String)
+      srcType.udonType === UdonType.DataToken &&
+      (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
+        targetTypeSymbol.udonType === UdonType.Boolean ||
+        targetTypeSymbol.udonType === UdonType.String)
     ) {
-      // Type assertion from erased type -> unwrap token
+      // DataToken assertions to primitive/string use typed token accessors.
       const unwrapped = this.unwrapDataToken(operand, targetTypeSymbol);
       if (unwrapped !== operand) {
         this.emitCopyWithTracking(result, unwrapped);
       } else {
-        this.emitCopyWithTracking(result, operand);
+        this.instructions.push(new CastInstruction(result, operand));
       }
+    } else if (
+      NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
+      targetTypeSymbol.udonType === UdonType.Boolean ||
+      targetTypeSymbol.udonType === UdonType.String
+    ) {
+      this.instructions.push(new CastInstruction(result, operand));
     } else {
       this.emitCopyWithTracking(result, operand);
     }

@@ -1,7 +1,7 @@
 import { ExternTypes, PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
 import { CastInstruction } from "../../tac_instruction.js";
-import { TACOperandKind, type TACOperand } from "../../tac_operand.js";
+import { type TACOperand, TACOperandKind } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 
 /**
@@ -14,6 +14,10 @@ export function normalizeOperandToInt32(
 ): TACOperand {
   let normalized = operand;
   const sourceType = converter.getOperandType(normalized);
+  const sourceWasErased =
+    sourceType.udonType === UdonType.DataToken ||
+    sourceType.name === ExternTypes.dataToken.name ||
+    sourceType.udonType === UdonType.Object;
   if (
     sourceType.udonType === UdonType.DataToken ||
     sourceType.name === ExternTypes.dataToken.name
@@ -23,9 +27,9 @@ export function normalizeOperandToInt32(
 
   const normalizedType = converter.getOperandType(normalized);
   if (normalizedType.udonType === UdonType.Int32) {
-    // Keep constants as-is, but force a cast for variables/temps so the value
-    // is re-materialized into a guaranteed Int32 slot right before use.
-    if (normalized.kind === TACOperandKind.Constant) {
+    // Keep already-typed Int32 values as-is to avoid redundant ToInt32 calls.
+    // Re-materialize only when coming from erased/object-like sources.
+    if (normalized.kind === TACOperandKind.Constant || !sourceWasErased) {
       return normalized;
     }
   }

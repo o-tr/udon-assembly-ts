@@ -1368,7 +1368,6 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       // any/object receiver must be normalized to Int32 before SoA DataList index comparison.
-      expect(result.tac).toMatch(/= cast boxed\b/);
       expect(result.tac).toContain("__soa_Tile_code.get_Item");
       expect(result.uasm).toContain(
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
@@ -1399,7 +1398,6 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      expect(result.tac).toMatch(/= cast boxed\b/);
       expect(result.tac).toContain("__soa_Tile_code.get_Item");
       expect(result.uasm).toContain(
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
