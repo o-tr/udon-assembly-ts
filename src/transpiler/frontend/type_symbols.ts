@@ -384,6 +384,15 @@ export const ExternTypes = {
 
 export const ObjectType = new ObjectTypeSymbol();
 
+export function isPlainObjectType(
+  type: TypeSymbol | null | undefined,
+): boolean {
+  return (
+    !!type &&
+    type.name === ObjectType.name &&
+    type.udonType === ObjectType.udonType
+  );
+}
 /**
  * Maps a C# type name (from type metadata registry) to a TypeSymbol.
  */

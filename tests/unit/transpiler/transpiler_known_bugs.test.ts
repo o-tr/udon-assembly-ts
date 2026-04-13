@@ -1002,6 +1002,50 @@ describe("known transpiler bugs", () => {
       );
     });
 
+    it("Map<string, unknown>.get() cast to string should unwrap via String", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, unknown> = new Map<string, unknown>();
+            m.set("key", "hello");
+            const val = m.get("key") as string;
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
+    it("Map<string, unknown>.keys().next().value should not use get_Reference", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, unknown> = new Map<string, unknown>();
+            m.set("a", "hello");
+            const firstKey = m.keys().next().value;
+            if (firstKey !== undefined) {
+              m.delete(firstKey);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
     it("Map<string, any>.get() result variable should be DataToken-typed in data section", () => {
       const source = `
         class Main {
