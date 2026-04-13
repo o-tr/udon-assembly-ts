@@ -697,6 +697,18 @@ exports[`JS Runtime Equivalence Tests > JS: loop_variable_scoping 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: lru_cache_map_get_regression 1`] = `
+[
+  "True",
+  "True",
+  "2",
+  "False",
+  "True",
+  "3",
+  "0",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: lru_numeric_compare_regression 1`] = `
 [
   "True",
@@ -1203,6 +1215,16 @@ exports[`JS Runtime Equivalence Tests > JS: ternary_and_shortcircuit 1`] = `
   "small",
   "False",
   "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: tile_sort_compare 1`] = `
+[
+  "LT",
+  "GT",
+  "EQ",
+  "LE",
+  "GE",
 ]
 `;
 

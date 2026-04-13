@@ -10,6 +10,7 @@ import {
   ExternTypes,
   getNativeArrayTypeName,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   mapCSharpTypeToTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
@@ -179,6 +180,17 @@ const resolveMapValueType = (
     );
   }
   return fallback ?? ObjectType;
+};
+
+const resolveMapGetResultType = (
+  converter: ASTToTACConverter,
+  mapValueType: TypeSymbol,
+): TypeSymbol => {
+  if (!isPlainObjectType(mapValueType)) return mapValueType;
+  // `expr as T` should guide Map.get() unwrap when map value generic is unknown/any.
+  const expected = converter.currentExpectedType;
+  if (!expected || isPlainObjectType(expected)) return mapValueType;
+  return expected;
 };
 
 const isLiteralRadix10 = (operand: TACOperand): boolean => {
@@ -2691,9 +2703,7 @@ export function visitCallExpression(
     // Iterator .next() on DataList: translate to get_Item(0) returning DataToken.
     // Only supports the single-shot `map.keys().next().value` idiom — repeated
     // .next() calls will always return the first element.
-    // The returned DataToken is unwrapped by the `.value` handler in
-    // visitPropertyAccessExpression. For primitive-typed keys (int, float),
-    // .Reference returns null — only string/reference-type keys are supported.
+    // Attach a best-effort unwrap hint for the subsequent `.value` access.
     if (
       propAccess.property === "next" &&
       evaluatedArgs.length === 0 &&
@@ -2707,6 +2717,14 @@ export function visitCallExpression(
           createConstant(0, PrimitiveTypes.int32),
         ]),
       );
+      const tokenKey = operandTrackingKey(tokenResult);
+      if (tokenKey) {
+        const hintedValueType =
+          objectType instanceof DataListTypeSymbol
+            ? objectType.elementType
+            : ObjectType;
+        this.dataTokenValueHints.set(tokenKey, hintedValueType);
+      }
       return tokenResult;
     }
 
@@ -4002,13 +4020,6 @@ function visitMapMethodCall(
 ): TACOperand | null {
   const keyType = resolveMapKeyType(mapType);
   const valueType = resolveMapValueType(mapType);
-  const unwrapToken = (
-    token: TACOperand,
-    targetType: TypeSymbol,
-  ): TACOperand =>
-    targetType.name === ExternTypes.dataToken.name
-      ? token
-      : converter.unwrapDataToken(token, targetType);
 
   switch (propAccess.property) {
     case "set": {
@@ -4034,12 +4045,13 @@ function visitMapMethodCall(
       const keyValue = converter.visitExpression(rawArgs[0]);
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.newTemp(ExternTypes.dataToken);
+      const getResultType = resolveMapGetResultType(converter, valueType);
       converter.instructions.push(
         new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
           keyToken,
         ]),
       );
-      return unwrapToken(valueToken, valueType);
+      return converter.unwrapDataToken(valueToken, getResultType);
     }
     case "has": {
       if (rawArgs.length !== 1) {
@@ -4172,8 +4184,8 @@ function visitMapMethodCall(
         ]),
       );
 
-      const keyValue = unwrapToken(keyToken, keyType);
-      const valueValue = unwrapToken(valueToken, valueType);
+      const keyValue = converter.unwrapDataToken(keyToken, keyType);
+      const valueValue = converter.unwrapDataToken(valueToken, valueType);
 
       if (paramVars[0]) {
         converter.emitCopyWithTracking(paramVars[0], valueValue);
