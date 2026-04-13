@@ -20,6 +20,9 @@ export class SystemString {
   static Concat(_a: string, _b: string): string {
     return "";
   }
+  static IsNullOrEmpty(_value: string): boolean {
+    return false;
+  }
 
   Contains(_value: string): boolean {
     return false;

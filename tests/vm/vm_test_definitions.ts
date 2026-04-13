@@ -395,4 +395,100 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "string_ts_compat_methods",
     sourceFile: "string_ts_compat_methods.ts",
   },
+  // --- Expanded coverage: exception/data/interface/control-flow ---
+  {
+    name: "exception_path_with_rethrow",
+    sourceFile: "exception_path_with_rethrow.ts",
+  },
+  {
+    name: "dictionary_iteration_order",
+    sourceFile: "dictionary_iteration_order.ts",
+  },
+  {
+    name: "datalist_nested_mutation",
+    sourceFile: "datalist_nested_mutation.ts",
+  },
+  {
+    name: "recursion_branching_depth",
+    sourceFile: "recursion_branching_depth.ts",
+  },
+  {
+    name: "optional_chaining_method_call",
+    sourceFile: "optional_chaining_method_call.ts",
+    expectError: true,
+  },
+  {
+    name: "string_concat_deep_mixed",
+    sourceFile: "string_concat_deep_mixed.ts",
+  },
+  {
+    name: "for_of_continue_break_mix",
+    sourceFile: "for_of_continue_break_mix.ts",
+  },
+  {
+    name: "enum_bitflag_style",
+    sourceFile: "enum_bitflag_style.ts",
+  },
+  {
+    name: "interface_dispatch_chained_return",
+    sourceFile: "interface_dispatch_chained_return.ts",
+  },
+  // --- Expanded coverage round 2 ---
+  {
+    name: "data_dictionary_trygetvalue_flow",
+    sourceFile: "data_dictionary_trygetvalue_flow.ts",
+  },
+  {
+    name: "data_list_insert_removeat_flow",
+    sourceFile: "data_list_insert_removeat_flow.ts",
+  },
+  {
+    name: "mathf_clamp_round_combo",
+    sourceFile: "mathf_clamp_round_combo.ts",
+  },
+  {
+    name: "switch_negative_case",
+    sourceFile: "switch_negative_case.ts",
+  },
+  {
+    name: "array_literal_accumulate_reassign",
+    sourceFile: "array_literal_accumulate_reassign.ts",
+  },
+  {
+    name: "nullish_ternary_mix",
+    sourceFile: "nullish_ternary_mix.ts",
+  },
+  // --- Expanded coverage round 3: DataContainer + control flow ---
+  {
+    name: "data_dictionary_getvalues_accumulate",
+    sourceFile: "data_dictionary_getvalues_accumulate.ts",
+  },
+  {
+    name: "data_dictionary_overwrite_reinsert",
+    sourceFile: "data_dictionary_overwrite_reinsert.ts",
+  },
+  {
+    name: "data_list_insert_middle_shift",
+    sourceFile: "data_list_insert_middle_shift.ts",
+  },
+  {
+    name: "data_list_remove_missing_then_add",
+    sourceFile: "data_list_remove_missing_then_add.ts",
+  },
+  {
+    name: "control_flow_nested_break_flag",
+    sourceFile: "control_flow_nested_break_flag.ts",
+  },
+  {
+    name: "control_flow_switch_in_if_chain",
+    sourceFile: "control_flow_switch_in_if_chain.ts",
+  },
+  {
+    name: "control_flow_do_while_continue_break",
+    sourceFile: "control_flow_do_while_continue_break.ts",
+  },
+  {
+    name: "control_flow_ternary_continue",
+    sourceFile: "control_flow_ternary_continue.ts",
+  },
 ];

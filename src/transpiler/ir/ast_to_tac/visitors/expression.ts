@@ -86,6 +86,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
+import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
@@ -842,6 +843,7 @@ export function visitShortCircuitAnd(
   const endLabel = this.newLabel("and_end");
 
   const left = this.visitExpression(node.left);
+  const coercedLeft = this.coerceToBoolean(left);
   const result = this.newTemp(PrimitiveTypes.boolean);
   this.instructions.push(
     new AssignmentInstruction(
@@ -849,10 +851,10 @@ export function visitShortCircuitAnd(
       createConstant(false, PrimitiveTypes.boolean),
     ),
   );
-  this.instructions.push(new ConditionalJumpInstruction(left, endLabel));
+  this.instructions.push(new ConditionalJumpInstruction(coercedLeft, endLabel));
 
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -866,8 +868,9 @@ export function visitShortCircuitOr(
   const endLabel = this.newLabel("or_end");
 
   const left = this.visitExpression(node.left);
+  const coercedLeft = this.coerceToBoolean(left);
   this.instructions.push(
-    new ConditionalJumpInstruction(left, shortCircuitLabel),
+    new ConditionalJumpInstruction(coercedLeft, shortCircuitLabel),
   );
 
   this.instructions.push(
@@ -880,7 +883,7 @@ export function visitShortCircuitOr(
 
   this.instructions.push(new LabelInstruction(shortCircuitLabel));
   const right = this.visitExpression(node.right);
-  this.emitCopyWithTracking(result, right);
+  this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.instructions.push(new LabelInstruction(endLabel));
   return result;
 }
@@ -890,7 +893,12 @@ export function visitUnaryExpression(
   node: UnaryExpressionNode,
 ): TACOperand {
   const operand = this.visitExpression(node.operand);
-  const resultType = this.getOperandType(operand);
+  // Logical NOT always produces Boolean regardless of operand type.
+  // This ensures coerceToBoolean sees Boolean and skips redundant coercion.
+  const resultType =
+    node.operator === "!"
+      ? PrimitiveTypes.boolean
+      : this.getOperandType(operand);
   const result = this.newTemp(resultType);
 
   this.instructions.push(
@@ -903,7 +911,7 @@ export function visitConditionalExpression(
   this: ASTToTACConverter,
   node: ConditionalExpressionNode,
 ): TACOperand {
-  const condition = this.visitExpression(node.condition);
+  const condition = this.coerceToBoolean(this.visitExpression(node.condition));
   const falseLabel = this.newLabel("cond_false");
   const endLabel = this.newLabel("cond_end");
 
@@ -1482,6 +1490,83 @@ export function visitIdentifier(
   });
 }
 
+/**
+ * When true, emit runtime Count + bounds checks before DataList.get_Item.
+ * Non-negative numeric literals skip (Bug 6); unary `+K` with K ≥ 0 matches that fast path.
+ * Everything else (including negative literals, `-K`, dynamic indices) needs the guard.
+ */
+function needsDataListReadBoundsGuard(indexNode: ASTNode): boolean {
+  if (indexNode.kind === ASTNodeKind.Literal) {
+    const lit = indexNode as LiteralNode;
+    if (typeof lit.value === "number") {
+      return lit.value < 0;
+    }
+    return true;
+  }
+  if (indexNode.kind === ASTNodeKind.UnaryExpression) {
+    const u = indexNode as UnaryExpressionNode;
+    if (u.operator === "+" && u.operand.kind === ASTNodeKind.Literal) {
+      const lit = u.operand as LiteralNode;
+      if (typeof lit.value === "number" && lit.value >= 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * DataList-backed bracket read: (index >= 0) then Count + (index < Count) before get_Item.
+ * Lower-bound first avoids a redundant Count read when index is negative (P2).
+ * Two ifFalse jumps (no labels between Count and get_Item) — matches Bug 10 TAC detector.
+ */
+function emitDataListBracketRead(
+  converter: ASTToTACConverter,
+  array: TACOperand,
+  coercedIndex: TACOperand,
+  indexNode: ASTNode,
+): TACOperand {
+  const tokenResult = converter.newTemp(ExternTypes.dataToken);
+  if (!needsDataListReadBoundsGuard(indexNode)) {
+    converter.instructions.push(
+      new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+    );
+    return tokenResult;
+  }
+
+  const zero = createConstant(0, PrimitiveTypes.int32);
+  const geZero = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(geZero, coercedIndex, ">=", zero),
+  );
+  const skipLabel = converter.newLabel("dlrd_oob");
+  const mergeLabel = converter.newLabel("dlrd_merge");
+  converter.instructions.push(
+    new ConditionalJumpInstruction(geZero, skipLabel),
+  );
+  const countTemp = converter.newTemp(PrimitiveTypes.int32);
+  converter.instructions.push(
+    new PropertyGetInstruction(countTemp, array, "Count"),
+  );
+  const ltCount = converter.newTemp(PrimitiveTypes.boolean);
+  converter.instructions.push(
+    new BinaryOpInstruction(ltCount, coercedIndex, "<", countTemp),
+  );
+  converter.instructions.push(
+    new ConditionalJumpInstruction(ltCount, skipLabel),
+  );
+  converter.instructions.push(
+    new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+  );
+  converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
+  converter.instructions.push(new LabelInstruction(skipLabel));
+  const nullVal = createConstant(null, ObjectType);
+  const nullToken = converter.wrapDataToken(nullVal);
+  converter.instructions.push(new CopyInstruction(tokenResult, nullToken));
+  converter.instructions.push(new LabelInstruction(mergeLabel));
+  return tokenResult;
+}
+
 export function visitArrayAccessExpression(
   this: ASTToTACConverter,
   node: ArrayAccessExpressionNode,
@@ -1533,9 +1618,11 @@ export function visitArrayAccessExpression(
       arrayType instanceof DataListTypeSymbol
         ? arrayType.elementType
         : ObjectType;
-    const tokenResult = this.newTemp(ExternTypes.dataToken);
-    this.instructions.push(
-      new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+    const tokenResult = emitDataListBracketRead(
+      this,
+      array,
+      coercedIndex,
+      node.index,
     );
     if (arrayType instanceof DataListTypeSymbol) {
       return this.unwrapDataToken(tokenResult, elementType);
@@ -1570,9 +1657,11 @@ export function visitArrayAccessExpression(
     this.instructions.push(new CastInstruction(intIndex, index));
     coercedIndex = intIndex;
   }
-  const tokenResult = this.newTemp(ExternTypes.dataToken);
-  this.instructions.push(
-    new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
+  const tokenResult = emitDataListBracketRead(
+    this,
+    array,
+    coercedIndex,
+    node.index,
   );
   return this.unwrapDataToken(tokenResult, resolvedElementType);
 }
@@ -1996,11 +2085,7 @@ export function visitPropertyAccessExpression(
                 const hdlVar = this.newTemp(PrimitiveTypes.int32);
                 this.instructions.push(new CopyInstruction(hdlVar, object));
                 const token = this.newTemp(ExternTypes.dataToken);
-                this.instructions.push(
-                  new MethodCallInstruction(token, fieldList, "get_Item", [
-                    hdlVar,
-                  ]),
-                );
+                emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
                 return this.unwrapDataToken(token, untrackedPropType);
               }
               // SoA class property not in soaFieldLists — the fallthrough

@@ -343,7 +343,7 @@ export function visitIfStatement(
   this: ASTToTACConverter,
   node: IfStatementNode,
 ): void {
-  const condition = this.visitExpression(node.condition);
+  const condition = this.coerceToBoolean(this.visitExpression(node.condition));
   const elseLabel = this.newLabel("else");
   const endLabel = this.newLabel("endif");
 
@@ -374,7 +374,7 @@ export function visitWhileStatement(
   this.instructions.push(new LabelInstruction(startLabel));
 
   // Condition
-  const condition = this.visitExpression(node.condition);
+  const condition = this.coerceToBoolean(this.visitExpression(node.condition));
   this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
 
   // Body
@@ -410,7 +410,9 @@ export function visitForStatement(
   this.instructions.push(new LabelInstruction(startLabel));
 
   if (node.condition) {
-    const condition = this.visitExpression(node.condition);
+    const condition = this.coerceToBoolean(
+      this.visitExpression(node.condition),
+    );
     this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
   }
 
@@ -1109,7 +1111,7 @@ export function visitDoWhileStatement(
   this.loopContextStack.pop();
 
   this.instructions.push(new LabelInstruction(conditionLabel));
-  const condition = this.visitExpression(node.condition);
+  const condition = this.coerceToBoolean(this.visitExpression(node.condition));
   this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
   this.instructions.push(new UnconditionalJumpInstruction(startLabel));
   this.instructions.push(new LabelInstruction(endLabel));

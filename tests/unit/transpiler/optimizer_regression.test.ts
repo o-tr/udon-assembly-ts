@@ -3,14 +3,14 @@
  * via UASM comparison between UdonSharp (C#) and udon-assembly-ts.
  *
  * Each test is tagged with the category:
- *   [BUG]     — optimizer crashes or produces incorrect output
- *   [REGRESS] — optimization makes output worse than baseline (no optimization)
- *   [GAP]     — optimization is insufficient compared to expected behavior
- *   [PASS]    — optimization works correctly (green baseline for comparison)
+ *   [BUG]        — optimizer crashes or produces incorrect output
+ *   [REGRESS]    — optimization makes output worse than baseline (no optimization)
+ *   [GAP]        — optimization is insufficient compared to expected behavior
+ *   [PASS]       — optimization works correctly (green baseline for comparison)
+ *   [KNOWN FAIL] — known UdonSharp parity gap; uses it.fails; flip to it(...) when fixed
  *
- * Tests use it.fails() to document known failures. When a bug is fixed,
- * the corresponding test will start passing and it.fails() will flag it —
- * at that point, switch it back to a normal it().
+ * These cases were added after real optimizer regressions/bugs and should
+ * remain green to prevent future regressions.
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
@@ -75,7 +75,7 @@ describe("optimizer regression tests", () => {
   // [BUG] tail_merge crash on if/else-if/else with instance field access
   // ─────────────────────────────────────────────────────────────────────────
   describe("[BUG] tail_merge crash", () => {
-    it.fails("does not crash on if/else-if/else with property access and Debug.Log", () => {
+    it("does not crash on if/else-if/else with property access and Debug.Log", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -105,10 +105,10 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // [BUG] _start export missing after optimization
+  // [BUG] exported entry labels missing after optimization
   // ─────────────────────────────────────────────────────────────────────────
   describe("[BUG] _start export pruned by optimizer", () => {
-    it.fails("always exports _start even when optimization prunes methods", () => {
+    it("always exports _start even when optimization prunes methods", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -147,6 +147,15 @@ describe("optimizer regression tests", () => {
       const transpiler = new TypeScriptToUdonTranspiler();
       const result = transpiler.transpile(source, { optimize: true });
       expect(result.uasm).toContain(".export _start");
+      const expectedPublicExports = [
+        "__0_AddScore",
+        "ResetGame",
+        "GetScore",
+        "GetHighScore",
+      ];
+      for (const label of expectedPublicExports) {
+        expect(result.uasm).toContain(`.export ${label}`);
+      }
     });
   });
 
@@ -154,7 +163,7 @@ describe("optimizer regression tests", () => {
   // [REGRESS] diamond_simp: SSA reconstruction inflates instruction count
   // ─────────────────────────────────────────────────────────────────────────
   describe("[REGRESS] diamond simplification SSA inflation", () => {
-    it.fails("optimization should not increase instruction count for ternary patterns", () => {
+    it("optimization should not increase instruction count for ternary patterns", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -187,7 +196,7 @@ describe("optimizer regression tests", () => {
   // [REGRESS] loop optimization: SSA overhead increases instructions
   // ─────────────────────────────────────────────────────────────────────────
   describe("[REGRESS] loop optimization SSA overhead", () => {
-    it.fails("optimization should not increase instruction count for fibonacci loop", () => {
+    it("optimization should not increase instruction count for fibonacci loop", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -217,7 +226,7 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThanOrEqual(baselineCount);
     });
 
-    it.fails("optimization should not increase instruction count for simple loop unroll", () => {
+    it("optimization should not increase instruction count for simple loop unroll", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -244,7 +253,7 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThanOrEqual(baselineCount);
     });
 
-    it.fails("optimization should not increase instruction count for LICM pattern", () => {
+    it("optimization should not increase instruction count for LICM pattern", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -276,10 +285,114 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // [PASS] early return: optimized output must not add restrict init artifacts
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("[PASS] early return guard", () => {
+    it("should not inject __asm_restrict_eq_extern when optimized", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class EarlyReturnGuardTest extends UdonSharpBehaviour {
+          private isReady = false;
+
+          Start(): void {
+            if (!this.isReady) {
+              Debug.Log("skip");
+              return;
+            }
+            Debug.Log("run");
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const baseline = transpiler.transpile(source, { optimize: false });
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const baselineCount = countUasmInstructions(baseline.uasm);
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      expect(optimized.uasm).not.toContain("__asm_restrict_eq_extern");
+      expect(optimized.uasm).not.toContain(
+        "SystemBoolean.__op_UnaryNegation__SystemBoolean__SystemBoolean",
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(baselineCount);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // [KNOWN FAIL] compare:uasm — cases not yet improved (remove it.fails when fixed)
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("[KNOWN FAIL] UdonSharp parity gaps", () => {
+    it.fails("array_index_mutation should stay on Int32Array path (why: still widened to SingleArray)", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class ArrayIndexMutationTest extends UdonSharpBehaviour {
+          Start(): void {
+            const values: number[] = [1, 2, 3, 4];
+            values[1] = values[0] + values[2];
+            values[3] = values[1] * 2;
+            Debug.Log(values[1]);
+            Debug.Log(values[3]);
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      // TODO: convert to regular `it(...)` once the bug is fixed.
+      expect(optimized.uasm).toContain(
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
+      );
+      expect(optimized.uasm).not.toMatch(
+        /SystemSingleArray|SystemConvert\.__ToDouble__SystemSingle__SystemDouble|SystemMath\.__Truncate__SystemDouble__SystemDouble|SystemConvert\.__ToInt32__SystemDouble__SystemInt32/,
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(63);
+    });
+
+    it.fails("array_reassign_then_read should avoid float-conversion array pipeline (why: still SingleArray-based)", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class ArrayReassignThenReadTest extends UdonSharpBehaviour {
+          Start(): void {
+            const values = [2, 4, 6];
+            values[0] = values[1] + 1;
+            values[2] = values[0] + values[1];
+            Debug.Log(values[0]);
+            Debug.Log(values[2]);
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const optimized = transpiler.transpile(source, { optimize: true });
+      const optimizedCount = countUasmInstructions(optimized.uasm);
+
+      // TODO: convert to regular `it(...)` once the bug is fixed.
+      expect(optimized.uasm).toContain(
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
+      );
+      expect(optimized.uasm).not.toMatch(
+        /SystemSingleArray|SystemConvert\.__ToDouble__SystemSingle__SystemDouble|SystemMath\.__Truncate__SystemDouble__SystemDouble|SystemConvert\.__ToInt32__SystemDouble__SystemInt32/,
+      );
+      expect(optimizedCount).toBeLessThanOrEqual(59);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // [GAP] constant folding: chain of constant arithmetic should fully fold
   // ─────────────────────────────────────────────────────────────────────────
   describe("[GAP] constant folding chain", () => {
-    it.fails("folds a chain of constant arithmetic to a single value at TAC level", () => {
+    it("folds a chain of constant arithmetic to a single value at TAC level", () => {
       // t0 = 2 + 3   → 5
       // t1 = t0 * 4  → 20
       // t2 = 100 / 5 → 20
@@ -357,7 +470,7 @@ describe("optimizer regression tests", () => {
       }
     });
 
-    it.fails("end-to-end: constant arithmetic chain produces fewer externs when optimized", () => {
+    it("end-to-end: constant arithmetic chain produces fewer externs when optimized", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -428,6 +541,34 @@ describe("optimizer regression tests", () => {
 
       // Algebraic simplification should remove identity arithmetic ops
       expect(optimizedCount).toBeLessThan(baselineCount);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // [PASS] native Int32Array: indexed write must not widen to SystemSingleArray
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("[PASS] Int32 native array index mutation with optimizer", () => {
+    it("explicit UdonInt[] literal index write stays on SystemInt32Array path", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        @UdonBehaviour()
+        export class ArrayIndexMutationTest extends UdonSharpBehaviour {
+          Start(): void {
+            const xs: UdonInt[] = [1, 2, 3];
+            xs[1] = (5 as UdonInt);
+            Debug.Log(xs[0]);
+          }
+        }
+      `;
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const result = transpiler.transpile(source, { optimize: true });
+      expect(result.uasm).toContain("SystemInt32Array.__Set__");
+      expect(result.uasm).not.toContain("SystemSingleArray.__Set__");
+      expect(result.uasm).not.toContain("SystemSingleArray.__Get__");
     });
   });
 });

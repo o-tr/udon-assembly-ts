@@ -671,7 +671,11 @@ export class UdonAssembler {
         // Labels appear on their own line
         const labelName = (inst as LabelInstruction).name;
         const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
-        if (canonicalLabel !== labelName) {
+        // Keep externally callable labels even when same-address labels are
+        // canonicalized; VRC events and exportLabels are part of the public ABI.
+        const preserveAliasLabel =
+          isVrcEventLabel(labelName) || exportLabels?.has(labelName);
+        if (canonicalLabel !== labelName && !preserveAliasLabel) {
           continue;
         }
         if (labelName === "_start") {

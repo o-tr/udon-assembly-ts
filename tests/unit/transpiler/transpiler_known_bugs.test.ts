@@ -51,6 +51,17 @@
  *         at runtime because the DataToken stores a typed value (String, Int, etc.)
  *         that cannot be accessed via .Reference.
  *         (root cause #11 residual in vm-test-failures-investigation.md)
+ *
+ * Bug 10 (FIXED): DataList.get_Item bounds safety on dynamic cache reads —
+ *         non-literal indices emit Count + (index >= 0) + (index < Count) + ifFalse
+ *         before get_Item; negative numeric / unary-minus literals use the same guard.
+ *         Null DataToken fallback when out of bounds.
+ *         (root cause #18 in vm-test-failures-investigation.md)
+ *
+ * Bug 11 (FIXED): Flyweight cache typed unwrap stability — SoA DataList get_Item
+ *         now emits Count / index < Count / ifFalse guards (plus OOB get_Item(0))
+ *         before field loads in SoA method dispatch and untracked property reads.
+ *         (root cause #19/#20 in vm-test-failures-investigation.md)
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -64,6 +75,123 @@ function getDataSection(uasm: string): string[] {
   const endIdx = lines.findIndex((l) => l.includes(".data_end"));
   if (startIdx < 0 || endIdx < 0) return [];
   return lines.slice(startIdx, endIdx + 1);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** `indexVar >= 0` / `0 <= indexVar` assignment must be followed by ifFalse/if on that temp. */
+function hasLowerBoundGuardBranch(
+  guardScanLines: string[],
+  indexVar: string,
+): boolean {
+  const escapedIndexVar = escapeRegex(indexVar);
+  const lowerAssignRe = new RegExp(
+    `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*>=\\s*0|0\\s*<=\\s*${escapedIndexVar})`,
+  );
+  for (let i = 0; i < guardScanLines.length; i++) {
+    const m = guardScanLines[i].trim().match(lowerAssignRe);
+    if (!m?.[1]) continue;
+    const lbTemp = m[1];
+    const branchPattern = new RegExp(
+      `^(ifFalse|ifTrue|if)\\s+${escapeRegex(lbTemp)}\\s+goto\\b`,
+    );
+    if (
+      guardScanLines
+        .slice(i + 1)
+        .some((line) => branchPattern.test(line.trim()))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function detectIndexAwareGuardBeforeGetItem(
+  tacLines: string[],
+  getItemIdx: number,
+  countAssignmentPattern: RegExp,
+  requireLowerBound = false,
+): boolean {
+  if (getItemIdx <= 0 || getItemIdx >= tacLines.length) return false;
+
+  const getItemLine = tacLines[getItemIdx];
+  const indexVarMatch = getItemLine.match(/get_Item\(([^)]+)\)/);
+  const indexVar = indexVarMatch?.[1]?.trim();
+  if (!indexVar) return false;
+  const escapedIndexVar = escapeRegex(indexVar);
+
+  // Scope the scan to the enclosing TAC label block to avoid accidental
+  // matches from unrelated earlier blocks/method fragments.
+  let blockStart = 0;
+  for (let i = getItemIdx - 1; i >= 0; i--) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*:$/.test(tacLines[i].trim())) {
+      blockStart = i + 1;
+      break;
+    }
+  }
+  const collectCountAssignments = (
+    lines: string[],
+  ): { i: number; countVar: string }[] =>
+    lines
+      .map((line, i) => ({
+        i,
+        countVar: line.trim().match(countAssignmentPattern)?.[1],
+      }))
+      .filter(
+        (entry): entry is { i: number; countVar: string } => !!entry.countVar,
+      );
+
+  let guardScanLines = tacLines.slice(blockStart, getItemIdx);
+  let countAssignments = collectCountAssignments(guardScanLines);
+  // OOB `get_Item(0)` often follows a label while `.Count` was read earlier in
+  // the same helper; allow matching that assignment by scanning from TAC start.
+  if (countAssignments.length === 0) {
+    guardScanLines = tacLines.slice(0, getItemIdx);
+    countAssignments = collectCountAssignments(guardScanLines);
+  }
+  if (countAssignments.length === 0) return false;
+
+  const countVars = [
+    ...new Set(countAssignments.map((entry) => entry.countVar)),
+  ];
+  const matched = countVars.some((countVar) => {
+    const assignIndices = countAssignments
+      .filter((entry) => entry.countVar === countVar)
+      .map((entry) => entry.i);
+    if (assignIndices.length === 0) return false;
+
+    const escapedCountVar = escapeRegex(countVar);
+    const comparisonPattern = new RegExp(
+      `^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(?:${escapedIndexVar}\\s*(<|<=|>|>=)\\s*${escapedCountVar}|${escapedCountVar}\\s*(<|<=|>|>=)\\s*${escapedIndexVar})$`,
+    );
+    return assignIndices.some((assignIdx) => {
+      const afterAssign = guardScanLines.slice(assignIdx + 1);
+
+      for (let i = 0; i < afterAssign.length; i++) {
+        const comparisonMatch = afterAssign[i].trim().match(comparisonPattern);
+        if (!comparisonMatch?.[1]) continue;
+
+        const cmpTemp = comparisonMatch[1];
+        const escapedCmpTemp = escapeRegex(cmpTemp);
+        const branchPattern = new RegExp(
+          `^(ifFalse|ifTrue|if)\\s+${escapedCmpTemp}\\s+goto\\b`,
+        );
+        const hasGuardBranch = afterAssign
+          .slice(i + 1)
+          .some((line) => branchPattern.test(line.trim()));
+        if (hasGuardBranch) return true;
+      }
+
+      return false;
+    });
+  });
+  if (!matched) return false;
+  if (requireLowerBound) {
+    return hasLowerBoundGuardBranch(guardScanLines, indexVar);
+  }
+  return true;
 }
 
 describe("known transpiler bugs", () => {
@@ -482,6 +610,38 @@ describe("known transpiler bugs", () => {
       return contexts;
     }
 
+    /**
+     * Assert that every PUSH immediately before a JUMP_IF_FALSE references
+     * a %SystemBoolean variable in the data section.
+     */
+    function assertJumpIfFalseUsesBoolean(
+      uasm: string,
+      dataSection: string[],
+    ): void {
+      const contexts = getJumpIfFalseContexts(uasm);
+      expect(contexts.length).toBeGreaterThan(0);
+      for (const ctx of contexts) {
+        // The target JUMP_IF_FALSE is always the last element of the context.
+        // Use length-1 instead of findIndex to avoid matching a prior
+        // JUMP_IF_FALSE that falls within the context window.
+        const jifIdx = ctx.length - 1;
+        let pushLine: string | undefined;
+        for (let k = jifIdx - 1; k >= 0; k--) {
+          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
+            pushLine = ctx[k];
+            break;
+          }
+        }
+        expect(pushLine).toBeDefined();
+        const varName = pushLine?.trim().replace("PUSH, ", "");
+        const dataEntry = dataSection.find((l) =>
+          l.trimStart().startsWith(`${varName}:`),
+        );
+        expect(dataEntry).toBeDefined();
+        expect(dataEntry).toContain("%SystemBoolean");
+      }
+    }
+
     it("boolean variable in if-condition needs no coercion (baseline)", () => {
       const source = `
         class Main {
@@ -504,7 +664,7 @@ describe("known transpiler bugs", () => {
       expect(jumpContext).toContain("PUSH, flag");
     });
 
-    it.fails("integer variable in if-condition should be coerced to boolean", () => {
+    it("integer variable in if-condition should be coerced to boolean", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
@@ -517,19 +677,17 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: JUMP_IF_FALSE should be preceded by a != 0 comparison
       // that produces a Boolean result.
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      // Must have an inequality/equality comparison to produce Boolean
-      expect(jumpContext).toMatch(
+      expect(result.uasm).toMatch(
         /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
       );
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
     });
 
-    it.fails("string variable in if-condition should be coerced to boolean via length check", () => {
+    it("string variable in if-condition should be coerced to boolean via IsNullOrEmpty", () => {
       const source = `
         class Main {
           Start(): void {
@@ -541,16 +699,16 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
-      // After fix: should check str.Length != 0 for JS truthiness semantics
-      expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
+      // After fix: should use String.IsNullOrEmpty for null-safe truthiness
+      expect(result.uasm).toContain(
+        "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean",
+      );
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
     });
 
-    it.fails("integer ternary condition should be coerced to boolean", () => {
+    it("integer ternary condition should be coerced to boolean", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         class Main {
@@ -562,14 +720,13 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: the ternary condition should have a != 0 comparison
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      expect(jumpContext).toMatch(
+      expect(result.uasm).toMatch(
         /op_Inequality|op_Equality|op_GreaterThan|op_LessThan/,
       );
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
     });
 
     it("logical NOT on integer should produce Boolean-typed result", () => {
@@ -586,38 +743,15 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-      // The declared type of `negated` is inferred as `boolean` by the parser,
-      // so the variable is allocated as %SystemBoolean in the data section even
-      // though the UnaryOp intermediate temp is Int32. JUMP_IF_FALSE therefore
-      // receives a Boolean push, avoiding HeapTypeMismatchException.
       const dataSection = getDataSection(result.uasm);
 
-      // All temps used in JUMP_IF_FALSE must be %SystemBoolean.
-      // The PUSH immediately before JUMP_IF_FALSE is the condition operand.
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      for (const ctx of contexts) {
-        const jifIdx = ctx.findIndex((l) => l.includes("JUMP_IF_FALSE"));
-        // Search backwards from JUMP_IF_FALSE for the immediately preceding PUSH
-        let pushLine: string | undefined;
-        for (let k = jifIdx - 1; k >= 0; k--) {
-          if (ctx[k].includes("PUSH") && !ctx[k].includes("EXTERN")) {
-            pushLine = ctx[k];
-            break;
-          }
-        }
-        expect(pushLine).toBeDefined();
-        const varName = pushLine?.trim().replace("PUSH, ", "");
-        const dataEntry = dataSection.find((l) =>
-          l.trimStart().startsWith(`${varName}:`),
-        );
-        expect(dataEntry).toBeDefined();
-        expect(dataEntry).toContain("%SystemBoolean");
-      }
+      // The `!` operator always produces a Boolean-typed result in TAC,
+      // so the variable and all intermediate temps are %SystemBoolean.
+      // JUMP_IF_FALSE receives a Boolean push, avoiding HeapTypeMismatchException.
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
     });
 
-    it.fails("inline class instance in if-condition should be coerced to boolean", () => {
+    it("inline class instance in if-condition should be coerced to boolean", () => {
       // No for-loop or other conditionals — the only JUMP_IF_FALSE in the
       // output corresponds to `if (r)`, so contexts[0] is unambiguous.
       const source = `
@@ -637,13 +771,70 @@ describe("known transpiler bugs", () => {
         }
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
 
       // After fix: the inline handle (Int32) should be compared against
       // null or 0 to produce a Boolean before JUMP_IF_FALSE.
-      const contexts = getJumpIfFalseContexts(result.uasm);
-      expect(contexts.length).toBeGreaterThan(0);
-      const jumpContext = contexts[0].join("\n");
-      expect(jumpContext).toMatch(/op_Inequality|op_Equality/);
+      expect(result.uasm).toMatch(/op_Inequality|op_Equality/);
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
+    });
+
+    it("short-circuit AND with non-boolean operands should coerce both sides", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            const a: UdonInt = 1;
+            const b: UdonInt = 2;
+            if (a && b) {
+              Debug.Log("both truthy");
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
+
+      // Both operands should be coerced; all JUMP_IF_FALSE must use Boolean
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
+    });
+
+    it("short-circuit OR with non-boolean operands should coerce both sides", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            const a: UdonInt = 0;
+            const b: UdonInt = 1;
+            if (a || b) {
+              Debug.Log("at least one truthy");
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
+
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
+    });
+
+    it("non-boolean while-loop condition should be coerced to boolean", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            let n: UdonInt = 5;
+            while (n) {
+              Debug.Log(n);
+              n = (n - 1) as UdonInt;
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
+
+      assertJumpIfFalseUsesBoolean(result.uasm, dataSection);
     });
   });
 
@@ -652,7 +843,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("SoA D3 method dispatch", () => {
-    it.fails("method call on SoA class instance from for-of loop should not produce dispatch miss", () => {
+    it("method call on SoA class instance from for-of loop should not produce dispatch miss", () => {
       const source = `
         class Item {
           value: number;
@@ -682,11 +873,13 @@ describe("known transpiler bugs", () => {
       // After fix: SoA fast path should be used instead of per-instance
       // handle comparison that always misses for dynamic SoA handles.
       expect(result.uasm).not.toContain("dispatch miss");
-      // Should still read from SoA DataLists
-      expect(result.uasm).toContain("__soa_Item_label");
+      // SoA fast path prologue should load fields from DataLists
+      expect(result.tac).toContain("__soa_Item_label.get_Item");
+      // getLabel() is read-only — no field write-back expected
+      expect(result.tac).not.toContain("__soa_Item_label.set_Item");
     });
 
-    it.fails("method call on SoA class instance returned from cache should not produce dispatch miss", () => {
+    it("method call on SoA class instance returned from cache should not produce dispatch miss", () => {
       const source = `
         class Tile {
           kind: number;
@@ -721,8 +914,10 @@ describe("known transpiler bugs", () => {
       // After fix: the returned Tile instance from cache should be
       // dispatchable via SoA fast path.
       expect(result.uasm).not.toContain("dispatch miss");
-      // Should read SoA fields for the inlined toString() body
-      expect(result.uasm).toContain("__soa_Tile_kind");
+      // SoA fast path prologue should load fields from DataLists
+      expect(result.tac).toContain("__soa_Tile_kind.get_Item");
+      // toString() is read-only — no field write-back expected
+      expect(result.tac).not.toContain("__soa_Tile_kind.set_Item");
     });
   });
 
@@ -834,6 +1029,254 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
+    it("Map<string, any>.get() result variable should be DataToken-typed in data section", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, any> = new Map<string, any>();
+            m.set("key", 42);
+            const val = m.get("key");
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const dataSection = getDataSection(result.uasm);
+
+      // The variable 'val' should be typed as DataToken (not SystemObject)
+      // because unwrapDataToken returns the DataToken operand as-is
+      // (rather than unwrapping to a typed temporary), preserving its
+      // original DataToken type.
+      const valLine = dataSection.find((l) => l.trimStart().startsWith("val:"));
+      expect(valLine).toBeDefined();
+      expect(valLine).toContain("%VRCSDK3DataDataToken");
+    });
+
+    it("Map<string, string>.get() should still use typed unwrap (regression guard)", () => {
+      // When the value type is known (e.g. string), unwrapDataToken must
+      // still use the typed accessor (.String), not skip the unwrap.
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, string> = new Map<string, string>();
+            m.set("key", "hello");
+            const val: string = m.get("key");
+            Debug.Log(val);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Typed Map should use .String accessor, not .Reference
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 10: DataList.get_Item bounds safety
+  // ---------------------------------------------------------------------------
+
+  describe("DataList.get_Item bounds safety", () => {
+    it("dynamic cache index reads should emit index-aware Count guard before get_Item", () => {
+      const source = `
+          class Item {
+            constructor(public value: number) {}
+            static cache: Item[] = [];
+            static seed(): void {
+              for (let i: number = 0; i < 3; i++) {
+                Item.cache.push(new Item(i));
+              }
+            }
+            static at(index: number): Item {
+              return Item.cache[index];
+            }
+          }
+          class Main {
+            Start(): void {
+              Item.seed();
+              const it = Item.at(1);
+              Debug.Log(it.value);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+      const cacheGetIdx = tacLines.findIndex((l) =>
+        l.includes("Item__cache.get_Item("),
+      );
+      expect(cacheGetIdx).toBeGreaterThan(0);
+
+      const hasIndexAwareGuard = detectIndexAwareGuardBeforeGetItem(
+        tacLines,
+        cacheGetIdx,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+        true,
+      );
+
+      expect(hasIndexAwareGuard).toBe(true);
+    });
+
+    it("primitive number[] cache with negative literal and unary-minus indices emit guards", () => {
+      const source = `
+          class Item {
+            static cache: number[] = [];
+            static seed(): void {
+              for (let i: number = 0; i < 3; i++) {
+                Item.cache.push(i);
+              }
+            }
+            static at(index: number): number {
+              return Item.cache[index];
+            }
+          }
+          class Main {
+            Start(): void {
+              Item.seed();
+              Debug.Log(Item.at(-1));
+              Debug.Log(Item.at(-(1)));
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+      const getIndices = tacLines
+        .map((l, idx) => (l.includes("Item__cache.get_Item(") ? idx : -1))
+        .filter((idx) => idx >= 0);
+      expect(getIndices.length).toBeGreaterThanOrEqual(2);
+
+      for (const idx of getIndices) {
+        expect(
+          detectIndexAwareGuardBeforeGetItem(
+            tacLines,
+            idx,
+            /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Item__cache\.Count$/,
+            true,
+          ),
+        ).toBe(true);
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 11: Flyweight cache typed unwrap stability
+  // ---------------------------------------------------------------------------
+
+  describe("flyweight cache typed unwrap stability", () => {
+    it("cache-returned inline instance should use String/Boolean accessors without Reference fallback", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          getLabel(): string {
+            return this.label;
+          }
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 3; i++) {
+              Tile.cache.push(new Tile("tile" + i, i === 0));
+            }
+          }
+          static parse(_s: string): Tile {
+            return Tile.cache[1];
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const t = Tile.parse("1m");
+            Debug.Log(t.getLabel());
+            Debug.Log(t.isRed);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tacLines = result.tac.split("\n");
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.uasm).not.toContain("dispatch miss"); // guard against codegen fallback label emitted on unresolved dispatch
+
+      const soaGetIndices = tacLines
+        .map((line, idx) =>
+          line.includes("__soa_Tile_label.get_Item(") ||
+          line.includes("__soa_Tile_isRed.get_Item(")
+            ? idx
+            : -1,
+        )
+        .filter((idx) => idx >= 0);
+      expect(soaGetIndices.length).toBeGreaterThan(0);
+
+      for (const soaGetIdx of soaGetIndices) {
+        const hasHandleGuard = detectIndexAwareGuardBeforeGetItem(
+          tacLines,
+          soaGetIdx,
+          /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*__soa_Tile_(label|isRed)\.Count$/,
+        );
+        expect(hasHandleGuard).toBe(true);
+      }
+    });
+
+    it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class LRUCache {
+          private cache: Map<string, string> = new Map<string, string>();
+          private maxSize: UdonInt;
+          constructor(maxSize: UdonInt) {
+            this.maxSize = maxSize;
+          }
+          get(key: string): string {
+            if (!this.cache.has(key)) return "";
+            const value = this.cache.get(key)!;
+            this.cache.delete(key);
+            this.cache.set(key, value);
+            if (this.cache.size != this.maxSize) {
+              Debug.Log("neq");
+            }
+            if (this.cache.size > this.maxSize) {
+              Debug.Log("gt");
+            }
+            return value;
+          }
+          seed(): void {
+            this.cache.set("a", "hello");
+          }
+        }
+        class Main {
+          Start(): void {
+            const c = new LRUCache(2 as UdonInt);
+            c.seed();
+            Debug.Log(c.get("a"));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataDictionary.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken",
+      );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_String__SystemString",
       );
