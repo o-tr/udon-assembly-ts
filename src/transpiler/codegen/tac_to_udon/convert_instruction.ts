@@ -102,7 +102,9 @@ export function convertInstruction(
         } else if (leftIsNum) {
           promotedType = leftType;
         } else if (rightIsNum) {
-          promotedType = rightType;
+          // Keep left type when only right is numeric so extern selection
+          // stays consistent with the uncoerced left operand.
+          promotedType = leftType;
         } else {
           promotedType = leftType;
         }
