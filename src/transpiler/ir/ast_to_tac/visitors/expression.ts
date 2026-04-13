@@ -2693,8 +2693,7 @@ export function visitAsExpression(
         targetTypeSymbol.udonType === UdonType.Boolean ||
         (targetTypeSymbol.udonType === UdonType.String &&
           (NUMERIC_UDON_TYPES.has(srcType.udonType) ||
-            srcType.udonType === UdonType.Boolean ||
-            srcType.udonType === UdonType.String)))
+            srcType.udonType === UdonType.Boolean)))
     ) {
       this.instructions.push(new CastInstruction(result, operand));
     } else {

@@ -1404,6 +1404,37 @@ describe("known transpiler bugs", () => {
       );
       expect(result.uasm).not.toContain("dispatch miss");
     });
+
+    it("for-of path with boxed loop variable keeps Int32 normalization for SoA access", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+          toLabel(): string {
+            return "t" + this.code;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            for (const t of tiles) {
+              const boxed: any = t;
+              Debug.Log(boxed.code);
+              Debug.Log(boxed.toLabel());
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
   });
 
   describe("tile-like DataToken accessor mismatch regressions", () => {
