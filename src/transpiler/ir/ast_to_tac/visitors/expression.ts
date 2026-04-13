@@ -9,6 +9,7 @@ import {
   getNativeArrayTypeName,
   getPromotedType,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   mapCSharpTypeToTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
@@ -234,6 +235,8 @@ function resolvePropertyTypeFromType(
   return null;
 }
 
+// isPlainObjectType is imported from type_symbols.js
+
 export function resolveTypeFromNode(
   converter: ASTToTACConverter,
   node: ASTNode,
@@ -405,6 +408,69 @@ function resolveMethodReturnType(
     return resolveFromClassMap(isStatic);
   }
   return resolveFromClassMap(false) ?? resolveFromClassMap(true);
+}
+
+function resolveIteratorValueTypeFromNextCall(
+  converter: ASTToTACConverter,
+  nextCallNode: ASTNode,
+): TypeSymbol | null {
+  if (nextCallNode.kind !== ASTNodeKind.CallExpression) return null;
+  const nextCall = nextCallNode as CallExpressionNode;
+  if (
+    nextCall.arguments.length !== 0 ||
+    nextCall.callee.kind !== ASTNodeKind.PropertyAccessExpression
+  ) {
+    return null;
+  }
+  const nextAccess = nextCall.callee as PropertyAccessExpressionNode;
+  if (nextAccess.property !== "next") return null;
+
+  const iterableExpr = nextAccess.object;
+  const iterableType = resolveTypeFromNode(converter, iterableExpr);
+  if (iterableType instanceof DataListTypeSymbol) {
+    return iterableType.elementType;
+  }
+  if (iterableType instanceof ArrayTypeSymbol) {
+    return iterableType.elementType;
+  }
+
+  if (iterableExpr.kind !== ASTNodeKind.CallExpression) return null;
+  const iterableCall = iterableExpr as CallExpressionNode;
+  if (
+    iterableCall.arguments.length !== 0 ||
+    iterableCall.callee.kind !== ASTNodeKind.PropertyAccessExpression
+  ) {
+    return null;
+  }
+
+  const iterableAccess = iterableCall.callee as PropertyAccessExpressionNode;
+  const collectionType = resolveTypeFromNode(converter, iterableAccess.object);
+  if (!collectionType) return null;
+
+  if (
+    collectionType instanceof CollectionTypeSymbol &&
+    isMapCollectionType(collectionType)
+  ) {
+    switch (iterableAccess.property) {
+      case "keys":
+        return (collectionType.keyType as TypeSymbol | undefined) ?? null;
+      case "values":
+        return (collectionType.valueType as TypeSymbol | undefined) ?? null;
+      case "entries":
+        return ExternTypes.dataToken;
+      default:
+        return null;
+    }
+  }
+
+  if (
+    isSetCollectionType(collectionType) &&
+    (iterableAccess.property === "keys" || iterableAccess.property === "values")
+  ) {
+    return (collectionType.elementType as TypeSymbol | undefined) ?? null;
+  }
+
+  return null;
 }
 
 function flattenStringConcatChain(
@@ -2149,14 +2215,36 @@ export function visitPropertyAccessExpression(
       return result;
     }
 
-    // Iterator result .value on DataToken: unwrap via .Reference property.
-    // Handles the tail of the `map.keys().next().value` pattern.
-    // Note: .Reference returns null for primitive-keyed maps (int, float);
-    // only string/reference-type keys are supported by this pattern.
+    // Iterator result `.value` on DataToken (`map.keys().next().value` etc).
+    // Prefer iterable element type / expected type before falling back to
+    // `.Reference`, which is unsafe for primitive-backed tokens.
     if (
       objectType.name === ExternTypes.dataToken.name &&
       node.property === "value"
     ) {
+      const tokenKey = operandTrackingKey(object);
+      if (tokenKey) {
+        const hintedValueType = this.dataTokenValueHints.get(tokenKey);
+        if (hintedValueType) {
+          if (object.kind === TACOperandKind.Temporary) {
+            this.dataTokenValueHints.delete(tokenKey);
+          }
+          if (!isPlainObjectType(hintedValueType)) {
+            return this.unwrapDataToken(object, hintedValueType);
+          }
+        }
+      }
+      const iteratorValueType = resolveIteratorValueTypeFromNextCall(
+        this,
+        node.object,
+      );
+      if (iteratorValueType && !isPlainObjectType(iteratorValueType)) {
+        return this.unwrapDataToken(object, iteratorValueType);
+      }
+      const expected = this.currentExpectedType;
+      if (expected && !isPlainObjectType(expected)) {
+        return this.unwrapDataToken(object, expected);
+      }
       const result = this.newTemp(ObjectType);
       this.instructions.push(
         new PropertyGetInstruction(result, object, "Reference"),
@@ -2533,12 +2621,19 @@ export function visitAsExpression(
   this: ASTToTACConverter,
   node: AsExpressionNode,
 ): TACOperand {
-  const operand = this.visitExpression(node.expression);
   const targetTypeText = node.targetType.trim();
   if (targetTypeText === "const") {
-    return operand;
+    return this.visitExpression(node.expression);
   }
   const targetTypeSymbol = this.typeMapper.mapTypeScriptType(targetTypeText);
+  const prevExpectedType = this.currentExpectedType;
+  this.currentExpectedType = targetTypeSymbol;
+  let operand: TACOperand;
+  try {
+    operand = this.visitExpression(node.expression);
+  } finally {
+    this.currentExpectedType = prevExpectedType;
+  }
   const result = this.newTemp(targetTypeSymbol);
   const srcType = this.getOperandType(operand);
   // Use CastInstruction for numeric type conversions (e.g. float→int);

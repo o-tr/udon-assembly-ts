@@ -697,6 +697,18 @@ exports[`JS Runtime Equivalence Tests > JS: loop_variable_scoping 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: lru_cache_map_get_regression 1`] = `
+[
+  "True",
+  "True",
+  "2",
+  "False",
+  "True",
+  "3",
+  "0",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: lru_numeric_compare_regression 1`] = `
 [
   "True",

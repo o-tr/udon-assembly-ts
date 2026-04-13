@@ -43,6 +43,10 @@ const datalistArrayDisallowedExterns = [
   "SystemObjectArray.__get_Length__SystemInt32",
 ];
 
+const dataTokenReferenceDisallowedExterns = [
+  "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+];
+
 export const VM_TEST_CASES: VmTestCase[] = [
   { name: "simple_log", sourceFile: "simple_log.ts" },
   { name: "arithmetic", sourceFile: "arithmetic.ts" },
@@ -244,6 +248,12 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "tile_sort_compare",
     sourceFile: "tile_sort_compare.ts",
     expectedLogs: ["LT", "GT", "EQ", "LE", "GE"],
+  },
+  {
+    name: "lru_cache_map_get_regression",
+    sourceFile: "lru_cache_map_get_regression.ts",
+    expectedLogs: ["True", "True", "2", "False", "True", "3", "0"],
+    disallowedExterns: dataTokenReferenceDisallowedExterns,
   },
   { name: "numeric_cast_chain", sourceFile: "numeric_cast_chain.ts" },
   // --- Multi-part string concat ---
