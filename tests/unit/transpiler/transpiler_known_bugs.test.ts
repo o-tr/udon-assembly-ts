@@ -1475,7 +1475,25 @@ describe("known transpiler bugs", () => {
     }
   });
 
-  describe("as string cast guard for reference types", () => {
+  describe("as string cast extern coverage", () => {
+    it("should emit Convert.ToString for int-as-string assertions", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            const n: UdonInt = 42 as UdonInt;
+            const s = n as string;
+            Debug.Log(s);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToString__SystemInt32__SystemString",
+      );
+    });
+
     it("should not emit Transform-specific Convert.ToString extern for type assertions", () => {
       const source = `
         class Main {
