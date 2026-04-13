@@ -311,7 +311,9 @@ function ensureSoaOperands(
 
   const fields = collectAllInstanceFields(converter, classNode);
   const fieldLists = new Map<string, VariableOperand>();
+  const fieldTypes = new Map<string, TypeSymbol>();
   for (const field of fields) {
+    fieldTypes.set(field.name, field.type);
     fieldLists.set(
       field.name,
       createVariable(
@@ -321,6 +323,7 @@ function ensureSoaOperands(
     );
   }
   converter.soaFieldLists.set(className, fieldLists);
+  converter.soaFieldTypes.set(className, fieldTypes);
   converter.soaCounterVars.set(
     className,
     createVariable(`__soa_${className}__counter`, PrimitiveTypes.int32),
@@ -349,7 +352,38 @@ function createSoaSentinelValue(
   if (isNumericUdonType(fieldType.udonType)) {
     return createConstant(0, fieldType);
   }
-  return createConstant(0, PrimitiveTypes.int32);
+  if (
+    fieldType.udonType === UdonType.Array ||
+    fieldType.udonType === UdonType.DataList
+  ) {
+    const listValue = converter.newTemp(ExternTypes.dataList);
+    const listCtorSig = converter.requireExternSignature(
+      "DataList",
+      "ctor",
+      "method",
+      [],
+      "DataList",
+    );
+    converter.instructions.push(
+      new CallInstruction(listValue, listCtorSig, []),
+    );
+    return listValue;
+  }
+  if (fieldType.udonType === UdonType.DataDictionary) {
+    const dictValue = converter.newTemp(ExternTypes.dataDictionary);
+    const dictCtorSig = converter.requireExternSignature(
+      "DataDictionary",
+      "ctor",
+      "method",
+      [],
+      "DataDictionary",
+    );
+    converter.instructions.push(
+      new CallInstruction(dictValue, dictCtorSig, []),
+    );
+    return dictValue;
+  }
+  return createConstant(null, ObjectType);
 }
 
 /**
@@ -362,17 +396,11 @@ function createSoaSentinelValue(
 function emitSoaInitGuard(
   converter: ASTToTACConverter,
   className: string,
-  classNode: ClassDeclarationNode,
 ): void {
   const fieldLists = converter.soaFieldLists.get(className);
+  const fieldTypes = converter.soaFieldTypes.get(className);
   const counterVar = converter.soaCounterVars.get(className);
-  if (!fieldLists || !counterVar) return;
-  const fieldTypes = new Map(
-    collectAllInstanceFields(converter, classNode).map((field) => [
-      field.name,
-      field.type,
-    ]),
-  );
+  if (!fieldLists || !fieldTypes || !counterVar) return;
 
   const initedVar = createVariable(
     `__soa_${className}__inited`,
@@ -426,7 +454,7 @@ function emitSoaInitGuard(
   // Reserve index 0 as a sentinel in each DataList so that handle values
   // (starting at 1) align with DataList indices.
   for (const [fieldName, listVar] of fieldLists) {
-    const fieldType = fieldTypes.get(fieldName) ?? PrimitiveTypes.int32;
+    const fieldType = fieldTypes.get(fieldName) ?? ObjectType;
     const dummyToken = converter.wrapDataToken(
       createSoaSentinelValue(converter, fieldType),
     );
@@ -450,7 +478,7 @@ function initSoaForClass(
   classNode: ClassDeclarationNode,
 ): void {
   ensureSoaOperands(converter, className, classNode);
-  emitSoaInitGuard(converter, className, classNode);
+  emitSoaInitGuard(converter, className);
 }
 
 export function resolveClassProperty(

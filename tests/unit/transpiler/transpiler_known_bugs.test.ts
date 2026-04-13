@@ -81,6 +81,15 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const STRING_SENTINEL_CTOR =
+  'call VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken("")';
+const BOOLEAN_SENTINEL_CTOR =
+  "call VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken(false)";
+const INT32_ZERO_SENTINEL_CTOR =
+  "call VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken(0)";
+const OBJECT_NULL_SENTINEL_CTOR =
+  "call VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken(null)";
+
 /** `indexVar >= 0` / `0 <= indexVar` assignment must be followed by ifFalse/if on that temp. */
 function hasLowerBoundGuardBranch(
   guardScanLines: string[],
@@ -1213,17 +1222,34 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      expect(result.tac).toContain(
-        'call VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken("")',
-      );
-      expect(result.tac).toContain(
-        "call VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken(false)",
-      );
+      expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+      expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
       // Int32 token ctor is still valid for handle wrapping in Tile.cache.
       // What we forbid is an Int32 sentinel literal at index 0.
-      expect(result.tac).not.toContain(
-        "call VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken(0)",
-      );
+      expect(result.tac).not.toContain(INT32_ZERO_SENTINEL_CTOR);
+    });
+
+    it("SoA sentinel tokens for reference fields should use null object token", () => {
+      const source = `
+        class Holder {
+          constructor(public target: GameObject) {}
+          static cache: Holder[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 2; i++) {
+              Holder.cache.push(new Holder(null as unknown as GameObject));
+            }
+          }
+        }
+        class Main {
+          Start(): void {
+            Holder.init();
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain(OBJECT_NULL_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(INT32_ZERO_SENTINEL_CTOR);
     });
 
     it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
@@ -1336,15 +1362,9 @@ describe("known transpiler bugs", () => {
         );
 
         expect(result.uasm).toContain(testCase.accessor);
-        expect(result.tac).toContain(
-          'call VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken("")',
-        );
-        expect(result.tac).toContain(
-          "call VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken(false)",
-        );
-        expect(result.tac).not.toContain(
-          "call VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken(0)",
-        );
+        expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+        expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
+        expect(result.tac).not.toContain(INT32_ZERO_SENTINEL_CTOR);
       });
     }
   });
