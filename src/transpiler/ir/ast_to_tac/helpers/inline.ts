@@ -45,6 +45,7 @@ import {
   type TemplateExpressionNode,
   type ThrowStatementNode,
   type TryCatchStatementNode,
+  UdonType,
   type UnaryExpressionNode,
   type UpdateExpressionNode,
   type VariableDeclarationNode,
@@ -326,6 +327,31 @@ function ensureSoaOperands(
   );
 }
 
+function createSoaSentinelValue(
+  converter: ASTToTACConverter,
+  fieldType: TypeSymbol,
+): TACOperand {
+  if (isInlineHandleType(converter, fieldType)) {
+    return createConstant(0, PrimitiveTypes.int32);
+  }
+  if (fieldType.udonType === UdonType.String) {
+    return createConstant("", PrimitiveTypes.string);
+  }
+  if (fieldType.udonType === UdonType.Boolean) {
+    return createConstant(false, PrimitiveTypes.boolean);
+  }
+  if (
+    fieldType.udonType === UdonType.Int64 ||
+    fieldType.udonType === UdonType.UInt64
+  ) {
+    return createConstant(0n, fieldType);
+  }
+  if (isNumericUdonType(fieldType.udonType)) {
+    return createConstant(0, fieldType);
+  }
+  return createConstant(0, PrimitiveTypes.int32);
+}
+
 /**
  * Emit a runtime-guarded init block for a SoA class.
  * Called at every constructor call site so that whichever site executes first
@@ -336,10 +362,17 @@ function ensureSoaOperands(
 function emitSoaInitGuard(
   converter: ASTToTACConverter,
   className: string,
+  classNode: ClassDeclarationNode,
 ): void {
   const fieldLists = converter.soaFieldLists.get(className);
   const counterVar = converter.soaCounterVars.get(className);
   if (!fieldLists || !counterVar) return;
+  const fieldTypes = new Map(
+    collectAllInstanceFields(converter, classNode).map((field) => [
+      field.name,
+      field.type,
+    ]),
+  );
 
   const initedVar = createVariable(
     `__soa_${className}__inited`,
@@ -392,9 +425,10 @@ function emitSoaInitGuard(
 
   // Reserve index 0 as a sentinel in each DataList so that handle values
   // (starting at 1) align with DataList indices.
-  for (const [, listVar] of fieldLists) {
+  for (const [fieldName, listVar] of fieldLists) {
+    const fieldType = fieldTypes.get(fieldName) ?? PrimitiveTypes.int32;
     const dummyToken = converter.wrapDataToken(
-      createConstant(0, PrimitiveTypes.int32),
+      createSoaSentinelValue(converter, fieldType),
     );
     converter.instructions.push(
       new MethodCallInstruction(undefined, listVar, "Add", [dummyToken]),
@@ -416,7 +450,7 @@ function initSoaForClass(
   classNode: ClassDeclarationNode,
 ): void {
   ensureSoaOperands(converter, className, classNode);
-  emitSoaInitGuard(converter, className);
+  emitSoaInitGuard(converter, className, classNode);
 }
 
 export function resolveClassProperty(

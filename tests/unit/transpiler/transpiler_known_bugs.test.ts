@@ -1194,6 +1194,38 @@ describe("known transpiler bugs", () => {
       }
     });
 
+    it("SoA sentinel tokens for string/boolean fields should avoid Int32 DataToken ctor", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 2; i++) {
+              Tile.cache.push(new Tile("tile" + i, i === 0));
+            }
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain(
+        'call VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken("")',
+      );
+      expect(result.tac).toContain(
+        "call VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken(false)",
+      );
+      // Int32 token ctor is still valid for handle wrapping in Tile.cache.
+      // What we forbid is an Int32 sentinel literal at index 0.
+      expect(result.tac).not.toContain(
+        "call VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken(0)",
+      );
+    });
+
     it("LRU-like Map<string, string>.get flow should keep typed String unwrap", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
@@ -1240,5 +1272,80 @@ describe("known transpiler bugs", () => {
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
     });
+  });
+
+  describe("tile-like DataToken accessor mismatch regressions", () => {
+    const buildTileLikeSource = (body: string): string => `
+      class Tile {
+        constructor(public label: string, public isRed: boolean) {}
+        static cache: Tile[] = [];
+        static init(): void {
+          for (let i: number = 0; i < 2; i++) {
+            Tile.cache.push(new Tile("5m" + i, i === 0));
+          }
+        }
+        static parse(_raw: string): Tile {
+          return Tile.cache[0];
+        }
+      }
+      class Main {
+        Start(): void {
+          Tile.init();
+          const tile = Tile.parse("5m");
+          ${body}
+        }
+      }
+    `;
+
+    const cases: Array<{
+      name: string;
+      body: string;
+      accessor: string;
+    }> = [
+      {
+        name: "tile_parse-like flow keeps string unwrap",
+        body: "Debug.Log(tile.label);",
+        accessor: "VRCSDK3DataDataToken.__get_String__SystemString",
+      },
+      {
+        name: "tile_predicates-like flow keeps string unwrap",
+        body: "Debug.Log(tile.label.substring(0, 1));",
+        accessor: "VRCSDK3DataDataToken.__get_String__SystemString",
+      },
+      {
+        name: "meld_validation-like flow keeps string unwrap",
+        body: 'const meldLabel: string = "pon-" + tile.label; Debug.Log(meldLabel);',
+        accessor: "VRCSDK3DataDataToken.__get_String__SystemString",
+      },
+      {
+        name: "tile_dora-like flow keeps boolean unwrap",
+        body: "Debug.Log(tile.isRed);",
+        accessor: "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      },
+      {
+        name: "dora_calculator-like flow keeps boolean unwrap",
+        body: "const hasDora: boolean = tile.isRed && tile.label.length > 0; Debug.Log(hasDora);",
+        accessor: "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      },
+    ];
+
+    for (const testCase of cases) {
+      it(testCase.name, () => {
+        const result = new TypeScriptToUdonTranspiler().transpile(
+          buildTileLikeSource(testCase.body),
+        );
+
+        expect(result.uasm).toContain(testCase.accessor);
+        expect(result.tac).toContain(
+          'call VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken("")',
+        );
+        expect(result.tac).toContain(
+          "call VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken(false)",
+        );
+        expect(result.tac).not.toContain(
+          "call VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken(0)",
+        );
+      });
+    }
   });
 });
