@@ -1474,4 +1474,23 @@ describe("known transpiler bugs", () => {
       });
     }
   });
+
+  describe("as string cast guard for reference types", () => {
+    it("should not emit Transform-specific Convert.ToString extern for type assertions", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const t: Transform = null as unknown as Transform;
+            const s = t as string;
+            Debug.Log(s);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToString__UnityEngineTransform__SystemString",
+      );
+    });
+  });
 });

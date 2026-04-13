@@ -2691,7 +2691,10 @@ export function visitAsExpression(
       srcType.udonType !== UdonType.Object &&
       (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
         targetTypeSymbol.udonType === UdonType.Boolean ||
-        targetTypeSymbol.udonType === UdonType.String)
+        (targetTypeSymbol.udonType === UdonType.String &&
+          (NUMERIC_UDON_TYPES.has(srcType.udonType) ||
+            srcType.udonType === UdonType.Boolean ||
+            srcType.udonType === UdonType.String)))
     ) {
       this.instructions.push(new CastInstruction(result, operand));
     } else {
