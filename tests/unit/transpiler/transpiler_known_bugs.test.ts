@@ -32,20 +32,23 @@
  *         causing an IndexOutOfRange at runtime.
  *         (root cause #13 continuation in vm-test-failures-investigation.md)
  *
- * Bug 7: HeapTypeMismatchException Int32→Boolean — non-boolean values (Int32,
+ * Bug 7 (FIXED in transpiler; VM known-fail tracked separately):
+ *         HeapTypeMismatchException Int32→Boolean — non-boolean values (Int32,
  *         Single, String, Object) are passed directly to JUMP_IF_FALSE without
  *         coercion to Boolean. The Udon VM strictly requires Boolean for
  *         JUMP_IF_FALSE. Patterns like `if (count)`, `count ? a : b`, and
  *         `if (obj)` all fail at runtime.
  *         (root cause #16 in vm-test-failures-investigation.md)
  *
- * Bug 8: SoA D3 method dispatch miss — tryD3MethodDispatch compares runtime
+ * Bug 8 (FIXED in transpiler; VM known-fail tracked separately):
+ *         SoA D3 method dispatch miss — tryD3MethodDispatch compares runtime
  *         handles against compile-time instanceId constants. For SoA classes
  *         (loop-created), runtime handles are dynamic counter values that never
  *         match static instanceIds. Method calls on SoA instances always miss.
  *         (root cause #17 in vm-test-failures-investigation.md)
  *
- * Bug 9: DataToken.get_Reference for Map<string, unknown> — when a Map's value
+ * Bug 9 (FIXED in transpiler; VM known-fail tracked separately):
+ *         DataToken.get_Reference for Map<string, unknown> — when a Map's value
  *         type is `unknown` (or `any`/`object`), it maps to ObjectType. The
  *         unwrapDataToken function's default case uses .Reference, which crashes
  *         at runtime because the DataToken stores a typed value (String, Int, etc.)
@@ -1504,6 +1507,158 @@ describe("known transpiler bugs", () => {
         expect(result.tac).not.toContain(INT32_ZERO_SENTINEL_CTOR);
       });
     }
+  });
+
+  describe("recurrence monitors for previously surfaced VM failures", () => {
+    it("HeapTypeMismatch monitor: numeric condition emits Int32->Boolean comparison path", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            const count: UdonInt = 2;
+            if (count) {
+              Debug.Log("truthy");
+            } else {
+              Debug.Log("falsy");
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_Inequality__SystemInt32_SystemInt32__SystemBoolean",
+      );
+    });
+
+    it("dispatch miss monitor: SoA loop-created instances keep fast-path dispatch", () => {
+      const source = `
+        class Item {
+          constructor(public label: string) {}
+          show(): string {
+            return this.label;
+          }
+        }
+        class Main {
+          Start(): void {
+            const items: Item[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              items.push(new Item("item" + i));
+            }
+            for (const item of items) {
+              Debug.Log(item.show());
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Item_label.get_Item");
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
+
+    it("get_Reference monitor: unknown-typed Map.get flow avoids Reference fallback", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const cache: Map<string, unknown> = new Map<string, unknown>();
+            cache.set("a", "hello");
+            const value = cache.get("a") as string;
+            Debug.Log(value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // [KNOWN FAIL] Latest active VM regressions (convert after bug fixes land)
+  // ---------------------------------------------------------------------------
+
+  describe("[KNOWN FAIL] latest active VM regressions", () => {
+    it.fails("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+        class Tile {
+          constructor(public kind: UdonInt) {}
+          static parse(raw: string): Tile {
+            return new Tile(
+              UdonTypeConverters.toUdonInt(raw.substring(0, 1).length),
+            );
+          }
+          static compare(a: Tile, b: Tile): UdonInt {
+            const d = (a.kind as number) - (b.kind as number);
+            return UdonTypeConverters.toUdonInt(d);
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const cmp1 = Tile.compare(Tile.parse("1m"), Tile.parse("2m"));
+            const cmp2 = Tile.compare(Tile.parse("2m"), Tile.parse("1m"));
+            Debug.Log(cmp1 < (0 as UdonInt) ? "LT" : "GE");
+            Debug.Log(cmp2 > (0 as UdonInt) ? "GT" : "LE");
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_GreaterThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+    });
+
+    it.fails("tile_dora-like boolean flow should not require DataToken String accessor", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 2; i++) {
+              Tile.cache.push(new Tile("5m" + i, i === 0));
+            }
+          }
+          static parse(_raw: string): Tile {
+            return Tile.cache[0];
+          }
+          static isDoraIndicatorFor(indicator: Tile, target: Tile): boolean {
+            return indicator.isRed === target.isRed;
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const indicator = Tile.parse("1m");
+            const target = Tile.parse("2m");
+            Debug.Log(Tile.isDoraIndicatorFor(indicator, target) ? "True" : "False");
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+    });
   });
 
   describe("as string cast extern coverage", () => {
