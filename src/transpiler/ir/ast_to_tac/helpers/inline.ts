@@ -191,10 +191,10 @@ export function saveAndBindInlineParams(
         // Coerce argument type if both are numeric but different.
         // Without this, a COPY from Single (float) to Int32 would do a
         // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
-        const argType = converter.getOperandType(arg);
         if (
-          argType.udonType !== effectiveParamType.udonType &&
-          isNumericUdonType(argType.udonType) &&
+          argConcreteType !== undefined &&
+          argConcreteType.udonType !== effectiveParamType.udonType &&
+          isNumericUdonType(argConcreteType.udonType) &&
           isNumericUdonType(effectiveParamType.udonType)
         ) {
           const coercedArg = converter.newTemp(effectiveParamType);
