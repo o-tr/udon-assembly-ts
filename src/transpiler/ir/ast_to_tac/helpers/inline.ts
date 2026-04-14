@@ -155,19 +155,24 @@ export function saveAndBindInlineParams(
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
     const arg = args[i];
-    // When the declared param type is erased (unknown/any/object) and the
-    // argument carries a concrete scalar type (String/Bool/numeric), promote
-    // the local variable to that concrete type so that wrapDataToken uses the
-    // correct DataToken.ctor overload (ctor(SystemString) not ctor(SystemObject)).
     const argConcreteType = arg ? converter.getOperandType(arg) : undefined;
-    const effectiveParamType =
-      argConcreteType &&
+    // When the declared param type is erased (unknown/any/object) and the
+    // argument carries a concrete scalar type (String/Bool/numeric), pre-wrap
+    // the arg into a DataToken at binding time and declare the local as DataToken.
+    // Using DataToken (not the concrete scalar) avoids a stale-type hazard: if
+    // the body later reassigns the param to an ObjectType value, the symbol
+    // table still reports DataToken, so wrapDataToken at the return site
+    // short-circuits (passthrough) instead of calling ctor(SystemString) on a
+    // value that may have changed type.
+    const shouldWrapErasedParam =
+      argConcreteType !== undefined &&
       isPlainObjectType(param.type) &&
       (isNumericUdonType(argConcreteType.udonType) ||
         argConcreteType.udonType === UdonType.Boolean ||
-        argConcreteType.udonType === UdonType.String)
-        ? argConcreteType
-        : param.type;
+        argConcreteType.udonType === UdonType.String);
+    const effectiveParamType = shouldWrapErasedParam
+      ? ExternTypes.dataToken
+      : param.type;
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
       converter.symbolTable.addSymbol(
         param.name,
@@ -179,21 +184,23 @@ export function saveAndBindInlineParams(
     saved.set(param.name, converter.inlineInstanceMap.get(param.name));
     converter.inlineInstanceMap.delete(param.name);
     if (arg) {
-      // Coerce argument type if both are numeric but different.
-      // Without this, a COPY from Single (float) to Int32 would do a
-      // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
-      let argToUse = arg;
-      // argConcreteType is guaranteed non-undefined here (arg is truthy).
-      // biome-ignore lint/style/noNonNullAssertion: arg is truthy → argConcreteType is set
-      const argType = argConcreteType!;
-      if (
-        argType.udonType !== effectiveParamType.udonType &&
-        isNumericUdonType(argType.udonType) &&
-        isNumericUdonType(effectiveParamType.udonType)
-      ) {
-        const coercedArg = converter.newTemp(effectiveParamType);
-        converter.instructions.push(new CastInstruction(coercedArg, arg));
-        argToUse = coercedArg;
+      // If the param is erased and the arg is a concrete scalar, pre-wrap the
+      // arg into a typed DataToken. Otherwise coerce numeric types if needed.
+      let argToUse = shouldWrapErasedParam ? converter.wrapDataToken(arg) : arg;
+      if (!shouldWrapErasedParam) {
+        // Coerce argument type if both are numeric but different.
+        // Without this, a COPY from Single (float) to Int32 would do a
+        // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
+        const argType = converter.getOperandType(arg);
+        if (
+          argType.udonType !== effectiveParamType.udonType &&
+          isNumericUdonType(argType.udonType) &&
+          isNumericUdonType(effectiveParamType.udonType)
+        ) {
+          const coercedArg = converter.newTemp(effectiveParamType);
+          converter.instructions.push(new CastInstruction(coercedArg, arg));
+          argToUse = coercedArg;
+        }
       }
       converter.instructions.push(
         new CopyInstruction(
