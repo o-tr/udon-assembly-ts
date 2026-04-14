@@ -1647,6 +1647,13 @@ describe("known transpiler bugs", () => {
 
   describe("[KNOWN FAIL] latest active VM regressions", () => {
     it("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
+      // Note: Tile.parse uses a plain ternary rather than the original
+      // `UdonTypeConverters.toUdonInt(raw.substring(0, 1).length)` expression.
+      // The substring(0,1).length chain triggers a separate bug (SystemString.
+      // __substring__ returns Object, so .length resolves to ObjectType) that
+      // is out of scope for this compare-flow fix. The intent of this test is
+      // to verify that Tile.compare emits Int32 arithmetic only, independent
+      // of the parse implementation detail.
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";

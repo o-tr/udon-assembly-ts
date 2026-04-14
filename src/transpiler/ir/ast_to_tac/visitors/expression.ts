@@ -86,6 +86,7 @@ import {
   resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
+  resolveInlineClassType,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
@@ -345,19 +346,21 @@ function resolveMethodReturnType(
   const resolveReturnTypeStr = (retType: string): TypeSymbol => {
     const mapped = converter.typeMapper.mapTypeScriptType(retType);
     // If the mapper returned ObjectType but the name is a known inline class,
-    // create a ClassTypeSymbol so callers can identify the concrete type.
+    // upgrade to an Int32-typed ClassTypeSymbol so callers see the concrete type.
+    // Delegates to resolveInlineClassType (shared with saveAndBindInlineParams)
+    // which also excludes UdonBehaviour classes and stub-only entries.
     if (
       mapped === ObjectType &&
       retType !== "object" &&
       retType !== "unknown" &&
       retType !== "any"
     ) {
-      const isInlineClass =
-        converter.classMap.has(retType) ||
-        (converter.classRegistry?.getClass(retType) &&
-          !converter.udonBehaviourClasses.has(retType));
-      if (isInlineClass) {
-        return new ClassTypeSymbol(retType, UdonType.Int32);
+      const promoted = resolveInlineClassType(
+        converter,
+        new ClassTypeSymbol(retType, UdonType.Object),
+      );
+      if (promoted.udonType === UdonType.Int32) {
+        return promoted;
       }
     }
     return mapped;
@@ -2637,6 +2640,11 @@ export function visitAsExpression(
   // F2: `x as number` is a TypeScript brand-strip, not a float conversion.
   // When the source is already an integer type, preserve it so downstream
   // arithmetic stays in the integer lane (e.g. UdonInt → number → subtract).
+  // This covers all integer widths (Int32, Int64, UInt64, Int16, UInt16, Byte,
+  // SByte): `someInt64 as number` returns the Int64 operand unchanged rather
+  // than narrowing to Single. TypeScript's `as` is a compile-time assertion, so
+  // this matches the brand-strip intent. Users who need an explicit float
+  // conversion should write `someValue as SystemSingle` or `as UdonFloat`.
   if (
     targetTypeText === "number" &&
     NUMERIC_UDON_TYPES.has(srcType.udonType) &&

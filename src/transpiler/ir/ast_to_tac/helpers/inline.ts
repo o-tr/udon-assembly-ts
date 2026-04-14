@@ -147,7 +147,7 @@ export function resolveClassNode(
  * on the heap; the Object udonType is an artefact of type_mapper's fallback for
  * unrecognized user-defined names.
  */
-function resolveInlineClassType(
+export function resolveInlineClassType(
   converter: ASTToTACConverter,
   type: TypeSymbol,
 ): TypeSymbol {
