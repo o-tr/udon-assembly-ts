@@ -4,6 +4,7 @@ import {
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -1103,10 +1104,15 @@ export function visitInlineStaticMethodCall(
     );
   }
 
-  // --- Non-recursive path (unchanged) ---
+  // --- Non-recursive path ---
+  // When the declared return type is erased (unknown/any/object), promote the
+  // return slot to DataToken so the caller's `as T` unwrap can see the type.
+  // TODO: recursive paths with erased return types need separate analysis.
+  const isErasedReturn = isPlainObjectType(returnType);
+  const effectiveReturnType = isErasedReturn ? ExternTypes.dataToken : returnType;
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
-    returnType,
+    effectiveReturnType,
     { isLocal: true },
   );
   const returnLabel = this.newLabel("inline_return");
@@ -1148,6 +1154,7 @@ export function visitInlineStaticMethodCall(
     returnTrackingInvalidated: false,
     loopDepth: this.loopContextStack.length,
     returnInstancePrefix,
+    isErasedReturn,
   });
   // Reset constructor index for this body so deduplication picks up from
   // position 0 on each invocation (cache may already be populated from a
@@ -1657,9 +1664,14 @@ function inlineInstanceMethodCallCore(
       returnType = lateResolved;
     }
   }
+  // When the declared return type is erased (unknown/any/object), promote the
+  // return slot to DataToken so the caller's `as T` unwrap can see the type.
+  // TODO: recursive paths with erased return types need separate analysis.
+  const isErasedReturn = isPlainObjectType(returnType);
+  const effectiveReturnType = isErasedReturn ? ExternTypes.dataToken : returnType;
   const result = createVariable(
     `__inline_ret_${converter.tempCounter++}`,
-    returnType,
+    effectiveReturnType,
     { isLocal: true },
   );
   const returnLabel = converter.newLabel("inline_return");
@@ -1703,6 +1715,7 @@ function inlineInstanceMethodCallCore(
     returnTrackingInvalidated: false,
     loopDepth: converter.loopContextStack.length,
     returnInstancePrefix,
+    isErasedReturn,
   });
   // Reset constructor index for this body so deduplication picks up from
   // position 0 on each invocation (cache may already be populated).

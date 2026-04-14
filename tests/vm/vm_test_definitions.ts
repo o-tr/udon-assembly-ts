@@ -296,8 +296,6 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "mahjong_lru_cache_regression",
     sourceFile: "mahjong_lru_cache_regression.ts",
     expectedLogs: ["True", "hello", "2", "False", "True", "3", "0"],
-    knownFail: true,
-    knownFailReason: "Map.get unknown->string unwrap remains unstable in VM",
   },
   { name: "numeric_cast_chain", sourceFile: "numeric_cast_chain.ts" },
   // --- Multi-part string concat ---

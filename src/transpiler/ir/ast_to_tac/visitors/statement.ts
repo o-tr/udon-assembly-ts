@@ -1370,10 +1370,20 @@ export function visitReturnStatement(
     }
 
     if (value) {
+      // When the return slot was promoted to DataToken (erased return type),
+      // wrap the value so it is always a DataToken, enabling the caller's
+      // `as T` branch in visitAsExpression to emit the typed accessor.
+      const returnPayload = inlineContext.isErasedReturn
+        ? this.wrapDataToken(value)
+        : value;
       this.instructions.push(
-        new CopyInstruction(inlineContext.returnVar, value),
+        new CopyInstruction(inlineContext.returnVar, returnPayload),
       );
-      if (!inlineContext.returnTrackingInvalidated) {
+      if (inlineContext.isErasedReturn) {
+        // DataToken payload can never be an inline class handle.
+        this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+        inlineContext.returnTrackingInvalidated = true;
+      } else if (!inlineContext.returnTrackingInvalidated) {
         if (valueMapping) {
           const existingMapping = this.inlineInstanceMap.get(
             inlineContext.returnVar.name,
