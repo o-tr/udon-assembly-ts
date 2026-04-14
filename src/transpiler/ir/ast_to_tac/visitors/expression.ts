@@ -2633,8 +2633,18 @@ export function visitAsExpression(
   } finally {
     this.currentExpectedType = prevExpectedType;
   }
-  const result = this.newTemp(targetTypeSymbol);
   const srcType = this.getOperandType(operand);
+  // F2: `x as number` is a TypeScript brand-strip, not a float conversion.
+  // When the source is already an integer type, preserve it so downstream
+  // arithmetic stays in the integer lane (e.g. UdonInt → number → subtract).
+  if (
+    targetTypeText === "number" &&
+    NUMERIC_UDON_TYPES.has(srcType.udonType) &&
+    !FLOAT_UDON_TYPES.has(srcType.udonType)
+  ) {
+    return operand;
+  }
+  const result = this.newTemp(targetTypeSymbol);
   // Use CastInstruction for numeric type conversions (e.g. float→int);
   // use COPY for same-type or reference-type casts.
   if (srcType.udonType !== targetTypeSymbol.udonType) {

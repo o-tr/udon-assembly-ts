@@ -141,6 +141,32 @@ export function resolveClassNode(
   return classNode;
 }
 
+/**
+ * Upgrade an Object-typed ClassTypeSymbol to Int32 when the class is a known
+ * inline (non-UdonBehaviour) class. Inline classes are tracked as Int32 handles
+ * on the heap; the Object udonType is an artefact of type_mapper's fallback for
+ * unrecognized user-defined names.
+ */
+function resolveInlineClassType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): TypeSymbol {
+  if (
+    !(type instanceof ClassTypeSymbol) ||
+    type.udonType !== UdonType.Object
+  ) {
+    return type;
+  }
+  const name = type.name;
+  if (
+    !converter.udonBehaviourClasses.has(name) &&
+    resolveClassNode(converter, name) !== undefined
+  ) {
+    return new ClassTypeSymbol(name, UdonType.Int32, type.baseClass, type.members);
+  }
+  return type;
+}
+
 export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
   params: Array<{ name: string; type: TypeSymbol }>,
@@ -173,6 +199,10 @@ export function saveAndBindInlineParams(
     ) {
       effectiveParamType = argConcreteType;
     }
+    // F1: upgrade Object-typed inline-class params to Int32 after scalar
+    // promotion. Inline classes are stored as Int32 handles; Object is a
+    // type_mapper artefact for unrecognized user-defined names.
+    effectiveParamType = resolveInlineClassType(converter, effectiveParamType);
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
       converter.symbolTable.addSymbol(
         param.name,
@@ -188,6 +218,16 @@ export function saveAndBindInlineParams(
       // Without this, a COPY from Single (float) to Int32 would do a
       // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
       let argToUse = arg;
+      // Unwrap DataToken args when the parameter expects a concrete (non-DataToken) type.
+      // This handles the case where array element access on e.g. Tile[] returns a raw
+      // DataToken wrapping an Int32 handle, but the param is declared as Tile (Int32).
+      if (
+        argConcreteType !== undefined &&
+        argConcreteType.udonType === UdonType.DataToken &&
+        effectiveParamType.udonType !== UdonType.DataToken
+      ) {
+        argToUse = converter.unwrapDataToken(arg, effectiveParamType);
+      }
       if (
         argConcreteType !== undefined &&
         argConcreteType.udonType !== effectiveParamType.udonType &&
@@ -236,7 +276,7 @@ export function saveAndBindInlineParams(
           // ObjectType from a Map.get or conditional), try the parameter's
           // declared type. The method signature is more reliable than the
           // operand's runtime type in this case.
-          const paramTypeName = param.type.name;
+          const paramTypeName = paramType.name;
           const isParamTypeAlias =
             converter.typeMapper.getAlias(paramTypeName) instanceof
             InterfaceTypeSymbol;
@@ -1145,6 +1185,9 @@ export function visitInlineStaticMethodCall(
       returnType = lateResolved;
     }
   }
+
+  // F1: upgrade Object-typed inline-class return type to Int32.
+  returnType = resolveInlineClassType(this, returnType);
 
   // --- Check for self-recursion ---
   const selfCallCount = countStaticSelfCalls(

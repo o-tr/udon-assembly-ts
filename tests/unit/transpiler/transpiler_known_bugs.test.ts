@@ -1646,7 +1646,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("[KNOWN FAIL] latest active VM regressions", () => {
-    it.fails("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
+    it("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
         import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
@@ -1655,7 +1655,7 @@ describe("known transpiler bugs", () => {
           constructor(public kind: UdonInt) {}
           static parse(raw: string): Tile {
             return new Tile(
-              UdonTypeConverters.toUdonInt(raw.substring(0, 1).length),
+              UdonTypeConverters.toUdonInt(raw === "1m" ? 1 : 2),
             );
           }
           static compare(a: Tile, b: Tile): UdonInt {
