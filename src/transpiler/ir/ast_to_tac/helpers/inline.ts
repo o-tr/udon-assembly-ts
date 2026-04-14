@@ -276,7 +276,7 @@ export function saveAndBindInlineParams(
           // ObjectType from a Map.get or conditional), try the parameter's
           // declared type. The method signature is more reliable than the
           // operand's runtime type in this case.
-          const paramTypeName = paramType.name;
+          const paramTypeName = param.type.name;
           const isParamTypeAlias =
             converter.typeMapper.getAlias(paramTypeName) instanceof
             InterfaceTypeSymbol;
