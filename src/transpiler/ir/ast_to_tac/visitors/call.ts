@@ -441,6 +441,16 @@ function collectSoAFieldReadsFromNode(
     const access = node as PropertyAccessExpressionNode;
     if (access.object.kind === ASTNodeKind.ThisExpression) {
       fieldReads.add(access.property);
+    } else {
+      // Recurse into the object to find nested this.field accesses
+      // (e.g. this.items.push(x) — object is PropertyAccess{this,"items"}).
+      collectSoAFieldReadsFromNode(
+        converter,
+        className,
+        access.object,
+        fieldReads,
+        visitedMethodKeys,
+      );
     }
     return;
   }
