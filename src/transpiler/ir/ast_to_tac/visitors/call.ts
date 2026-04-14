@@ -442,6 +442,7 @@ function collectSoAFieldReadsFromNode(
     if (access.object.kind === ASTNodeKind.ThisExpression) {
       fieldReads.add(access.property);
     }
+    return;
   }
 
   for (const value of Object.values(node)) {

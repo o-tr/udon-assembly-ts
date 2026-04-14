@@ -191,6 +191,8 @@ export function saveAndBindInlineParams(
         const isHeapPrefix =
           argVar.name.startsWith("__inst_") ||
           argVar.name.startsWith("__viface_");
+        // TODO: derive from a shared INSTANCE_PREFIXES constant so this stays
+        // in sync with variable-name minting in the rest of the compiler.
         if (!isHeapPrefix) continue;
 
         const argType = converter.getOperandType(argVar);
@@ -225,6 +227,19 @@ export function saveAndBindInlineParams(
           }
         }
       }
+    } else if (param.type.udonType === UdonType.Boolean) {
+      // arg not supplied: explicitly reset optional boolean param to false.
+      // Boolean parameters are named heap variables shared across all inlinings
+      // of any method that uses the same param name. Without this reset, a
+      // prior inlining that wrote `true` to the heap slot would leave a stale
+      // value visible to subsequent calls where the param was not provided
+      // (e.g. `fromKind(kind)` seeing a `true` left by the Tile constructor).
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          createConstant(false, PrimitiveTypes.boolean),
+        ),
+      );
     }
   }
   return saved;
