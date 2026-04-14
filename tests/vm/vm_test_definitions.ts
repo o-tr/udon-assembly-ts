@@ -288,9 +288,6 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "mahjong_tile_dora_regression",
     sourceFile: "mahjong_tile_dora_regression.ts",
     expectedLogs: ["2m", "1m", "2z", "1z", "6z", "5z", "True", "False"],
-    knownFail: true,
-    knownFailReason:
-      "Tile.parse/fromKind path still hits DataToken accessor mismatch",
   },
   {
     name: "mahjong_lru_cache_regression",

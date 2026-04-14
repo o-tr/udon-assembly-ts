@@ -1624,7 +1624,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it.fails("tile_dora-like boolean flow should not require DataToken String accessor", () => {
+    it("tile_dora-like boolean flow should not require DataToken String accessor", () => {
       const source = `
         class Tile {
           constructor(public label: string, public isRed: boolean) {}
