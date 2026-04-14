@@ -230,6 +230,7 @@ export class ASTToTACConverter {
     returnTrackingInvalidated: boolean;
     loopDepth: number;
     returnInstancePrefix?: string;
+    isErasedReturn?: boolean;
   }> = [];
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;

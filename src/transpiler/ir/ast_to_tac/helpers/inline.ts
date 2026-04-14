@@ -4,6 +4,7 @@ import {
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
@@ -153,30 +154,53 @@ export function saveAndBindInlineParams(
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
+    const arg = args[i];
+    const argConcreteType = arg ? converter.getOperandType(arg) : undefined;
+    // When the declared param type is erased (unknown/any/object) and the
+    // argument carries a concrete scalar type (String/Bool/numeric), promote
+    // the local to that concrete type so wrapDataToken uses the correct
+    // DataToken.ctor overload (e.g. ctor(SystemString) not ctor(SystemObject))
+    // at every body use of the parameter (map.set, return, etc.).
+    // Using the concrete scalar (not DataToken) preserves normal body semantics
+    // such as equality comparisons (v === "hello" keeps StringType on both sides).
+    let effectiveParamType = param.type;
+    if (
+      argConcreteType !== undefined &&
+      isPlainObjectType(param.type) &&
+      (isNumericUdonType(argConcreteType.udonType) ||
+        argConcreteType.udonType === UdonType.Boolean ||
+        argConcreteType.udonType === UdonType.String)
+    ) {
+      effectiveParamType = argConcreteType;
+    }
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-      converter.symbolTable.addSymbol(param.name, param.type, true, false);
+      converter.symbolTable.addSymbol(
+        param.name,
+        effectiveParamType,
+        true,
+        false,
+      );
     }
     saved.set(param.name, converter.inlineInstanceMap.get(param.name));
     converter.inlineInstanceMap.delete(param.name);
-    const arg = args[i];
     if (arg) {
       // Coerce argument type if both are numeric but different.
       // Without this, a COPY from Single (float) to Int32 would do a
       // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
       let argToUse = arg;
-      const argType = converter.getOperandType(arg);
       if (
-        argType.udonType !== param.type.udonType &&
-        isNumericUdonType(argType.udonType) &&
-        isNumericUdonType(param.type.udonType)
+        argConcreteType !== undefined &&
+        argConcreteType.udonType !== effectiveParamType.udonType &&
+        isNumericUdonType(argConcreteType.udonType) &&
+        isNumericUdonType(effectiveParamType.udonType)
       ) {
-        const coercedArg = converter.newTemp(param.type);
+        const coercedArg = converter.newTemp(effectiveParamType);
         converter.instructions.push(new CastInstruction(coercedArg, arg));
         argToUse = coercedArg;
       }
       converter.instructions.push(
         new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
+          createVariable(param.name, effectiveParamType, { isParameter: true }),
           argToUse,
         ),
       );
@@ -256,6 +280,26 @@ export function restoreInlineParams(
       converter.inlineInstanceMap.set(name, entry);
     }
   }
+}
+
+/**
+ * Resolve the effective return type for an inline method body.
+ * When the declared return type is erased (unknown/any/object), promotes the
+ * return slot to DataToken so the caller's `as T` unwrap path can see the
+ * concrete runtime type.
+ *
+ * NOTE: recursive paths are NOT handled here; see the TODO comment at
+ * `emitInlineRecursiveStaticMethod` call sites.
+ */
+function resolveInlineReturnType(returnType: TypeSymbol): {
+  effectiveReturnType: TypeSymbol;
+  isErasedReturn: boolean;
+} {
+  const isErasedReturn = isPlainObjectType(returnType);
+  return {
+    effectiveReturnType: isErasedReturn ? ExternTypes.dataToken : returnType,
+    isErasedReturn,
+  };
 }
 
 function getEntryPointPropertyNameForClass(
@@ -1109,6 +1153,13 @@ export function visitInlineStaticMethodCall(
     method.body,
   );
   if (selfCallCount > 0) {
+    // TODO: erased return types on recursive paths need separate analysis;
+    // DataToken promotion is not applied here.
+    if (isPlainObjectType(returnType)) {
+      console.warn(
+        `transpiler: inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
+      );
+    }
     return emitInlineRecursiveStaticMethod(
       this,
       className,
@@ -1121,10 +1172,12 @@ export function visitInlineStaticMethodCall(
     );
   }
 
-  // --- Non-recursive path (unchanged) ---
+  // --- Non-recursive path ---
+  const { effectiveReturnType, isErasedReturn } =
+    resolveInlineReturnType(returnType);
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
-    returnType,
+    effectiveReturnType,
     { isLocal: true },
   );
   const returnLabel = this.newLabel("inline_return");
@@ -1166,6 +1219,7 @@ export function visitInlineStaticMethodCall(
     returnTrackingInvalidated: false,
     loopDepth: this.loopContextStack.length,
     returnInstancePrefix,
+    isErasedReturn,
   });
   // Reset constructor index for this body so deduplication picks up from
   // position 0 on each invocation (cache may already be populated from a
@@ -1675,9 +1729,13 @@ function inlineInstanceMethodCallCore(
       returnType = lateResolved;
     }
   }
+  // When the declared return type is erased (unknown/any/object), promote the
+  // return slot to DataToken so the caller's `as T` unwrap can see the type.
+  const { effectiveReturnType, isErasedReturn } =
+    resolveInlineReturnType(returnType);
   const result = createVariable(
     `__inline_ret_${converter.tempCounter++}`,
-    returnType,
+    effectiveReturnType,
     { isLocal: true },
   );
   const returnLabel = converter.newLabel("inline_return");
@@ -1721,6 +1779,7 @@ function inlineInstanceMethodCallCore(
     returnTrackingInvalidated: false,
     loopDepth: converter.loopContextStack.length,
     returnInstancePrefix,
+    isErasedReturn,
   });
   // Reset constructor index for this body so deduplication picks up from
   // position 0 on each invocation (cache may already be populated).
