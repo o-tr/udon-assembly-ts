@@ -184,12 +184,17 @@ export function saveAndBindInlineParams(
       if (argInfo) {
         converter.inlineInstanceMap.set(param.name, argInfo);
       } else if (arg.kind === TACOperandKind.Variable) {
-        // Only Variable args can provide a valid prefix — the variable name
-        // points to existing heap variables (e.g. inst_0__field). Temporary
-        // args have no stable heap location, so inserting a tracking entry
-        // with param.name as prefix would point to non-existent field
-        // variables and silently produce wrong property resolution.
         const argVar = arg as VariableOperand;
+        // Only real heap-prefix variables can be rebound this way. Synthetic
+        // return temps like `__inline_ret_*` may be untracked even though they
+        // look prefix-like, so letting them masquerade as instances is unsafe.
+        const isHeapPrefix =
+          argVar.name.startsWith("__inst_") ||
+          argVar.name.startsWith("__viface_");
+        // TODO: derive from a shared INSTANCE_PREFIXES constant so this stays
+        // in sync with variable-name minting in the rest of the compiler.
+        if (!isHeapPrefix) continue;
+
         const argType = converter.getOperandType(argVar);
         const isTypeAlias =
           converter.typeMapper.getAlias(argType.name) instanceof
@@ -222,6 +227,19 @@ export function saveAndBindInlineParams(
           }
         }
       }
+    } else if (param.type.udonType === UdonType.Boolean) {
+      // arg not supplied: explicitly reset optional boolean param to false.
+      // Boolean parameters are named heap variables shared across all inlinings
+      // of any method that uses the same param name. Without this reset, a
+      // prior inlining that wrote `true` to the heap slot would leave a stale
+      // value visible to subsequent calls where the param was not provided
+      // (e.g. `fromKind(kind)` seeing a `true` left by the Tile constructor).
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, param.type, { isParameter: true }),
+          createConstant(false, PrimitiveTypes.boolean),
+        ),
+      );
     }
   }
   return saved;

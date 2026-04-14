@@ -1507,6 +1507,68 @@ describe("known transpiler bugs", () => {
         expect(result.tac).not.toContain(INT32_ZERO_SENTINEL_CTOR);
       });
     }
+
+    it("tile_dora-like boolean flow should not require DataToken String accessor", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 2; i++) {
+              Tile.cache.push(new Tile("5m" + i, i === 0));
+            }
+          }
+          static parse(_raw: string): Tile {
+            return Tile.cache[0];
+          }
+          static isDoraIndicatorFor(indicator: Tile, target: Tile): boolean {
+            return indicator.isRed === target.isRed;
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const indicator = Tile.parse("1m");
+            const target = Tile.parse("2m");
+            Debug.Log(Tile.isDoraIndicatorFor(indicator, target) ? "True" : "False");
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+    });
+
+    it("boolean-literal constructor arg is not clobbered by false in inlined body", () => {
+      // Regression for: the else-if(Boolean) block inside saveAndBindInlineParams
+      // emitted a second CopyInstruction(param, false) whenever the arg was a
+      // Constant or Temporary — silently overriding the real value with false.
+      const source = `
+        class Box {
+          constructor(public flag: boolean) {}
+          check(): boolean {
+            return this.flag;
+          }
+        }
+        class Main {
+          Start(): void {
+            const b = new Box(true);
+            Debug.Log(b.check() ? "yes" : "no");
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // The param binding must copy the literal true into the flag variable.
+      expect(result.tac).toContain("flag = true");
+      // No subsequent override with false must appear for the same variable.
+      expect(result.tac).not.toContain("flag = false");
+    });
   });
 
   describe("recurrence monitors for previously surfaced VM failures", () => {
@@ -1621,42 +1683,6 @@ describe("known transpiler bugs", () => {
       );
       expect(result.uasm).not.toContain(
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
-      );
-    });
-
-    it.fails("tile_dora-like boolean flow should not require DataToken String accessor", () => {
-      const source = `
-        class Tile {
-          constructor(public label: string, public isRed: boolean) {}
-          static cache: Tile[] = [];
-          static init(): void {
-            for (let i: number = 0; i < 2; i++) {
-              Tile.cache.push(new Tile("5m" + i, i === 0));
-            }
-          }
-          static parse(_raw: string): Tile {
-            return Tile.cache[0];
-          }
-          static isDoraIndicatorFor(indicator: Tile, target: Tile): boolean {
-            return indicator.isRed === target.isRed;
-          }
-        }
-        class Main {
-          Start(): void {
-            Tile.init();
-            const indicator = Tile.parse("1m");
-            const target = Tile.parse("2m");
-            Debug.Log(Tile.isDoraIndicatorFor(indicator, target) ? "True" : "False");
-          }
-        }
-      `;
-      const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-      expect(result.uasm).toContain(
-        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
-      );
-      expect(result.uasm).not.toContain(
-        "VRCSDK3DataDataToken.__get_String__SystemString",
       );
     });
   });

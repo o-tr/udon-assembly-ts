@@ -361,6 +361,144 @@ function getOrPopulateImplementorNames(
   return converter.implementorNamesCache.get(typeName) ?? null;
 }
 
+function isASTNode(value: unknown): value is ASTNode {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as Record<string, unknown>).kind === "string"
+  );
+}
+
+/**
+ * Collect `this.field` reads from a method body so SoA dispatch only preloads
+ * the fields the inlined body actually touches.
+ */
+function collectSoAFieldReadsFromNode(
+  converter: ASTToTACConverter,
+  className: string,
+  node: ASTNode | undefined,
+  fieldReads: Set<string>,
+  visitedMethodKeys: Set<string>,
+): void {
+  if (!node) return;
+
+  if (node.kind === ASTNodeKind.CallExpression) {
+    const call = node as CallExpressionNode;
+    if (call.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+      const callee = call.callee as PropertyAccessExpressionNode;
+      if (callee.object.kind === ASTNodeKind.ThisExpression) {
+        const methodName = callee.property;
+        const methodKey = `${className}::${methodName}`;
+        if (!visitedMethodKeys.has(methodKey)) {
+          visitedMethodKeys.add(methodKey);
+          const resolved = resolveClassMethod(
+            converter,
+            className,
+            methodName,
+            false,
+          );
+          if (resolved) {
+            collectSoAFieldReadsFromNode(
+              converter,
+              className,
+              resolved.method.body,
+              fieldReads,
+              visitedMethodKeys,
+            );
+          }
+        }
+      } else {
+        collectSoAFieldReadsFromNode(
+          converter,
+          className,
+          callee,
+          fieldReads,
+          visitedMethodKeys,
+        );
+      }
+    } else {
+      collectSoAFieldReadsFromNode(
+        converter,
+        className,
+        call.callee,
+        fieldReads,
+        visitedMethodKeys,
+      );
+    }
+    for (const arg of call.arguments) {
+      collectSoAFieldReadsFromNode(
+        converter,
+        className,
+        arg,
+        fieldReads,
+        visitedMethodKeys,
+      );
+    }
+    return;
+  }
+
+  if (node.kind === ASTNodeKind.PropertyAccessExpression) {
+    const access = node as PropertyAccessExpressionNode;
+    if (access.object.kind === ASTNodeKind.ThisExpression) {
+      fieldReads.add(access.property);
+    } else {
+      // Recurse into the object to find nested this.field accesses
+      // (e.g. this.items.push(x) — object is PropertyAccess{this,"items"}).
+      collectSoAFieldReadsFromNode(
+        converter,
+        className,
+        access.object,
+        fieldReads,
+        visitedMethodKeys,
+      );
+    }
+    return;
+  }
+
+  for (const value of Object.values(node)) {
+    if (isASTNode(value)) {
+      collectSoAFieldReadsFromNode(
+        converter,
+        className,
+        value,
+        fieldReads,
+        visitedMethodKeys,
+      );
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isASTNode(item)) {
+          collectSoAFieldReadsFromNode(
+            converter,
+            className,
+            item,
+            fieldReads,
+            visitedMethodKeys,
+          );
+        }
+      }
+    }
+  }
+}
+
+function collectSoAFieldReads(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+): Set<string> {
+  const resolved = resolveClassMethod(converter, className, methodName, false);
+  if (!resolved) return new Set();
+  const fieldReads = new Set<string>();
+  const visitedMethodKeys = new Set([`${className}::${methodName}`]);
+  collectSoAFieldReadsFromNode(
+    converter,
+    className,
+    resolved.method.body,
+    fieldReads,
+    visitedMethodKeys,
+  );
+  return fieldReads;
+}
+
 /**
  * SoA fast path for method dispatch: when ALL candidate instances belong to a
  * single SoA class, load fields from per-field DataLists using the runtime
@@ -392,6 +530,11 @@ function trySoAMethodDispatch(
 
   const fieldLists = converter.soaFieldLists.get(soaClassName);
   if (!fieldLists) return null;
+  const fieldsToLoad = collectSoAFieldReads(
+    converter,
+    soaClassName,
+    propAccess.property,
+  );
 
   // Save state for rollback if inlining fails
   const savedInstanceCounter = converter.instanceCounter;
@@ -428,24 +571,24 @@ function trySoAMethodDispatch(
     ),
   );
 
-  // Collect scratch variable names for dirty-detection after inlining.
-  const scratchNames = new Set<string>();
+  const fieldScratchVars = new Map<string, VariableOperand>();
+  const scratchNameToField = new Map<string, string>();
   for (const [fieldName] of fieldLists) {
-    const sv = converter.mapInlineProperty(
-      soaClassName,
-      scratchPrefix,
-      fieldName,
-    );
-    if (sv) scratchNames.add(sv.name);
-  }
-
-  // Prologue: load all SoA fields from DataLists → scratch variables
-  for (const [fieldName, listVar] of fieldLists) {
     const scratchVar = converter.mapInlineProperty(
       soaClassName,
       scratchPrefix,
       fieldName,
     );
+    if (scratchVar) {
+      fieldScratchVars.set(fieldName, scratchVar);
+      scratchNameToField.set(scratchVar.name, fieldName);
+    }
+  }
+
+  // Prologue: load only the SoA fields referenced by the inlined body.
+  for (const [fieldName, listVar] of fieldLists) {
+    if (!fieldsToLoad.has(fieldName)) continue;
+    const scratchVar = fieldScratchVars.get(fieldName);
     if (scratchVar) {
       const token = converter.newTemp(ExternTypes.dataToken);
       emitBoundedDataListGetItem(converter, listVar, hdlVar, token);
@@ -473,31 +616,28 @@ function trySoAMethodDispatch(
     return null;
   }
 
-  // Epilogue: write back fields only if the inlined body actually wrote to
-  // any scratch variable. Read-only methods (getLabel, toString, etc.) skip
-  // the write-back, avoiding unnecessary set_Item extern round-trips.
-  let needsWriteBack = false;
+  // Epilogue: write back fields that were mutated during the inlined body.
+  // Read-only fields (preloaded but not written) are not written back —
+  // their DataList slots still hold the correct value.
+  const writtenFieldNames = new Set<string>();
   for (let i = instrBeforeInline; i < converter.instructions.length; i++) {
     const inst = converter.instructions[i];
     if ("dest" in inst) {
       const dest = (inst as { dest: TACOperand }).dest;
-      if (
-        dest &&
-        dest.kind === TACOperandKind.Variable &&
-        scratchNames.has((dest as VariableOperand).name)
-      ) {
-        needsWriteBack = true;
-        break;
+      if (dest && dest.kind === TACOperandKind.Variable) {
+        const fieldName = scratchNameToField.get(
+          (dest as VariableOperand).name,
+        );
+        if (fieldName) {
+          writtenFieldNames.add(fieldName);
+        }
       }
     }
   }
-  if (needsWriteBack) {
+  if (writtenFieldNames.size > 0) {
     for (const [fieldName, listVar] of fieldLists) {
-      const scratchVar = converter.mapInlineProperty(
-        soaClassName,
-        scratchPrefix,
-        fieldName,
-      );
+      if (!writtenFieldNames.has(fieldName)) continue;
+      const scratchVar = fieldScratchVars.get(fieldName);
       if (scratchVar) {
         const token = converter.wrapDataToken(scratchVar);
         converter.instructions.push(
