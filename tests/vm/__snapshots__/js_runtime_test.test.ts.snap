@@ -753,6 +753,8 @@ exports[`JS Runtime Equivalence Tests > JS: mahjong_tile_sort_compare_regression
   "3p",
   "5s",
   "1s",
+  "5s",
+  "9s",
 ]
 `;
 

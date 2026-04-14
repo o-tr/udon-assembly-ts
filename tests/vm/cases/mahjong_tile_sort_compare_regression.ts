@@ -199,5 +199,7 @@ export class MahjongTileSortCompareRegression extends UdonSharpBehaviour {
       Tile.parse("5s"),
     ]);
     Debug.Log(sorted3[0].toString());
+    Debug.Log(sorted3[1].toString());
+    Debug.Log(sorted3[2].toString());
   }
 }

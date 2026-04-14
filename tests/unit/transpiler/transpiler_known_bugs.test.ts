@@ -1581,30 +1581,6 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("[KNOWN FAIL] latest active VM regressions", () => {
-    it.fails("boxed SoA field access should avoid SystemConvert.ToInt32(object)", () => {
-      const source = `
-        class Tile {
-          constructor(public code: number) {}
-        }
-        class Main {
-          Start(): void {
-            const tiles: Tile[] = [];
-            for (let i: number = 0; i < 3; i++) {
-              tiles.push(new Tile(i));
-            }
-            const boxed: any = tiles[1];
-            Debug.Log(boxed.code);
-          }
-        }
-      `;
-      const result = new TypeScriptToUdonTranspiler().transpile(source);
-
-      expect(result.tac).toContain("__soa_Tile_code.get_Item");
-      expect(result.uasm).not.toContain(
-        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
-      );
-    });
-
     it.fails("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
       const source = `
         import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";

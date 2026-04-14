@@ -233,20 +233,24 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
 
   // Generate individual vitest assertions per test case
   for (const testCase of VM_TEST_CASES) {
-    const vmCase = testCase.knownFail ? it.fails : it;
     const knownFailSuffix = testCase.knownFail
       ? testCase.knownFailReason
         ? ` [KNOWN FAIL: ${testCase.knownFailReason}]`
         : " [KNOWN FAIL]"
       : "";
 
-    vmCase(`VM: ${testCase.name}${knownFailSuffix}`, () => {
+    it(`VM: ${testCase.name}${knownFailSuffix}`, () => {
       const result = testResults.get(testCase.name);
       if (!result) {
         throw new Error(`No result found for test "${testCase.name}"`);
       }
 
       const expectedLogs = resolvedExpectedLogs.get(testCase.name) ?? [];
+
+      if (testCase.knownFail) {
+        expect(result.passed).toBe(false);
+        return;
+      }
 
       if (!result.passed) {
         throw new Error(
