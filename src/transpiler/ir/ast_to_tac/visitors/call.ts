@@ -586,13 +586,6 @@ function trySoAMethodDispatch(
     }
   }
 
-  const loadedFieldNames = new Set<string>();
-  for (const fieldName of fieldsToLoad) {
-    if (fieldScratchVars.has(fieldName)) {
-      loadedFieldNames.add(fieldName);
-    }
-  }
-
   // Inline the method body
   const instrBeforeInline = converter.instructions.length;
   const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
@@ -612,8 +605,9 @@ function trySoAMethodDispatch(
     return null;
   }
 
-  // Epilogue: write back only the fields that were loaded or mutated.
-  // Untouched SoA slots stay untouched, preventing accidental zeroing.
+  // Epilogue: write back fields that were mutated during the inlined body.
+  // Read-only fields (preloaded but not written) are not written back —
+  // their DataList slots still hold the correct value.
   const writtenFieldNames = new Set<string>();
   for (let i = instrBeforeInline; i < converter.instructions.length; i++) {
     const inst = converter.instructions[i];
@@ -630,12 +624,8 @@ function trySoAMethodDispatch(
     }
   }
   if (writtenFieldNames.size > 0) {
-    const fieldsToWriteBack = new Set<string>(loadedFieldNames);
-    for (const fieldName of writtenFieldNames) {
-      fieldsToWriteBack.add(fieldName);
-    }
     for (const [fieldName, listVar] of fieldLists) {
-      if (!fieldsToWriteBack.has(fieldName)) continue;
+      if (!writtenFieldNames.has(fieldName)) continue;
       const scratchVar = fieldScratchVars.get(fieldName);
       if (scratchVar) {
         const token = converter.wrapDataToken(scratchVar);

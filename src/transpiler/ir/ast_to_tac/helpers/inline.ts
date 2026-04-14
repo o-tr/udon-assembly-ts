@@ -224,13 +224,6 @@ export function saveAndBindInlineParams(
             });
           }
         }
-      } else if (param.type.udonType === UdonType.Boolean) {
-        converter.instructions.push(
-          new CopyInstruction(
-            createVariable(param.name, param.type, { isParameter: true }),
-            createConstant(false, PrimitiveTypes.boolean),
-          ),
-        );
       }
     }
   }
