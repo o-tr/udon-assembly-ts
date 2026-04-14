@@ -1506,6 +1506,182 @@ describe("known transpiler bugs", () => {
     }
   });
 
+  describe("recurrence monitors for previously surfaced VM failures", () => {
+    it("HeapTypeMismatch monitor: numeric condition emits Int32->Boolean comparison path", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Main {
+          Start(): void {
+            const count: UdonInt = 2;
+            if (count) {
+              Debug.Log("truthy");
+            } else {
+              Debug.Log("falsy");
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_Inequality__SystemInt32_SystemInt32__SystemBoolean",
+      );
+    });
+
+    it("dispatch miss monitor: SoA loop-created instances keep fast-path dispatch", () => {
+      const source = `
+        class Item {
+          constructor(public label: string) {}
+          show(): string {
+            return this.label;
+          }
+        }
+        class Main {
+          Start(): void {
+            const items: Item[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              items.push(new Item("item" + i));
+            }
+            for (const item of items) {
+              Debug.Log(item.show());
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Item_label.get_Item");
+      expect(result.uasm).not.toContain("dispatch miss");
+    });
+
+    it("get_Reference monitor: unknown-typed Map.get flow avoids Reference fallback", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const cache: Map<string, unknown> = new Map<string, unknown>();
+            cache.set("a", "hello");
+            const value = cache.get("a") as string;
+            Debug.Log(value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // [KNOWN FAIL] Latest active VM regressions (convert after bug fixes land)
+  // ---------------------------------------------------------------------------
+
+  describe("[KNOWN FAIL] latest active VM regressions", () => {
+    it.fails("boxed SoA field access should avoid SystemConvert.ToInt32(object)", () => {
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[1];
+            Debug.Log(boxed.code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Tile_code.get_Item");
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+    });
+
+    it.fails("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+        class Tile {
+          constructor(public kind: UdonInt) {}
+          static parse(raw: string): Tile {
+            return new Tile(
+              UdonTypeConverters.toUdonInt(raw.substring(0, 1).length),
+            );
+          }
+          static compare(a: Tile, b: Tile): UdonInt {
+            const d = (a.kind as number) - (b.kind as number);
+            return UdonTypeConverters.toUdonInt(d);
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const cmp1 = Tile.compare(Tile.parse("1m"), Tile.parse("2m"));
+            const cmp2 = Tile.compare(Tile.parse("2m"), Tile.parse("1m"));
+            Debug.Log(cmp1 < (0 as UdonInt) ? "LT" : "GE");
+            Debug.Log(cmp2 > (0 as UdonInt) ? "GT" : "LE");
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+      expect(result.uasm).toContain(
+        "SystemInt32.__op_GreaterThan__SystemInt32_SystemInt32__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+    });
+
+    it.fails("tile_dora-like boolean flow should not require DataToken String accessor", () => {
+      const source = `
+        class Tile {
+          constructor(public label: string, public isRed: boolean) {}
+          static cache: Tile[] = [];
+          static init(): void {
+            for (let i: number = 0; i < 2; i++) {
+              Tile.cache.push(new Tile("5m" + i, i === 0));
+            }
+          }
+          static parse(_raw: string): Tile {
+            return Tile.cache[0];
+          }
+          static isDoraIndicatorFor(indicator: Tile, target: Tile): boolean {
+            return indicator.isRed === target.isRed;
+          }
+        }
+        class Main {
+          Start(): void {
+            Tile.init();
+            const indicator = Tile.parse("1m");
+            const target = Tile.parse("2m");
+            Debug.Log(Tile.isDoraIndicatorFor(indicator, target) ? "True" : "False");
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+    });
+  });
+
   describe("as string cast extern coverage", () => {
     it("should emit Convert.ToString for int-as-string assertions", () => {
       const source = `

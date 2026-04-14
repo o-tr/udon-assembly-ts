@@ -15,6 +15,13 @@ export interface VmTestCase {
   expectedLogs?: string[];
   /** If true, the test expects a VM/assembly error */
   expectError?: boolean;
+  /**
+   * If true, this case is tracked as an active regression and is expected to
+   * fail for now. vm_test.test.ts will run it with `it.fails(...)`.
+   */
+  knownFail?: boolean;
+  /** Optional note explaining why the case is currently expected to fail. */
+  knownFailReason?: string;
   /** If true, enable TAC optimizer before code generation */
   optimize?: boolean;
   /** Required extern signatures that must appear in generated UASM */
@@ -254,6 +261,28 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "lru_cache_map_get_regression.ts",
     expectedLogs: ["True", "True", "2", "False", "True", "3", "0"],
     disallowedExterns: dataTokenReferenceDisallowedExterns,
+  },
+  {
+    name: "mahjong_tile_sort_compare_regression",
+    sourceFile: "mahjong_tile_sort_compare_regression.ts",
+    expectedLogs: ["LT", "GT", "EQ", "1m", "5m", "9m", "1m", "3p", "5s", "1s"],
+    knownFail: true,
+    knownFailReason: "comparison inversion / Object->Int32 conversion path",
+  },
+  {
+    name: "mahjong_tile_dora_regression",
+    sourceFile: "mahjong_tile_dora_regression.ts",
+    expectedLogs: ["2m", "1m", "2z", "1z", "6z", "5z", "True", "False"],
+    knownFail: true,
+    knownFailReason:
+      "Tile.parse/fromKind path still hits DataToken accessor mismatch",
+  },
+  {
+    name: "mahjong_lru_cache_regression",
+    sourceFile: "mahjong_lru_cache_regression.ts",
+    expectedLogs: ["True", "hello", "2", "False", "True", "3", "0"],
+    knownFail: true,
+    knownFailReason: "Map.get unknown->string unwrap remains unstable in VM",
   },
   { name: "numeric_cast_chain", sourceFile: "numeric_cast_chain.ts" },
   // --- Multi-part string concat ---

@@ -716,6 +716,46 @@ exports[`JS Runtime Equivalence Tests > JS: lru_numeric_compare_regression 1`] =
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: mahjong_lru_cache_regression 1`] = `
+[
+  "True",
+  "hello",
+  "2",
+  "False",
+  "True",
+  "3",
+  "0",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: mahjong_tile_dora_regression 1`] = `
+[
+  "2m",
+  "1m",
+  "2z",
+  "1z",
+  "6z",
+  "5z",
+  "True",
+  "False",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: mahjong_tile_sort_compare_regression 1`] = `
+[
+  "LT",
+  "GT",
+  "EQ",
+  "1m",
+  "5m",
+  "9m",
+  "1m",
+  "3p",
+  "5s",
+  "1s",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: mathf_advanced 1`] = `
 [
   "3",
