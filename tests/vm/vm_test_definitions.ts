@@ -17,7 +17,9 @@ export interface VmTestCase {
   expectError?: boolean;
   /**
    * If true, this case is tracked as an active regression and is expected to
-   * fail for now. vm_test.test.ts will run it with `it.fails(...)`.
+   * fail on the VM. vm_test.test.ts asserts `result.passed === false` and
+   * returns early; when the bug is fixed this assertion will fail and prompt
+   * removal of this flag.
    */
   knownFail?: boolean;
   /** Optional note explaining why the case is currently expected to fail. */
