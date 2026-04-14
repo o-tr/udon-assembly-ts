@@ -32,20 +32,23 @@
  *         causing an IndexOutOfRange at runtime.
  *         (root cause #13 continuation in vm-test-failures-investigation.md)
  *
- * Bug 7: HeapTypeMismatchException Int32→Boolean — non-boolean values (Int32,
+ * Bug 7 (FIXED in transpiler; VM known-fail tracked separately):
+ *         HeapTypeMismatchException Int32→Boolean — non-boolean values (Int32,
  *         Single, String, Object) are passed directly to JUMP_IF_FALSE without
  *         coercion to Boolean. The Udon VM strictly requires Boolean for
  *         JUMP_IF_FALSE. Patterns like `if (count)`, `count ? a : b`, and
  *         `if (obj)` all fail at runtime.
  *         (root cause #16 in vm-test-failures-investigation.md)
  *
- * Bug 8: SoA D3 method dispatch miss — tryD3MethodDispatch compares runtime
+ * Bug 8 (FIXED in transpiler; VM known-fail tracked separately):
+ *         SoA D3 method dispatch miss — tryD3MethodDispatch compares runtime
  *         handles against compile-time instanceId constants. For SoA classes
  *         (loop-created), runtime handles are dynamic counter values that never
  *         match static instanceIds. Method calls on SoA instances always miss.
  *         (root cause #17 in vm-test-failures-investigation.md)
  *
- * Bug 9: DataToken.get_Reference for Map<string, unknown> — when a Map's value
+ * Bug 9 (FIXED in transpiler; VM known-fail tracked separately):
+ *         DataToken.get_Reference for Map<string, unknown> — when a Map's value
  *         type is `unknown` (or `any`/`object`), it maps to ObjectType. The
  *         unwrapDataToken function's default case uses .Reference, which crashes
  *         at runtime because the DataToken stores a typed value (String, Int, etc.)

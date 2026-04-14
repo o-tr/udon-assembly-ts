@@ -248,6 +248,9 @@ describe.skipIf(!shouldRun)("UASM VM Runtime Tests", () => {
       const expectedLogs = resolvedExpectedLogs.get(testCase.name) ?? [];
 
       if (testCase.knownFail) {
+        // Ensure VM execution produced a structured result; do not treat
+        // missing execution artifacts as an acceptable known failure.
+        expect(Array.isArray(result.capturedLogs)).toBe(true);
         expect(result.passed).toBe(false);
         return;
       }
