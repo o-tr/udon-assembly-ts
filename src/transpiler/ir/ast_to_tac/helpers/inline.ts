@@ -154,30 +154,50 @@ export function saveAndBindInlineParams(
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
+    const arg = args[i];
+    // When the declared param type is erased (unknown/any/object) and the
+    // argument carries a concrete scalar type (String/Bool/numeric), promote
+    // the local variable to that concrete type so that wrapDataToken uses the
+    // correct DataToken.ctor overload (ctor(SystemString) not ctor(SystemObject)).
+    const argConcreteType = arg ? converter.getOperandType(arg) : undefined;
+    const effectiveParamType =
+      argConcreteType &&
+      isPlainObjectType(param.type) &&
+      (isNumericUdonType(argConcreteType.udonType) ||
+        argConcreteType.udonType === UdonType.Boolean ||
+        argConcreteType.udonType === UdonType.String)
+        ? argConcreteType
+        : param.type;
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-      converter.symbolTable.addSymbol(param.name, param.type, true, false);
+      converter.symbolTable.addSymbol(
+        param.name,
+        effectiveParamType,
+        true,
+        false,
+      );
     }
     saved.set(param.name, converter.inlineInstanceMap.get(param.name));
     converter.inlineInstanceMap.delete(param.name);
-    const arg = args[i];
     if (arg) {
       // Coerce argument type if both are numeric but different.
       // Without this, a COPY from Single (float) to Int32 would do a
       // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
       let argToUse = arg;
-      const argType = converter.getOperandType(arg);
+      // argConcreteType is guaranteed non-undefined here (arg is truthy).
+      // biome-ignore lint/style/noNonNullAssertion: arg is truthy → argConcreteType is set
+      const argType = argConcreteType!;
       if (
-        argType.udonType !== param.type.udonType &&
+        argType.udonType !== effectiveParamType.udonType &&
         isNumericUdonType(argType.udonType) &&
-        isNumericUdonType(param.type.udonType)
+        isNumericUdonType(effectiveParamType.udonType)
       ) {
-        const coercedArg = converter.newTemp(param.type);
+        const coercedArg = converter.newTemp(effectiveParamType);
         converter.instructions.push(new CastInstruction(coercedArg, arg));
         argToUse = coercedArg;
       }
       converter.instructions.push(
         new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
+          createVariable(param.name, effectiveParamType, { isParameter: true }),
           argToUse,
         ),
       );
@@ -239,6 +259,26 @@ export function restoreInlineParams(
       converter.inlineInstanceMap.set(name, entry);
     }
   }
+}
+
+/**
+ * Resolve the effective return type for an inline method body.
+ * When the declared return type is erased (unknown/any/object), promotes the
+ * return slot to DataToken so the caller's `as T` unwrap path can see the
+ * concrete runtime type.
+ *
+ * NOTE: recursive paths are NOT handled here; see the TODO comment at
+ * `emitInlineRecursiveStaticMethod` call sites.
+ */
+function resolveInlineReturnType(returnType: TypeSymbol): {
+  effectiveReturnType: TypeSymbol;
+  isErasedReturn: boolean;
+} {
+  const isErasedReturn = isPlainObjectType(returnType);
+  return {
+    effectiveReturnType: isErasedReturn ? ExternTypes.dataToken : returnType,
+    isErasedReturn,
+  };
 }
 
 function getEntryPointPropertyNameForClass(
@@ -1092,6 +1132,13 @@ export function visitInlineStaticMethodCall(
     method.body,
   );
   if (selfCallCount > 0) {
+    // TODO: erased return types on recursive paths need separate analysis;
+    // DataToken promotion is not applied here.
+    if (isPlainObjectType(returnType)) {
+      console.warn(
+        `transpiler: inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
+      );
+    }
     return emitInlineRecursiveStaticMethod(
       this,
       className,
@@ -1105,11 +1152,8 @@ export function visitInlineStaticMethodCall(
   }
 
   // --- Non-recursive path ---
-  // When the declared return type is erased (unknown/any/object), promote the
-  // return slot to DataToken so the caller's `as T` unwrap can see the type.
-  // TODO: recursive paths with erased return types need separate analysis.
-  const isErasedReturn = isPlainObjectType(returnType);
-  const effectiveReturnType = isErasedReturn ? ExternTypes.dataToken : returnType;
+  const { effectiveReturnType, isErasedReturn } =
+    resolveInlineReturnType(returnType);
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
     effectiveReturnType,
@@ -1666,9 +1710,8 @@ function inlineInstanceMethodCallCore(
   }
   // When the declared return type is erased (unknown/any/object), promote the
   // return slot to DataToken so the caller's `as T` unwrap can see the type.
-  // TODO: recursive paths with erased return types need separate analysis.
-  const isErasedReturn = isPlainObjectType(returnType);
-  const effectiveReturnType = isErasedReturn ? ExternTypes.dataToken : returnType;
+  const { effectiveReturnType, isErasedReturn } =
+    resolveInlineReturnType(returnType);
   const result = createVariable(
     `__inline_ret_${converter.tempCounter++}`,
     effectiveReturnType,

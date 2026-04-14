@@ -5,6 +5,7 @@ import {
   ExternTypes,
   getNativeArrayTypeName,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
@@ -1373,9 +1374,22 @@ export function visitReturnStatement(
       // When the return slot was promoted to DataToken (erased return type),
       // wrap the value so it is always a DataToken, enabling the caller's
       // `as T` branch in visitAsExpression to emit the typed accessor.
-      const returnPayload = inlineContext.isErasedReturn
-        ? this.wrapDataToken(value)
-        : value;
+      let returnPayload = value;
+      if (inlineContext.isErasedReturn) {
+        if (isPlainObjectType(this.getOperandType(value))) {
+          // The value still has an erased type at the return site — wrapping
+          // it will produce a Reference DataToken instead of a typed one.
+          // The caller's `as T` (get_String, get_Int32, etc.) will throw at
+          // runtime. This usually indicates that a parameter or local
+          // declared as `unknown`/`any` was not promoted to a concrete type
+          // by saveAndBindInlineParams (e.g. a non-scalar arg such as a
+          // DataToken or struct).
+          console.warn(
+            "transpiler: erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
+          );
+        }
+        returnPayload = this.wrapDataToken(value);
+      }
       this.instructions.push(
         new CopyInstruction(inlineContext.returnVar, returnPayload),
       );
