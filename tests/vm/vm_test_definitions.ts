@@ -281,8 +281,6 @@ export const VM_TEST_CASES: VmTestCase[] = [
       "5s",
       "9s",
     ],
-    knownFail: true,
-    knownFailReason: "comparison inversion / Object->Int32 conversion path",
   },
   {
     name: "mahjong_tile_dora_regression",

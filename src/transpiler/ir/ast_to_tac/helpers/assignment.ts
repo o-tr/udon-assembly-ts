@@ -50,6 +50,7 @@ import {
   isInlineHandleType,
   resolveClassNode,
   resolveClassProperty,
+  resolveInlineClassType,
 } from "./inline.js";
 
 export function assignToTarget(
@@ -565,6 +566,13 @@ export function unwrapDataToken(
   if (tokenType.name !== ExternTypes.dataToken.name) {
     return token;
   }
+
+  // Upgrade ClassTypeSymbol(name, Object) → ClassTypeSymbol(name, Int32) for
+  // known inline classes so the unwrap temp is declared as %SystemInt32 (the
+  // actual slot type of get_Int), not %SystemObject. Without this, downstream
+  // code reading the temp will round-trip via SystemConvert.ToInt32(Object)
+  // and may hit a type-mismatch crash at runtime.
+  targetType = resolveInlineClassType(this, targetType);
 
   // When the target type cannot determine the correct DataToken accessor
   // at compile time, return the DataToken as-is to avoid a .Reference

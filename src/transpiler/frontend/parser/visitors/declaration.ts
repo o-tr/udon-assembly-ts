@@ -8,6 +8,7 @@ import {
 import {
   type ASTNode,
   ASTNodeKind,
+  type BlockStatementNode,
   type ClassDeclarationNode,
   type DecoratorNode,
   type EnumDeclarationNode,
@@ -142,7 +143,25 @@ export function visitClassDeclaration(
           ...(isParameterProperty ? { isParameterProperty: true } : {}),
         };
       });
-      const body = member.body ? this.visitBlock(member.body) : undefined;
+      // Register parameters in a wrapping scope so that inferType inside the
+      // body can resolve parameter types (e.g. `tiles[0]` where `tiles` is a
+      // Tile[] param). Mirrors visitMethodDeclaration; without this, an
+      // ElementAccessExpression falls through to mapTypeScriptType("object")
+      // = DataDictionary, which corrupts DataToken wrapping for inline-class
+      // arrays consumed by constructor bodies.
+      let body: BlockStatementNode | undefined;
+      if (member.body) {
+        this.symbolTable.enterScope();
+        for (const param of member.parameters) {
+          const paramName = param.name.getText();
+          const paramType = param.type
+            ? this.mapTypeWithGenerics(param.type.getText(), param.type)
+            : this.mapTypeWithGenerics("number");
+          this.symbolTable.addSymbol(paramName, paramType, true, false);
+        }
+        body = this.visitBlock(member.body);
+        this.symbolTable.exitScope();
+      }
       if (body) {
         constructorNode = {
           parameters: params,
@@ -495,7 +514,16 @@ export function visitMethodDeclaration(
       ? this.mapTypeWithGenerics(returnTypeText, node.type)
       : this.mapTypeWithGenerics("void");
 
+  // Register parameters in a wrapping scope so that inferType inside the body
+  // can resolve parameter types (e.g. for `let a = tiles[0]` where `tiles` is
+  // a Tile[] param). Without this, ElementAccessExpression falls through to
+  // mapTypeScriptType("object") = DataDictionary, which corrupts DataToken wrapping.
+  this.symbolTable.enterScope();
+  for (const param of parameters) {
+    this.symbolTable.addSymbol(param.name, param.type, true, false);
+  }
   const body = this.visitBlock(node.body);
+  this.symbolTable.exitScope();
 
   const isStatic = !!node.modifiers?.some(
     (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
