@@ -1352,7 +1352,7 @@ describe("known transpiler bugs", () => {
   // ---------------------------------------------------------------------------
 
   describe("LessThan guard operand Int32 normalization", () => {
-    it("SoA property read from any-typed receiver casts handle to Int32 before index<Count guard", () => {
+    it("SoA property read from any-annotated local keeps Int32 handle for index<Count guard", () => {
       const source = `
         class Tile {
           constructor(public code: number) {}
@@ -1370,9 +1370,11 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      // any/object receiver must be normalized to Int32 before SoA DataList index comparison.
+      // The unwrap of a Tile[] element produces an Int32 handle directly, so
+      // the SoA bounds check operates on a real Int32 slot (no redundant
+      // SystemConvert.ToInt32(Object) round-trip through an Object temp).
       expect(result.tac).toContain("__soa_Tile_code.get_Item");
-      expect(result.uasm).toContain(
+      expect(result.uasm).not.toContain(
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
       );
       expect(result.uasm).toContain(
@@ -1380,7 +1382,7 @@ describe("known transpiler bugs", () => {
       );
     });
 
-    it("SoA method dispatch from any-typed receiver casts handle to Int32", () => {
+    it("SoA method dispatch from any-annotated local keeps Int32 handle", () => {
       const source = `
         class Tile {
           constructor(public code: number) {}
@@ -1402,7 +1404,7 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       expect(result.tac).toContain("__soa_Tile_code.get_Item");
-      expect(result.uasm).toContain(
+      expect(result.uasm).not.toContain(
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
       );
       expect(result.uasm).not.toContain("dispatch miss");
