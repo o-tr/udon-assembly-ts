@@ -397,7 +397,11 @@ export interface FunctionDeclarationNode extends ASTNode {
  */
 export interface FunctionExpressionNode extends ASTNode {
   kind: ASTNodeKind.FunctionExpression;
-  parameters: Array<{ name: string; type: TypeSymbol }>;
+  parameters: Array<{
+    name: string;
+    type: TypeSymbol;
+    initializer?: ASTNode;
+  }>;
   body: ASTNode | BlockStatementNode;
   isArrow: boolean;
   returnType?: TypeSymbol;
@@ -418,7 +422,11 @@ export interface DecoratorNode extends ASTNode {
 export interface MethodDeclarationNode extends ASTNode {
   kind: ASTNodeKind.MethodDeclaration;
   name: string;
-  parameters: Array<{ name: string; type: TypeSymbol }>;
+  parameters: Array<{
+    name: string;
+    type: TypeSymbol;
+    initializer?: ASTNode;
+  }>;
   returnType: TypeSymbol;
   originalReturnTypeName?: string;
   body: BlockStatementNode;
@@ -453,7 +461,11 @@ export interface InterfaceDeclarationNode extends ASTNode {
   properties: Array<{ name: string; type: TypeSymbol }>;
   methods: Array<{
     name: string;
-    parameters: Array<{ name: string; type: TypeSymbol }>;
+    parameters: Array<{
+      name: string;
+      type: TypeSymbol;
+      initializer?: ASTNode;
+    }>;
     returnType: TypeSymbol;
   }>;
 }
@@ -475,6 +487,7 @@ export interface ClassDeclarationNode extends ASTNode {
       type: string;
       isSerializeField?: boolean;
       isParameterProperty?: boolean;
+      initializer?: ASTNode;
     }>;
     body: ASTNode;
   };

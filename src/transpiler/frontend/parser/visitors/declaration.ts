@@ -6,7 +6,6 @@ import {
   type TypeSymbol,
 } from "../../type_symbols.js";
 import {
-  type ASTNode,
   ASTNodeKind,
   type BlockStatementNode,
   type ClassDeclarationNode,
@@ -70,12 +69,7 @@ export function visitClassDeclaration(
 
   const properties: PropertyDeclarationNode[] = [];
   const methods: MethodDeclarationNode[] = [];
-  let constructorNode:
-    | {
-        parameters: Array<{ name: string; type: string }>;
-        body: ASTNode;
-      }
-    | undefined;
+  let constructorNode: ClassDeclarationNode["constructor"];
 
   const classTypeParams = new Set(
     (node.typeParameters ?? []).map((param) => param.name.getText()),
@@ -130,10 +124,15 @@ export function visitClassDeclaration(
         };
       });
 
-      // Build params, marking @SerializeField and parameter-property ones
+      // Build params, marking @SerializeField and parameter-property ones.
+      // Also capture any `= <default>` initializer AST so saveAndBindInlineParams
+      // can emit the default when a caller omits the argument (bug #22).
       const params = member.parameters.map((param, i) => {
         const paramName = param.name.getText();
         const { isParameterProperty } = paramPropertyInfo[i];
+        const initializer = param.initializer
+          ? this.parseParameterInitializer(param.initializer, param.type)
+          : undefined;
         return {
           name: paramName,
           type: param.type ? param.type.getText() : "number",
@@ -141,6 +140,7 @@ export function visitClassDeclaration(
             ? { isSerializeField: true }
             : {}),
           ...(isParameterProperty ? { isParameterProperty: true } : {}),
+          ...(initializer ? { initializer } : {}),
         };
       });
       // Register parameters in a wrapping scope so that inferType inside the
@@ -505,7 +505,14 @@ export function visitMethodDeclaration(
     const paramType = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
       : this.mapTypeWithGenerics("number");
-    return { name: paramName, type: paramType };
+    const initializer = param.initializer
+      ? this.parseParameterInitializer(param.initializer, param.type)
+      : undefined;
+    return {
+      name: paramName,
+      type: paramType,
+      ...(initializer ? { initializer } : {}),
+    };
   });
 
   const returnTypeText = node.type ? node.type.getText() : undefined;
