@@ -1644,10 +1644,10 @@ describe("known transpiler bugs", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Tile sort compare regression (fixed)
+  // Tile sort compare + parser scope regressions (fixed)
   // ---------------------------------------------------------------------------
 
-  describe("tile sort compare regression (fixed)", () => {
+  describe("tile sort compare + parser scope regressions (fixed)", () => {
     it("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
       // Note: Tile.parse uses a plain ternary rather than the original
       // `UdonTypeConverters.toUdonInt(raw.substring(0, 1).length)` expression.
@@ -1692,6 +1692,52 @@ describe("known transpiler bugs", () => {
       );
       expect(result.uasm).not.toContain(
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
+      );
+    });
+
+    it("constructor body element-access on parameter-typed array unwraps as Int32 handle", () => {
+      // Regression: visitClassDeclaration's constructor branch visited the
+      // body without registering parameters in the symbol table first. So
+      // `const first = input[0]` inside the constructor body called
+      // inferType(input[0]); inferType for ElementAccess walks the symbol
+      // table to find `input` — and not finding it, fell back to
+      // mapTypeScriptType("object") = DataDictionary. Then `[first]` (an
+      // array literal whose element wrap reads `first`'s declared type)
+      // emitted DataToken.__ctor__DataDictionary instead of __ctor__Int32.
+      //
+      // The negative assertion below is the load-bearing discriminator:
+      // this exact source produces one __ctor__VRCSDK3DataDataDictionary
+      // extern WITHOUT the parser scope fix and zero with it. Removing
+      // either `const first = input[0]` (no inferType call) or the
+      // `[first]` array literal wrap (no wrapDataToken consuming first's
+      // type) collapses the test to a trivial pass.
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+        }
+        class Holder {
+          cached: Tile[];
+          constructor(input: Tile[]) {
+            const first = input[0];
+            const arr: Tile[] = [first];
+            this.cached = arr;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const h = new Holder(tiles);
+            Debug.Log(h.cached[0].code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataDictionary__VRCSDK3DataDataToken",
       );
     });
   });
