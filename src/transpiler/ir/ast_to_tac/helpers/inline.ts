@@ -151,10 +151,7 @@ export function resolveInlineClassType(
   converter: ASTToTACConverter,
   type: TypeSymbol,
 ): TypeSymbol {
-  if (
-    !(type instanceof ClassTypeSymbol) ||
-    type.udonType !== UdonType.Object
-  ) {
+  if (!(type instanceof ClassTypeSymbol) || type.udonType !== UdonType.Object) {
     return type;
   }
   const name = type.name;
@@ -162,7 +159,12 @@ export function resolveInlineClassType(
     !converter.udonBehaviourClasses.has(name) &&
     resolveClassNode(converter, name) !== undefined
   ) {
-    return new ClassTypeSymbol(name, UdonType.Int32, type.baseClass, type.members);
+    return new ClassTypeSymbol(
+      name,
+      UdonType.Int32,
+      type.baseClass,
+      type.members,
+    );
   }
   return type;
 }
