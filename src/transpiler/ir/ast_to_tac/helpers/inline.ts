@@ -188,7 +188,7 @@ export function resolveInlineClassType(
 
 export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
-  params: Array<{ name: string; type: TypeSymbol }>,
+  params: Array<{ name: string; type: TypeSymbol; initializer?: ASTNode }>,
   args: TACOperand[],
 ): InlineParamSave {
   const argInlineInfos = args.map((arg) => {
@@ -356,25 +356,62 @@ export function saveAndBindInlineParams(
           }
         }
       }
-    } else if (param.type.udonType === UdonType.Boolean) {
-      // arg not supplied: explicitly reset optional boolean param to false.
-      // Named param heap slots are shared across all inlinings of any method
-      // using the same param name, so a prior inlining that wrote `true` to
-      // the slot would otherwise leak into later calls where the param was
-      // omitted (the original mahjong regression: `fromKind(kind)` seeing
-      // a stale `true` left by the Tile constructor's `isRed = true`).
+    } else if (param.initializer) {
+      // arg not supplied: emit the parameter's `= <default>` initializer.
+      // This fixes root cause #22 — constructor / method parameter defaults
+      // like `melds: readonly Meld[] = []` on `Hand` were previously dropped,
+      // leaving the auto-exported heap slot at its initial `null` and
+      // crashing `get_Count` calls in the body.
       //
-      // Scope is intentionally narrow: only Boolean is reset because that's
-      // the only type with a verified regression. The same heap-sharing risk
-      // technically exists for every other shared-name param type (Int32,
-      // String, etc.), but a broader reset has not been validated against
-      // the existing test suite and could mask other bugs (e.g. silently
-      // zeroing what should have been a passed-through caller value via a
-      // future binding-path change). Generalize only when an additional
-      // failing test pins the next type that needs it. NOTE: do NOT extend
-      // to ClassTypeSymbol params even if their udonType is Int32 — a zero
-      // handle would alias instance 0, producing a wrong inline instance
-      // rather than a benign default.
+      // The initializer AST was pre-parsed by the parser with the correct
+      // `typeHint` baked in (see TypeScriptParser.parseParameterInitializer),
+      // so re-visiting it here yields the right DataList element type.
+      //
+      // Clear `currentNativeArrayVarName` so a stale signal from the
+      // enclosing visitVariableStatement can't mis-classify a default array
+      // literal as native.
+      //
+      // Scope limitations:
+      // - Literal defaults (`[]`, `false`, `0`, `""`, `{}`) are fully
+      //   supported.
+      // - A default that allocates a user inline class (`= new Foo()`)
+      //   would produce an inline-class handle but this path does NOT
+      //   wire `inlineInstanceMap`, so the body's field-access resolution
+      //   for `param.someField` would fall back to un-tracked lookup.
+      // - A default that references another parameter (`= a + 1`) is
+      //   parsed at declaration time — before the parameter scope is
+      //   entered — so the identifier is captured without type resolution.
+      //   Re-visiting it at inline-bind time may or may not resolve the
+      //   reference depending on caller scope state.
+      // No mahjong-t2 parameter uses either of these shapes; generalize
+      // only when a failing test pins the next shape that needs it.
+      const savedNative = converter.currentNativeArrayVarName;
+      converter.currentNativeArrayVarName = null;
+      try {
+        const defaultValue = converter.visitExpression(param.initializer);
+        converter.instructions.push(
+          new CopyInstruction(
+            createVariable(param.name, effectiveParamType, {
+              isParameter: true,
+            }),
+            defaultValue,
+          ),
+        );
+      } finally {
+        converter.currentNativeArrayVarName = savedNative;
+      }
+    } else if (param.type.udonType === UdonType.Boolean) {
+      // arg not supplied and no explicit `= <default>`: reset optional
+      // boolean param to false. Named param heap slots are shared across
+      // all inlinings of any method using the same param name, so a prior
+      // inlining that wrote `true` to the slot would otherwise leak into
+      // later calls where the param was omitted (the original mahjong
+      // regression: `fromKind(kind)` seeing a stale `true` left by the
+      // Tile constructor's `isRed = true`).
+      //
+      // This fallback kicks in only for bare `foo?: boolean` params —
+      // params with an explicit `= false` default now go through the
+      // default-emission branch above.
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
@@ -989,6 +1026,7 @@ export function inlineSuperConstructorFromArgs(
       const typedParams = baseClassNode.constructor.parameters.map((param) => ({
         name: param.name,
         type: converter.typeMapper.mapTypeScriptType(param.type),
+        ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries = saveAndBindInlineParams(
         converter,
@@ -1155,6 +1193,7 @@ export function visitInlineConstructor(
       const typedParams = classNode.constructor.parameters.map((param) => ({
         name: param.name,
         type: this.typeMapper.mapTypeScriptType(param.type),
+        ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries = saveAndBindInlineParams(
         this,
@@ -1786,6 +1825,19 @@ function emitInlineRecursiveSelfCall(
           ? converter.unwrapDataToken(argOp, resolvedParamType)
           : argOp;
       converter.emitCopyWithTracking(paramVar, unwrapped);
+    } else if (param.initializer) {
+      // arg omitted on a recursive self-call: emit the declared default so
+      // the recursive iteration sees the same shape as a non-recursive
+      // inline call. Without this, the heap slot leaks whatever value the
+      // previous iteration left in it (bug #22 parity).
+      const savedNative = converter.currentNativeArrayVarName;
+      converter.currentNativeArrayVarName = null;
+      try {
+        const defaultValue = converter.visitExpression(param.initializer);
+        converter.emitCopyWithTracking(paramVar, defaultValue);
+      } finally {
+        converter.currentNativeArrayVarName = savedNative;
+      }
     }
   }
 

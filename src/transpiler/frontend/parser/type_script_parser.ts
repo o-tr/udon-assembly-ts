@@ -7,6 +7,11 @@ import { ErrorCollector } from "../../errors/error_collector.js";
 import { EnumRegistry } from "../enum_registry.js";
 import { SymbolTable } from "../symbol_table.js";
 import { TypeMapper } from "../type_mapper.js";
+import {
+  ArrayTypeSymbol,
+  DataListTypeSymbol,
+  NativeArrayTypeSymbol,
+} from "../type_symbols.js";
 import { type ASTNode, ASTNodeKind, type ProgramNode } from "../types.js";
 import {
   createUnsupportedExpressionPlaceholder,
@@ -222,4 +227,50 @@ export class TypeScriptParser {
   visitPropertyDeclaration = visitPropertyDeclaration;
   visitMethodDeclaration = visitMethodDeclaration;
   visitEnumDeclaration = visitEnumDeclaration;
+
+  /**
+   * Parse a parameter default initializer (`param: T = <expr>`). For array
+   * literal defaults, derive the element-type `typeHint` from the parameter's
+   * annotated type so that ast_to_tac's `visitArrayLiteralExpression` picks
+   * the right `DataListTypeSymbol(elementType)` at bind time.
+   *
+   * The typeHint is resolved via `mapTypeWithGenerics` so that `Array<T>`,
+   * `ReadonlyArray<T>`, `readonly T[]`, `(T | null)[]`, etc. all produce the
+   * same `ArrayTypeSymbol.elementType.name` — not a raw string-mangled
+   * substring that falls back to ObjectType on anything non-trivial.
+   */
+  parseParameterInitializer(
+    initializer: ts.Expression,
+    paramTypeNode: ts.TypeNode | undefined,
+  ): ASTNode {
+    if (ts.isArrayLiteralExpression(initializer)) {
+      const typeHint = paramTypeNode
+        ? this.resolveArrayElementTypeHint(paramTypeNode)
+        : undefined;
+      return this.visitArrayLiteralExpression(initializer, typeHint);
+    }
+    return this.visitExpression(initializer);
+  }
+
+  /**
+   * Extract the element-type name for an array-typed parameter annotation.
+   * Returns undefined if the annotation does not resolve to an array type
+   * (the caller falls back to `ObjectType` in that case).
+   */
+  private resolveArrayElementTypeHint(
+    paramTypeNode: ts.TypeNode,
+  ): string | undefined {
+    const resolved = this.mapTypeWithGenerics(
+      paramTypeNode.getText(),
+      paramTypeNode,
+    );
+    if (
+      resolved instanceof ArrayTypeSymbol ||
+      resolved instanceof DataListTypeSymbol ||
+      resolved instanceof NativeArrayTypeSymbol
+    ) {
+      return resolved.elementType.name;
+    }
+    return undefined;
+  }
 }

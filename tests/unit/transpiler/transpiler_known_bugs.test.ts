@@ -1866,6 +1866,159 @@ describe("known transpiler bugs", () => {
       // ctor or to GetKeys/GetValues.
       expectAllCountReadsTraceToCtor(result.tac);
     });
+
+    // -----------------------------------------------------------------------
+    // Bug 13 reproducers: parameter default emission
+    // -----------------------------------------------------------------------
+    //
+    // Root cause #22 (vm-test-failures-investigation.md): constructor and
+    // method parameter defaults like `melds: readonly Meld[] = []` on Hand
+    // were silently dropped by the parser, and `saveAndBindInlineParams`
+    // only reset Boolean params when the arg was omitted. Every other type
+    // (arrays, DataList, strings, numbers, objects) left the auto-exported
+    // parameter heap slot at its initial `null`, causing `get_Count` (and
+    // any other method call) on the slot to crash at runtime.
+    //
+    // The tests below exercise every parameter-default shape that the
+    // mahjong-t2 codebase uses, plus a Boolean regression guard for the
+    // pre-existing line-359 fallback path.
+
+    it("(13e) class-element array default `= []` on omitted ctor arg is emitted", () => {
+      // Faithful reproducer of the `new Hand([tiles])` / `melds: Meld[] = []`
+      // shape. Class-element arrays take the DataList path because
+      // getNativeArrayTypeName returns null for user classes.
+      const source = `
+        class Item {
+          constructor(public label: string) {}
+        }
+        class Bag {
+          contents: Item[];
+          constructor(items: Item[] = []) {
+            this.contents = [...items];
+          }
+          count(): number {
+            return this.contents.length;
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(new Bag().count());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // The omitted arg must be initialized by a fresh DataList ctor, and
+      // every `.Count` read must trace to a ctor via the existing invariant.
+      expect(result.tac).toMatch(
+        /[A-Za-z_][A-Za-z0-9_]*\s*=\s*call\s+VRCSDK3DataDataList\.__ctor____VRCSDK3DataDataList\(\)[\s\S]*?items\s*=/,
+      );
+      expectAllCountReadsTraceToCtor(result.tac);
+    });
+
+    it("(13f) primitive array default `= []` on omitted ctor arg is emitted", () => {
+      // Primitive arrays also hit the DataList path for EMPTY literals
+      // because visitArrayLiteralExpression's native path requires
+      // `node.elements.length > 0` (expression.ts:1148). Use for-of to
+      // exercise the receiver.
+      const source = `
+        class Box {
+          values: number[];
+          constructor(xs: number[] = []) {
+            this.values = [...xs];
+          }
+          sum(): number {
+            let s = 0;
+            for (const v of this.values) s += v;
+            return s;
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(new Box().sum());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // The `xs` parameter slot must be assigned a fresh DataList before
+      // `xs.Count` is read in the spread loop.
+      const lines = result.tac.split("\n").map((l) => l.trim());
+      const xsCountIdx = lines.findIndex((l) =>
+        /^\w+\s*=\s*xs\.Count$/.test(l),
+      );
+      expect(xsCountIdx).toBeGreaterThanOrEqual(0);
+      const hasCtorBefore = lines
+        .slice(0, xsCountIdx)
+        .some((l) =>
+          /^\w+\s*=\s*call\s+VRCSDK3DataDataList\.__ctor____VRCSDK3DataDataList\(\)/.test(
+            l,
+          ),
+        );
+      expect(hasCtorBefore).toBe(true);
+      expectAllCountReadsTraceToCtor(result.tac);
+    });
+
+    it("(13g) method (non-constructor) parameter default is emitted", () => {
+      // Exercises the instance-method binding path (inline.ts:1320 / 1897),
+      // not just the ctor path at 989 / 1155.
+      const source = `
+        class Helper {
+          describe(prefix: string = "default"): string {
+            return prefix + "-x";
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(new Helper().describe());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // The default string literal "default" must be copied into the
+      // `prefix` slot before the concat.
+      expect(result.tac).toMatch(/prefix\s*=\s*"default"/);
+    });
+
+    it("(13h) boolean default `= true` on omitted ctor arg is actually honored", () => {
+      // Load-bearing discriminator: a bare `boolean` param with the arg
+      // omitted goes through the pre-existing line-359 fallback that
+      // always resets to `false`. With a declared default of `= true`,
+      // the OLD fallback would wrongly emit `false` — the new default-
+      // emission branch must override it and emit `true`.
+      //
+      // The test first calls `new Flag(false)` to ensure the slot holds
+      // `false` when the second omitted call runs. Then the omitted call
+      // must observe `v = true` via the default, not `v = false` from
+      // the fallback or the stale previous value.
+      const source = `
+        class Flag {
+          state: boolean;
+          constructor(v: boolean = true) {
+            this.state = v;
+          }
+        }
+        class Main {
+          Start(): void {
+            const a = new Flag(false);
+            const b = new Flag();
+            Debug.Log(a.state);
+            Debug.Log(b.state);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // The second inlined ctor body (for `new Flag()`) must emit a
+      // `v = true` COPY (the declared default) — on master it would
+      // emit `v = false` via the narrow Boolean fallback.
+      const tac = result.tac;
+      const falseIdx = tac.indexOf("v = false"); // first call (explicit arg)
+      const trueIdx = tac.indexOf("v = true", falseIdx >= 0 ? falseIdx : 0);
+      expect(falseIdx).toBeGreaterThanOrEqual(0);
+      expect(trueIdx).toBeGreaterThan(falseIdx);
+    });
   });
 
   describe("recurrence monitors for previously surfaced VM failures", () => {

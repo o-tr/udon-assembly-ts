@@ -238,7 +238,10 @@ export function visitFunctionLiteralExpression(
     const type = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
       : this.typeMapper.mapTypeScriptType("object");
-    return { name, type };
+    const initializer = param.initializer
+      ? this.parseParameterInitializer(param.initializer, param.type)
+      : undefined;
+    return { name, type, ...(initializer ? { initializer } : {}) };
   });
 
   const body = ts.isBlock(node.body)
