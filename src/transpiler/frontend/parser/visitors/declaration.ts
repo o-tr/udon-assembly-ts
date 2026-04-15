@@ -495,7 +495,16 @@ export function visitMethodDeclaration(
       ? this.mapTypeWithGenerics(returnTypeText, node.type)
       : this.mapTypeWithGenerics("void");
 
+  // Register parameters in a wrapping scope so that inferType inside the body
+  // can resolve parameter types (e.g. for `let a = tiles[0]` where `tiles` is
+  // a Tile[] param). Without this, ElementAccessExpression falls through to
+  // mapTypeScriptType("object") = DataDictionary, which corrupts DataToken wrapping.
+  this.symbolTable.enterScope();
+  for (const param of parameters) {
+    this.symbolTable.addSymbol(param.name, param.type, true, false);
+  }
   const body = this.visitBlock(node.body);
+  this.symbolTable.exitScope();
 
   const isStatic = !!node.modifiers?.some(
     (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
