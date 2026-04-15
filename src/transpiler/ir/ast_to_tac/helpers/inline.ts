@@ -77,6 +77,15 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
+// Heap-variable name prefixes that identify "real" inline-instance backing
+// slots (as opposed to synthetic temps such as `__inline_ret_*`). Only
+// variables with these prefixes are eligible to be rebound as inline
+// instances in saveAndBindInlineParams. The same prefixes are minted in
+// several other files (visitors/statement.ts, codegen/tac_to_udon/*,
+// optimizer/passes/temp_reuse.ts); keep them in sync if renamed. A
+// shared cross-module conventions module is a separate follow-up.
+const HEAP_INSTANCE_PREFIXES = ["__inst_", "__viface_"] as const;
+
 export type InlineParamSaveEntry = {
   // Previous inlineInstanceMap entry for this param name (undefined if the
   // map had no entry — restore = delete).
@@ -307,14 +316,12 @@ export function saveAndBindInlineParams(
         converter.inlineInstanceMap.set(param.name, argInfo);
       } else if (arg.kind === TACOperandKind.Variable) {
         const argVar = arg as VariableOperand;
-        // Only real heap-prefix variables can be rebound this way. Synthetic
-        // return temps like `__inline_ret_*` may be untracked even though they
-        // look prefix-like, so letting them masquerade as instances is unsafe.
-        const isHeapPrefix =
-          argVar.name.startsWith("__inst_") ||
-          argVar.name.startsWith("__viface_");
-        // TODO: derive from a shared INSTANCE_PREFIXES constant so this stays
-        // in sync with variable-name minting in the rest of the compiler.
+        // Only real heap-instance backing slots can be rebound this way.
+        // Synthetic temps (e.g. `__inline_ret_*`) use unrelated prefixes and
+        // are correctly excluded by HEAP_INSTANCE_PREFIXES.
+        const isHeapPrefix = HEAP_INSTANCE_PREFIXES.some((p) =>
+          argVar.name.startsWith(p),
+        );
         if (!isHeapPrefix) continue;
 
         const argType = converter.getOperandType(argVar);
@@ -351,11 +358,23 @@ export function saveAndBindInlineParams(
       }
     } else if (param.type.udonType === UdonType.Boolean) {
       // arg not supplied: explicitly reset optional boolean param to false.
-      // Boolean parameters are named heap variables shared across all inlinings
-      // of any method that uses the same param name. Without this reset, a
-      // prior inlining that wrote `true` to the heap slot would leave a stale
-      // value visible to subsequent calls where the param was not provided
-      // (e.g. `fromKind(kind)` seeing a `true` left by the Tile constructor).
+      // Named param heap slots are shared across all inlinings of any method
+      // using the same param name, so a prior inlining that wrote `true` to
+      // the slot would otherwise leak into later calls where the param was
+      // omitted (the original mahjong regression: `fromKind(kind)` seeing
+      // a stale `true` left by the Tile constructor's `isRed = true`).
+      //
+      // Scope is intentionally narrow: only Boolean is reset because that's
+      // the only type with a verified regression. The same heap-sharing risk
+      // technically exists for every other shared-name param type (Int32,
+      // String, etc.), but a broader reset has not been validated against
+      // the existing test suite and could mask other bugs (e.g. silently
+      // zeroing what should have been a passed-through caller value via a
+      // future binding-path change). Generalize only when an additional
+      // failing test pins the next type that needs it. NOTE: do NOT extend
+      // to ClassTypeSymbol params even if their udonType is Int32 — a zero
+      // handle would alias instance 0, producing a wrong inline instance
+      // rather than a benign default.
       converter.instructions.push(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
