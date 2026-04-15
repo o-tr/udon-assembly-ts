@@ -65,6 +65,29 @@
  *         now emits Count / index < Count / ifFalse guards (plus OOB get_Item(0))
  *         before field loads in SoA method dispatch and untracked property reads.
  *         (root cause #19/#20 in vm-test-failures-investigation.md)
+ *
+ * Bug 13 (OPEN — 9th-run main cause, 26/26 failing VM tests):
+ *         VRCSDK3DataDataList.__get_Count__SystemInt32 runtime exception because
+ *         the DataList receiver is null / never ctor'd. Root cause is not yet
+ *         localized; candidate sources in the investigation report:
+ *         (a) inline-class DataList field not ctor'd in constructor,
+ *         (b) inline-class Map/Set field not ctor'd in constructor,
+ *         (c) SoA __soa_*_field DataList read on an execution path that never
+ *             runs emitSoaInitGuard (no `new ClassName(...)` upstream), and
+ *         (d) for-of over a Map field before the backing DataDictionary is
+ *             ctor'd.
+ *
+ *         The tests in the "Bug 13 baseline invariants" describe block below
+ *         pin down the *simple* shape of each candidate and assert the static
+ *         invariant "DataList.__ctor__ must appear before the first
+ *         corresponding get_Count in UASM text order". They currently pass on
+ *         master, which means the simple minimal reproducers are *not* the
+ *         source of #22 — the real failure path is deeper in HandAnalyzer /
+ *         yaku / scoring pipelines. Keeping these as positive regression
+ *         guards prevents a future refactor from breaking the simple-case
+ *         invariant while the full #22 fix is being developed. When a more
+ *         minimal reproducer is identified, add it alongside as `it.fails`.
+ *         (root cause #22 in vm-test-failures-investigation.md)
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -1570,6 +1593,171 @@ describe("known transpiler bugs", () => {
       expect(result.tac).toContain("flag = true");
       // No subsequent override with false must appear for the same variable.
       expect(result.tac).not.toContain("flag = false");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Bug 13: DataList.get_Count receiver null / uninitialized (OPEN)
+  // ---------------------------------------------------------------------------
+  //
+  // 9th-run main cause (2026-04-15): 26/26 failing VM tests crash at
+  // VRCSDK3DataDataList.__get_Count__SystemInt32, which is a valid EXTERN.
+  // The runtime exception therefore implies the DataList receiver is null
+  // (i.e. it was never ctor'd on this execution path).
+  //
+  // The simple minimal reproducers below currently compile correctly: ctor
+  // precedes every get_Count in UASM text order. That means #22's real source
+  // is a more complex shape (deep HandAnalyzer/yaku/scoring call chains, or a
+  // cross-method inline-tracking loss). These baseline tests are kept as
+  // positive regression guards so that if a future refactor breaks the
+  // simple-case invariant "ctor before get_Count", CI catches it
+  // immediately. Add `it.fails` reproducers alongside once a minimized shape
+  // of the real #22 bug is identified.
+
+  describe("Bug 13 baseline invariants: DataList ctor precedes get_Count", () => {
+    /**
+     * Assert that every VRCSDK3Data{DataList,DataDictionary}.__get_Count__
+     * EXTERN in uasm is preceded by at least one matching __ctor__ EXTERN.
+     * Text-order is a conservative proxy for execution-order in these small
+     * single-Start fixtures. This catches the specific shape of #22 at the
+     * static UASM level: a get_Count on a receiver that never saw a ctor.
+     */
+    const expectCtorBeforeCount = (
+      uasm: string,
+      listKind: "DataList" | "DataDictionary",
+    ): void => {
+      const ctorSig = `VRCSDK3Data${listKind}.__ctor____VRCSDK3Data${listKind}`;
+      const countSig = `VRCSDK3Data${listKind}.__get_Count__SystemInt32`;
+      const countIdx = uasm.indexOf(countSig);
+      if (countIdx < 0) return; // nothing to check
+      const ctorIdx = uasm.indexOf(ctorSig);
+      expect(ctorIdx).toBeGreaterThanOrEqual(0);
+      expect(ctorIdx).toBeLessThan(countIdx);
+    };
+
+    it("(13a) inline class DataList field — ctor precedes get_Count", () => {
+      const source = `
+        class Bag {
+          items: DataList;
+          constructor() {
+            this.items = new DataList();
+          }
+          count(): number {
+            return this.items.Count;
+          }
+        }
+        class Main {
+          Start(): void {
+            const b = new Bag();
+            Debug.Log(b.count());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // DataList field must be declared as %VRCSDK3DataDataList in the data
+      // section (not %SystemObject / %SystemArray), otherwise the ctor call
+      // cannot land on the correct slot at runtime.
+      const dataSection = getDataSection(result.uasm).join("\n");
+      expect(dataSection).toMatch(
+        /__inst_Bag_\d+_items:\s*%VRCSDK3DataDataList/,
+      );
+      expectCtorBeforeCount(result.uasm, "DataList");
+    });
+
+    it("(13b) inline class Map field — DataDictionary ctor precedes size read", () => {
+      const source = `
+        class Lookup {
+          private table: Map<string, number>;
+          constructor() {
+            this.table = new Map<string, number>();
+          }
+          size(): number {
+            return this.table.size;
+          }
+        }
+        class Main {
+          Start(): void {
+            const l = new Lookup();
+            Debug.Log(l.size());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataDictionary.__ctor____VRCSDK3DataDataDictionary",
+      );
+      expectCtorBeforeCount(result.uasm, "DataDictionary");
+    });
+
+    it("(13c) static cache field — ctor emitted in entry even without `new`", () => {
+      // Candidate cause #1: emitSoaInitGuard only runs at constructor call
+      // sites, so a Start() path that reaches a static cache DataList read
+      // without first invoking `new Tile(...)` could (in principle) see an
+      // uninitialized list. The minimal-case transpiler currently emits a
+      // DataList ctor for `Tile.cache` at entry regardless, so this test
+      // pins that behavior: if a future refactor moves ctor emission into a
+      // branch that can be skipped, the assertion fails.
+      const source = `
+        class Tile {
+          constructor(public code: number) {}
+          static cache: Tile[] = [];
+          static at(index: number): Tile {
+            return Tile.cache[index];
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(Tile.at(0).code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Tile.cache must be declared as %VRCSDK3DataDataList.
+      const dataSection = getDataSection(result.uasm).join("\n");
+      expect(dataSection).toMatch(/Tile__cache:\s*%VRCSDK3DataDataList/);
+      expectCtorBeforeCount(result.uasm, "DataList");
+    });
+
+    it("(13d) for-of over Map keys — DataDictionary ctor precedes GetKeys", () => {
+      const source = `
+        class Registry {
+          entries: Map<string, number>;
+          constructor() {
+            this.entries = new Map<string, number>();
+            this.entries.set("a", 1);
+          }
+          dump(): void {
+            for (const k of this.entries.keys()) {
+              Debug.Log(k);
+            }
+          }
+        }
+        class Main {
+          Start(): void {
+            const r = new Registry();
+            r.dump();
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      const dictCtor = result.uasm.indexOf(
+        "VRCSDK3DataDataDictionary.__ctor____VRCSDK3DataDataDictionary",
+      );
+      const getKeys = result.uasm.indexOf(
+        "VRCSDK3DataDataDictionary.__GetKeys__VRCSDK3DataDataList",
+      );
+      expect(dictCtor).toBeGreaterThanOrEqual(0);
+      expect(getKeys).toBeGreaterThan(dictCtor);
+      // The keys DataList returned by GetKeys is ctor'd by the EXTERN itself,
+      // so get_Count on the keys-list handle does not require a separate
+      // DataList ctor. The invariant we check is the dict ctor → GetKeys
+      // ordering above; any get_Count that appears on the dict path would be
+      // covered by expectCtorBeforeCount on DataDictionary.
+      expectCtorBeforeCount(result.uasm, "DataDictionary");
     });
   });
 
