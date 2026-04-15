@@ -235,7 +235,7 @@ export function saveAndBindInlineParams(
         isNumericUdonType(effectiveParamType.udonType)
       ) {
         const coercedArg = converter.newTemp(effectiveParamType);
-        converter.instructions.push(new CastInstruction(coercedArg, arg));
+        converter.instructions.push(new CastInstruction(coercedArg, argToUse));
         argToUse = coercedArg;
       }
       converter.instructions.push(
@@ -1681,7 +1681,17 @@ function emitInlineRecursiveSelfCall(
       isLocal: true,
     });
     if (args[i] !== undefined) {
-      converter.emitCopyWithTracking(paramVar, args[i]);
+      const argOp = args[i];
+      const argType = converter.getOperandType(argOp);
+      // Unwrap DataToken args when the parameter expects a concrete (non-DataToken)
+      // type — mirrors the same logic in saveAndBindInlineParams so that SoA
+      // array-element DataTokens are unwrapped before copying into recursive locals.
+      const unwrapped =
+        argType.udonType === UdonType.DataToken &&
+        resolvedParamType.udonType !== UdonType.DataToken
+          ? converter.unwrapDataToken(argOp, resolvedParamType)
+          : argOp;
+      converter.emitCopyWithTracking(paramVar, unwrapped);
     }
   }
 

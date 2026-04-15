@@ -345,25 +345,11 @@ function resolveMethodReturnType(
 
   const resolveReturnTypeStr = (retType: string): TypeSymbol => {
     const mapped = converter.typeMapper.mapTypeScriptType(retType);
-    // If the mapper returned ObjectType but the name is a known inline class,
-    // upgrade to an Int32-typed ClassTypeSymbol so callers see the concrete type.
-    // Delegates to resolveInlineClassType (shared with saveAndBindInlineParams)
-    // which also excludes UdonBehaviour classes and stub-only entries.
-    if (
-      mapped === ObjectType &&
-      retType !== "object" &&
-      retType !== "unknown" &&
-      retType !== "any"
-    ) {
-      const promoted = resolveInlineClassType(
-        converter,
-        new ClassTypeSymbol(retType, UdonType.Object),
-      );
-      if (promoted.udonType === UdonType.Int32) {
-        return promoted;
-      }
-    }
-    return mapped;
+    // Upgrade Object-typed ClassTypeSymbols for known inline classes to Int32.
+    // resolveInlineClassType guards on ClassTypeSymbol + UdonType.Object + known
+    // inline class (via classRegistry) + not UdonBehaviour, so primitives,
+    // interfaces, and stubs pass through unchanged.
+    return resolveInlineClassType(converter, mapped);
   };
 
   // Check class registry for inline classes.
