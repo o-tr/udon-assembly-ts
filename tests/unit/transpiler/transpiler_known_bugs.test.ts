@@ -2019,6 +2019,46 @@ describe("known transpiler bugs", () => {
       expect(falseIdx).toBeGreaterThanOrEqual(0);
       expect(trueIdx).toBeGreaterThan(falseIdx);
     });
+
+    it("(13h-rec) bare optional boolean on recursive self-call is reset to false", () => {
+      // Recursive static methods emit via `emitInlineRecursiveSelfCall`, a
+      // separate binding loop from `saveAndBindInlineParams`. Previously
+      // only the arg-supplied path handled type coercion; omitted bare
+      // `foo?: boolean` params inherited whatever the caller frame left in
+      // the slot. The fix mirrors `saveAndBindInlineParams`' fallback so
+      // the recursive frame always starts with a clean `false`.
+      //
+      // This test body sets `seen = true` then recursively calls the
+      // static method without passing `seen`. Without the fallback, the
+      // recursive iteration would observe `seen === true` from the caller
+      // frame — a subtle state-leak bug. With the fallback, the TAC must
+      // contain both `seen = true` (from the body) AND `seen = false`
+      // (from the omitted-arg reset) in that order.
+      const source = `
+        class Util {
+          static reduce(n: number, seen?: boolean): number {
+            if (n <= 0) return 0;
+            seen = true;
+            return Util.reduce(n - 1);
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(Util.reduce(2));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      const tac = result.tac;
+      const seenTrueIdx = tac.indexOf("seen = true");
+      const seenFalseIdx = tac.indexOf(
+        "seen = false",
+        seenTrueIdx >= 0 ? seenTrueIdx : 0,
+      );
+      expect(seenTrueIdx).toBeGreaterThanOrEqual(0);
+      expect(seenFalseIdx).toBeGreaterThan(seenTrueIdx);
+    });
   });
 
   describe("recurrence monitors for previously surfaced VM failures", () => {

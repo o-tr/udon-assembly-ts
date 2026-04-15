@@ -186,6 +186,62 @@ export function resolveInlineClassType(
   return type;
 }
 
+/**
+ * Visit a parameter's `= <default>` initializer AST in a way that prevents
+ * the caller's `currentNativeArrayVarName` signal from leaking into an empty
+ * array-literal default (which would mis-classify it as a native fixed-length
+ * array based on a destination unrelated to this param). Always restores the
+ * saved signal in a `finally` so callers stay unaffected.
+ */
+function visitDefaultInitializer(
+  converter: ASTToTACConverter,
+  initializer: ASTNode,
+): TACOperand {
+  const savedNative = converter.currentNativeArrayVarName;
+  converter.currentNativeArrayVarName = null;
+  try {
+    return converter.visitExpression(initializer);
+  } finally {
+    converter.currentNativeArrayVarName = savedNative;
+  }
+}
+
+/**
+ * Coerce a value operand so it is assignable to a parameter slot declared
+ * with `paramType`. Mirrors the coercion performed by the explicit-argument
+ * binding path (DataToken unwrap + numeric cast) so default-value emissions
+ * receive the same treatment. Returns the (possibly new) operand the caller
+ * should copy into the param slot.
+ *
+ * Does NOT wire `inlineInstanceMap` — literal parameter defaults (`[]`,
+ * `false`, `0`, `""`, `{}`) never produce inline-class instances to track.
+ * Generalize only when a failing test pins a default shape that needs it.
+ */
+function coerceValueForParamSlot(
+  converter: ASTToTACConverter,
+  value: TACOperand,
+  paramType: TypeSymbol,
+): TACOperand {
+  const valueType = converter.getOperandType(value);
+  let coerced = value;
+  if (
+    valueType.udonType === UdonType.DataToken &&
+    paramType.udonType !== UdonType.DataToken
+  ) {
+    coerced = converter.unwrapDataToken(coerced, paramType);
+  }
+  if (
+    valueType.udonType !== paramType.udonType &&
+    isNumericUdonType(valueType.udonType) &&
+    isNumericUdonType(paramType.udonType)
+  ) {
+    const cast = converter.newTemp(paramType);
+    converter.instructions.push(new CastInstruction(cast, coerced));
+    coerced = cast;
+  }
+  return coerced;
+}
+
 export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
   params: Array<{ name: string; type: TypeSymbol; initializer?: ASTNode }>,
@@ -358,48 +414,43 @@ export function saveAndBindInlineParams(
       }
     } else if (param.initializer) {
       // arg not supplied: emit the parameter's `= <default>` initializer.
-      // This fixes root cause #22 — constructor / method parameter defaults
-      // like `melds: readonly Meld[] = []` on `Hand` were previously dropped,
+      // Fixes root cause #22 — constructor / method parameter defaults like
+      // `melds: readonly Meld[] = []` on `Hand` were previously dropped,
       // leaving the auto-exported heap slot at its initial `null` and
       // crashing `get_Count` calls in the body.
       //
       // The initializer AST was pre-parsed by the parser with the correct
       // `typeHint` baked in (see TypeScriptParser.parseParameterInitializer),
       // so re-visiting it here yields the right DataList element type.
+      // Coercion (DataToken unwrap + numeric cast) mirrors the explicit-arg
+      // path so a numeric default like `n: number = 0 as UdonInt` lands in
+      // the correct slot width.
       //
-      // Clear `currentNativeArrayVarName` so a stale signal from the
-      // enclosing visitVariableStatement can't mis-classify a default array
-      // literal as native.
-      //
-      // Scope limitations:
+      // Scope limitations (see coerceValueForParamSlot):
       // - Literal defaults (`[]`, `false`, `0`, `""`, `{}`) are fully
       //   supported.
       // - A default that allocates a user inline class (`= new Foo()`)
-      //   would produce an inline-class handle but this path does NOT
-      //   wire `inlineInstanceMap`, so the body's field-access resolution
-      //   for `param.someField` would fall back to un-tracked lookup.
+      //   would produce a handle but inlineInstanceMap is NOT wired, so
+      //   `param.someField` would fall back to un-tracked lookup.
       // - A default that references another parameter (`= a + 1`) is
-      //   parsed at declaration time — before the parameter scope is
-      //   entered — so the identifier is captured without type resolution.
-      //   Re-visiting it at inline-bind time may or may not resolve the
-      //   reference depending on caller scope state.
-      // No mahjong-t2 parameter uses either of these shapes; generalize
-      // only when a failing test pins the next shape that needs it.
-      const savedNative = converter.currentNativeArrayVarName;
-      converter.currentNativeArrayVarName = null;
-      try {
-        const defaultValue = converter.visitExpression(param.initializer);
-        converter.instructions.push(
-          new CopyInstruction(
-            createVariable(param.name, effectiveParamType, {
-              isParameter: true,
-            }),
-            defaultValue,
-          ),
-        );
-      } finally {
-        converter.currentNativeArrayVarName = savedNative;
-      }
+      //   parsed before the parameter scope is entered; identifier
+      //   resolution at inline-bind time depends on caller scope state.
+      // No mahjong-t2 parameter uses either; generalize only when a
+      // failing test pins the next shape that needs it.
+      const rawDefault = visitDefaultInitializer(converter, param.initializer);
+      const coercedDefault = coerceValueForParamSlot(
+        converter,
+        rawDefault,
+        effectiveParamType,
+      );
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(param.name, effectiveParamType, {
+            isParameter: true,
+          }),
+          coercedDefault,
+        ),
+      );
     } else if (param.type.udonType === UdonType.Boolean) {
       // arg not supplied and no explicit `= <default>`: reset optional
       // boolean param to false. Named param heap slots are shared across
@@ -1815,29 +1866,36 @@ function emitInlineRecursiveSelfCall(
     });
     if (args[i] !== undefined) {
       const argOp = args[i];
-      const argType = converter.getOperandType(argOp);
       // Unwrap DataToken args when the parameter expects a concrete (non-DataToken)
       // type — mirrors the same logic in saveAndBindInlineParams so that SoA
       // array-element DataTokens are unwrapped before copying into recursive locals.
-      const unwrapped =
-        argType.udonType === UdonType.DataToken &&
-        resolvedParamType.udonType !== UdonType.DataToken
-          ? converter.unwrapDataToken(argOp, resolvedParamType)
-          : argOp;
-      converter.emitCopyWithTracking(paramVar, unwrapped);
+      const coerced = coerceValueForParamSlot(
+        converter,
+        argOp,
+        resolvedParamType,
+      );
+      converter.emitCopyWithTracking(paramVar, coerced);
     } else if (param.initializer) {
       // arg omitted on a recursive self-call: emit the declared default so
       // the recursive iteration sees the same shape as a non-recursive
       // inline call. Without this, the heap slot leaks whatever value the
       // previous iteration left in it (bug #22 parity).
-      const savedNative = converter.currentNativeArrayVarName;
-      converter.currentNativeArrayVarName = null;
-      try {
-        const defaultValue = converter.visitExpression(param.initializer);
-        converter.emitCopyWithTracking(paramVar, defaultValue);
-      } finally {
-        converter.currentNativeArrayVarName = savedNative;
-      }
+      const rawDefault = visitDefaultInitializer(converter, param.initializer);
+      const coerced = coerceValueForParamSlot(
+        converter,
+        rawDefault,
+        resolvedParamType,
+      );
+      converter.emitCopyWithTracking(paramVar, coerced);
+    } else if (resolvedParamType.udonType === UdonType.Boolean) {
+      // Mirror saveAndBindInlineParams' bare `foo?: boolean` fallback:
+      // reset to false so the recursive frame doesn't inherit a stale
+      // `true` left by the caller frame (heap slot sharing via the
+      // named-param auto-export rule).
+      converter.emitCopyWithTracking(
+        paramVar,
+        createConstant(false, PrimitiveTypes.boolean),
+      );
     }
   }
 
