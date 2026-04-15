@@ -1642,10 +1642,10 @@ describe("known transpiler bugs", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // [KNOWN FAIL] Latest active VM regressions (convert after bug fixes land)
+  // Tile sort compare regression (fixed)
   // ---------------------------------------------------------------------------
 
-  describe("[KNOWN FAIL] latest active VM regressions", () => {
+  describe("tile sort compare regression (fixed)", () => {
     it("tile_sort_compare-like compare flow should not rely on Object->Int32 conversion", () => {
       // Note: Tile.parse uses a plain ternary rather than the original
       // `UdonTypeConverters.toUdonInt(raw.substring(0, 1).length)` expression.

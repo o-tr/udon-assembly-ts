@@ -1674,7 +1674,10 @@ function emitInlineRecursiveSelfCall(
   }
   for (let i = 0; i < method.parameters.length; i++) {
     const param = method.parameters[i];
-    const paramVar = createVariable(param.name, param.type, {
+    // Mirror saveAndBindInlineParams: upgrade Object-typed inline-class params
+    // to Int32 so recursive locals carry the same concrete handle type.
+    const resolvedParamType = resolveInlineClassType(converter, param.type);
+    const paramVar = createVariable(param.name, resolvedParamType, {
       isLocal: true,
     });
     if (args[i] !== undefined) {
@@ -1772,6 +1775,9 @@ function inlineInstanceMethodCallCore(
       returnType = lateResolved;
     }
   }
+  // F1: upgrade Object-typed inline-class return type to Int32 (mirrors the
+  // same transformation applied in visitInlineStaticMethodCall).
+  returnType = resolveInlineClassType(converter, returnType);
   // When the declared return type is erased (unknown/any/object), promote the
   // return slot to DataToken so the caller's `as T` unwrap can see the type.
   const { effectiveReturnType, isErasedReturn } =
