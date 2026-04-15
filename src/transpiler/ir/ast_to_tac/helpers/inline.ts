@@ -77,10 +77,18 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
-export type InlineParamSave = Map<
-  string,
-  { prefix: string; className: string } | undefined
->;
+export type InlineParamSaveEntry = {
+  // Previous inlineInstanceMap entry for this param name (undefined if the
+  // map had no entry — restore = delete).
+  inlineInstance: { prefix: string; className: string } | undefined;
+  // When the param name collides with a variable already visible in the
+  // caller's symbol-table scope chain, the heap slot is shared. We snapshot
+  // the slot's current value to a temp before binding so restoreInlineParams
+  // can put the caller's value back after the inlined body returns.
+  // The restore is emitted as a COPY into the original named slot.
+  valueBackup?: { temp: TACOperand; slotType: TypeSymbol };
+};
+export type InlineParamSave = Map<string, InlineParamSaveEntry>;
 type InlineInitializerState = NonNullable<
   ASTToTACConverter["currentInlineInitializerState"]
 >;
@@ -179,6 +187,22 @@ export function saveAndBindInlineParams(
     const key = operandTrackingKey(arg);
     return key ? converter.resolveInlineInstance(key) : undefined;
   });
+  // Snapshot args whose VariableOperand name collides with a param name into
+  // fresh temps BEFORE the binding loop. Without this, sequential bindings
+  // like `compare(b, a)` would corrupt themselves: the first COPY writes b's
+  // value into slot `a`, and the second COPY would then read slot `a` (now
+  // holding b's value) into slot `b`. By snapshotting first, each binding
+  // reads from a temp that captured the pre-binding value.
+  const paramNameSet = new Set(params.map((p) => p.name));
+  const snapshottedArgs = new Map<string, TACOperand>();
+  for (const arg of args) {
+    if (!arg || arg.kind !== TACOperandKind.Variable) continue;
+    const argName = (arg as VariableOperand).name;
+    if (!paramNameSet.has(argName) || snapshottedArgs.has(argName)) continue;
+    const snap = converter.newTemp(converter.getOperandType(arg));
+    converter.instructions.push(new CopyInstruction(snap, arg));
+    snapshottedArgs.set(argName, snap);
+  }
   const saved: InlineParamSave = new Map();
   for (let i = 0; i < params.length; i++) {
     const param = params[i];
@@ -205,6 +229,27 @@ export function saveAndBindInlineParams(
     // promotion. Inline classes are stored as Int32 handles; Object is a
     // type_mapper artefact for unrecognized user-defined names.
     effectiveParamType = resolveInlineClassType(converter, effectiveParamType);
+    // Detect collision with any caller-visible variable: walk the entire
+    // scope chain, not just the current scope. The heap slot is named, so a
+    // parent-scope variable with the same name shares the slot and would be
+    // clobbered by the binding COPY below.
+    const collidingCallerSymbol = converter.symbolTable.lookup(param.name);
+    let valueBackup: InlineParamSaveEntry["valueBackup"];
+    if (collidingCallerSymbol !== undefined) {
+      // Snapshot the slot's current value to a temp so restoreInlineParams
+      // can put the caller's value back after the inlined body returns.
+      // Use the colliding symbol's declared type so the temp slot type
+      // matches the original heap slot (avoids type-mismatch on restore).
+      const slotType = collidingCallerSymbol.type;
+      const backupTemp = converter.newTemp(slotType);
+      converter.instructions.push(
+        new CopyInstruction(
+          backupTemp,
+          createVariable(param.name, slotType, { isParameter: true }),
+        ),
+      );
+      valueBackup = { temp: backupTemp, slotType };
+    }
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
       converter.symbolTable.addSymbol(
         param.name,
@@ -213,13 +258,24 @@ export function saveAndBindInlineParams(
         false,
       );
     }
-    saved.set(param.name, converter.inlineInstanceMap.get(param.name));
+    saved.set(param.name, {
+      inlineInstance: converter.inlineInstanceMap.get(param.name),
+      valueBackup,
+    });
     converter.inlineInstanceMap.delete(param.name);
     if (arg) {
+      // Use a pre-binding snapshot if this arg references a slot that collides
+      // with a param name (see snapshottedArgs above).
+      let argToUse = arg;
+      if (arg.kind === TACOperandKind.Variable) {
+        const snap = snapshottedArgs.get((arg as VariableOperand).name);
+        if (snap !== undefined) {
+          argToUse = snap;
+        }
+      }
       // Coerce argument type if both are numeric but different.
       // Without this, a COPY from Single (float) to Int32 would do a
       // bitwise transfer and corrupt the value (e.g. 25000.0 → 0).
-      let argToUse = arg;
       // Unwrap DataToken args when the parameter expects a concrete (non-DataToken) type.
       // This handles the case where array element access on e.g. Tile[] returns a raw
       // DataToken wrapping an Int32 handle, but the param is declared as Tile (Int32).
@@ -228,7 +284,7 @@ export function saveAndBindInlineParams(
         argConcreteType.udonType === UdonType.DataToken &&
         effectiveParamType.udonType !== UdonType.DataToken
       ) {
-        argToUse = converter.unwrapDataToken(arg, effectiveParamType);
+        argToUse = converter.unwrapDataToken(argToUse, effectiveParamType);
       }
       if (
         argConcreteType !== undefined &&
@@ -316,10 +372,24 @@ export function restoreInlineParams(
   saved: InlineParamSave,
 ): void {
   for (const [name, entry] of saved) {
-    if (entry === undefined) {
+    if (entry.inlineInstance === undefined) {
       converter.inlineInstanceMap.delete(name);
     } else {
-      converter.inlineInstanceMap.set(name, entry);
+      converter.inlineInstanceMap.set(name, entry.inlineInstance);
+    }
+    // Restore the named heap slot's pre-binding value when the param name
+    // collided with a caller-visible variable. Without this, the inlined
+    // function's binding COPY would persist past the call boundary and
+    // corrupt the caller's local of the same name.
+    if (entry.valueBackup !== undefined) {
+      converter.instructions.push(
+        new CopyInstruction(
+          createVariable(name, entry.valueBackup.slotType, {
+            isParameter: true,
+          }),
+          entry.valueBackup.temp,
+        ),
+      );
     }
   }
 }
@@ -1292,11 +1362,14 @@ export function visitInlineStaticMethodCall(
     this.currentInlineConstructorClassName = savedInlineCtorClass;
     this.currentThisOverride = savedThisOverride;
     this.currentInlineBaseClass = savedBaseClass;
+    // Emit the inline return label BEFORE restoring params so all early
+    // `goto inline_return*` paths from the body fall through into the
+    // restore COPYs. Otherwise the restore is dead code (gotos jump past it).
+    this.instructions.push(new LabelInstruction(returnLabel));
     restoreInlineParams(this, savedParamEntries);
     this.symbolTable.exitScope();
   }
 
-  this.instructions.push(new LabelInstruction(returnLabel));
   return result;
 }
 
@@ -1867,11 +1940,13 @@ function inlineInstanceMethodCallCore(
     converter.currentInlineConstructorClassName = savedInlineCtorClass;
     converter.currentThisOverride = savedThisOverride;
     converter.currentInlineBaseClass = savedBaseClass;
+    // See visitInlineStaticMethodCall: emit the label BEFORE the restore so
+    // early `goto inline_return*` paths fall through into the restore COPYs.
+    converter.instructions.push(new LabelInstruction(returnLabel));
     restoreInlineParams(converter, savedParamEntries);
     converter.symbolTable.exitScope();
   }
 
-  converter.instructions.push(new LabelInstruction(returnLabel));
   return result;
 }
 
