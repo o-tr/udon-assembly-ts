@@ -1616,26 +1616,73 @@ describe("known transpiler bugs", () => {
 
   describe("Bug 13 baseline invariants: DataList ctor precedes get_Count", () => {
     /**
-     * Assert that every VRCSDK3Data{DataList,DataDictionary}.__get_Count__
-     * EXTERN in uasm is preceded by at least one matching __ctor__ EXTERN.
-     * Text-order is a conservative proxy for execution-order in these small
-     * single-Start fixtures. This catches the specific shape of #22 at the
-     * static UASM level: a get_Count on a receiver that never saw a ctor.
+     * For every `x = y.Count` line in the TAC, verify that `y` traces back
+     * (through an alias chain of plain `a = b` copy assignments) to a prior
+     * line that originated a DataList/DataDictionary handle — either a
+     * `__ctor__` call, a `GetKeys()` call, or a `GetValues()` call (both of
+     * which return a freshly-allocated DataList from the Udon side).
+     *
+     * TAC is used instead of raw UASM because UASM interleaves the data
+     * section (which declares every extern signature as a string constant up
+     * front) with the code section (which references them by `__extern_N`
+     * symbols). A textual `indexOf` on UASM therefore checks *registration
+     * order*, not *call order*, and only catches the first occurrence of any
+     * signature globally. TAC, by contrast, expresses each ctor call and
+     * each `.Count` read explicitly at the point they execute, so a single
+     * forward pass with a per-Count-read backward alias walk catches every
+     * receiver whose handle was never ctor'd — which is the exact shape of
+     * root cause #22.
      */
-    const expectCtorBeforeCount = (
-      uasm: string,
-      listKind: "DataList" | "DataDictionary",
-    ): void => {
-      const ctorSig = `VRCSDK3Data${listKind}.__ctor____VRCSDK3Data${listKind}`;
-      const countSig = `VRCSDK3Data${listKind}.__get_Count__SystemInt32`;
-      const countIdx = uasm.indexOf(countSig);
-      if (countIdx < 0) return; // nothing to check
-      const ctorIdx = uasm.indexOf(ctorSig);
-      expect(ctorIdx).toBeGreaterThanOrEqual(0);
-      expect(ctorIdx).toBeLessThan(countIdx);
+    const expectAllCountReadsTraceToCtor = (tac: string): void => {
+      const lines = tac.split("\n").map((l) => l.trim());
+      const countRe = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/;
+      const ctorRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
+      const getKeysOrValuesRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+[A-Za-z_][A-Za-z0-9_.]*\.(?:GetKeys|GetValues)\(/;
+      const copyRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)$/;
+
+      const countReads: Array<{ line: number; receiver: string }> = [];
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(countRe);
+        if (m) countReads.push({ line: i, receiver: m[2] });
+      }
+
+      // Fail the test explicitly if a fixture forgets to exercise a `.Count`
+      // read — that would make the invariant check vacuous and silently pass.
+      expect(
+        countReads.length,
+        "fixture must exercise at least one `.Count` read for the invariant to be meaningful",
+      ).toBeGreaterThan(0);
+
+      for (const { line, receiver } of countReads) {
+        const aliases = new Set<string>([receiver]);
+        let traced = false;
+        for (let j = line - 1; j >= 0; j--) {
+          const cm = lines[j].match(ctorRe);
+          if (cm && aliases.has(cm[1])) {
+            traced = true;
+            break;
+          }
+          const gm = lines[j].match(getKeysOrValuesRe);
+          if (gm && aliases.has(gm[1])) {
+            traced = true;
+            break;
+          }
+          const am = lines[j].match(copyRe);
+          if (am && aliases.has(am[1])) {
+            aliases.add(am[2]);
+          }
+        }
+        expect(
+          traced,
+          `TAC line ${line} reads '.Count' on '${receiver}' with no preceding DataList/DataDictionary ctor or GetKeys/GetValues in its alias chain`,
+        ).toBe(true);
+      }
     };
 
-    it("(13a) inline class DataList field — ctor precedes get_Count", () => {
+    it("(13a) inline class DataList field — every .Count read traces to a ctor", () => {
       const source = `
         class Bag {
           items: DataList;
@@ -1662,10 +1709,10 @@ describe("known transpiler bugs", () => {
       expect(dataSection).toMatch(
         /__inst_Bag_\d+_items:\s*%VRCSDK3DataDataList/,
       );
-      expectCtorBeforeCount(result.uasm, "DataList");
+      expectAllCountReadsTraceToCtor(result.tac);
     });
 
-    it("(13b) inline class Map field — DataDictionary ctor precedes size read", () => {
+    it("(13b) inline class Map field — every .Count read traces to a ctor", () => {
       const source = `
         class Lookup {
           private table: Map<string, number>;
@@ -1688,17 +1735,20 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "VRCSDK3DataDataDictionary.__ctor____VRCSDK3DataDataDictionary",
       );
-      expectCtorBeforeCount(result.uasm, "DataDictionary");
+      expectAllCountReadsTraceToCtor(result.tac);
     });
 
-    it("(13c) static cache field — ctor emitted in entry even without `new`", () => {
-      // Candidate cause #1: emitSoaInitGuard only runs at constructor call
+    it("(13c) static cache field — every .Count read traces to a ctor even without `new`", () => {
+      // Candidate cause #1: `emitSoaInitGuard` only runs at constructor call
       // sites, so a Start() path that reaches a static cache DataList read
       // without first invoking `new Tile(...)` could (in principle) see an
-      // uninitialized list. The minimal-case transpiler currently emits a
-      // DataList ctor for `Tile.cache` at entry regardless, so this test
-      // pins that behavior: if a future refactor moves ctor emission into a
-      // branch that can be skipped, the assertion fails.
+      // uninitialized list. Today the transpiler opts out of SoA when no
+      // `new` is reachable and emits a plain `Tile__cache` DataList ctor at
+      // entry, so the current TAC has exactly one `.Count` receiver
+      // (`Tile__cache`) traceable to a ctor. The invariant helper walks every
+      // `.Count` read, so if a future refactor either (a) introduces a
+      // `__soa_Tile_code` read whose ctor is skipped, or (b) moves
+      // `Tile__cache`'s ctor into a branch, the trace will fail.
       const source = `
         class Tile {
           constructor(public code: number) {}
@@ -1718,10 +1768,17 @@ describe("known transpiler bugs", () => {
       // Tile.cache must be declared as %VRCSDK3DataDataList.
       const dataSection = getDataSection(result.uasm).join("\n");
       expect(dataSection).toMatch(/Tile__cache:\s*%VRCSDK3DataDataList/);
-      expectCtorBeforeCount(result.uasm, "DataList");
+      // If SoA storage is generated for Tile, its DataList must also be
+      // declared; this assertion fires only when the transpiler decides to
+      // emit SoA for this shape, guarding against a half-emitted SoA (field
+      // declared but unreachable ctor).
+      if (/__soa_Tile_code\b/.test(result.tac)) {
+        expect(dataSection).toMatch(/__soa_Tile_code:\s*%VRCSDK3DataDataList/);
+      }
+      expectAllCountReadsTraceToCtor(result.tac);
     });
 
-    it("(13d) for-of over Map keys — DataDictionary ctor precedes GetKeys", () => {
+    it("(13d) for-of over Map keys — GetKeys receiver traces back to a DataDictionary ctor", () => {
       const source = `
         class Registry {
           entries: Map<string, number>;
@@ -1744,20 +1801,45 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      const dictCtor = result.uasm.indexOf(
-        "VRCSDK3DataDataDictionary.__ctor____VRCSDK3DataDataDictionary",
-      );
-      const getKeys = result.uasm.indexOf(
-        "VRCSDK3DataDataDictionary.__GetKeys__VRCSDK3DataDataList",
-      );
-      expect(dictCtor).toBeGreaterThanOrEqual(0);
-      expect(getKeys).toBeGreaterThan(dictCtor);
-      // The keys DataList returned by GetKeys is ctor'd by the EXTERN itself,
-      // so get_Count on the keys-list handle does not require a separate
-      // DataList ctor. The invariant we check is the dict ctor → GetKeys
-      // ordering above; any get_Count that appears on the dict path would be
-      // covered by expectCtorBeforeCount on DataDictionary.
-      expectCtorBeforeCount(result.uasm, "DataDictionary");
+      // Assert the TAC contains a DataDictionary ctor for the backing map
+      // field and that the GetKeys call is issued on a receiver aliased to
+      // that ctor'd handle. Walk the TAC lines directly instead of using
+      // UASM indexOf to avoid data-section registration-order artifacts.
+      const tacLines = result.tac.split("\n").map((l) => l.trim());
+      const dictCtorRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+VRCSDK3DataDataDictionary\.__ctor____VRCSDK3DataDataDictionary\(/;
+      const copyRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)$/;
+      const getKeysRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+([A-Za-z_][A-Za-z0-9_]*)\.GetKeys\(/;
+
+      const getKeysIdx = tacLines.findIndex((l) => getKeysRe.test(l));
+      expect(getKeysIdx).toBeGreaterThanOrEqual(0);
+      const getKeysMatch = tacLines[getKeysIdx].match(getKeysRe);
+      expect(getKeysMatch).not.toBeNull();
+      const keysReceiver = getKeysMatch?.[2] ?? "";
+      expect(keysReceiver).not.toBe("");
+
+      const aliases = new Set<string>([keysReceiver]);
+      let traced = false;
+      for (let j = getKeysIdx - 1; j >= 0; j--) {
+        const cm = tacLines[j].match(dictCtorRe);
+        if (cm && aliases.has(cm[1])) {
+          traced = true;
+          break;
+        }
+        const am = tacLines[j].match(copyRe);
+        if (am && aliases.has(am[1])) aliases.add(am[2]);
+      }
+      expect(
+        traced,
+        `GetKeys receiver '${keysReceiver}' does not trace back to a DataDictionary ctor`,
+      ).toBe(true);
+
+      // Also run the general invariant: any .Count read (e.g. on the
+      // returned keys DataList driving the for-of) must trace to a
+      // ctor or to GetKeys/GetValues.
+      expectAllCountReadsTraceToCtor(result.tac);
     });
   });
 
