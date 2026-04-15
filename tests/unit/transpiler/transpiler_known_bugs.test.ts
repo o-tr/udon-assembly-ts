@@ -1635,7 +1635,8 @@ describe("known transpiler bugs", () => {
      */
     const expectAllCountReadsTraceToCtor = (tac: string): void => {
       const lines = tac.split("\n").map((l) => l.trim());
-      const countRe = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/;
+      const countRe =
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/;
       const ctorRe =
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
       const getKeysOrValuesRe =
