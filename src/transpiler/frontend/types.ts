@@ -387,11 +387,7 @@ export interface BlockStatementNode extends ASTNode {
 export interface FunctionDeclarationNode extends ASTNode {
   kind: ASTNodeKind.FunctionDeclaration;
   name: string;
-  parameters: Array<{
-    name: string;
-    type: TypeSymbol;
-    initializer?: ASTNode;
-  }>;
+  parameters: Array<{ name: string; type: TypeSymbol }>;
   returnType: TypeSymbol;
   body: BlockStatementNode;
 }

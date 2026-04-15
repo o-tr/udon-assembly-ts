@@ -6,7 +6,6 @@ import {
   type TypeSymbol,
 } from "../../type_symbols.js";
 import {
-  type ASTNode,
   ASTNodeKind,
   type BlockStatementNode,
   type ClassDeclarationNode,
@@ -70,12 +69,7 @@ export function visitClassDeclaration(
 
   const properties: PropertyDeclarationNode[] = [];
   const methods: MethodDeclarationNode[] = [];
-  let constructorNode:
-    | {
-        parameters: Array<{ name: string; type: string }>;
-        body: ASTNode;
-      }
-    | undefined;
+  let constructorNode: ClassDeclarationNode["constructor"];
 
   const classTypeParams = new Set(
     (node.typeParameters ?? []).map((param) => param.name.getText()),
