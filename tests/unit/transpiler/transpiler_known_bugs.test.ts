@@ -1632,6 +1632,25 @@ describe("known transpiler bugs", () => {
      * forward pass with a per-Count-read backward alias walk catches every
      * receiver whose handle was never ctor'd — which is the exact shape of
      * root cause #22.
+     *
+     * **Coverage boundary**: The backward scan is linear over TAC lines, not
+     * control-flow-aware. A ctor emitted inside one branch of an earlier
+     * `if` is still accepted as "traced" even though the else-branch leaves
+     * the receiver uninitialized. This is intentional: the full
+     * control-flow path check is what root cause #22 ultimately needs, but
+     * the shapes in these fixtures are single-branch straight-line Start
+     * methods, so the linear scan catches the simple failure modes (ctor
+     * entirely absent, ctor emitted after the Count read, or ctor landing
+     * on a different receiver than the Count read).
+     *
+     * **Alias chain limitation**: `copyRe` only matches bare-identifier
+     * copies (`a = b`). It does not extend aliases through
+     * `PropertyGetInstruction` lowerings of the form `a = b.field`, so a
+     * future fixture that materializes an intermediate property-get between
+     * the ctor and the Count receiver would see a false negative (trace
+     * fails even though the ctor is present). For the current four
+     * fixtures inline-class SoA fields are flat identifiers, so the
+     * limitation is moot.
      */
     const expectAllCountReadsTraceToCtor = (tac: string): void => {
       const lines = tac.split("\n").map((l) => l.trim());
@@ -1746,10 +1765,15 @@ describe("known transpiler bugs", () => {
       // uninitialized list. Today the transpiler opts out of SoA when no
       // `new` is reachable and emits a plain `Tile__cache` DataList ctor at
       // entry, so the current TAC has exactly one `.Count` receiver
-      // (`Tile__cache`) traceable to a ctor. The invariant helper walks every
-      // `.Count` read, so if a future refactor either (a) introduces a
-      // `__soa_Tile_code` read whose ctor is skipped, or (b) moves
-      // `Tile__cache`'s ctor into a branch, the trace will fail.
+      // (`Tile__cache`) traceable to a ctor.
+      //
+      // The invariant helper walks every `.Count` read in a single linear
+      // backward scan, so it guards against (a) a new `__soa_Tile_code.Count`
+      // read with no ctor anywhere earlier in the text, and (b) a refactor
+      // that removes the `Tile__cache` ctor entirely or pushes it below the
+      // Count read in TAC order. It does NOT detect a ctor that is inside a
+      // conditional branch and therefore absent on some execution paths —
+      // that more complex shape is the real #22 bug still being minimized.
       const source = `
         class Tile {
           constructor(public code: number) {}
