@@ -935,7 +935,44 @@ function emitInlinePropertyInitializersForClass(
   state: InlineInitializerState,
 ): void {
   for (const prop of classNode.properties) {
-    if (!prop.initializer || prop.isStatic) continue;
+    if (prop.isStatic) continue;
+
+    if (!prop.initializer) {
+      // Emit type-appropriate default for reference-type fields that
+      // would otherwise stay null. Skip @SerializeField / synced fields
+      // whose values are set externally by Unity/VRChat.
+      if (
+        prop.isSerializeField ||
+        (prop.syncMode && prop.syncMode !== "None")
+      ) {
+        continue;
+      }
+      const ut = prop.type.udonType;
+      if (
+        ut === UdonType.String ||
+        ut === UdonType.Array ||
+        ut === UdonType.DataList ||
+        ut === UdonType.DataDictionary
+      ) {
+        const propVarName =
+          state.kind === "inline"
+            ? `${state.instancePrefix}_${prop.name}`
+            : getEntryPointPropertyNameForClass(
+                converter,
+                state.entryClassName,
+                prop.name,
+              );
+        const propVar = createVariable(propVarName, prop.type);
+        // createSoaSentinelValue emits CallInstruction side-effects for
+        // DataList/DataDictionary constructors onto converter.instructions.
+        const defaultValue = createSoaSentinelValue(converter, prop.type);
+        converter.instructions.push(
+          new AssignmentInstruction(propVar, defaultValue),
+        );
+      }
+      continue;
+    }
+
     const previousSerializeFieldState = converter.inSerializeFieldInitializer;
     converter.inSerializeFieldInitializer = !!prop.isSerializeField;
     const propVarName =
