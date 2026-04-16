@@ -2900,5 +2900,78 @@ describe("known transpiler bugs", () => {
       expect(result.tac).toContain("__soa_Tile_kind.get_Item");
       expect(result.tac).toContain("__soa_Tile_label.get_Item");
     });
+
+    it("14f: OOB sentinel for UdonInt[] bracket read uses Int32 ctor, not Object", () => {
+      const source = `
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const arr: UdonInt[] = [];
+    arr.push(1 as UdonInt);
+    arr.push(2 as UdonInt);
+    arr.push(3 as UdonInt);
+    let idx = 0 as UdonInt;
+    idx = (idx + 1) as UdonInt;
+    const val = arr[idx as number];
+    Debug.Log(val);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Array uses push() so it stays as DataList (not native array).
+      // OOB sentinel in the bounds guard must use Int32 ctor (matching element type)
+      // and NOT Object ctor which would crash on .Int unwrap.
+      expect(result.tac).toContain("dlrd_oob");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+    });
+
+    it("14g: grow loop default for string[] uses String ctor, not Int32", () => {
+      const source = `
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const names: string[] = [];
+    names[2] = "hello";
+    Debug.Log(names[0]);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Grow loop fills indices 0-1 with default tokens.
+      // Those must use String ctor to match element type.
+      expect(result.tac).toContain("dlgrow_start");
+      expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+    });
+
+    it("14h: grow loop default for boolean[] uses Boolean ctor, not Int32", () => {
+      const source = `
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const flags: boolean[] = [];
+    flags[1] = true;
+    Debug.Log(flags[0]);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).toContain("dlgrow_start");
+      expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
+    });
   });
 });

@@ -87,6 +87,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
+  createSoaSentinelValue,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
@@ -1515,6 +1516,7 @@ function emitDataListBracketRead(
   array: TACOperand,
   coercedIndex: TACOperand,
   indexNode: ASTNode,
+  elementType: TypeSymbol,
 ): TACOperand {
   const tokenResult = converter.newTemp(ExternTypes.dataToken);
   if (!needsDataListReadBoundsGuard(indexNode)) {
@@ -1550,9 +1552,9 @@ function emitDataListBracketRead(
   );
   converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
   converter.instructions.push(new LabelInstruction(skipLabel));
-  const nullVal = createConstant(null, ObjectType);
-  const nullToken = converter.wrapDataToken(nullVal);
-  converter.instructions.push(new CopyInstruction(tokenResult, nullToken));
+  const sentinelVal = createSoaSentinelValue(converter, elementType);
+  const sentinelToken = converter.wrapDataToken(sentinelVal);
+  converter.instructions.push(new CopyInstruction(tokenResult, sentinelToken));
   converter.instructions.push(new LabelInstruction(mergeLabel));
   return tokenResult;
 }
@@ -1613,6 +1615,7 @@ export function visitArrayAccessExpression(
       array,
       coercedIndex,
       node.index,
+      elementType,
     );
     if (arrayType instanceof DataListTypeSymbol) {
       return this.unwrapDataToken(tokenResult, elementType);
@@ -1652,6 +1655,7 @@ export function visitArrayAccessExpression(
     array,
     coercedIndex,
     node.index,
+    resolvedElementType,
   );
   return this.unwrapDataToken(tokenResult, resolvedElementType);
 }

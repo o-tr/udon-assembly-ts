@@ -611,7 +611,7 @@ function ensureSoaOperands(
   );
 }
 
-function createSoaSentinelValue(
+export function createSoaSentinelValue(
   converter: ASTToTACConverter,
   fieldType: TypeSymbol,
 ): TACOperand {
@@ -924,8 +924,9 @@ export function emitStaticPropertyInitializers(
     }
     const value = converter.visitExpression(prop.initializer);
     converter.currentExpectedType = prevExpected;
-    converter.instructions.push(new AssignmentInstruction(propVar, value));
-    converter.maybeTrackInlineInstanceAssignment(propVar, value);
+    const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
+    converter.instructions.push(new AssignmentInstruction(propVar, coerced));
+    converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
   }
 }
 
@@ -1002,8 +1003,9 @@ function emitInlinePropertyInitializersForClass(
     const value = converter.visitExpression(prop.initializer);
     converter.currentExpectedType = prevExpected;
     converter.inSerializeFieldInitializer = previousSerializeFieldState;
-    converter.instructions.push(new AssignmentInstruction(propVar, value));
-    converter.maybeTrackInlineInstanceAssignment(propVar, value);
+    const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
+    converter.instructions.push(new AssignmentInstruction(propVar, coerced));
+    converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
   }
 }
 
