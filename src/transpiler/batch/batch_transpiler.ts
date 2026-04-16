@@ -27,7 +27,6 @@ import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "../frontend/parser/index.js";
 import { SymbolTable } from "../frontend/symbol_table.js";
-import type { TypeMapper } from "../frontend/type_mapper.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -36,13 +35,6 @@ import {
   type ProgramNode,
   type VariableDeclarationNode,
 } from "../frontend/types.js";
-import {
-  buildHeapUsageTreeBreakdown,
-  computeHeapUsage,
-  TASM_HEAP_LIMIT,
-  UASM_HEAP_LIMIT,
-  UASM_RUNTIME_LIMIT,
-} from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
@@ -148,7 +140,6 @@ export interface BatchTranspilerOptions {
   allowCircular?: boolean;
   includeExternalDependencies?: boolean;
   outputExtension?: string;
-  heapLimit?: number;
 }
 
 export interface BatchFileResult {
@@ -369,9 +360,6 @@ export class BatchTranspiler {
         `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
       );
     }
-    const heapLimit =
-      options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
-
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
     // Sweep stale output-cache entries when there is no prior cache or when the
     // transpiler hash changed (including v2→v3 upgrades where loadCache injects
@@ -397,7 +385,6 @@ export class BatchTranspiler {
           optimize,
           useStringBuilder,
           ext,
-          heapLimit,
         ),
       );
     }
@@ -605,7 +592,6 @@ export class BatchTranspiler {
         optimize,
         useStringBuilder,
         ext,
-        heapLimit,
       );
       const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
       const outputCacheKey = this.computeOutputCacheKey(
@@ -680,51 +666,15 @@ export class BatchTranspiler {
         entryPoint.behaviourSyncMode,
         exposedLabels, // same as computeExportLabels(...)
       );
-      let splitCandidates: Map<string, number> | undefined;
-      const heapUsage = computeHeapUsage(dataSectionWithTypes);
-      if (heapUsage > heapLimit) {
-        try {
-          splitCandidates = this.estimateSplitCandidates(
-            filteredInlineClassNames,
-            udonConverter.getHeapUsageByClass(),
-            registry,
-            callAnalyzer,
-            parser,
-            typeMapper,
-            udonBehaviourLayouts,
-            udonBehaviourClasses,
-            options.optimize,
-            options.reflect,
-            options.useStringBuilder,
-            methodUsage,
-          );
-        } catch (e) {
-          if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
-          throw e;
-        }
-      }
-
-      const heapWarnings = this.ensureHeapWithinLimit(
-        entryPoint.name,
-        dataSectionWithTypes,
-        udonConverter.getHeapUsageByClass(),
-        callAnalyzer,
-        registry,
-        splitCandidates,
-        heapUsage,
-        heapLimit,
-        ext,
-      );
       const assemblerWarnings = assembler.getWarnings();
-      for (const w of heapWarnings) console.warn(w);
       for (const w of assemblerWarnings) console.warn(w);
 
       const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
-      const allWarnings = [...heapWarnings, ...assemblerWarnings];
-      const warnings = allWarnings.length > 0 ? allWarnings : undefined;
+      const warnings =
+        assemblerWarnings.length > 0 ? assemblerWarnings : undefined;
       // Tier 2: Save assembled output to cache.
       this.saveOutputCache(cacheFilePath, {
         key: outputCacheKey,
@@ -773,229 +723,6 @@ export class BatchTranspiler {
       computedHashes,
     );
     return { outputs };
-  }
-
-  private ensureHeapWithinLimit(
-    entryPointName: string,
-    dataSection: Array<[string, number, string, unknown]>,
-    usageByClass: Map<string, number>,
-    callAnalyzer: CallAnalyzer,
-    registry: ClassRegistry,
-    splitCandidates?: Map<string, number>,
-    heapUsage?: number,
-    heapLimit?: number,
-    outputExt?: string,
-  ): string[] {
-    heapLimit = heapLimit ?? UASM_HEAP_LIMIT;
-    const resolvedUsage = heapUsage ?? computeHeapUsage(dataSection);
-    const collected: string[] = [];
-    if (outputExt === "uasm" && resolvedUsage > UASM_RUNTIME_LIMIT) {
-      collected.push(
-        `UASM heap usage ${resolvedUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPointName}.`,
-      );
-    }
-    if (resolvedUsage <= heapLimit) return collected;
-
-    const breakdown = buildHeapUsageTreeBreakdown(
-      usageByClass,
-      resolvedUsage,
-      entryPointName,
-      callAnalyzer,
-      registry,
-    );
-    const formatLabel = outputExt === "tasm" ? "TASM" : "UASM";
-    const messageParts = [
-      `${formatLabel} heap usage ${resolvedUsage} exceeds limit ${heapLimit} for ${entryPointName}.`,
-      "Heap usage by class:",
-      breakdown || "  - <no data>",
-    ];
-    const splitReport = this.formatSplitCandidateReport(splitCandidates);
-    if (splitReport) {
-      messageParts.push(
-        "Split candidates (estimated heap if separated as UdonBehaviour):",
-        splitReport,
-      );
-    }
-    collected.push(messageParts.join("\n"));
-    return collected;
-  }
-
-  private formatSplitCandidateReport(
-    candidates?: Map<string, number>,
-  ): string | null {
-    if (!candidates || candidates.size === 0) return null;
-    const entries = Array.from(candidates.entries())
-      .filter(([, heapUsage]) => heapUsage > 0)
-      .sort((a, b) => b[1] - a[1]);
-    if (entries.length === 0) return null;
-
-    const top = entries.slice(0, 10);
-    return top
-      .map(([className, usage]) => `  - ${className}: ${usage}`)
-      .join("\n");
-  }
-
-  private estimateSplitCandidates(
-    inlineClassNames: string[],
-    heapUsageByClass: Map<string, number>,
-    registry: ClassRegistry,
-    callAnalyzer: CallAnalyzer,
-    parser: TypeScriptParser,
-    typeMapper: TypeMapper,
-    udonBehaviourLayouts: ReturnType<typeof buildUdonBehaviourLayouts>,
-    udonBehaviourClasses: ReadonlySet<string>,
-    _optimize?: boolean,
-    reflect?: boolean,
-    useStringBuilder?: boolean,
-    methodUsage?: Map<string, Set<string>> | null,
-  ): Map<string, number> {
-    // Rank inline classes by coarse heap contribution from main compile,
-    // then run the expensive full-pipeline estimation only for the top N.
-    const MAX_PRECISE_CANDIDATES = 3;
-    const ranked = [...inlineClassNames]
-      .map((name) => ({ name, coarse: heapUsageByClass.get(name) ?? 0 }))
-      .sort((a, b) => b.coarse - a.coarse);
-
-    const results = new Map<string, number>();
-    for (const { name: className } of ranked.slice(0, MAX_PRECISE_CANDIDATES)) {
-      try {
-        results.set(
-          className,
-          this.estimateHeapUsageForClass(
-            className,
-            registry,
-            callAnalyzer,
-            parser,
-            typeMapper,
-            udonBehaviourLayouts,
-            udonBehaviourClasses,
-            false, // skip optimizer for estimation — coarse heap is sufficient
-            reflect,
-            useStringBuilder,
-            methodUsage ?? null,
-          ),
-        );
-      } catch (e) {
-        // Rethrow duplicate-const errors from collectAllTopLevelConsts
-        if (e instanceof DuplicateTopLevelConstError) {
-          throw e;
-        }
-        // If estimation fails for other reasons, set to 0 rather than blocking the error message
-        results.set(className, 0);
-      }
-    }
-    return results;
-  }
-
-  private estimateHeapUsageForClass(
-    entryPointName: string,
-    registry: ClassRegistry,
-    callAnalyzer: CallAnalyzer,
-    parser: TypeScriptParser,
-    typeMapper: TypeMapper,
-    udonBehaviourLayouts: ReturnType<typeof buildUdonBehaviourLayouts>,
-    udonBehaviourClasses: ReadonlySet<string>,
-    optimize?: boolean,
-    reflect?: boolean,
-    useStringBuilder?: boolean,
-    methodUsage: Map<string, Set<string>> | null = null,
-  ): number {
-    const mergedMethods = registry.getMergedMethods(entryPointName);
-    const mergedProperties = registry.getMergedProperties(entryPointName);
-    const entryPointMethods = this.orderEntryMethods(
-      this.filterMethodsByUsage(mergedMethods, entryPointName, methodUsage),
-    );
-
-    const reachableInline = Array.from(
-      this.collectReachableInlineClasses(
-        entryPointName,
-        callAnalyzer,
-        registry,
-      ),
-    );
-    const filteredInline = reachableInline.filter((name) => {
-      const meta = registry.getClass(name);
-      if (!meta) return true;
-      return !meta.decorators.some(
-        (decorator) => decorator.name === "UdonBehaviour",
-      );
-    });
-
-    const symbolTable = new SymbolTable();
-    for (const prop of mergedProperties) {
-      symbolTable.addSymbol(
-        prop.name,
-        typeMapper.mapTypeScriptType(prop.type),
-        false,
-        false,
-      );
-    }
-
-    const entryMeta = registry.getClass(entryPointName);
-    const estTopLevelConsts = entryMeta
-      ? this.collectAllTopLevelConsts(
-          entryMeta.filePath,
-          filteredInline,
-          registry,
-        )
-      : [];
-    for (const tlc of estTopLevelConsts) {
-      if (!symbolTable.hasInCurrentScope(tlc.name)) {
-        symbolTable.addSymbol(
-          tlc.name,
-          typeMapper.mapTypeScriptType(tlc.type),
-          false,
-          true,
-          tlc.node.initializer,
-        );
-      }
-    }
-
-    const estTopLevelConstNodes = estTopLevelConsts.map((tlc) => tlc.node);
-    const methodProgram = this.classesToProgram(
-      this.buildClassNodes(
-        entryPointName,
-        entryPointMethods,
-        filteredInline,
-        registry,
-        methodUsage,
-      ),
-      estTopLevelConstNodes,
-    );
-    const tacConverter = new ASTToTACConverter(
-      symbolTable,
-      parser.getEnumRegistry(),
-      udonBehaviourClasses,
-      udonBehaviourLayouts,
-      registry,
-      { useStringBuilder, typeMapper },
-    );
-    let tacInstructions = tacConverter.convert(methodProgram);
-
-    if (optimize === true) {
-      const optimizer = new TACOptimizer();
-      const exposedLabels = computeExposedLabels(
-        registry,
-        udonBehaviourLayouts,
-        entryPointName,
-      );
-      tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
-    }
-
-    const udonConverter = new TACToUdonConverter();
-    const inlineClassNameSet = new Set(filteredInline);
-    udonConverter.convert(tacInstructions, {
-      entryClassName: entryPointName,
-      inlineClassNames: inlineClassNameSet,
-    });
-    let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
-    if (reflect === true) {
-      dataSectionWithTypes = appendReflectionData(
-        dataSectionWithTypes,
-        entryPointName,
-      );
-    }
-    return computeHeapUsage(dataSectionWithTypes);
   }
 
   private loadCache(cachePath: string): CacheV3 | null {
@@ -1146,7 +873,6 @@ export class BatchTranspiler {
     optimize: boolean,
     useStringBuilder: boolean,
     ext: string,
-    heapLimit: number,
   ): string {
     const slot = crypto
       .createHash("sha256")
@@ -1156,7 +882,6 @@ export class BatchTranspiler {
           optimize ? "1" : "0",
           useStringBuilder ? "1" : "0",
           ext,
-          heapLimit.toString(),
         ].join("|"),
       )
       .digest("hex")
