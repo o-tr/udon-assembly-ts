@@ -687,8 +687,13 @@ export class BatchTranspiler {
       }
       if (heapUsage > heapLimit) {
         const formatLabel = ext === "tasm" ? "TASM" : "UASM";
+        const usageByClass = udonConverter.getHeapUsageByClass();
+        const breakdown = Array.from(usageByClass.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([cls, n]) => `  - ${cls}: ${n}`)
+          .join("\n");
         heapWarnings.push(
-          `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.`,
+          `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown || "  - <no data>"}`,
         );
       }
       const assemblerWarnings = assembler.getWarnings();
