@@ -402,6 +402,7 @@ export class ASTToTACConverter {
    */
   private resetState(): void {
     this.instructions = [];
+    this.metadataOnlyMode = false;
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.instanceCounter = 0;

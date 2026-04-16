@@ -13,6 +13,7 @@ import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "./frontend/parser/index.js";
 import { TypeMapper } from "./frontend/type_mapper.js";
 import { ASTNodeKind, type ClassDeclarationNode } from "./frontend/types.js";
+import { computeHeapUsage, UASM_HEAP_LIMIT } from "./heap_limits.js";
 import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
 import { TACOptimizer } from "./ir/optimizer/index.js";
 import { pruneProgramByMethodUsage } from "./ir/optimizer/ipa.js";
@@ -177,6 +178,14 @@ export class TypeScriptToUdonTranspiler {
       undefined,
       exportLabels,
     );
+
+    const heapUsage = computeHeapUsage(dataSectionWithTypes);
+    if (heapUsage > UASM_HEAP_LIMIT) {
+      const entryLabel = entryClassName ? ` for ${entryClassName}` : "";
+      console.warn(
+        `UASM heap usage ${heapUsage} exceeds limit ${UASM_HEAP_LIMIT}${entryLabel}.`,
+      );
+    }
 
     const warnings = assembler.getWarnings();
     return {

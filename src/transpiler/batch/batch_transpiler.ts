@@ -35,6 +35,12 @@ import {
   type ProgramNode,
   type VariableDeclarationNode,
 } from "../frontend/types.js";
+import {
+  computeHeapUsage,
+  TASM_HEAP_LIMIT,
+  UASM_HEAP_LIMIT,
+  UASM_RUNTIME_LIMIT,
+} from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
@@ -140,6 +146,7 @@ export interface BatchTranspilerOptions {
   allowCircular?: boolean;
   includeExternalDependencies?: boolean;
   outputExtension?: string;
+  heapLimit?: number;
 }
 
 export interface BatchFileResult {
@@ -360,6 +367,9 @@ export class BatchTranspiler {
         `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
       );
     }
+    const heapLimit =
+      options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
+
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
     // Sweep stale output-cache entries when there is no prior cache or when the
     // transpiler hash changed (including v2→v3 upgrades where loadCache injects
@@ -385,6 +395,7 @@ export class BatchTranspiler {
           optimize,
           useStringBuilder,
           ext,
+          heapLimit,
         ),
       );
     }
@@ -592,6 +603,7 @@ export class BatchTranspiler {
         optimize,
         useStringBuilder,
         ext,
+        heapLimit,
       );
       const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
       const outputCacheKey = this.computeOutputCacheKey(
@@ -666,15 +678,29 @@ export class BatchTranspiler {
         entryPoint.behaviourSyncMode,
         exposedLabels, // same as computeExportLabels(...)
       );
+      const heapWarnings: string[] = [];
+      const heapUsage = computeHeapUsage(dataSectionWithTypes);
+      if (ext === "uasm" && heapUsage > UASM_RUNTIME_LIMIT) {
+        heapWarnings.push(
+          `UASM heap usage ${heapUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPoint.name}.`,
+        );
+      }
+      if (heapUsage > heapLimit) {
+        const formatLabel = ext === "tasm" ? "TASM" : "UASM";
+        heapWarnings.push(
+          `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.`,
+        );
+      }
       const assemblerWarnings = assembler.getWarnings();
+      for (const w of heapWarnings) console.warn(w);
       for (const w of assemblerWarnings) console.warn(w);
 
       const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, uasm, "utf8");
 
-      const warnings =
-        assemblerWarnings.length > 0 ? assemblerWarnings : undefined;
+      const allWarnings = [...heapWarnings, ...assemblerWarnings];
+      const warnings = allWarnings.length > 0 ? allWarnings : undefined;
       // Tier 2: Save assembled output to cache.
       this.saveOutputCache(cacheFilePath, {
         key: outputCacheKey,
@@ -873,6 +899,7 @@ export class BatchTranspiler {
     optimize: boolean,
     useStringBuilder: boolean,
     ext: string,
+    heapLimit: number,
   ): string {
     const slot = crypto
       .createHash("sha256")
@@ -882,6 +909,7 @@ export class BatchTranspiler {
           optimize ? "1" : "0",
           useStringBuilder ? "1" : "0",
           ext,
+          heapLimit.toString(),
         ].join("|"),
       )
       .digest("hex")
