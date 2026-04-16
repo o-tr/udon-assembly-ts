@@ -90,10 +90,7 @@ export class ClassRegistry {
   private reversedInheritanceChainCache = new Map<string, readonly string[]>();
   private mergedMethodsCache = new Map<string, readonly MethodInfo[]>();
   private mergedPropertiesCache = new Map<string, readonly PropertyInfo[]>();
-  private mergedMethodByNameCache = new Map<
-    string,
-    Map<string, MethodInfo>
-  >();
+  private mergedMethodByNameCache = new Map<string, Map<string, MethodInfo>>();
   private mergedPropertyByNameCache = new Map<
     string,
     Map<string, PropertyInfo>
@@ -151,9 +148,7 @@ export class ClassRegistry {
     return chain;
   }
 
-  private getReversedInheritanceChain(
-    className: string,
-  ): readonly string[] {
+  private getReversedInheritanceChain(className: string): readonly string[] {
     const cached = this.reversedInheritanceChainCache.get(className);
     if (cached) return cached;
     const reversed = [...this.getInheritanceChain(className)].reverse();
@@ -197,9 +192,8 @@ export class ClassRegistry {
     return result;
   }
 
-  getMergedMethods(className: string): readonly MethodInfo[] {
-    this.ensureCachesClean();
-    const cached = this.mergedMethodsCache.get(className);
+  private ensureMergedMethodsMaps(className: string): Map<string, MethodInfo> {
+    const cached = this.mergedMethodByNameCache.get(className);
     if (cached) return cached;
 
     const chain = this.getReversedInheritanceChain(className);
@@ -214,28 +208,32 @@ export class ClassRegistry {
       }
     }
 
-    const result = Array.from(merged.values());
-    this.mergedMethodsCache.set(className, result);
-    return result;
+    this.mergedMethodByNameCache.set(className, merged);
+    const arr = Array.from(merged.values());
+    this.mergedMethodsCache.set(className, arr);
+    return merged;
   }
 
-  getMergedMethod(className: string, methodName: string): MethodInfo | undefined {
+  getMergedMethods(className: string): readonly MethodInfo[] {
     this.ensureCachesClean();
-    const byName = this.mergedMethodByNameCache.get(className);
-    if (byName) return byName.get(methodName);
-
-    const methods = this.getMergedMethods(className);
-    const map = new Map<string, MethodInfo>();
-    for (const m of methods) {
-      map.set(m.name, m);
-    }
-    this.mergedMethodByNameCache.set(className, map);
-    return map.get(methodName);
+    const cached = this.mergedMethodsCache.get(className);
+    if (cached) return cached;
+    this.ensureMergedMethodsMaps(className);
+    return this.mergedMethodsCache.get(className) ?? [];
   }
 
-  getMergedProperties(className: string): readonly PropertyInfo[] {
+  getMergedMethod(
+    className: string,
+    methodName: string,
+  ): MethodInfo | undefined {
     this.ensureCachesClean();
-    const cached = this.mergedPropertiesCache.get(className);
+    return this.ensureMergedMethodsMaps(className).get(methodName);
+  }
+
+  private ensureMergedPropertiesMaps(
+    className: string,
+  ): Map<string, PropertyInfo> {
+    const cached = this.mergedPropertyByNameCache.get(className);
     if (cached) return cached;
 
     const chain = this.getReversedInheritanceChain(className);
@@ -250,9 +248,18 @@ export class ClassRegistry {
       }
     }
 
-    const result = Array.from(merged.values());
-    this.mergedPropertiesCache.set(className, result);
-    return result;
+    this.mergedPropertyByNameCache.set(className, merged);
+    const arr = Array.from(merged.values());
+    this.mergedPropertiesCache.set(className, arr);
+    return merged;
+  }
+
+  getMergedProperties(className: string): readonly PropertyInfo[] {
+    this.ensureCachesClean();
+    const cached = this.mergedPropertiesCache.get(className);
+    if (cached) return cached;
+    this.ensureMergedPropertiesMaps(className);
+    return this.mergedPropertiesCache.get(className) ?? [];
   }
 
   getMergedProperty(
@@ -260,16 +267,7 @@ export class ClassRegistry {
     propName: string,
   ): PropertyInfo | undefined {
     this.ensureCachesClean();
-    const byName = this.mergedPropertyByNameCache.get(className);
-    if (byName) return byName.get(propName);
-
-    const props = this.getMergedProperties(className);
-    const map = new Map<string, PropertyInfo>();
-    for (const p of props) {
-      map.set(p.name, p);
-    }
-    this.mergedPropertyByNameCache.set(className, map);
-    return map.get(propName);
+    return this.ensureMergedPropertiesMaps(className).get(propName);
   }
 
   getTopLevelConstsForFile(filePath: string): TopLevelConstInfo[] {
@@ -399,6 +397,7 @@ export class ClassRegistry {
   }
 
   getImplementorsOfInterface(interfaceName: string): ClassMetadata[] {
+    this.ensureCachesClean();
     return Array.from(this.classes.values()).filter((cls) =>
       this.classImplementsInterface(cls.name, interfaceName),
     );
@@ -407,8 +406,8 @@ export class ClassRegistry {
   /**
    * Return all interfaces a class implements, including those inherited
    * through the base class chain. Results are deduplicated.
-   * Cache is invalidated by register()/clearCaches(), so results are only
-   * reliable after all classes have been registered (post-parsing phase).
+   * Cache is invalidated lazily via the `cachesDirty` flag, so results are
+   * only reliable after all classes have been registered (post-parsing phase).
    *
    * Limitation: interface-extends-interface relationships are not traversed
    * because InterfaceDeclarationNode does not currently have an `extends`
@@ -442,8 +441,10 @@ export class ClassRegistry {
 
   /**
    * Check if a class implements an interface, including through inheritance.
-   * Reads the cache directly to avoid the defensive array copy that
-   * getAllImplementedInterfaces returns to external callers.
+   * Reads the cache directly when available; falls back to
+   * getAllImplementedInterfaces which triggers ensureCachesClean().
+   * The public caller (getImplementorsOfInterface) also calls
+   * ensureCachesClean() upfront, so stale entries are never consulted.
    */
   private classImplementsInterface(
     className: string,

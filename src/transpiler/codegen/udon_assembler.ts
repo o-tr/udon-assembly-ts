@@ -80,6 +80,7 @@ interface TypeClassification {
   category: TypeCategory;
   csharpType: string;
   udonType: string;
+  isNullOnly: boolean;
 }
 
 export class UdonAssembler {
@@ -172,10 +173,6 @@ export class UdonAssembler {
     return this.integerPartOverflowsInt32(this.expandToDecimal(value));
   }
 
-  private isFloatType(typeName: string): boolean {
-    return FLOAT_TYPES.has(typeName);
-  }
-
   private isIntegerType(typeName: string): boolean {
     return INTEGER_TYPES.has(typeName);
   }
@@ -255,14 +252,6 @@ export class UdonAssembler {
     return expanded.includes(".") ? expanded.split(".")[0] : expanded;
   }
 
-  private isStringType(typeName: string): boolean {
-    return STRING_TYPES.has(typeName);
-  }
-
-  private isBooleanType(typeName: string): boolean {
-    return BOOLEAN_TYPES.has(typeName);
-  }
-
   private resolveUdonTypeName(typeName: string): string {
     const csharpType = mapTypeScriptToCSharp(typeName);
     if (
@@ -311,7 +300,17 @@ export class UdonAssembler {
       category = "other";
     }
 
-    const result: TypeClassification = { category, csharpType, udonType };
+    const isNullOnly =
+      NULL_ONLY_TYPES.has(type) ||
+      NULL_ONLY_TYPES.has(csharpType) ||
+      NULL_ONLY_TYPES.has(udonType);
+
+    const result: TypeClassification = {
+      category,
+      csharpType,
+      udonType,
+      isNullOnly,
+    };
     this.typeClassificationCache.set(type, result);
     return result;
   }
@@ -321,21 +320,6 @@ export class UdonAssembler {
    */
   private formatHexAddress(byteAddr: number): string {
     return `0x${byteAddr.toString(16).toUpperCase().padStart(8, "0")}`;
-  }
-
-  /**
-   * Check if a type is a null-only type that cannot have literal values in the data section.
-   */
-  private isNullOnlyType(
-    type: string,
-    csharpType: string,
-    udonType: string,
-  ): boolean {
-    return (
-      NULL_ONLY_TYPES.has(type) ||
-      NULL_ONLY_TYPES.has(csharpType) ||
-      NULL_ONLY_TYPES.has(udonType)
-    );
   }
 
   /**
@@ -363,9 +347,8 @@ export class UdonAssembler {
 
     for (const entry of mutData) {
       const [name, , type, value] = entry;
-      const { csharpType, udonType, category } = this.classifyType(type);
+      const { udonType, category, isNullOnly } = this.classifyType(type);
 
-      const isNullOnly = this.isNullOnlyType(type, csharpType, udonType);
       const isOverflowingFloat =
         !isNullOnly &&
         typeof value === "number" &&
@@ -660,10 +643,7 @@ export class UdonAssembler {
           category !== "string"
         ) {
           initialValue = resolvedValue;
-        } else if (
-          typeof resolvedValue === "number" &&
-          category === "float"
-        ) {
+        } else if (typeof resolvedValue === "number" && category === "float") {
           initialValue = this.formatFloatLiteral(resolvedValue);
         } else if (
           typeof resolvedValue === "number" &&
