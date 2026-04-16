@@ -154,6 +154,7 @@ import {
  */
 export class ASTToTACConverter {
   instructions: TACInstruction[] = [];
+  private metadataOnlyMode = false;
   tempCounter = 0;
   labelCounter = 0;
   instanceCounter = 0;
@@ -454,6 +455,16 @@ export class ASTToTACConverter {
   }
 
   /**
+   * Emit a TAC instruction. Skipped in metadata-only mode (Pass 1).
+   */
+  emit(...instructions: TACInstruction[]): void {
+    if (this.metadataOnlyMode) return;
+    for (const inst of instructions) {
+      this.instructions.push(inst);
+    }
+  }
+
+  /**
    * Convert program to TAC (two-pass).
    * Pass 1 collects allInlineInstances and interfaceClassIdMap so that
    * forward references (e.g. a Meld instance created *after* the for-of
@@ -462,6 +473,7 @@ export class ASTToTACConverter {
   convert(program: ProgramNode): TACInstruction[] {
     // Pass 1: collect inline instance and interface metadata; discard output
     this.resetState();
+    this.metadataOnlyMode = true;
     this.convertImpl(program);
 
     // Diagnostic: warn when an all-inline interface is used in source but no
@@ -504,6 +516,7 @@ export class ASTToTACConverter {
 
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata
     this.resetState();
+    this.metadataOnlyMode = false;
     this.allInlineInstances = allInstancesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
@@ -669,7 +682,7 @@ export class ASTToTACConverter {
 
     // No Start method: generate _start with initialization
     const startLabel = createLabel("_start");
-    this.instructions.push(new LabelInstruction(startLabel));
+    this.emit(new LabelInstruction(startLabel));
 
     // 1. pendingTopLevelInits
     for (const tlc of this.pendingTopLevelInits) {
@@ -689,7 +702,7 @@ export class ASTToTACConverter {
       }
     }
 
-    this.instructions.push(new ReturnInstruction());
+    this.emit(new ReturnInstruction());
   }
 
   /**

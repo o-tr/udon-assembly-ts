@@ -35,6 +35,6 @@ export function normalizeOperandToInt32(
   }
 
   const casted = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new CastInstruction(casted, normalized));
+  converter.emit(new CastInstruction(casted, normalized));
   return casted;
 }

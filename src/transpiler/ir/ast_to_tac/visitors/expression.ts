@@ -141,12 +141,12 @@ function widenNumericOperands(
   let newRight = right;
   if (leftSym.udonType !== promoted.udonType) {
     const w = converter.newTemp(promoted);
-    converter.instructions.push(new CastInstruction(w, left));
+    converter.emit(new CastInstruction(w, left));
     newLeft = w;
   }
   if (rightSym.udonType !== promoted.udonType) {
     const w = converter.newTemp(promoted);
-    converter.instructions.push(new CastInstruction(w, right));
+    converter.emit(new CastInstruction(w, right));
     newRight = w;
   }
   return { left: newLeft, right: newRight };
@@ -175,12 +175,12 @@ function narrowToInt32ForBitwise(
   let newRight = right;
   if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
     const cast = converter.newTemp(PrimitiveTypes.int32);
-    converter.instructions.push(new CastInstruction(cast, left));
+    converter.emit(new CastInstruction(cast, left));
     newLeft = cast;
   }
   if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
     const cast = converter.newTemp(PrimitiveTypes.int32);
-    converter.instructions.push(new CastInstruction(cast, right));
+    converter.emit(new CastInstruction(cast, right));
     newRight = cast;
   }
   return { left: newLeft, right: newRight };
@@ -506,16 +506,14 @@ function generateStringBuilderConcat(
     [],
     "System.Text.StringBuilder",
   );
-  converter.instructions.push(new CallInstruction(builder, ctorSig, []));
+  converter.emit(new CallInstruction(builder, ctorSig, []));
   for (const partOperand of parts) {
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(undefined, builder, "Append", [partOperand]),
     );
   }
   const result = converter.newTemp(PrimitiveTypes.string);
-  converter.instructions.push(
-    new MethodCallInstruction(result, builder, "ToString", []),
-  );
+  converter.emit(new MethodCallInstruction(result, builder, "ToString", []));
   return result;
 }
 
@@ -616,15 +614,13 @@ export function visitBinaryExpression(
       ? narrowToInt32ForBitwise(this, leftOriginal, rightOriginal)
       : widenNumericOperands(this, leftOriginal, rightOriginal);
     const opResult = this.newTemp(this.getOperandType(w.left));
-    this.instructions.push(
-      new BinaryOpInstruction(opResult, w.left, baseOp, w.right),
-    );
+    this.emit(new BinaryOpInstruction(opResult, w.left, baseOp, w.right));
 
     let assignValue: TACOperand = opResult;
     // Narrow back to the original left operand's type if promotion widened it.
     if (w.left !== leftOriginal) {
       const narrowed = this.newTemp(this.getOperandType(leftOriginal));
-      this.instructions.push(new CastInstruction(narrowed, opResult));
+      this.emit(new CastInstruction(narrowed, opResult));
       assignValue = narrowed;
     }
 
@@ -644,9 +640,7 @@ export function visitBinaryExpression(
     if (!externSig) {
       throw new Error("Mathf.Pow extern signature not found");
     }
-    this.instructions.push(
-      new CallInstruction(result, externSig, [left, right]),
-    );
+    this.emit(new CallInstruction(result, externSig, [left, right]));
     return result;
   }
   if (node.operator === "instanceof") {
@@ -659,7 +653,7 @@ export function visitBinaryExpression(
     if (targetType.name === ExternTypes.dataDictionary.name) {
       const result = this.newTemp(PrimitiveTypes.boolean);
       const keyToken = this.wrapDataToken(key);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(result, target, "ContainsKey", [keyToken]),
       );
       return result;
@@ -671,7 +665,7 @@ export function visitBinaryExpression(
     const right = this.visitExpression(node.right);
     const resultType = this.getOperandType(left);
     const result = this.newTemp(resultType);
-    this.instructions.push(new BinaryOpInstruction(result, left, ">>", right));
+    this.emit(new BinaryOpInstruction(result, left, ">>", right));
     return result;
   }
   if (node.operator === "&&") {
@@ -704,7 +698,7 @@ export function visitBinaryExpression(
             partOperand = exprResult;
           } else {
             partOperand = this.newTemp(PrimitiveTypes.string);
-            this.instructions.push(
+            this.emit(
               new MethodCallInstruction(
                 partOperand,
                 exprResult,
@@ -734,7 +728,7 @@ export function visitBinaryExpression(
           ["string", "string"],
           "System.String",
         );
-        this.instructions.push(
+        this.emit(
           new CallInstruction(newResult, concatExtern, [
             resultOperand,
             partOperand,
@@ -772,16 +766,12 @@ export function visitBinaryExpression(
     ) {
       if (leftType.udonType !== UdonType.String) {
         const strLeft = this.newTemp(PrimitiveTypes.string);
-        this.instructions.push(
-          new MethodCallInstruction(strLeft, left, "ToString", []),
-        );
+        this.emit(new MethodCallInstruction(strLeft, left, "ToString", []));
         left = strLeft;
       }
       if (rightType.udonType !== UdonType.String) {
         const strRight = this.newTemp(PrimitiveTypes.string);
-        this.instructions.push(
-          new MethodCallInstruction(strRight, right, "ToString", []),
-        );
+        this.emit(new MethodCallInstruction(strRight, right, "ToString", []));
         right = strRight;
       }
       const concatExtern = this.requireExternSignature(
@@ -792,9 +782,7 @@ export function visitBinaryExpression(
         "System.String",
       );
       const result = this.newTemp(PrimitiveTypes.string);
-      this.instructions.push(
-        new CallInstruction(result, concatExtern, [left, right]),
-      );
+      this.emit(new CallInstruction(result, concatExtern, [left, right]));
       return result;
     }
   }
@@ -820,9 +808,7 @@ export function visitBinaryExpression(
     : this.getOperandType(left);
   const result = this.newTemp(resultType);
 
-  this.instructions.push(
-    new BinaryOpInstruction(result, left, node.operator, right),
-  );
+  this.emit(new BinaryOpInstruction(result, left, node.operator, right));
   return result;
 }
 
@@ -835,17 +821,17 @@ export function visitShortCircuitAnd(
   const left = this.visitExpression(node.left);
   const coercedLeft = this.coerceToBoolean(left);
   const result = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(
       result,
       createConstant(false, PrimitiveTypes.boolean),
     ),
   );
-  this.instructions.push(new ConditionalJumpInstruction(coercedLeft, endLabel));
+  this.emit(new ConditionalJumpInstruction(coercedLeft, endLabel));
 
   const right = this.visitExpression(node.right);
   this.emitCopyWithTracking(result, this.coerceToBoolean(right));
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
   return result;
 }
 
@@ -859,22 +845,20 @@ export function visitShortCircuitOr(
 
   const left = this.visitExpression(node.left);
   const coercedLeft = this.coerceToBoolean(left);
-  this.instructions.push(
-    new ConditionalJumpInstruction(coercedLeft, shortCircuitLabel),
-  );
+  this.emit(new ConditionalJumpInstruction(coercedLeft, shortCircuitLabel));
 
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(
       result,
       createConstant(true, PrimitiveTypes.boolean),
     ),
   );
-  this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+  this.emit(new UnconditionalJumpInstruction(endLabel));
 
-  this.instructions.push(new LabelInstruction(shortCircuitLabel));
+  this.emit(new LabelInstruction(shortCircuitLabel));
   const right = this.visitExpression(node.right);
   this.emitCopyWithTracking(result, this.coerceToBoolean(right));
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
   return result;
 }
 
@@ -891,9 +875,7 @@ export function visitUnaryExpression(
       : this.getOperandType(operand);
   const result = this.newTemp(resultType);
 
-  this.instructions.push(
-    new UnaryOpInstruction(result, node.operator, operand),
-  );
+  this.emit(new UnaryOpInstruction(result, node.operator, operand));
   return result;
 }
 
@@ -905,17 +887,17 @@ export function visitConditionalExpression(
   const falseLabel = this.newLabel("cond_false");
   const endLabel = this.newLabel("cond_end");
 
-  this.instructions.push(new ConditionalJumpInstruction(condition, falseLabel));
+  this.emit(new ConditionalJumpInstruction(condition, falseLabel));
 
   const trueVal = this.visitExpression(node.whenTrue);
   const result = this.newTemp(this.getOperandType(trueVal));
   // Plain copy: the shared result temp is written from two diverging
   // branches — tracking would retain only the last-written branch's
   // prefix, producing incorrect property resolution for the other branch.
-  this.instructions.push(new CopyInstruction(result, trueVal));
-  this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+  this.emit(new CopyInstruction(result, trueVal));
+  this.emit(new UnconditionalJumpInstruction(endLabel));
 
-  this.instructions.push(new LabelInstruction(falseLabel));
+  this.emit(new LabelInstruction(falseLabel));
   const falseVal = this.visitExpression(node.whenFalse);
   // Upgrade result type if the false branch provides a more specific
   // non-primitive reference type. Only upgrade for types that benefit from
@@ -935,8 +917,8 @@ export function visitConditionalExpression(
       (result as TemporaryOperand).type = falseType;
     }
   }
-  this.instructions.push(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
+  this.emit(new LabelInstruction(endLabel));
   return result;
 }
 
@@ -951,10 +933,8 @@ export function visitNullCoalescingExpression(
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
   const nullConstant = createConstant(null, ObjectType);
-  this.instructions.push(
-    new BinaryOpInstruction(isNull, left, "==", nullConstant),
-  );
-  this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
+  this.emit(new BinaryOpInstruction(isNull, left, "==", nullConstant));
+  this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
   // Upgrade result type if the right operand provides a more specific
@@ -973,12 +953,12 @@ export function visitNullCoalescingExpression(
     }
   }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
-  this.instructions.push(new CopyInstruction(result, right));
-  this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+  this.emit(new CopyInstruction(result, right));
+  this.emit(new UnconditionalJumpInstruction(endLabel));
 
-  this.instructions.push(new LabelInstruction(notNullLabel));
-  this.instructions.push(new CopyInstruction(result, left)); // Plain copy: see null-path comment above.
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(notNullLabel));
+  this.emit(new CopyInstruction(result, left)); // Plain copy: see null-path comment above.
+  this.emit(new LabelInstruction(endLabel));
   return result;
 }
 
@@ -1006,7 +986,7 @@ export function visitTemplateExpression(
         partOperand = exprResult;
       } else {
         partOperand = this.newTemp(PrimitiveTypes.string);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(partOperand, exprResult, "ToString", []),
         );
       }
@@ -1028,16 +1008,14 @@ export function visitTemplateExpression(
       [],
       "System.Text.StringBuilder",
     );
-    this.instructions.push(new CallInstruction(builder, ctorSig, []));
+    this.emit(new CallInstruction(builder, ctorSig, []));
     for (const partOperand of parts) {
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(undefined, builder, "Append", [partOperand]),
       );
     }
     const result = this.newTemp(PrimitiveTypes.string);
-    this.instructions.push(
-      new MethodCallInstruction(result, builder, "ToString", []),
-    );
+    this.emit(new MethodCallInstruction(result, builder, "ToString", []));
     return result;
   }
 
@@ -1052,7 +1030,7 @@ export function visitTemplateExpression(
       ["string", "string"],
       "System.String",
     );
-    this.instructions.push(
+    this.emit(
       new CallInstruction(newResult, concatExtern, [result, partOperand]),
     );
     result = newResult;
@@ -1166,15 +1144,11 @@ export function visitArrayLiteralExpression(
       node.elements.length,
       PrimitiveTypes.int32,
     );
-    this.instructions.push(
-      new CallInstruction(arrayResult, ctorSig, [lengthConst]),
-    );
+    this.emit(new CallInstruction(arrayResult, ctorSig, [lengthConst]));
     for (let i = 0; i < node.elements.length; i++) {
       const value = this.visitExpression(node.elements[i].value);
       const idxConst = createConstant(i, PrimitiveTypes.int32);
-      this.instructions.push(
-        new ArrayAssignmentInstruction(arrayResult, idxConst, value),
-      );
+      this.emit(new ArrayAssignmentInstruction(arrayResult, idxConst, value));
     }
     return arrayResult;
   }
@@ -1187,7 +1161,7 @@ export function visitArrayLiteralExpression(
     [],
     "DataList",
   );
-  this.instructions.push(new CallInstruction(listResult, externSig, []));
+  this.emit(new CallInstruction(listResult, externSig, []));
 
   for (const element of node.elements) {
     if (element.kind === "spread") {
@@ -1352,43 +1326,39 @@ export function visitArrayLiteralExpression(
 
       const indexVar = this.newTemp(PrimitiveTypes.int32);
       const lengthVar = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
+      this.emit(
         new AssignmentInstruction(
           indexVar,
           createConstant(0, PrimitiveTypes.int32),
         ),
       );
       // All arrays (both DataList and ArrayTypeSymbol) use Count at runtime.
-      this.instructions.push(
-        new PropertyGetInstruction(lengthVar, spreadValue, "Count"),
-      );
+      this.emit(new PropertyGetInstruction(lengthVar, spreadValue, "Count"));
 
       const loopStart = this.newLabel("array_spread_start");
       const loopContinue = this.newLabel("array_spread_continue");
       const loopEnd = this.newLabel("array_spread_end");
 
-      this.instructions.push(new LabelInstruction(loopStart));
+      this.emit(new LabelInstruction(loopStart));
       const condTemp = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-      );
-      this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
+      this.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+      this.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
       // All arrays use DataList.get_Item at runtime → returns DataToken.
       const itemToken = this.newTemp(ExternTypes.dataToken);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(itemToken, spreadValue, "get_Item", [
           indexVar,
         ]),
       );
       // DataList.Add expects DataToken — pass directly, no wrap/unwrap needed.
       const token = itemToken;
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(undefined, listResult, "Add", [token]),
       );
 
-      this.instructions.push(new LabelInstruction(loopContinue));
-      this.instructions.push(
+      this.emit(new LabelInstruction(loopContinue));
+      this.emit(
         new BinaryOpInstruction(
           indexVar,
           indexVar,
@@ -1396,15 +1366,13 @@ export function visitArrayLiteralExpression(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      this.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      this.instructions.push(new LabelInstruction(loopEnd));
+      this.emit(new UnconditionalJumpInstruction(loopStart));
+      this.emit(new LabelInstruction(loopEnd));
       continue;
     }
     const value = this.visitExpression(element.value);
     const token = this.wrapDataToken(value);
-    this.instructions.push(
-      new MethodCallInstruction(undefined, listResult, "Add", [token]),
-    );
+    this.emit(new MethodCallInstruction(undefined, listResult, "Add", [token]));
   }
 
   return listResult;
@@ -1518,7 +1486,7 @@ function emitDataListBracketRead(
 ): TACOperand {
   const tokenResult = converter.newTemp(ExternTypes.dataToken);
   if (!needsDataListReadBoundsGuard(indexNode)) {
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
     );
     return tokenResult;
@@ -1526,34 +1494,26 @@ function emitDataListBracketRead(
 
   const zero = createConstant(0, PrimitiveTypes.int32);
   const geZero = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(geZero, coercedIndex, ">=", zero),
-  );
+  converter.emit(new BinaryOpInstruction(geZero, coercedIndex, ">=", zero));
   const skipLabel = converter.newLabel("dlrd_oob");
   const mergeLabel = converter.newLabel("dlrd_merge");
-  converter.instructions.push(
-    new ConditionalJumpInstruction(geZero, skipLabel),
-  );
+  converter.emit(new ConditionalJumpInstruction(geZero, skipLabel));
   const countTemp = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new PropertyGetInstruction(countTemp, array, "Count"),
-  );
+  converter.emit(new PropertyGetInstruction(countTemp, array, "Count"));
   const ltCount = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
+  converter.emit(
     new BinaryOpInstruction(ltCount, coercedIndex, "<", countTemp),
   );
-  converter.instructions.push(
-    new ConditionalJumpInstruction(ltCount, skipLabel),
-  );
-  converter.instructions.push(
+  converter.emit(new ConditionalJumpInstruction(ltCount, skipLabel));
+  converter.emit(
     new MethodCallInstruction(tokenResult, array, "get_Item", [coercedIndex]),
   );
-  converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
-  converter.instructions.push(new LabelInstruction(skipLabel));
+  converter.emit(new UnconditionalJumpInstruction(mergeLabel));
+  converter.emit(new LabelInstruction(skipLabel));
   const nullVal = createConstant(null, ObjectType);
   const nullToken = converter.wrapDataToken(nullVal);
-  converter.instructions.push(new CopyInstruction(tokenResult, nullToken));
-  converter.instructions.push(new LabelInstruction(mergeLabel));
+  converter.emit(new CopyInstruction(tokenResult, nullToken));
+  converter.emit(new LabelInstruction(mergeLabel));
   return tokenResult;
 }
 
@@ -1573,12 +1533,10 @@ export function visitArrayAccessExpression(
     const nativeIndexType = this.getOperandType(index);
     if (needsInt32IndexCoercion(nativeIndexType.udonType)) {
       const intIndex = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(new CastInstruction(intIndex, index));
+      this.emit(new CastInstruction(intIndex, index));
       nativeIndex = intIndex;
     }
-    this.instructions.push(
-      new ArrayAccessInstruction(result, array, nativeIndex),
-    );
+    this.emit(new ArrayAccessInstruction(result, array, nativeIndex));
     return result;
   }
 
@@ -1586,9 +1544,7 @@ export function visitArrayAccessExpression(
     const elementType =
       arrayType.valueType ?? arrayType.elementType ?? PrimitiveTypes.single;
     const result = this.newTemp(elementType);
-    this.instructions.push(
-      new MethodCallInstruction(result, array, "get_Item", [index]),
-    );
+    this.emit(new MethodCallInstruction(result, array, "get_Item", [index]));
     return result;
   }
 
@@ -1601,7 +1557,7 @@ export function visitArrayAccessExpression(
     const indexType = this.getOperandType(index);
     if (needsInt32IndexCoercion(indexType.udonType)) {
       const intIndex = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(new CastInstruction(intIndex, index));
+      this.emit(new CastInstruction(intIndex, index));
       coercedIndex = intIndex;
     }
     const elementType =
@@ -1644,7 +1600,7 @@ export function visitArrayAccessExpression(
   const idxType = this.getOperandType(index);
   if (needsInt32IndexCoercion(idxType.udonType)) {
     const intIndex = this.newTemp(PrimitiveTypes.int32);
-    this.instructions.push(new CastInstruction(intIndex, index));
+    this.emit(new CastInstruction(intIndex, index));
     coercedIndex = intIndex;
   }
   const tokenResult = emitDataListBracketRead(
@@ -1769,7 +1725,7 @@ export function visitPropertyAccessExpression(
       if (externSig) {
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
         const result = this.newTemp(returnType);
-        this.instructions.push(new CallInstruction(result, externSig, []));
+        this.emit(new CallInstruction(result, externSig, []));
         return result;
       }
     }
@@ -1838,7 +1794,7 @@ export function visitPropertyAccessExpression(
           for (const [className, classId] of classIds) {
             const nextLabel = this.newLabel("iface_prop_next");
             const cond = this.newTemp(PrimitiveTypes.boolean);
-            this.instructions.push(
+            this.emit(
               new BinaryOpInstruction(
                 cond,
                 classIdVar,
@@ -1846,9 +1802,7 @@ export function visitPropertyAccessExpression(
                 createConstant(classId, PrimitiveTypes.int32),
               ),
             );
-            this.instructions.push(
-              new ConditionalJumpInstruction(cond, nextLabel),
-            );
+            this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
             const concreteMapped = this.mapInlineProperty(
               className,
@@ -1862,10 +1816,10 @@ export function visitPropertyAccessExpression(
             }
             this.emitCopyWithTracking(result, concreteMapped);
 
-            this.instructions.push(new UnconditionalJumpInstruction(endLabel));
-            this.instructions.push(new LabelInstruction(nextLabel));
+            this.emit(new UnconditionalJumpInstruction(endLabel));
+            this.emit(new LabelInstruction(nextLabel));
           }
-          this.instructions.push(new LabelInstruction(endLabel));
+          this.emit(new LabelInstruction(endLabel));
           return result;
         }
       }
@@ -2101,7 +2055,7 @@ export function visitPropertyAccessExpression(
             for (const [instId, info] of dispInstances) {
               const dispNext = this.newLabel("uninst_prop_next");
               const dispCond = this.newTemp(PrimitiveTypes.boolean);
-              this.instructions.push(
+              this.emit(
                 new BinaryOpInstruction(
                   dispCond,
                   hdlVar,
@@ -2109,7 +2063,7 @@ export function visitPropertyAccessExpression(
                   createConstant(instId, PrimitiveTypes.int32),
                 ),
               );
-              this.instructions.push(
+              this.emit(
                 // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
                 new ConditionalJumpInstruction(dispCond, dispNext),
               );
@@ -2125,8 +2079,8 @@ export function visitPropertyAccessExpression(
               // this instance. This should not happen: all entries in
               // dispInstances share the same className (enforced by the filter
               // above), so every instance must expose the same property set.
-              this.instructions.push(new UnconditionalJumpInstruction(dispEnd));
-              this.instructions.push(new LabelInstruction(dispNext));
+              this.emit(new UnconditionalJumpInstruction(dispEnd));
+              this.emit(new LabelInstruction(dispNext));
             }
             // Miss path: if no handle matched in the dispatch table.
             if (usedErasedFallback) {
@@ -2149,9 +2103,7 @@ export function visitPropertyAccessExpression(
                 `[udon-assembly-ts] D3 dispatch miss: ${node.property} on untracked instance`,
                 PrimitiveTypes.string,
               );
-              this.instructions.push(
-                new CallInstruction(undefined, logExtern, [errMsg]),
-              );
+              this.emit(new CallInstruction(undefined, logExtern, [errMsg]));
               // dispResult retains its Udon heap zero-initialised default
               // (null for references, 0 for int32, false for bool).
               // No explicit COPY needed — emitting one with a null literal
@@ -2160,7 +2112,7 @@ export function visitPropertyAccessExpression(
             // For non-erased D3 dispatch the miss is unreachable: every object
             // of the matched type was constructed via a tracked constructor,
             // so its runtime handle always matches one branch above.
-            this.instructions.push(new LabelInstruction(dispEnd));
+            this.emit(new LabelInstruction(dispEnd));
             return dispResult;
           }
         }
@@ -2175,9 +2127,7 @@ export function visitPropertyAccessExpression(
       node.property === "length"
     ) {
       const result = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
-        new PropertyGetInstruction(result, object, "Length"),
-      );
+      this.emit(new PropertyGetInstruction(result, object, "Length"));
       return result;
     }
 
@@ -2185,9 +2135,7 @@ export function visitPropertyAccessExpression(
     // Arrays are backed by DataList, so use "Count" property.
     if (objectType instanceof ArrayTypeSymbol && node.property === "length") {
       const result = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
-        new PropertyGetInstruction(result, object, "Count"),
-      );
+      this.emit(new PropertyGetInstruction(result, object, "Count"));
       return result;
     }
 
@@ -2199,9 +2147,7 @@ export function visitPropertyAccessExpression(
       node.property === "length"
     ) {
       const result = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
-        new PropertyGetInstruction(result, object, "Count"),
-      );
+      this.emit(new PropertyGetInstruction(result, object, "Count"));
       return result;
     }
 
@@ -2236,9 +2182,7 @@ export function visitPropertyAccessExpression(
         return this.unwrapDataToken(object, expected);
       }
       const result = this.newTemp(ObjectType);
-      this.instructions.push(
-        new PropertyGetInstruction(result, object, "Reference"),
-      );
+      this.emit(new PropertyGetInstruction(result, object, "Reference"));
       return result;
     }
 
@@ -2249,9 +2193,7 @@ export function visitPropertyAccessExpression(
       isMapCollectionType(objectType) || isMapCollectionType(resolvedBaseType);
     if ((isSet || isMap) && node.property === "size") {
       const result = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
-        new PropertyGetInstruction(result, object, "Count"),
-      );
+      this.emit(new PropertyGetInstruction(result, object, "Count"));
       return result;
     }
     let resultType: TypeSymbol | undefined;
@@ -2297,9 +2239,7 @@ export function visitPropertyAccessExpression(
     }
     const result = this.newTemp(resultType ?? ObjectType);
 
-    this.instructions.push(
-      new PropertyGetInstruction(result, object, node.property),
-    );
+    this.emit(new PropertyGetInstruction(result, object, node.property));
     return result;
   } finally {
     this.propertyAccessDepth -= 1;
@@ -2356,7 +2296,7 @@ export function visitObjectLiteralExpression(
       `${instancePrefix}__handle`,
       PrimitiveTypes.int32,
     );
-    this.instructions.push(
+    this.emit(
       new AssignmentInstruction(
         instanceHandle,
         createConstant(instanceId, PrimitiveTypes.int32),
@@ -2394,7 +2334,7 @@ export function visitObjectLiteralExpression(
       }
       const value = this.visitExpression(prop.value);
       this.currentExpectedType = prev;
-      this.instructions.push(new AssignmentInstruction(propVar, value));
+      this.emit(new AssignmentInstruction(propVar, value));
       this.maybeTrackInlineInstanceAssignment(propVar, value);
     }
     return instanceHandle;
@@ -2422,7 +2362,7 @@ export function visitDeleteExpression(
         PrimitiveTypes.string,
       );
       const nullValue = createConstant(null, ObjectType);
-      this.instructions.push(
+      this.emit(
         new CallInstruction(undefined, externSig, [
           object,
           propName,
@@ -2437,13 +2377,13 @@ export function visitDeleteExpression(
         createConstant(propAccess.property, PrimitiveTypes.string),
       );
       const result = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(result, object, "Remove", [keyToken]),
       );
       return result;
     }
     const nullValue = createConstant(null, ObjectType);
-    this.instructions.push(
+    this.emit(
       new PropertySetInstruction(object, propAccess.property, nullValue),
     );
     return createConstant(true, PrimitiveTypes.boolean);
@@ -2457,9 +2397,7 @@ export function visitDeleteExpression(
     if (objectType.name === ExternTypes.dataDictionary.name) {
       const keyToken = this.wrapDataToken(index);
       const result = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new MethodCallInstruction(result, array, "Remove", [keyToken]),
-      );
+      this.emit(new MethodCallInstruction(result, array, "Remove", [keyToken]));
       return result;
     }
     // delete arr[i] → set_Item(i, DataToken(null))
@@ -2468,11 +2406,11 @@ export function visitDeleteExpression(
     const idxType = this.getOperandType(index);
     if (needsInt32IndexCoercion(idxType.udonType)) {
       const intIndex = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(new CastInstruction(intIndex, index));
+      this.emit(new CastInstruction(intIndex, index));
       coercedIndex = intIndex;
     }
     const token = this.wrapDataToken(nullValue);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(undefined, array, "set_Item", [
         coercedIndex,
         token,
@@ -2524,7 +2462,7 @@ export function visitOptionalChainingExpression(
   }
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       isNull,
       objTemp,
@@ -2535,13 +2473,13 @@ export function visitOptionalChainingExpression(
   const notNullLabel = this.newLabel("opt_notnull");
   const endLabel = this.newLabel("opt_end");
   const result = this.newTemp(resultType ?? ObjectType);
-  this.instructions.push(new ConditionalJumpInstruction(isNull, notNullLabel));
-  this.instructions.push(
+  this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
+  this.emit(
     new AssignmentInstruction(result, createConstant(null, ObjectType)),
   );
-  this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+  this.emit(new UnconditionalJumpInstruction(endLabel));
 
-  this.instructions.push(new LabelInstruction(notNullLabel));
+  this.emit(new LabelInstruction(notNullLabel));
   // Create a named variable to hold objTemp so visitPropertyAccessExpression
   // can look it up by name and get proper inline tracking. Use a temporary
   // scope to avoid leaking the symbol into the enclosing scope.
@@ -2552,7 +2490,7 @@ export function visitOptionalChainingExpression(
   let propResult: TACOperand;
   try {
     this.symbolTable.addSymbol(optBaseName, optBaseType);
-    this.instructions.push(new CopyInstruction(optBase, objTemp));
+    this.emit(new CopyInstruction(optBase, objTemp));
     // Propagate inline instance tracking from objTemp to optBase
     this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
     propResult = this.visitPropertyAccessExpression({
@@ -2567,7 +2505,7 @@ export function visitOptionalChainingExpression(
     this.symbolTable.exitScope();
   }
   this.emitCopyWithTracking(result, propResult);
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
 
   return result;
 }
@@ -2671,7 +2609,7 @@ export function visitAsExpression(
             targetTypeSymbol,
           );
           if (foldedValue !== null) {
-            this.instructions.push(
+            this.emit(
               new AssignmentInstruction(
                 result,
                 createConstant(foldedValue, targetTypeSymbol),
@@ -2681,7 +2619,7 @@ export function visitAsExpression(
           }
         }
       }
-      this.instructions.push(new CastInstruction(result, operand));
+      this.emit(new CastInstruction(result, operand));
     } else if (
       srcType.udonType === UdonType.DataToken &&
       (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
@@ -2693,7 +2631,7 @@ export function visitAsExpression(
       if (unwrapped !== operand) {
         this.emitCopyWithTracking(result, unwrapped);
       } else {
-        this.instructions.push(new CastInstruction(result, operand));
+        this.emit(new CastInstruction(result, operand));
       }
     } else if (
       srcType.udonType !== UdonType.Object &&
@@ -2703,7 +2641,7 @@ export function visitAsExpression(
           (NUMERIC_UDON_TYPES.has(srcType.udonType) ||
             srcType.udonType === UdonType.Boolean)))
     ) {
-      this.instructions.push(new CastInstruction(result, operand));
+      this.emit(new CastInstruction(result, operand));
     } else {
       this.emitCopyWithTracking(result, operand);
     }
@@ -2750,8 +2688,6 @@ export function visitTypeofExpression(
     ["string"],
     "Type",
   );
-  this.instructions.push(
-    new CallInstruction(result, externSig, [typeNameConst]),
-  );
+  this.emit(new CallInstruction(result, externSig, [typeNameConst]));
   return result;
 }

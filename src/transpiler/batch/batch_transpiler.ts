@@ -686,6 +686,7 @@ export class BatchTranspiler {
         try {
           splitCandidates = this.estimateSplitCandidates(
             filteredInlineClassNames,
+            udonConverter.getHeapUsageByClass(),
             registry,
             callAnalyzer,
             parser,
@@ -836,19 +837,27 @@ export class BatchTranspiler {
 
   private estimateSplitCandidates(
     inlineClassNames: string[],
+    heapUsageByClass: Map<string, number>,
     registry: ClassRegistry,
     callAnalyzer: CallAnalyzer,
     parser: TypeScriptParser,
     typeMapper: TypeMapper,
     udonBehaviourLayouts: ReturnType<typeof buildUdonBehaviourLayouts>,
     udonBehaviourClasses: ReadonlySet<string>,
-    optimize?: boolean,
+    _optimize?: boolean,
     reflect?: boolean,
     useStringBuilder?: boolean,
     methodUsage?: Map<string, Set<string>> | null,
   ): Map<string, number> {
+    // Rank inline classes by coarse heap contribution from main compile,
+    // then run the expensive full-pipeline estimation only for the top N.
+    const MAX_PRECISE_CANDIDATES = 3;
+    const ranked = [...inlineClassNames]
+      .map((name) => ({ name, coarse: heapUsageByClass.get(name) ?? 0 }))
+      .sort((a, b) => b.coarse - a.coarse);
+
     const results = new Map<string, number>();
-    for (const className of inlineClassNames) {
+    for (const { name: className } of ranked.slice(0, MAX_PRECISE_CANDIDATES)) {
       try {
         results.set(
           className,
@@ -860,7 +869,7 @@ export class BatchTranspiler {
             typeMapper,
             udonBehaviourLayouts,
             udonBehaviourClasses,
-            optimize,
+            false, // skip optimizer for estimation — coarse heap is sufficient
             reflect,
             useStringBuilder,
             methodUsage ?? null,

@@ -206,7 +206,7 @@ const emitSetKeysList = (
 ): TACOperand => {
   const listType = new DataListTypeSymbol(elementType);
   const listResult = converter.newTemp(listType);
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(listResult, setOperand, "GetKeys", []),
   );
   return listResult;
@@ -219,7 +219,7 @@ const emitMapValuesList = (
 ): TACOperand => {
   const listType = new DataListTypeSymbol(valueType);
   const listResult = converter.newTemp(listType);
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(listResult, mapOperand, "GetValues", []),
   );
   return listResult;
@@ -564,7 +564,7 @@ function trySoAMethodDispatch(
   // Sync the instance handle so that bare `this` references inside the
   // inlined method body read the correct runtime handle, not the stale
   // value left over from the last constructor invocation.
-  converter.instructions.push(
+  converter.emit(
     new CopyInstruction(
       createVariable(`${scratchPrefix}__handle`, PrimitiveTypes.int32),
       hdlVar,
@@ -593,7 +593,7 @@ function trySoAMethodDispatch(
       const token = converter.newTemp(ExternTypes.dataToken);
       emitBoundedDataListGetItem(converter, listVar, hdlVar, token);
       const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
-      converter.instructions.push(new CopyInstruction(scratchVar, unwrapped));
+      converter.emit(new CopyInstruction(scratchVar, unwrapped));
     }
   }
 
@@ -640,7 +640,7 @@ function trySoAMethodDispatch(
       const scratchVar = fieldScratchVars.get(fieldName);
       if (scratchVar) {
         const token = converter.wrapDataToken(scratchVar);
-        converter.instructions.push(
+        converter.emit(
           new MethodCallInstruction(undefined, listVar, "set_Item", [
             hdlVar,
             token,
@@ -824,7 +824,7 @@ function tryUntrackedInlineDispatch(
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("untracked_call_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
-    converter.instructions.push(
+    converter.emit(
       new BinaryOpInstruction(
         cond,
         handleVar,
@@ -832,9 +832,7 @@ function tryUntrackedInlineDispatch(
         createConstant(instanceId, PrimitiveTypes.int32),
       ),
     );
-    converter.instructions.push(
-      new ConditionalJumpInstruction(cond, nextLabel),
-    );
+    converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
     const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
       info.className,
@@ -853,17 +851,15 @@ function tryUntrackedInlineDispatch(
     }
 
     if (dispatchResult) {
-      converter.instructions.push(
-        new CopyInstruction(dispatchResult, inlineRes),
-      );
+      converter.emit(new CopyInstruction(dispatchResult, inlineRes));
       resultInlineMapping = mergeInlineMapping(
         resultInlineMapping,
         inlineRes,
         converter.inlineInstanceMap,
       );
     }
-    converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
-    converter.instructions.push(new LabelInstruction(nextLabel));
+    converter.emit(new UnconditionalJumpInstruction(endLabel));
+    converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
     converter.allInlineInstances = branchAllInlineSnapshot;
   }
@@ -886,10 +882,8 @@ function tryUntrackedInlineDispatch(
     `[udon-assembly-ts] Untracked inline method dispatch miss: ${propAccess.property}`,
     PrimitiveTypes.string,
   );
-  converter.instructions.push(
-    new CallInstruction(undefined, logExtern, [missMsg]),
-  );
-  converter.instructions.push(new LabelInstruction(endLabel));
+  converter.emit(new CallInstruction(undefined, logExtern, [missMsg]));
+  converter.emit(new LabelInstruction(endLabel));
 
   // Propagate inline tracking if all branches agreed.
   if (dispatchResult && resultInlineMapping) {
@@ -1088,7 +1082,7 @@ function tryD3MethodDispatch(
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("d3_method_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
-    converter.instructions.push(
+    converter.emit(
       new BinaryOpInstruction(
         cond,
         handleVar,
@@ -1096,9 +1090,7 @@ function tryD3MethodDispatch(
         createConstant(instanceId, PrimitiveTypes.int32),
       ),
     );
-    converter.instructions.push(
-      new ConditionalJumpInstruction(cond, nextLabel),
-    );
+    converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
     const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
       info.className,
@@ -1117,17 +1109,15 @@ function tryD3MethodDispatch(
     }
 
     if (dispatchResult) {
-      converter.instructions.push(
-        new CopyInstruction(dispatchResult, inlineRes),
-      );
+      converter.emit(new CopyInstruction(dispatchResult, inlineRes));
       resultInlineMapping = mergeInlineMapping(
         resultInlineMapping,
         inlineRes,
         converter.inlineInstanceMap,
       );
     }
-    converter.instructions.push(new UnconditionalJumpInstruction(endLabel));
-    converter.instructions.push(new LabelInstruction(nextLabel));
+    converter.emit(new UnconditionalJumpInstruction(endLabel));
+    converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
     converter.allInlineInstances = branchAllInlineSnapshot;
   }
@@ -1150,10 +1140,8 @@ function tryD3MethodDispatch(
     `[udon-assembly-ts] D3 method dispatch miss: ${propAccess.property} on untracked instance`,
     PrimitiveTypes.string,
   );
-  converter.instructions.push(
-    new CallInstruction(undefined, logExtern, [errMsg]),
-  );
-  converter.instructions.push(new LabelInstruction(endLabel));
+  converter.emit(new CallInstruction(undefined, logExtern, [errMsg]));
+  converter.emit(new LabelInstruction(endLabel));
 
   // Propagate inline tracking if all branches agreed.
   if (dispatchResult && resultInlineMapping) {
@@ -1287,7 +1275,7 @@ export function visitCallExpression(
         ? this.typeMapper.mapTypeScriptType(this.currentClassName)
         : ObjectType;
       const thisOperand = createVariable("this", classType);
-      this.instructions.push(
+      this.emit(
         new CallInstruction(undefined, externSig, [
           thisOperand,
           methodNameConst,
@@ -1336,9 +1324,7 @@ export function visitCallExpression(
             );
           }
           const castResult = this.newTemp(targetType);
-          this.instructions.push(
-            new CastInstruction(castResult, evaluatedArgs[0]),
-          );
+          this.emit(new CastInstruction(castResult, evaluatedArgs[0]));
           return castResult;
         }
         const inlineResult = this.visitInlineStaticMethodCall(
@@ -1359,15 +1345,11 @@ export function visitCallExpression(
         if (externSig) {
           const returnType = resolveExternReturnType(externSig) ?? ObjectType;
           if (returnType === PrimitiveTypes.void) {
-            this.instructions.push(
-              new CallInstruction(undefined, externSig, evaluatedArgs),
-            );
+            this.emit(new CallInstruction(undefined, externSig, evaluatedArgs));
             return VOID_RETURN;
           }
           const callResult = this.newTemp(returnType);
-          this.instructions.push(
-            new CallInstruction(callResult, externSig, evaluatedArgs),
-          );
+          this.emit(new CallInstruction(callResult, externSig, evaluatedArgs));
           return callResult;
         }
       }
@@ -1390,7 +1372,7 @@ export function visitCallExpression(
         return arg;
       }
       const castResult = this.newTemp(PrimitiveTypes.int64);
-      this.instructions.push(new CastInstruction(castResult, arg));
+      this.emit(new CastInstruction(castResult, arg));
       return castResult;
     }
     if (calleeName === "Number") {
@@ -1410,7 +1392,7 @@ export function visitCallExpression(
         return arg;
       }
       const castResult = this.newTemp(PrimitiveTypes.single);
-      this.instructions.push(new CastInstruction(castResult, arg));
+      this.emit(new CastInstruction(castResult, arg));
       return castResult;
     }
     if (calleeName === "String") {
@@ -1427,9 +1409,7 @@ export function visitCallExpression(
         return arg;
       }
       const result = this.newTemp(PrimitiveTypes.string);
-      this.instructions.push(
-        new MethodCallInstruction(result, arg, "ToString", []),
-      );
+      this.emit(new MethodCallInstruction(result, arg, "ToString", []));
       return result;
     }
     if (calleeName === "parseInt") {
@@ -1464,7 +1444,7 @@ export function visitCallExpression(
         ["string"],
         "int",
       );
-      this.instructions.push(new CallInstruction(result, externSig, [arg]));
+      this.emit(new CallInstruction(result, externSig, [arg]));
       return result;
     }
     if (calleeName === "parseFloat") {
@@ -1487,7 +1467,7 @@ export function visitCallExpression(
         ["string"],
         "float",
       );
-      this.instructions.push(new CallInstruction(result, externSig, [arg]));
+      this.emit(new CallInstruction(result, externSig, [arg]));
       return result;
     }
     if (node.isNew) {
@@ -1524,7 +1504,7 @@ export function visitCallExpression(
         paramTypes,
         calleeName,
       );
-      this.instructions.push(
+      this.emit(
         new CallInstruction(collectionResult, externSig, evaluatedArgs),
       );
       return collectionResult;
@@ -1538,7 +1518,7 @@ export function visitCallExpression(
         [],
         "DataList",
       );
-      this.instructions.push(new CallInstruction(listResult, externSig, []));
+      this.emit(new CallInstruction(listResult, externSig, []));
       return listResult;
     }
     if (node.isNew && calleeName === "DataDictionary") {
@@ -1550,7 +1530,7 @@ export function visitCallExpression(
         [],
         "DataDictionary",
       );
-      this.instructions.push(new CallInstruction(dictResult, externSig, []));
+      this.emit(new CallInstruction(dictResult, externSig, []));
       return dictResult;
     }
     if (calleeName === "Array") {
@@ -1583,7 +1563,7 @@ export function visitCallExpression(
                 ["int"],
                 nativeType.nativeUdonTypeName,
               );
-              this.instructions.push(
+              this.emit(
                 new CallInstruction(nativeResult, ctorSig, [
                   createConstant(count, PrimitiveTypes.int32),
                 ]),
@@ -1606,7 +1586,7 @@ export function visitCallExpression(
         [],
         "DataList",
       );
-      this.instructions.push(new CallInstruction(listResult, externSig, []));
+      this.emit(new CallInstruction(listResult, externSig, []));
       // Single-argument numeric-length semantics: Array(n) and new Array(n)
       // are equivalent in JS and both produce a length-n array.
       if (rawArgs.length === 1) {
@@ -1647,14 +1627,14 @@ export function visitCallExpression(
             // If Math.floor isn't available for some reason, fall back to
             // treating the argument as a single element.
             const token = this.wrapDataToken(argOperand);
-            this.instructions.push(
+            this.emit(
               new MethodCallInstruction(undefined, listResult, "Add", [token]),
             );
             return listResult;
           }
 
           const isIntTemp = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
+          this.emit(
             new BinaryOpInstruction(isIntTemp, argOperand, "==", floorValue),
           );
 
@@ -1663,27 +1643,25 @@ export function visitCallExpression(
 
           // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
           // If `isIntTemp` is false (non-integer), jump to `nonIntLabel` to add the element.
-          this.instructions.push(
-            new ConditionalJumpInstruction(isIntTemp, nonIntLabel),
-          );
+          this.emit(new ConditionalJumpInstruction(isIntTemp, nonIntLabel));
 
           // Integer-case: do nothing (create empty list), jump to done.
-          this.instructions.push(new UnconditionalJumpInstruction(doneLabel));
+          this.emit(new UnconditionalJumpInstruction(doneLabel));
 
           // Non-integer case: add the single value as element.
-          this.instructions.push(new LabelInstruction(nonIntLabel));
+          this.emit(new LabelInstruction(nonIntLabel));
           const token = this.wrapDataToken(argOperand);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
-          this.instructions.push(new LabelInstruction(doneLabel));
+          this.emit(new LabelInstruction(doneLabel));
 
           return listResult;
         }
 
         if (!isNumericLength && !isWholeFloatConstant) {
           const token = this.wrapDataToken(argOperand);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(undefined, listResult, "Add", [token]),
           );
         } else if (node.typeArguments?.[0]) {
@@ -1738,7 +1716,7 @@ export function visitCallExpression(
             const defaultValue = createConstant(defaultVal, arrayType);
             const defaultToken = this.wrapDataToken(defaultValue);
             for (let i = 0; i < count; i++) {
-              this.instructions.push(
+              this.emit(
                 new MethodCallInstruction(undefined, listResult, "Add", [
                   defaultToken,
                 ]),
@@ -1750,7 +1728,7 @@ export function visitCallExpression(
       }
       for (const arg of evaluatedArgs) {
         const token = this.wrapDataToken(arg);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(undefined, listResult, "Add", [token]),
         );
       }
@@ -1768,24 +1746,18 @@ export function visitCallExpression(
         ["GameObject"],
         "GameObject",
       );
-      this.instructions.push(
-        new CallInstruction(instResult, externSig, getArgs()),
-      );
+      this.emit(new CallInstruction(instResult, externSig, getArgs()));
       return instResult;
     }
     if (node.isNew) {
       const externSig = `__ctor_${calleeName}`;
       const ctorType = this.typeMapper.mapTypeScriptType(calleeName);
       const ctorResult = this.newTemp(ctorType);
-      this.instructions.push(
-        new CallInstruction(ctorResult, externSig, getArgs()),
-      );
+      this.emit(new CallInstruction(ctorResult, externSig, getArgs()));
       return ctorResult;
     }
     const callResult = defaultResult();
-    this.instructions.push(
-      new CallInstruction(callResult, calleeName, getArgs()),
-    );
+    this.emit(new CallInstruction(callResult, calleeName, getArgs()));
     return callResult;
   }
 
@@ -1812,21 +1784,15 @@ export function visitCallExpression(
         );
         // First comparison (use "==" since Udon has no strict equality)
         let accumulator = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
-          new BinaryOpInstruction(accumulator, arg, "==", literals[0]),
-        );
+        this.emit(new BinaryOpInstruction(accumulator, arg, "==", literals[0]));
         // Chain remaining with bitwise OR — Udon has no logical-OR BinaryOp;
         // `||` is lowered via conditional jumps (visitShortCircuitOr), but `|`
         // on booleans produces the same result without branch overhead.
         for (let i = 1; i < literals.length; i++) {
           const cmp = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
-            new BinaryOpInstruction(cmp, arg, "==", literals[i]),
-          );
+          this.emit(new BinaryOpInstruction(cmp, arg, "==", literals[i]));
           const newAcc = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
-            new BinaryOpInstruction(newAcc, accumulator, "|", cmp),
-          );
+          this.emit(new BinaryOpInstruction(newAcc, accumulator, "|", cmp));
           accumulator = newAcc;
         }
         return accumulator;
@@ -1958,7 +1924,7 @@ export function visitCallExpression(
         );
       }
       const castResult = this.newTemp(targetType);
-      this.instructions.push(new CastInstruction(castResult, evaluatedArgs[0]));
+      this.emit(new CastInstruction(castResult, evaluatedArgs[0]));
       return castResult;
     }
 
@@ -2061,15 +2027,11 @@ export function visitCallExpression(
       if (externSig) {
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
         if (returnType === PrimitiveTypes.void) {
-          this.instructions.push(
-            new CallInstruction(undefined, externSig, evaluatedArgs),
-          );
+          this.emit(new CallInstruction(undefined, externSig, evaluatedArgs));
           return VOID_RETURN;
         }
         const callResult = this.newTemp(returnType);
-        this.instructions.push(
-          new CallInstruction(callResult, externSig, evaluatedArgs),
-        );
+        this.emit(new CallInstruction(callResult, externSig, evaluatedArgs));
         return callResult;
       }
     }
@@ -2112,9 +2074,7 @@ export function visitCallExpression(
       }
 
       if (externName) {
-        this.instructions.push(
-          new CallInstruction(undefined, externName, evaluatedArgs),
-        );
+        this.emit(new CallInstruction(undefined, externName, evaluatedArgs));
         return VOID_RETURN; // Console methods return void
       }
     }
@@ -2128,9 +2088,7 @@ export function visitCallExpression(
       // Strings use "Length"; arrays (backed by DataList) use "Count".
       const lengthProp =
         objectType === PrimitiveTypes.string ? "Length" : "Count";
-      this.instructions.push(
-        new PropertyGetInstruction(lengthResult, object, lengthProp),
-      );
+      this.emit(new PropertyGetInstruction(lengthResult, object, lengthProp));
       return lengthResult;
     }
 
@@ -2151,7 +2109,7 @@ export function visitCallExpression(
         "Component",
       );
       const typeResult = this.newTemp(targetTypeSymbol);
-      this.instructions.push(
+      this.emit(
         new CallInstruction(typeResult, externSig, [object, typeOperand]),
       );
       return typeResult;
@@ -2169,7 +2127,7 @@ export function visitCallExpression(
         ["string"],
         "void",
       );
-      this.instructions.push(
+      this.emit(
         new CallInstruction(undefined, externSig, [object, evaluatedArgs[0]]),
       );
       return VOID_RETURN;
@@ -2185,7 +2143,7 @@ export function visitCallExpression(
         ["NetworkEventTarget", "string"],
         "void",
       );
-      this.instructions.push(
+      this.emit(
         new CallInstruction(undefined, externSig, [
           object,
           evaluatedArgs[0],
@@ -2224,7 +2182,7 @@ export function visitCallExpression(
             ["string", "object"],
             "void",
           );
-          this.instructions.push(
+          this.emit(
             new CallInstruction(undefined, externSig, [
               object,
               paramName,
@@ -2240,7 +2198,7 @@ export function visitCallExpression(
         ["string"],
         "void",
       );
-      this.instructions.push(
+      this.emit(
         new CallInstruction(undefined, sendExtern, [object, methodName]),
       );
 
@@ -2257,7 +2215,7 @@ export function visitCallExpression(
           PrimitiveTypes.string,
         );
         const returnTemp = this.newTemp(layout.returnType);
-        this.instructions.push(
+        this.emit(
           new CallInstruction(returnTemp, getExtern, [object, returnName]),
         );
         return returnTemp;
@@ -2272,37 +2230,31 @@ export function visitCallExpression(
     ) {
       if (propAccess.property === "Add" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
-        this.instructions.push(
-          new MethodCallInstruction(undefined, object, "Add", [token]),
-        );
+        this.emit(new MethodCallInstruction(undefined, object, "Add", [token]));
         return VOID_RETURN;
       }
       if (propAccess.property === "push") {
         if (evaluatedArgs.length === 0) {
           // push() with no args: no mutation, return current count
           const countResult = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new PropertyGetInstruction(countResult, object, "Count"),
-          );
+          this.emit(new PropertyGetInstruction(countResult, object, "Count"));
           return countResult;
         }
         // DataList.push(value) → DataList.Add(wrapDataToken(value)) for each arg
         for (const arg of evaluatedArgs) {
           const token = this.wrapDataToken(arg);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(undefined, object, "Add", [token]),
           );
         }
         const countResult = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(
-          new PropertyGetInstruction(countResult, object, "Count"),
-        );
+        this.emit(new PropertyGetInstruction(countResult, object, "Count"));
         return countResult;
       }
       if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
         const removeResult = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(removeResult, object, "Remove", [token]),
         );
         return removeResult;
@@ -2312,7 +2264,7 @@ export function visitCallExpression(
       if (propAccess.property === "SetValue" && evaluatedArgs.length === 2) {
         const keyToken = this.wrapDataToken(evaluatedArgs[0]);
         const valueToken = this.wrapDataToken(evaluatedArgs[1]);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(undefined, object, "SetValue", [
             keyToken,
             valueToken,
@@ -2327,7 +2279,7 @@ export function visitCallExpression(
       ) {
         const keyToken = this.wrapDataToken(evaluatedArgs[0]);
         const dictResult = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(dictResult, object, propAccess.property, [
             keyToken,
           ]),
@@ -2344,33 +2296,25 @@ export function visitCallExpression(
       // Ensure argument is Int32 (Substring expects SystemInt32)
       const toInt32 = (op: TACOperand): TACOperand => {
         const cast = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CastInstruction(cast, op));
+        this.emit(new CastInstruction(cast, op));
         return cast;
       };
       // Adjust a negative index at runtime: max(0, length + intArg)
       const adjustNegIndex = (intArg: TACOperand): TACOperand => {
         const lenTemp = this.newTemp(PrimitiveTypes.int32);
         // Strings use "Length", not "Count" (which is DataList-only).
-        this.instructions.push(
-          new PropertyGetInstruction(lenTemp, object, "Length"),
-        );
+        this.emit(new PropertyGetInstruction(lenTemp, object, "Length"));
         const sum = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(
-          new BinaryOpInstruction(sum, lenTemp, "+", intArg),
-        );
+        this.emit(new BinaryOpInstruction(sum, lenTemp, "+", intArg));
         // Clamp to 0: if index < -length the sum is still negative
         const zero = createConstant(0, PrimitiveTypes.int32);
         const stillNeg = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
-          new BinaryOpInstruction(stillNeg, sum, "<", zero),
-        );
+        this.emit(new BinaryOpInstruction(stillNeg, sum, "<", zero));
         const clampSkip = this.newLabel("slice_clamp");
-        this.instructions.push(
-          new ConditionalJumpInstruction(stillNeg, clampSkip),
-        );
+        this.emit(new ConditionalJumpInstruction(stillNeg, clampSkip));
         // Still negative → clamp to 0
-        this.instructions.push(new CopyInstruction(sum, zero));
-        this.instructions.push(new LabelInstruction(clampSkip));
+        this.emit(new CopyInstruction(sum, zero));
+        this.emit(new LabelInstruction(clampSkip));
         return sum;
       };
       // Convert an index arg to Int32, adjusting negative values at runtime
@@ -2384,9 +2328,9 @@ export function visitCallExpression(
           return intArg;
         }
         const resolved = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CopyInstruction(resolved, intArg));
+        this.emit(new CopyInstruction(resolved, intArg));
         const isNeg = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
+        this.emit(
           new BinaryOpInstruction(
             isNeg,
             intArg,
@@ -2396,19 +2340,17 @@ export function visitCallExpression(
         );
         const skipLabel = this.newLabel("slice_pos");
         // ConditionalJump = "if FALSE goto label", so skips when NOT negative
-        this.instructions.push(
-          new ConditionalJumpInstruction(isNeg, skipLabel),
-        );
+        this.emit(new ConditionalJumpInstruction(isNeg, skipLabel));
         // Negative path: resolved = max(0, length + intArg)
         const adjusted = adjustNegIndex(intArg);
-        this.instructions.push(new CopyInstruction(resolved, adjusted));
-        this.instructions.push(new LabelInstruction(skipLabel));
+        this.emit(new CopyInstruction(resolved, adjusted));
+        this.emit(new LabelInstruction(skipLabel));
         return resolved;
       };
 
       if (evaluatedArgs.length === 1) {
         const startInt = resolveIndex(evaluatedArgs[0]);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(result, object, "Substring", [startInt]),
         );
       } else if (evaluatedArgs.length === 2) {
@@ -2417,10 +2359,8 @@ export function visitCallExpression(
         const startInt = resolveIndex(evaluatedArgs[0]);
         const endInt = resolveIndex(evaluatedArgs[1]);
         const lengthArg = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(
-          new BinaryOpInstruction(lengthArg, endInt, "-", startInt),
-        );
-        this.instructions.push(
+        this.emit(new BinaryOpInstruction(lengthArg, endInt, "-", startInt));
+        this.emit(
           new MethodCallInstruction(result, object, "Substring", [
             startInt,
             lengthArg,
@@ -2429,7 +2369,7 @@ export function visitCallExpression(
       } else {
         // slice() with 0 args is a TS type-error; 3+ args can't happen via the stub.
         // Emit a best-effort call and let the assembler surface the error.
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(
             result,
             object,
@@ -2459,9 +2399,7 @@ export function visitCallExpression(
               [],
               "DataList",
             );
-            this.instructions.push(
-              new CallInstruction(emptyList, ctorExtern, []),
-            );
+            this.emit(new CallInstruction(emptyList, ctorExtern, []));
             return emitArrayConcat(this, object, emptyList);
           }
           let result = object;
@@ -2490,11 +2428,9 @@ export function visitCallExpression(
               const wrapper = this.newTemp(
                 new DataListTypeSymbol(this.getOperandType(arg)),
               );
-              this.instructions.push(
-                new CallInstruction(wrapper, wrapperCtorSig, []),
-              );
+              this.emit(new CallInstruction(wrapper, wrapperCtorSig, []));
               const token = this.wrapDataToken(arg);
-              this.instructions.push(
+              this.emit(
                 new MethodCallInstruction(undefined, wrapper, "Add", [token]),
               );
               result = emitArrayConcat(this, result, wrapper);
@@ -2511,16 +2447,14 @@ export function visitCallExpression(
               return operand;
             }
             const casted = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(new CastInstruction(casted, operand));
+            this.emit(new CastInstruction(casted, operand));
             return casted;
           };
           if (evaluatedArgs.length === 0) {
             // slice() = copy entire list → GetRange(0, Count)
             const len = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
-              new PropertyGetInstruction(len, object, "Count"),
-            );
-            this.instructions.push(
+            this.emit(new PropertyGetInstruction(len, object, "Count"));
+            this.emit(
               new MethodCallInstruction(result, object, "GetRange", [
                 createConstant(0, PrimitiveTypes.int32),
                 len,
@@ -2530,14 +2464,10 @@ export function visitCallExpression(
             // slice(start) → GetRange(start, Count - start)
             const start = coerceToInt32(evaluatedArgs[0]);
             const len = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
-              new PropertyGetInstruction(len, object, "Count"),
-            );
+            this.emit(new PropertyGetInstruction(len, object, "Count"));
             const count = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
-              new BinaryOpInstruction(count, len, "-", start),
-            );
-            this.instructions.push(
+            this.emit(new BinaryOpInstruction(count, len, "-", start));
+            this.emit(
               new MethodCallInstruction(result, object, "GetRange", [
                 start,
                 count,
@@ -2548,10 +2478,8 @@ export function visitCallExpression(
             const start = coerceToInt32(evaluatedArgs[0]);
             const end = coerceToInt32(evaluatedArgs[1]);
             const count = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
-              new BinaryOpInstruction(count, end, "-", start),
-            );
-            this.instructions.push(
+            this.emit(new BinaryOpInstruction(count, end, "-", start));
+            this.emit(
               new MethodCallInstruction(result, object, "GetRange", [
                 start,
                 count,
@@ -2564,7 +2492,7 @@ export function visitCallExpression(
         case "reverse":
         case "sort": {
           const result = this.newTemp(arrayReturn);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(
               result,
               object,
@@ -2576,7 +2504,7 @@ export function visitCallExpression(
         }
         case "map": {
           const result = this.newTemp(new ArrayTypeSymbol(ObjectType));
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(result, object, "map", evaluatedArgs),
           );
           return result;
@@ -2587,14 +2515,14 @@ export function visitCallExpression(
               ? objectType.elementType
               : ObjectType;
           const result = this.newTemp(elementType);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(result, object, "find", evaluatedArgs),
           );
           return result;
         }
         case "indexOf": {
           const result = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(result, object, "indexOf", evaluatedArgs),
           );
           return result;
@@ -2605,41 +2533,35 @@ export function visitCallExpression(
           }
           const searchValue = evaluatedArgs[0];
           const result = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
+          this.emit(
             new AssignmentInstruction(
               result,
               createConstant(false, PrimitiveTypes.boolean),
             ),
           );
           const indexVar = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
+          this.emit(
             new AssignmentInstruction(
               indexVar,
               createConstant(0, PrimitiveTypes.int32),
             ),
           );
           const lenVar = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new PropertyGetInstruction(lenVar, object, "Count"),
-          );
+          this.emit(new PropertyGetInstruction(lenVar, object, "Count"));
           const loopStart = this.newLabel("includes_start");
           const loopEnd = this.newLabel("includes_end");
-          this.instructions.push(new LabelInstruction(loopStart));
+          this.emit(new LabelInstruction(loopStart));
           // if !(i < len) goto end
           const condVar = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
-            new BinaryOpInstruction(condVar, indexVar, "<", lenVar),
-          );
-          this.instructions.push(
-            new ConditionalJumpInstruction(condVar, loopEnd),
-          );
+          this.emit(new BinaryOpInstruction(condVar, indexVar, "<", lenVar));
+          this.emit(new ConditionalJumpInstruction(condVar, loopEnd));
           // elem = DataList.get_Item(i) → unwrap
           const elemType =
             objectType instanceof ArrayTypeSymbol
               ? objectType.elementType
               : ObjectType;
           const tokenTemp = this.newTemp(ExternTypes.dataToken);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(tokenTemp, object, "get_Item", [
               indexVar,
             ]),
@@ -2647,24 +2569,20 @@ export function visitCallExpression(
           const elem = this.unwrapDataToken(tokenTemp, elemType);
           // if (elem == value) { result = true; goto end }
           const eqVar = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
-            new BinaryOpInstruction(eqVar, elem, "==", searchValue),
-          );
+          this.emit(new BinaryOpInstruction(eqVar, elem, "==", searchValue));
           const nextLabel = this.newLabel("includes_no_match");
-          this.instructions.push(
-            new ConditionalJumpInstruction(eqVar, nextLabel),
-          );
-          this.instructions.push(
+          this.emit(new ConditionalJumpInstruction(eqVar, nextLabel));
+          this.emit(
             new AssignmentInstruction(
               result,
               createConstant(true, PrimitiveTypes.boolean),
             ),
           );
-          this.instructions.push(new UnconditionalJumpInstruction(loopEnd));
-          this.instructions.push(new LabelInstruction(nextLabel));
+          this.emit(new UnconditionalJumpInstruction(loopEnd));
+          this.emit(new LabelInstruction(nextLabel));
           // i = i + 1
           const nextIndex = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
+          this.emit(
             new BinaryOpInstruction(
               nextIndex,
               indexVar,
@@ -2672,16 +2590,14 @@ export function visitCallExpression(
               createConstant(1, PrimitiveTypes.int32),
             ),
           );
-          this.instructions.push(
-            new AssignmentInstruction(indexVar, nextIndex),
-          );
-          this.instructions.push(new UnconditionalJumpInstruction(loopStart));
-          this.instructions.push(new LabelInstruction(loopEnd));
+          this.emit(new AssignmentInstruction(indexVar, nextIndex));
+          this.emit(new UnconditionalJumpInstruction(loopStart));
+          this.emit(new LabelInstruction(loopEnd));
           return result;
         }
         case "join": {
           const result = this.newTemp(PrimitiveTypes.string);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(result, object, "join", evaluatedArgs),
           );
           return result;
@@ -2690,25 +2606,21 @@ export function visitCallExpression(
           // push() with no args: return current length without mutation
           if (evaluatedArgs.length === 0) {
             const curLen = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
-              new PropertyGetInstruction(curLen, object, "Count"),
-            );
+            this.emit(new PropertyGetInstruction(curLen, object, "Count"));
             return curLen;
           }
 
           // Current lowering policy: TS arrays use DataList; push = Add(token).
           for (const arg of evaluatedArgs) {
             const token = this.wrapDataToken(arg);
-            this.instructions.push(
+            this.emit(
               new MethodCallInstruction(undefined, object, "Add", [token]),
             );
           }
 
           // Return new length (push returns the new array length)
           const newLen = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new PropertyGetInstruction(newLen, object, "Count"),
-          );
+          this.emit(new PropertyGetInstruction(newLen, object, "Count"));
           return newLen;
         }
         case "splice": {
@@ -2731,11 +2643,9 @@ export function visitCallExpression(
                 ? createConstant(0, PrimitiveTypes.int32)
                 : evaluatedArgs[0];
             const arrLen = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
-              new PropertyGetInstruction(arrLen, object, "Count"),
-            );
+            this.emit(new PropertyGetInstruction(arrLen, object, "Count"));
             const computedDeleteCount = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
+            this.emit(
               new BinaryOpInstruction(
                 computedDeleteCount,
                 arrLen,
@@ -2753,15 +2663,13 @@ export function visitCallExpression(
 
           // endIdx = start + deleteCount
           const endIdx = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new BinaryOpInstruction(endIdx, start, "+", deleteCount),
-          );
+          this.emit(new BinaryOpInstruction(endIdx, start, "+", deleteCount));
 
           const zero = createConstant(0, PrimitiveTypes.int32);
 
           // left = array.GetRange(0, start)
           const leftPart = this.newTemp(arrayReturn);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(leftPart, object, "GetRange", [
               zero,
               start,
@@ -2770,7 +2678,7 @@ export function visitCallExpression(
 
           // removed = array.GetRange(start, deleteCount)
           const removed = this.newTemp(arrayReturn);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(removed, object, "GetRange", [
               start,
               deleteCount,
@@ -2779,15 +2687,13 @@ export function visitCallExpression(
 
           // right = array.GetRange(endIdx, length - endIdx)
           const spliceLen = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
-            new PropertyGetInstruction(spliceLen, object, "Count"),
-          );
+          this.emit(new PropertyGetInstruction(spliceLen, object, "Count"));
           const rightCount = this.newTemp(PrimitiveTypes.int32);
-          this.instructions.push(
+          this.emit(
             new BinaryOpInstruction(rightCount, spliceLen, "-", endIdx),
           );
           const rightPart = this.newTemp(arrayReturn);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(rightPart, object, "GetRange", [
               endIdx,
               rightCount,
@@ -2810,12 +2716,10 @@ export function visitCallExpression(
               [],
               "DataList",
             );
-            this.instructions.push(
-              new CallInstruction(insertList, insertCtorSig, []),
-            );
+            this.emit(new CallInstruction(insertList, insertCtorSig, []));
             for (const item of insertItems) {
               const token = this.wrapDataToken(item);
-              this.instructions.push(
+              this.emit(
                 new MethodCallInstruction(undefined, insertList, "Add", [
                   token,
                 ]),
@@ -2833,7 +2737,7 @@ export function visitCallExpression(
           // PropertyGet and writing to them would not propagate back to
           // the source property.
           if (object.kind === TACOperandKind.Variable) {
-            this.instructions.push(new CopyInstruction(object, newArr));
+            this.emit(new CopyInstruction(object, newArr));
           }
 
           return removed;
@@ -2853,7 +2757,7 @@ export function visitCallExpression(
         objectType.udonType === UdonType.DataList)
     ) {
       const tokenResult = this.newTemp(ExternTypes.dataToken);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(tokenResult, object, "get_Item", [
           createConstant(0, PrimitiveTypes.int32),
         ]),
@@ -2880,9 +2784,7 @@ export function visitCallExpression(
         [],
         "void",
       );
-      this.instructions.push(
-        new CallInstruction(undefined, externSig, [object]),
-      );
+      this.emit(new CallInstruction(undefined, externSig, [object]));
       return VOID_RETURN;
     }
     // Inline context self-method: this.method() inside inline class body
@@ -2985,7 +2887,7 @@ export function visitCallExpression(
 
             const nextLabel = this.newLabel("iface_dispatch_next");
             const cond = this.newTemp(PrimitiveTypes.boolean);
-            this.instructions.push(
+            this.emit(
               new BinaryOpInstruction(
                 cond,
                 classIdVar,
@@ -2993,9 +2895,7 @@ export function visitCallExpression(
                 createConstant(classId, PrimitiveTypes.int32),
               ),
             );
-            this.instructions.push(
-              new ConditionalJumpInstruction(cond, nextLabel),
-            );
+            this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
             const inlineRes = this.visitInlineInstanceMethodCallWithContext(
               className,
@@ -3016,7 +2916,7 @@ export function visitCallExpression(
               break;
             }
             if (result) {
-              this.instructions.push(new CopyInstruction(result, inlineRes));
+              this.emit(new CopyInstruction(result, inlineRes));
               const inlineMapping =
                 inlineRes.kind === TACOperandKind.Variable
                   ? this.inlineInstanceMap.get(
@@ -3101,9 +3001,7 @@ export function visitCallExpression(
                       `${result.name}_${propName}`,
                       propType,
                     );
-                    this.instructions.push(
-                      new CopyInstruction(dstField, srcField),
-                    );
+                    this.emit(new CopyInstruction(dstField, srcField));
                   }
                   resultInlineMapping = {
                     prefix: result.name,
@@ -3135,8 +3033,8 @@ export function visitCallExpression(
                 resultInlineMapping = null;
               }
             }
-            this.instructions.push(new UnconditionalJumpInstruction(endLabel));
-            this.instructions.push(new LabelInstruction(nextLabel));
+            this.emit(new UnconditionalJumpInstruction(endLabel));
+            this.emit(new LabelInstruction(nextLabel));
 
             // Restore maps INSIDE the loop (not after) so each branch starts
             // from the pre-dispatch state. After the loop, resultInlineMapping
@@ -3155,7 +3053,7 @@ export function visitCallExpression(
             // matched. This should not happen — every classId assigned in
             // the for-of dispatch has a corresponding branch. If it does,
             // result retains its Udon heap zero-initialised value.
-            this.instructions.push(new LabelInstruction(endLabel));
+            this.emit(new LabelInstruction(endLabel));
             if (result) {
               if (resultInlineMapping) {
                 this.inlineInstanceMap.set(result.name, resultInlineMapping);
@@ -3234,7 +3132,7 @@ export function visitCallExpression(
               PrimitiveTypes.int32,
             );
             const depthInc = this.newTemp(PrimitiveTypes.int32);
-            this.instructions.push(
+            this.emit(
               new BinaryOpInstruction(
                 depthInc,
                 depthVarOp,
@@ -3265,7 +3163,7 @@ export function visitCallExpression(
               PrimitiveTypes.int32,
               { isLocal: true },
             );
-            this.instructions.push(
+            this.emit(
               new AssignmentInstruction(
                 returnSiteIdxVar,
                 createConstant(returnSiteIdx, PrimitiveTypes.int32),
@@ -3274,12 +3172,10 @@ export function visitCallExpression(
 
             // 5. JUMP to method entry
             const methodLabel = createLabel(layout.exportMethodName);
-            this.instructions.push(
-              new UnconditionalJumpInstruction(methodLabel),
-            );
+            this.emit(new UnconditionalJumpInstruction(methodLabel));
 
             // 6. Return label (dispatch brings us back here)
-            this.instructions.push(new LabelInstruction(returnLabel));
+            this.emit(new LabelInstruction(returnLabel));
 
             // 7. Read return value into temp BEFORE pop
             let result: TACOperand = VOID_RETURN;
@@ -3345,7 +3241,7 @@ export function visitCallExpression(
             PrimitiveTypes.int32,
             { isLocal: true },
           );
-          this.instructions.push(
+          this.emit(
             new AssignmentInstruction(
               returnSiteIdxVar,
               createConstant(returnSiteIdx, PrimitiveTypes.int32),
@@ -3362,13 +3258,13 @@ export function visitCallExpression(
           );
           // JUMP to method entry
           const methodLabel = createLabel(layout.exportMethodName);
-          this.instructions.push(new UnconditionalJumpInstruction(methodLabel));
+          this.emit(new UnconditionalJumpInstruction(methodLabel));
           // Return label (dispatch brings us back here)
-          this.instructions.push(new LabelInstruction(returnLabel));
+          this.emit(new LabelInstruction(returnLabel));
           // Reset returnSiteIdx to 0 (sentinel) after dispatch returns here.
           // Without this, a subsequent VRC direct call (SendCustomEvent) would
           // see the stale index and dispatch back to this caller's return label.
-          this.instructions.push(
+          this.emit(
             new AssignmentInstruction(
               returnSiteIdxVar,
               createConstant(0, PrimitiveTypes.int32),
@@ -3509,7 +3405,7 @@ export function visitCallExpression(
     }
 
     if (resolvedReturnType === PrimitiveTypes.void) {
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(
           undefined,
           object,
@@ -3521,7 +3417,7 @@ export function visitCallExpression(
     }
 
     const callResult = this.newTemp(resolvedReturnType ?? ObjectType);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(
         callResult,
         object,
@@ -3540,7 +3436,7 @@ export function visitCallExpression(
     this.emitCopyWithTracking(objTemp, object);
 
     const isNotNull = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(
         isNotNull,
         objTemp,
@@ -3553,11 +3449,9 @@ export function visitCallExpression(
     const callResult = this.newTemp(ObjectType);
     // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
     // If `isNotNull` is false (object is null), jump to `nullLabel` to set the result to null.
-    this.instructions.push(
-      new ConditionalJumpInstruction(isNotNull, nullLabel),
-    );
+    this.emit(new ConditionalJumpInstruction(isNotNull, nullLabel));
 
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(
         callResult,
         objTemp,
@@ -3565,13 +3459,13 @@ export function visitCallExpression(
         evaluatedArgs,
       ),
     );
-    this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+    this.emit(new UnconditionalJumpInstruction(endLabel));
 
-    this.instructions.push(new LabelInstruction(nullLabel));
-    this.instructions.push(
+    this.emit(new LabelInstruction(nullLabel));
+    this.emit(
       new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
     );
-    this.instructions.push(new LabelInstruction(endLabel));
+    this.emit(new LabelInstruction(endLabel));
     return callResult;
   }
 
@@ -3594,7 +3488,7 @@ function emitSetConstructor(
     [],
     "DataDictionary",
   );
-  converter.instructions.push(new CallInstruction(setResult, ctorSig, []));
+  converter.emit(new CallInstruction(setResult, ctorSig, []));
 
   if (node.arguments.length > 0) {
     if (node.arguments.length !== 1) {
@@ -3669,48 +3563,42 @@ function emitSetPopulateFromIterable(
 
   const indexVar = converter.newTemp(PrimitiveTypes.int32);
   const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       indexVar,
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
   // Current lowering policy: TS arrays use DataList semantics, so use Count.
-  converter.instructions.push(
-    new PropertyGetInstruction(lengthVar, listOperand, "Count"),
-  );
+  converter.emit(new PropertyGetInstruction(lengthVar, listOperand, "Count"));
 
   const loopStart = converter.newLabel("set_ctor_start");
   const loopContinue = converter.newLabel("set_ctor_continue");
   const loopEnd = converter.newLabel("set_ctor_end");
 
-  converter.instructions.push(new LabelInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopStart));
   const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
-  converter.instructions.push(
-    new ConditionalJumpInstruction(condTemp, loopEnd),
-  );
+  converter.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+  converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
   // All iterables use DataList.get_Item → DataToken.
   const keyToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(keyToken, listOperand, "get_Item", [indexVar]),
   );
 
   const valueToken = converter.wrapDataToken(
     createConstant(true, PrimitiveTypes.boolean),
   );
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(undefined, setOperand, "SetValue", [
       keyToken,
       valueToken,
     ]),
   );
 
-  converter.instructions.push(new LabelInstruction(loopContinue));
-  converter.instructions.push(
+  converter.emit(new LabelInstruction(loopContinue));
+  converter.emit(
     new BinaryOpInstruction(
       indexVar,
       indexVar,
@@ -3718,8 +3606,8 @@ function emitSetPopulateFromIterable(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  converter.instructions.push(new LabelInstruction(loopEnd));
+  converter.emit(new UnconditionalJumpInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopEnd));
 }
 
 function emitMapConstructor(
@@ -3738,7 +3626,7 @@ function emitMapConstructor(
     [],
     "DataDictionary",
   );
-  converter.instructions.push(new CallInstruction(mapResult, ctorSig, []));
+  converter.emit(new CallInstruction(mapResult, ctorSig, []));
 
   if (node.arguments.length > 0) {
     if (node.arguments.length !== 1) {
@@ -3806,42 +3694,36 @@ function emitMapPopulateFromIterable(
 
   const indexVar = converter.newTemp(PrimitiveTypes.int32);
   const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       indexVar,
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
   // Current lowering policy: TS arrays use DataList semantics, so use Count.
-  converter.instructions.push(
-    new PropertyGetInstruction(lengthVar, listOperand, "Count"),
-  );
+  converter.emit(new PropertyGetInstruction(lengthVar, listOperand, "Count"));
 
   const loopStart = converter.newLabel("map_ctor_start");
   const loopContinue = converter.newLabel("map_ctor_continue");
   const loopEnd = converter.newLabel("map_ctor_end");
 
-  converter.instructions.push(new LabelInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopStart));
   const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
-  converter.instructions.push(
-    new ConditionalJumpInstruction(condTemp, loopEnd),
-  );
+  converter.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+  converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
   let keyToken: TACOperand;
   let valueToken: TACOperand;
 
   if (isDictionaryType) {
     const dictKeyToken = converter.newTemp(ExternTypes.dataToken);
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(dictKeyToken, listOperand, "get_Item", [
         indexVar,
       ]),
     );
     const dictValueToken = converter.newTemp(ExternTypes.dataToken);
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(dictValueToken, iterableOperand, "GetValue", [
         dictKeyToken,
       ]),
@@ -3852,18 +3734,18 @@ function emitMapPopulateFromIterable(
     // Both DataList and ArrayTypeSymbol are backed by DataList at runtime.
     // Elements are [key, value] pairs stored as nested DataLists.
     const pairToken = converter.newTemp(ExternTypes.dataToken);
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(pairToken, listOperand, "get_Item", [indexVar]),
     );
     const pairList = converter.unwrapDataToken(pairToken, ExternTypes.dataList);
     const pairKeyToken = converter.newTemp(ExternTypes.dataToken);
     const pairValueToken = converter.newTemp(ExternTypes.dataToken);
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(pairKeyToken, pairList, "get_Item", [
         createConstant(0, PrimitiveTypes.int32),
       ]),
     );
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(pairValueToken, pairList, "get_Item", [
         createConstant(1, PrimitiveTypes.int32),
       ]),
@@ -3872,15 +3754,15 @@ function emitMapPopulateFromIterable(
     valueToken = pairValueToken;
   }
 
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(undefined, mapOperand, "SetValue", [
       keyToken,
       valueToken,
     ]),
   );
 
-  converter.instructions.push(new LabelInstruction(loopContinue));
-  converter.instructions.push(
+  converter.emit(new LabelInstruction(loopContinue));
+  converter.emit(
     new BinaryOpInstruction(
       indexVar,
       indexVar,
@@ -3888,8 +3770,8 @@ function emitMapPopulateFromIterable(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  converter.instructions.push(new LabelInstruction(loopEnd));
+  converter.emit(new UnconditionalJumpInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopEnd));
 }
 
 function visitSetMethodCall(
@@ -3911,7 +3793,7 @@ function visitSetMethodCall(
       const valueToken = converter.wrapDataToken(
         createConstant(true, PrimitiveTypes.boolean),
       );
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(undefined, setOperand, "SetValue", [
           keyToken,
           valueToken,
@@ -3926,7 +3808,7 @@ function visitSetMethodCall(
       const value = converter.visitExpression(rawArgs[0]);
       const keyToken = converter.wrapDataToken(value);
       const result = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(result, setOperand, "ContainsKey", [
           keyToken,
         ]),
@@ -3940,7 +3822,7 @@ function visitSetMethodCall(
       const value = converter.visitExpression(rawArgs[0]);
       const keyToken = converter.wrapDataToken(value);
       const result = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(result, setOperand, "Remove", [keyToken]),
       );
       return result;
@@ -3949,7 +3831,7 @@ function visitSetMethodCall(
       if (rawArgs.length !== 0) {
         throw new Error("Set.clear expects no arguments.");
       }
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(undefined, setOperand, "Clear", []),
       );
       return VOID_RETURN;
@@ -3975,60 +3857,52 @@ function visitSetMethodCall(
         [],
         "DataList",
       );
-      converter.instructions.push(
-        new CallInstruction(entriesResult, listCtorSig, []),
-      );
+      converter.emit(new CallInstruction(entriesResult, listCtorSig, []));
 
       const indexVar = converter.newTemp(PrimitiveTypes.int32);
       const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-      converter.instructions.push(
+      converter.emit(
         new AssignmentInstruction(
           indexVar,
           createConstant(0, PrimitiveTypes.int32),
         ),
       );
-      converter.instructions.push(
-        new PropertyGetInstruction(lengthVar, keysList, "Count"),
-      );
+      converter.emit(new PropertyGetInstruction(lengthVar, keysList, "Count"));
 
       const loopStart = converter.newLabel("set_entries_start");
       const loopContinue = converter.newLabel("set_entries_continue");
       const loopEnd = converter.newLabel("set_entries_end");
 
-      converter.instructions.push(new LabelInstruction(loopStart));
+      converter.emit(new LabelInstruction(loopStart));
       const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
       );
-      converter.instructions.push(
-        new ConditionalJumpInstruction(condTemp, loopEnd),
-      );
+      converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
       const keyToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
       );
 
       const pairList = converter.newTemp(
         new DataListTypeSymbol(ExternTypes.dataToken),
       );
-      converter.instructions.push(
-        new CallInstruction(pairList, listCtorSig, []),
-      );
-      converter.instructions.push(
+      converter.emit(new CallInstruction(pairList, listCtorSig, []));
+      converter.emit(
         new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
       );
       const valueToken = keyToken;
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
       );
       const pairToken = converter.wrapDataToken(pairList);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
       );
 
-      converter.instructions.push(new LabelInstruction(loopContinue));
-      converter.instructions.push(
+      converter.emit(new LabelInstruction(loopContinue));
+      converter.emit(
         new BinaryOpInstruction(
           indexVar,
           indexVar,
@@ -4036,8 +3910,8 @@ function visitSetMethodCall(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      converter.instructions.push(new LabelInstruction(loopEnd));
+      converter.emit(new UnconditionalJumpInstruction(loopStart));
+      converter.emit(new LabelInstruction(loopEnd));
 
       return entriesResult;
     }
@@ -4069,15 +3943,13 @@ function visitSetMethodCall(
       const keysList = emitSetKeysList(converter, setOperand, elementType);
       const indexVar = converter.newTemp(PrimitiveTypes.int32);
       const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-      converter.instructions.push(
+      converter.emit(
         new AssignmentInstruction(
           indexVar,
           createConstant(0, PrimitiveTypes.int32),
         ),
       );
-      converter.instructions.push(
-        new PropertyGetInstruction(lengthVar, keysList, "Count"),
-      );
+      converter.emit(new PropertyGetInstruction(lengthVar, keysList, "Count"));
 
       const loopStart = converter.newLabel("set_foreach_start");
       const loopContinue = converter.newLabel("set_foreach_continue");
@@ -4097,17 +3969,15 @@ function visitSetMethodCall(
         return createVariable(param.name, paramType, { isLocal: true });
       });
 
-      converter.instructions.push(new LabelInstruction(loopStart));
+      converter.emit(new LabelInstruction(loopStart));
       const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
       );
-      converter.instructions.push(
-        new ConditionalJumpInstruction(condTemp, loopEnd),
-      );
+      converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
       const keyToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
       );
       const value = converter.unwrapDataToken(keyToken, elementType);
@@ -4133,8 +4003,8 @@ function visitSetMethodCall(
       }
       converter.currentThisOverride = previousThisOverride;
 
-      converter.instructions.push(new LabelInstruction(loopContinue));
-      converter.instructions.push(
+      converter.emit(new LabelInstruction(loopContinue));
+      converter.emit(
         new BinaryOpInstruction(
           indexVar,
           indexVar,
@@ -4142,8 +4012,8 @@ function visitSetMethodCall(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      converter.instructions.push(new LabelInstruction(loopEnd));
+      converter.emit(new UnconditionalJumpInstruction(loopStart));
+      converter.emit(new LabelInstruction(loopEnd));
       converter.symbolTable.exitScope();
 
       return VOID_RETURN;
@@ -4172,7 +4042,7 @@ function visitMapMethodCall(
       const valueValue = converter.visitExpression(rawArgs[1]);
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.wrapDataToken(valueValue);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(undefined, mapOperand, "SetValue", [
           keyToken,
           valueToken,
@@ -4188,7 +4058,7 @@ function visitMapMethodCall(
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.newTemp(ExternTypes.dataToken);
       const getResultType = resolveMapGetResultType(converter, valueType);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
           keyToken,
         ]),
@@ -4202,7 +4072,7 @@ function visitMapMethodCall(
       const keyValue = converter.visitExpression(rawArgs[0]);
       const keyToken = converter.wrapDataToken(keyValue);
       const result = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(result, mapOperand, "ContainsKey", [
           keyToken,
         ]),
@@ -4216,7 +4086,7 @@ function visitMapMethodCall(
       const keyValue = converter.visitExpression(rawArgs[0]);
       const keyToken = converter.wrapDataToken(keyValue);
       const result = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(result, mapOperand, "Remove", [keyToken]),
       );
       return result;
@@ -4225,7 +4095,7 @@ function visitMapMethodCall(
       if (rawArgs.length !== 0) {
         throw new Error("Map.clear expects no arguments.");
       }
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(undefined, mapOperand, "Clear", []),
       );
       return VOID_RETURN;
@@ -4276,15 +4146,13 @@ function visitMapMethodCall(
       const keysList = emitMapKeysList(converter, mapOperand, keyType);
       const indexVar = converter.newTemp(PrimitiveTypes.int32);
       const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-      converter.instructions.push(
+      converter.emit(
         new AssignmentInstruction(
           indexVar,
           createConstant(0, PrimitiveTypes.int32),
         ),
       );
-      converter.instructions.push(
-        new PropertyGetInstruction(lengthVar, keysList, "Count"),
-      );
+      converter.emit(new PropertyGetInstruction(lengthVar, keysList, "Count"));
 
       const loopStart = converter.newLabel("map_foreach_start");
       const loopContinue = converter.newLabel("map_foreach_continue");
@@ -4306,21 +4174,19 @@ function visitMapMethodCall(
         return createVariable(param.name, paramType, { isLocal: true });
       });
 
-      converter.instructions.push(new LabelInstruction(loopStart));
+      converter.emit(new LabelInstruction(loopStart));
       const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
       );
-      converter.instructions.push(
-        new ConditionalJumpInstruction(condTemp, loopEnd),
-      );
+      converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
       const keyToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
       );
       const valueToken = converter.newTemp(ExternTypes.dataToken);
-      converter.instructions.push(
+      converter.emit(
         new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
           keyToken,
         ]),
@@ -4350,8 +4216,8 @@ function visitMapMethodCall(
       }
       converter.currentThisOverride = previousThisOverride;
 
-      converter.instructions.push(new LabelInstruction(loopContinue));
-      converter.instructions.push(
+      converter.emit(new LabelInstruction(loopContinue));
+      converter.emit(
         new BinaryOpInstruction(
           indexVar,
           indexVar,
@@ -4359,8 +4225,8 @@ function visitMapMethodCall(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      converter.instructions.push(new LabelInstruction(loopEnd));
+      converter.emit(new UnconditionalJumpInstruction(loopStart));
+      converter.emit(new LabelInstruction(loopEnd));
       converter.symbolTable.exitScope();
 
       return VOID_RETURN;
@@ -4428,11 +4294,9 @@ export function visitNumberStaticCall(
       if (args.length !== 1) return null;
       const value = args[0];
       const notNaN = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new BinaryOpInstruction(notNaN, value, "==", value),
-      );
+      this.emit(new BinaryOpInstruction(notNaN, value, "==", value));
       const notPosInf = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
+      this.emit(
         new BinaryOpInstruction(
           notPosInf,
           value,
@@ -4441,7 +4305,7 @@ export function visitNumberStaticCall(
         ),
       );
       const notNegInf = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
+      this.emit(
         new BinaryOpInstruction(
           notNegInf,
           value,
@@ -4450,13 +4314,9 @@ export function visitNumberStaticCall(
         ),
       );
       const temp = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new BinaryOpInstruction(temp, notNaN, "&&", notPosInf),
-      );
+      this.emit(new BinaryOpInstruction(temp, notNaN, "&&", notPosInf));
       const result = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new BinaryOpInstruction(result, temp, "&&", notNegInf),
-      );
+      this.emit(new BinaryOpInstruction(result, temp, "&&", notNegInf));
       return result;
     }
     case "parseInt": {
@@ -4481,7 +4341,7 @@ export function visitNumberStaticCall(
         ["string"],
         "int",
       );
-      this.instructions.push(new CallInstruction(result, externSig, [value]));
+      this.emit(new CallInstruction(result, externSig, [value]));
       return result;
     }
     default:
@@ -4501,9 +4361,7 @@ export function visitMathStaticCall(
   if (methodName === "imul") {
     if (args.length !== 2) return null;
     const result = this.newTemp(PrimitiveTypes.int32);
-    this.instructions.push(
-      new BinaryOpInstruction(result, args[0], "*", args[1]),
-    );
+    this.emit(new BinaryOpInstruction(result, args[0], "*", args[1]));
     return result;
   }
 
@@ -4530,9 +4388,7 @@ export function visitMathStaticCall(
       const stepResult = this.newTemp(PrimitiveTypes.single);
       const externSig = this.resolveStaticExtern("Mathf", mapped, "method");
       if (!externSig) return null;
-      this.instructions.push(
-        new CallInstruction(stepResult, externSig, [current, args[i]]),
-      );
+      this.emit(new CallInstruction(stepResult, externSig, [current, args[i]]));
       current = stepResult;
     }
     return current;
@@ -4544,7 +4400,7 @@ export function visitMathStaticCall(
   const result = this.newTemp(PrimitiveTypes.single);
   const externSig = this.resolveStaticExtern("Mathf", mapped, "method");
   if (!externSig) return null;
-  this.instructions.push(new CallInstruction(result, externSig, args));
+  this.emit(new CallInstruction(result, externSig, args));
   return result;
 }
 
@@ -4604,13 +4460,11 @@ export function visitArrayStaticCall(
           [],
           "DataList",
         );
-        this.instructions.push(
-          new CallInstruction(listResult, listCtorSig, []),
-        );
+        this.emit(new CallInstruction(listResult, listCtorSig, []));
 
         const indexVar = this.newTemp(PrimitiveTypes.int32);
         const lengthVar = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(
+        this.emit(
           new AssignmentInstruction(
             indexVar,
             createConstant(0, PrimitiveTypes.int32),
@@ -4618,34 +4472,28 @@ export function visitArrayStaticCall(
         );
 
         // Current lowering policy: TS arrays use DataList semantics, so Count.
-        this.instructions.push(
-          new PropertyGetInstruction(lengthVar, source, "Count"),
-        );
+        this.emit(new PropertyGetInstruction(lengthVar, source, "Count"));
 
         const loopStart = this.newLabel("array_from_start");
         const loopContinue = this.newLabel("array_from_continue");
         const loopEnd = this.newLabel("array_from_end");
 
-        this.instructions.push(new LabelInstruction(loopStart));
+        this.emit(new LabelInstruction(loopStart));
         const condTemp = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
-          new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-        );
-        this.instructions.push(
-          new ConditionalJumpInstruction(condTemp, loopEnd),
-        );
+        this.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+        this.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
         // All sources use DataList.get_Item → DataToken → Add.
         const itemToken = this.newTemp(ExternTypes.dataToken);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(itemToken, source, "get_Item", [indexVar]),
         );
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(undefined, listResult, "Add", [itemToken]),
         );
 
-        this.instructions.push(new LabelInstruction(loopContinue));
-        this.instructions.push(
+        this.emit(new LabelInstruction(loopContinue));
+        this.emit(
           new BinaryOpInstruction(
             indexVar,
             indexVar,
@@ -4653,8 +4501,8 @@ export function visitArrayStaticCall(
             createConstant(1, PrimitiveTypes.int32),
           ),
         );
-        this.instructions.push(new UnconditionalJumpInstruction(loopStart));
-        this.instructions.push(new LabelInstruction(loopEnd));
+        this.emit(new UnconditionalJumpInstruction(loopStart));
+        this.emit(new LabelInstruction(loopEnd));
 
         return listResult;
       }
@@ -4682,7 +4530,7 @@ export function visitArrayStaticCall(
         throw new Error("Missing extern signature for Array.isArray");
       }
       const result = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(new CallInstruction(result, externSig, [target]));
+      this.emit(new CallInstruction(result, externSig, [target]));
       return result;
     }
     default:

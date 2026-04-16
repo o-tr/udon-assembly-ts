@@ -30,29 +30,23 @@ export function emitBoundedDataListGetItem(
 ): void {
   const intIndexVar = normalizeOperandToInt32(converter, indexVar);
   const countTemp = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
-    new PropertyGetInstruction(countTemp, listVar, "Count"),
-  );
+  converter.emit(new PropertyGetInstruction(countTemp, listVar, "Count"));
   const okTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(okTemp, intIndexVar, "<", countTemp),
-  );
+  converter.emit(new BinaryOpInstruction(okTemp, intIndexVar, "<", countTemp));
   const oobLabel = converter.newLabel("soa_get_oob");
   const mergeLabel = converter.newLabel("soa_get_merge");
-  converter.instructions.push(new ConditionalJumpInstruction(okTemp, oobLabel));
-  converter.instructions.push(
+  converter.emit(new ConditionalJumpInstruction(okTemp, oobLabel));
+  converter.emit(
     new MethodCallInstruction(destToken, listVar, "get_Item", [intIndexVar]),
   );
-  converter.instructions.push(new UnconditionalJumpInstruction(mergeLabel));
-  converter.instructions.push(new LabelInstruction(oobLabel));
+  converter.emit(new UnconditionalJumpInstruction(mergeLabel));
+  converter.emit(new LabelInstruction(oobLabel));
   const ok2 = converter.newTemp(PrimitiveTypes.boolean);
   const zero = createConstant(0, PrimitiveTypes.int32);
-  converter.instructions.push(
-    new BinaryOpInstruction(ok2, zero, "<", countTemp),
-  );
-  converter.instructions.push(new ConditionalJumpInstruction(ok2, mergeLabel));
-  converter.instructions.push(
+  converter.emit(new BinaryOpInstruction(ok2, zero, "<", countTemp));
+  converter.emit(new ConditionalJumpInstruction(ok2, mergeLabel));
+  converter.emit(
     new MethodCallInstruction(destToken, listVar, "get_Item", [zero]),
   );
-  converter.instructions.push(new LabelInstruction(mergeLabel));
+  converter.emit(new LabelInstruction(mergeLabel));
 }

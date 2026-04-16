@@ -531,18 +531,18 @@ export class TACOptimizer {
       return { instructions: next, changed: anyPassChanged };
     };
 
+    let cachedFingerprint: number | null = null;
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
       const beforeLen = optimized.length;
-      const beforeHash = computeFingerprint(optimized);
+      const beforeHash: number =
+        cachedFingerprint ?? computeFingerprint(optimized);
       const result = runAnalysisPasses(optimized, iteration <= 1, iteration);
       optimized = result.instructions;
       if (!result.changed) {
         break;
       }
-      if (
-        optimized.length === beforeLen &&
-        computeFingerprint(optimized) === beforeHash
-      ) {
+      cachedFingerprint = computeFingerprint(optimized);
+      if (optimized.length === beforeLen && cachedFingerprint === beforeHash) {
         break;
       }
     }

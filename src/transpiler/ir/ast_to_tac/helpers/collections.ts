@@ -52,7 +52,7 @@ export const emitMapKeysList = (
   keyType: TypeSymbol,
 ): TACOperand => {
   const keysList = converter.newTemp(new DataListTypeSymbol(keyType));
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(keysList, mapOperand, "GetKeys", []),
   );
   return keysList;
@@ -82,65 +82,57 @@ export const emitMapEntriesList = (
     [],
     "DataList",
   );
-  converter.instructions.push(
-    new CallInstruction(entriesResult, listCtorSig, []),
-  );
+  converter.emit(new CallInstruction(entriesResult, listCtorSig, []));
 
   const indexVar = converter.newTemp(PrimitiveTypes.int32);
   const lengthVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       indexVar,
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
-  converter.instructions.push(
-    new PropertyGetInstruction(lengthVar, keysList, "Count"),
-  );
+  converter.emit(new PropertyGetInstruction(lengthVar, keysList, "Count"));
 
   const loopStart = converter.newLabel("map_entries_start");
   const loopEnd = converter.newLabel("map_entries_end");
 
-  converter.instructions.push(new LabelInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopStart));
   const condTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
+  converter.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
   // ConditionalJumpInstruction jumps when the condition is FALSE,
   // so this exits the loop when indexVar >= lengthVar.
-  converter.instructions.push(
-    new ConditionalJumpInstruction(condTemp, loopEnd),
-  );
+  converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
   // keyToken/valueToken/pairList temps are reused across loop iterations.
   // This is safe because DataList.Add and wrapDataToken copy the current
   // value at call time; overwriting the temp on the next iteration does
   // not affect previously added entries.
   const keyToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
   );
   const valueToken = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
   );
 
   const pairList = converter.newTemp(
     new DataListTypeSymbol(ExternTypes.dataToken),
   );
-  converter.instructions.push(new CallInstruction(pairList, listCtorSig, []));
-  converter.instructions.push(
+  converter.emit(new CallInstruction(pairList, listCtorSig, []));
+  converter.emit(
     new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
   );
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
   );
   const pairToken = converter.wrapDataToken(pairList);
-  converter.instructions.push(
+  converter.emit(
     new MethodCallInstruction(undefined, entriesResult, "Add", [pairToken]),
   );
 
-  converter.instructions.push(
+  converter.emit(
     new BinaryOpInstruction(
       indexVar,
       indexVar,
@@ -148,8 +140,8 @@ export const emitMapEntriesList = (
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  converter.instructions.push(new LabelInstruction(loopEnd));
+  converter.emit(new UnconditionalJumpInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopEnd));
 
   return entriesResult;
 };
