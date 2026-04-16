@@ -2631,10 +2631,16 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       // Int32 accessor must be used for UdonInt field
-      expect(result.uasm).toContain("__get_Int__SystemInt32");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
       // Must not use Float accessor (Single) for Int32 field
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
       // Must not fall back to Reference
       expect(result.uasm).not.toContain(
@@ -2667,9 +2673,15 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      expect(result.uasm).toContain("__get_Int__SystemInt32");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
@@ -2704,7 +2716,9 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       // Each field type must use its matching DataToken accessor
-      expect(result.uasm).toContain("__get_Int__SystemInt32");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_String__SystemString",
       );
@@ -2718,6 +2732,7 @@ describe("known transpiler bugs", () => {
       // SoA sentinels must use type-appropriate constructors
       expect(result.tac).toContain(STRING_SENTINEL_CTOR);
       expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
       expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
       // All three SoA DataLists must be exercised
       expect(result.tac).toContain("__soa_Record_id.get_Item");
@@ -2754,7 +2769,9 @@ describe("known transpiler bugs", () => {
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
       // Handle unwraps via Int (inline class handles are Int32)
-      expect(result.uasm).toContain("__get_Int__SystemInt32");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
     });
 
     it("14e: SoA method dispatch with Int32 + String fields uses correct accessors", () => {
@@ -2782,7 +2799,9 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       // Int32 accessor for kind field
-      expect(result.uasm).toContain("__get_Int__SystemInt32");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
       // String accessor for label field
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_String__SystemString",
@@ -2790,6 +2809,10 @@ describe("known transpiler bugs", () => {
       // No Float accessor leaking from loop variable
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
       // No Reference fallback
       expect(result.uasm).not.toContain(
