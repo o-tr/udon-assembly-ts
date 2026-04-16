@@ -2650,6 +2650,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+      // Must not wrap UdonInt field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
       // Confirm SoA path is exercised
       expect(result.tac).toContain("__soa_Counter_value.get_Item");
     });
@@ -2693,6 +2697,10 @@ describe("known transpiler bugs", () => {
       );
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // Must not wrap UdonInt field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
       );
       // No dispatch miss (guards against Bug 8 regression on SoA method dispatch)
       expect(result.uasm).not.toContain("dispatch miss");
@@ -2856,6 +2864,10 @@ describe("known transpiler bugs", () => {
       // No Reference fallback
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // Must not wrap UdonInt field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
       );
       // No dispatch miss
       expect(result.uasm).not.toContain("dispatch miss");
