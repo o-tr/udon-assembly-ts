@@ -2792,6 +2792,8 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_Int__SystemInt32",
       );
+      // Confirm SoA path is exercised for the code field
+      expect(result.tac).toContain("__soa_Item_code.get_Item");
     });
 
     it("14e: SoA method dispatch with Int32 + String fields uses correct accessors", () => {
