@@ -937,6 +937,15 @@ function emitInlinePropertyInitializersForClass(
   for (const prop of classNode.properties) {
     if (prop.isStatic) continue;
 
+    const propVarName =
+      state.kind === "inline"
+        ? `${state.instancePrefix}_${prop.name}`
+        : getEntryPointPropertyNameForClass(
+            converter,
+            state.entryClassName,
+            prop.name,
+          );
+
     if (!prop.initializer) {
       // Emit type-appropriate default for reference-type fields that
       // would otherwise stay null. Skip @SerializeField / synced fields
@@ -954,14 +963,6 @@ function emitInlinePropertyInitializersForClass(
         ut === UdonType.DataList ||
         ut === UdonType.DataDictionary
       ) {
-        const propVarName =
-          state.kind === "inline"
-            ? `${state.instancePrefix}_${prop.name}`
-            : getEntryPointPropertyNameForClass(
-                converter,
-                state.entryClassName,
-                prop.name,
-              );
         const propVar = createVariable(propVarName, prop.type);
         // createSoaSentinelValue emits CallInstruction side-effects for
         // DataList/DataDictionary constructors onto converter.instructions.
@@ -969,20 +970,13 @@ function emitInlinePropertyInitializersForClass(
         converter.instructions.push(
           new AssignmentInstruction(propVar, defaultValue),
         );
+        converter.maybeTrackInlineInstanceAssignment(propVar, defaultValue);
       }
       continue;
     }
 
     const previousSerializeFieldState = converter.inSerializeFieldInitializer;
     converter.inSerializeFieldInitializer = !!prop.isSerializeField;
-    const propVarName =
-      state.kind === "inline"
-        ? `${state.instancePrefix}_${prop.name}`
-        : getEntryPointPropertyNameForClass(
-            converter,
-            state.entryClassName,
-            prop.name,
-          );
     let resolvedPropType = prop.type;
     if (
       prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
