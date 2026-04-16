@@ -2764,6 +2764,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
       );
+      // Handle must wrap as Int32 (inline class handles are Int32 row indices)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
       // Handle must not unwrap via Reference
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
