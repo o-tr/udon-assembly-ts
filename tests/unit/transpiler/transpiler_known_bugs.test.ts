@@ -1676,183 +1676,118 @@ describe("known transpiler bugs", () => {
      * fixtures inline-class SoA fields are flat identifiers, so the
      * limitation is moot.
      */
-    const expectAllCountReadsTraceToCtor = (tac: string): void => {
-      const lines = tac.split("\n").map((l) => l.trim());
-      const countRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/;
-      const ctorRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
-      const getKeysOrValuesRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+[A-Za-z_][A-Za-z0-9_.]*\.(?:GetKeys|GetValues)\(/;
-      const copyRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)$/;
-
-      const countReads: Array<{ line: number; receiver: string }> = [];
-      for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(countRe);
-        if (m) countReads.push({ line: i, receiver: m[2] });
-      }
-
-      // Fail the test explicitly if a fixture forgets to exercise a `.Count`
-      // read — that would make the invariant check vacuous and silently pass.
-      expect(
-        countReads.length,
-        "fixture must exercise at least one `.Count` read for the invariant to be meaningful",
-      ).toBeGreaterThan(0);
-
-      for (const { line, receiver } of countReads) {
-        const aliases = new Set<string>([receiver]);
-        let traced = false;
-        for (let j = line - 1; j >= 0; j--) {
-          const cm = lines[j].match(ctorRe);
-          if (cm && aliases.has(cm[1])) {
-            traced = true;
-            break;
-          }
-          const gm = lines[j].match(getKeysOrValuesRe);
-          if (gm && aliases.has(gm[1])) {
-            traced = true;
-            break;
-          }
-          const am = lines[j].match(copyRe);
-          if (am && aliases.has(am[1])) {
-            aliases.add(am[2]);
-          }
-        }
-        expect(
-          traced,
-          `TAC line ${line} reads '.Count' on '${receiver}' with no preceding DataList/DataDictionary ctor or GetKeys/GetValues in its alias chain`,
-        ).toBe(true);
-      }
-    };
-
     /**
-     * For every `x = y.get_Item(...)` line in the TAC (emitted as
-     * `call receiver.get_Item(idx)` for DataList bracket reads and for
-     * SoA field loads), verify that `receiver` traces back — through a
-     * bare-identifier copy alias chain — to a prior DataList/DataDictionary
-     * ctor call or a GetKeys/GetValues result.
+     * Generic backward-alias trace: for each read site collected by
+     * `readRe`, verify that the receiver traces back — through a chain
+     * of bare-identifier copies (`a = b`) — to a line accepted by
+     * `isOrigin`. The scan is linear (not control-flow-aware); see the
+     * Coverage boundary doc above for limitations.
      *
-     * This complements `expectAllCountReadsTraceToCtor`: the same null-
-     * receiver shape (#22 / #18') crashes at `.get_Item` just as readily as
-     * at `.Count`. The 10th-run `hand_operations` failure lands at
-     * `DataList.__get_Item__`, making the get_Item variant a first-class
-     * invariant rather than a side effect of the .Count check. Shares
-     * coverage boundaries with the .Count version (linear backward scan,
-     * no control-flow awareness, no property-get alias extension).
+     * @param readRe    Regex with group 2 = receiver identifier. Applied
+     *                  to each trimmed TAC line; every match becomes a
+     *                  read site whose receiver is traced.
+     * @param readLabel Human-readable name for the read kind (e.g.
+     *                  "`.Count`"), used in assertion messages.
+     * @param isOrigin  Predicate called with (trimmedLine, lhsIdentifier)
+     *                  for each assignment whose LHS is in the alias set.
+     *                  Return `true` if the line constitutes a valid
+     *                  origin for the receiver (ctor call, GetKeys/Values,
+     *                  non-copy assignment, etc.).
      */
-    const expectAllGetItemReceiversTraceToCtor = (tac: string): void => {
+    const traceAllReadsToCtor = (
+      tac: string,
+      readRe: RegExp,
+      readLabel: string,
+      isOrigin: (line: string, lhs: string) => boolean,
+    ): void => {
       const lines = tac.split("\n").map((l) => l.trim());
-      const getItemRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+([A-Za-z_][A-Za-z0-9_]*)\.get_Item\(/;
-      const ctorRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
-      const getKeysOrValuesRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+[A-Za-z_][A-Za-z0-9_.]*\.(?:GetKeys|GetValues)\(/;
       const copyRe =
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)$/;
+      const assignRe = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*.+$/;
 
       const reads: Array<{ line: number; receiver: string }> = [];
       for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(getItemRe);
+        const m = lines[i].match(readRe);
         if (m) reads.push({ line: i, receiver: m[2] });
       }
 
       expect(
         reads.length,
-        "fixture must exercise at least one `.get_Item(...)` read for the invariant to be meaningful",
+        `fixture must exercise at least one ${readLabel} read for the invariant to be meaningful`,
       ).toBeGreaterThan(0);
 
       for (const { line, receiver } of reads) {
         const aliases = new Set<string>([receiver]);
         let traced = false;
         for (let j = line - 1; j >= 0; j--) {
-          const cm = lines[j].match(ctorRe);
-          if (cm && aliases.has(cm[1])) {
-            traced = true;
-            break;
-          }
-          const gm = lines[j].match(getKeysOrValuesRe);
-          if (gm && aliases.has(gm[1])) {
-            traced = true;
-            break;
-          }
+          // Bare-identifier copies always extend the alias chain.
           const am = lines[j].match(copyRe);
           if (am && aliases.has(am[1])) {
             aliases.add(am[2]);
+            continue;
           }
-        }
-        expect(
-          traced,
-          `TAC line ${line} reads 'get_Item' on '${receiver}' with no preceding DataList/DataDictionary ctor or GetKeys/GetValues in its alias chain`,
-        ).toBe(true);
-      }
-    };
-
-    /**
-     * For every `x = y.length` line in the TAC (the lowercase form used by
-     * JS/TS `.length` on strings, as opposed to the `.Length` extern name),
-     * verify that `y` traces back — through a bare-identifier copy alias
-     * chain — to at least one concrete non-copy assignment. A "concrete
-     * origin" is anything that is not itself a bare `alias = other`
-     * identifier copy: string literal, property access (`.String` DataToken
-     * unwrap, etc.), call result, element access, or any operator
-     * expression.
-     *
-     * The helper targets root cause #23: the 10th-run `hand_tenpai` /
-     * `tenpai_edge` failures crash at `SystemString.__get_Length__`, a valid
-     * extern, which implies the string receiver was never initialized on
-     * that execution path. Accepting any non-copy origin is intentionally
-     * permissive — strings can arrive from literals, concat results,
-     * DataToken unwraps, native-array element access, or inline-method
-     * return slots, and distinguishing them at the TAC level without type
-     * info would produce false negatives on valid shapes. The invariant
-     * only catches the hard failure mode: a receiver whose alias chain
-     * terminates without any assignment at all.
-     *
-     * Shares the same coverage boundaries as `expectAllCountReadsTraceToCtor`:
-     * linear backward scan, no control-flow awareness, bare-identifier
-     * copies only (no property-get chain extension).
-     */
-    const expectAllLengthReadsTraceToStringOrigin = (tac: string): void => {
-      const lines = tac.split("\n").map((l) => l.trim());
-      const lengthRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.length$/;
-      const assignRe = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/;
-      const bareIdentRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-      const reads: Array<{ line: number; receiver: string }> = [];
-      for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(lengthRe);
-        if (m) reads.push({ line: i, receiver: m[2] });
-      }
-
-      expect(
-        reads.length,
-        "fixture must exercise at least one `.length` read for the invariant to be meaningful",
-      ).toBeGreaterThan(0);
-
-      for (const { line, receiver } of reads) {
-        const aliases = new Set<string>([receiver]);
-        let traced = false;
-        for (let j = line - 1; j >= 0; j--) {
-          const am = lines[j].match(assignRe);
-          if (!am) continue;
-          if (!aliases.has(am[1])) continue;
-          const rhs = am[2].trim();
-          if (bareIdentRe.test(rhs)) {
-            aliases.add(rhs);
-          } else {
+          // Non-copy assignments: check if this is a valid origin.
+          const gm = lines[j].match(assignRe);
+          if (gm && aliases.has(gm[1]) && isOrigin(lines[j], gm[1])) {
             traced = true;
             break;
           }
         }
         expect(
           traced,
-          `TAC line ${line} reads '.length' on '${receiver}' with no preceding concrete assignment (literal, call, property access, element access) in its alias chain`,
+          `TAC line ${line} reads ${readLabel} on '${receiver}' with no preceding origin in its alias chain`,
         ).toBe(true);
       }
     };
+
+    const dataListCtorRe =
+      /=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
+    const getKeysOrValuesRe =
+      /=\s*call\s+[A-Za-z_][A-Za-z0-9_.]*\.(?:GetKeys|GetValues)\(/;
+    const isDataListOrigin = (line: string): boolean =>
+      dataListCtorRe.test(line) || getKeysOrValuesRe.test(line);
+
+    const expectAllCountReadsTraceToCtor = (tac: string): void =>
+      traceAllReadsToCtor(
+        tac,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/,
+        "`.Count`",
+        isDataListOrigin,
+      );
+
+    const expectAllGetItemReceiversTraceToCtor = (tac: string): void =>
+      traceAllReadsToCtor(
+        tac,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+([A-Za-z_][A-Za-z0-9_]*)\.get_Item\(/,
+        "`.get_Item`",
+        isDataListOrigin,
+      );
+
+    /**
+     * For `.length` reads the origin check is more permissive: any
+     * non-bare-identifier assignment counts as a concrete origin (string
+     * literal, property access like `.String`, call result, element
+     * access). This avoids false negatives from the many sources a string
+     * value can arrive from without type info. The predicate simply
+     * returns `false` for bare-identifier copies (which extend the alias
+     * chain instead) and `true` for everything else.
+     */
+    const isNonCopyOrigin = (_line: string): boolean =>
+      // Bare copies `a = b` are handled by the copyRe branch in
+      // traceAllReadsToCtor (which extends the alias chain without
+      // calling isOrigin). This function is only reached for non-copy
+      // assignments (matched by the general assignRe after copyRe
+      // failed), so returning true marks any such line as a concrete
+      // origin.
+      true;
+
+    const expectAllLengthReadsTraceToStringOrigin = (tac: string): void =>
+      traceAllReadsToCtor(
+        tac,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.length$/,
+        "`.length`",
+        isNonCopyOrigin,
+      );
 
     it("(13a) inline class DataList field — every .Count read traces to a ctor", () => {
       const source = `
@@ -2210,6 +2145,59 @@ describe("known transpiler bugs", () => {
       );
       expect(seenTrueIdx).toBeGreaterThanOrEqual(0);
       expect(seenFalseIdx).toBeGreaterThan(seenTrueIdx);
+    });
+
+    // -----------------------------------------------------------------------
+    // Positive baselines for the get_Item and .length helpers
+    // -----------------------------------------------------------------------
+    //
+    // These validate that the regex patterns in the new helpers actually
+    // match the TAC form the transpiler emits. Without them, a silent
+    // regex mismatch in it.fails tests would invert for the wrong reason.
+    // Analogous to 13a for expectAllCountReadsTraceToCtor.
+
+    it("(13i-baseline) initialized DataList field — get_Item receiver traces to ctor", () => {
+      const source = `
+        class Bucket {
+          items: DataList;
+          constructor() {
+            this.items = new DataList();
+            this.items.Add(new DataToken("a"));
+          }
+          first(): string {
+            return this.items.get_Item(0).String;
+          }
+        }
+        class Main {
+          Start(): void {
+            const b = new Bucket();
+            Debug.Log(b.first());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllGetItemReceiversTraceToCtor(result.tac);
+    });
+
+    it("(13j-baseline) initialized string field — .length read traces to literal origin", () => {
+      const source = `
+        class Holder {
+          name: string;
+          constructor() {
+            this.name = "hello";
+          }
+          nameLen(): number {
+            return this.name.length;
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(new Holder().nameLen());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllLengthReadsTraceToStringOrigin(result.tac);
     });
 
     // -----------------------------------------------------------------------
