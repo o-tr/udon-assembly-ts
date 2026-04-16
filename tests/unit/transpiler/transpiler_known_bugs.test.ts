@@ -2857,6 +2857,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_String__SystemString",
       );
+      // SoA sentinels must use type-appropriate constructors
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
       // No Float accessor leaking from loop variable
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Float__SystemSingle",
