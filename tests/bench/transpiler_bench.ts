@@ -283,10 +283,14 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
   // Phase 5: Codegen (TAC → Udon)
   t0 = performance.now();
   const udonConverter = new TACToUdonConverter();
-  const callAnalyzer = entryClassName ? new CallAnalyzer(registry) : null;
-  const inlineClassNames = entryClassName
-    ? callAnalyzer?.analyzeClass(entryClassName).inlineClasses
-    : new Set<string>();
+  // Scope callAnalyzer inside the branch so we avoid both the optional chain
+  // (which widens the result type to include undefined) and a non-null
+  // assertion (forbidden by biome's noNonNullAssertion rule).
+  let inlineClassNames: ReadonlySet<string> = new Set<string>();
+  if (entryClassName) {
+    const callAnalyzer = new CallAnalyzer(registry);
+    inlineClassNames = callAnalyzer.analyzeClass(entryClassName).inlineClasses;
+  }
   const udonInstructions = udonConverter.convert(tacInstructions, {
     entryClassName: entryClassName ?? undefined,
     inlineClassNames,
