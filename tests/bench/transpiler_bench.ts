@@ -263,9 +263,10 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
 
   // Phase 4: Optimize (optional)
   t0 = performance.now();
+  let exposedLabels: ReturnType<typeof computeExposedLabels> | undefined;
   if (optimize && entryClassName) {
     const optimizer = new TACOptimizer();
-    const exposedLabels = computeExposedLabels(
+    exposedLabels = computeExposedLabels(
       registry,
       udonBehaviourLayouts,
       entryClassName,
@@ -291,9 +292,13 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
 
   // Phase 6: Assemble
   t0 = performance.now();
-  const exposedLabels = entryClassName
-    ? computeExposedLabels(registry, udonBehaviourLayouts, entryClassName)
-    : undefined;
+  if (!exposedLabels && entryClassName) {
+    exposedLabels = computeExposedLabels(
+      registry,
+      udonBehaviourLayouts,
+      entryClassName,
+    );
+  }
   const assembler = new UdonAssembler();
   assembler.assemble(
     udonInstructions,

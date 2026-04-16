@@ -688,6 +688,24 @@ export class BatchTranspiler {
       if (heapUsage > heapLimit) {
         const formatLabel = ext === "tasm" ? "TASM" : "UASM";
         const usageByClass = udonConverter.getHeapUsageByClass();
+        // Attribute any gap between tracked per-class totals and actual heap
+        // usage to the entry class, so the breakdown always sums to heapUsage.
+        // Only add the deficit when there is tracked usage or the entry class
+        // already appears, to avoid creating a phantom entry.
+        const totalTracked = Array.from(usageByClass.values()).reduce(
+          (sum, n) => sum + n,
+          0,
+        );
+        if (
+          totalTracked < heapUsage &&
+          (totalTracked > 0 || usageByClass.has(entryPoint.name))
+        ) {
+          usageByClass.set(
+            entryPoint.name,
+            (usageByClass.get(entryPoint.name) ?? 0) +
+              (heapUsage - totalTracked),
+          );
+        }
         const breakdown = Array.from(usageByClass.entries())
           .sort((a, b) => b[1] - a[1])
           .map(([cls, n]) => `  - ${cls}: ${n}`)

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
 
 describe("BatchTranspiler", () => {
@@ -42,6 +42,48 @@ describe("BatchTranspiler", () => {
     const output = fs.readFileSync(outputPath, "utf8");
     expect(output).toContain(".data_start");
     expect(output).toContain(".code_start");
+  });
+
+  it("should warn when heap usage exceeds limit", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mahjong-t2-batch-"));
+    const sourceDir = path.join(tempDir, "src");
+    const outputDir = path.join(tempDir, "out");
+    fs.mkdirSync(sourceDir, { recursive: true });
+
+    // Use a tiny heapLimit to force the warning without generating a huge program.
+    const sourcePath = path.join(sourceDir, "HeapTest.ts");
+    const source = `
+      @UdonBehaviour()
+      class HeapTest extends UdonSharpBehaviour {
+        Start(): void {
+          let a: number = 1;
+          let b: number = 2;
+          let c: number = 3;
+        }
+      }
+    `;
+
+    fs.writeFileSync(sourcePath, source, "utf8");
+
+    const transpiler = new BatchTranspiler();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = transpiler.transpile({
+      sourceDir,
+      outputDir,
+      excludeDirs: [],
+      outputExtension: "uasm",
+      heapLimit: 1,
+    });
+
+    expect(result.outputs).toHaveLength(1);
+    const outputPath = result.outputs[0]?.outputPath as string;
+    expect(fs.existsSync(outputPath)).toBe(true);
+    expect(warnSpy).toHaveBeenCalled();
+    const warnCalls = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(warnCalls).toContain("exceeds limit 1");
+    expect(warnCalls).toContain("Heap usage by class:");
+    warnSpy.mockRestore();
   });
 
   it("should collect top-level consts from inline class files", () => {
