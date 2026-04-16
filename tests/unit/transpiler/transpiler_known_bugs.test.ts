@@ -89,10 +89,12 @@
  *         The tests in the "Bug 13 baseline invariants" describe block below
  *         pin down the *simple* shape of each candidate and assert static
  *         invariants: "DataList.__ctor__ must appear before the first
- *         corresponding get_Count / get_Item in TAC order" and "any string
+ *         corresponding get_Count / get_Item in TAC order", "any string
  *         .length read must trace back to a concrete string origin (literal,
  *         call result, property access, or element access), not to a bare
- *         unresolved parameter slot".
+ *         unresolved parameter slot", and "constructor/method parameter
+ *         defaults (e.g. `= []`, `= true`) are emitted at bind time so
+ *         that omitted arguments receive the declared default value".
  *
  *         13a-13h-rec are positive baseline invariants that currently pass
  *         on master and guard against future refactor regressions on the
@@ -1645,7 +1647,7 @@ describe("known transpiler bugs", () => {
   // immediately. Add `it.fails` reproducers alongside once a minimized shape
   // of the real #22 bug is identified.
 
-  describe("Bug 13 baseline invariants: DataList ctor precedes get_Count", () => {
+  describe("Bug 13 baseline invariants: null-receiver family", () => {
     /**
      * For every `x = y.Count` line in the TAC, verify that `y` traces back
      * (through an alias chain of plain `a = b` copy assignments) to a prior
@@ -1771,30 +1773,39 @@ describe("known transpiler bugs", () => {
       );
 
     /**
-     * For `.length` reads the origin check is more permissive: any
-     * non-bare-identifier, non-null assignment counts as a concrete
-     * origin (string literal, property access like `.String`, call
-     * result, element access). Bare null assignments (`x = null`) are
-     * rejected because calling `.length` on null would still crash at
-     * runtime, and accepting them would cause `it.fails` to flip
-     * prematurely if the transpiler emits null-init TAC for string
-     * fields.
+     * For `.length` reads the origin check uses a whitelist of
+     * string-producing TAC RHS shapes:
+     *  - `"..."` — string literal (RHS starts with `"`)
+     *  - `x.prop` — property access, including `.String` DataToken
+     *    unwrap (RHS contains `.`)
+     *  - `call ...` — call result such as `SystemString.__Concat__`
+     *    (RHS contains `call`)
+     *  - `arr[idx]` — element access from a native string array
+     *    (RHS contains `[`)
+     *
+     * Numeric literals (`1`), booleans (`true`/`false`), and `null`
+     * are all correctly rejected because none match the patterns above.
+     * Bare-identifier copies are never seen here — they are caught by
+     * the `copyRe` branch in `traceAllReadsToCtor` first.
      */
-    const isNonCopyOrigin = (line: string): boolean =>
-      // Bare copies `a = b` are handled by the copyRe branch in
-      // traceAllReadsToCtor (which extends the alias chain without
-      // calling isOrigin). This function is only reached for non-copy
-      // assignments (matched by the general assignRe after copyRe
-      // failed). Reject bare null so that `x = null` does not count
-      // as a valid string origin.
-      !/\bnull$/.test(line.trim());
+    const isStringProducingOrigin = (line: string): boolean => {
+      const eqIdx = line.indexOf("=");
+      if (eqIdx < 0) return false;
+      const rhs = line.substring(eqIdx + 1).trim();
+      return (
+        /^"/.test(rhs) ||
+        /\bcall\b/.test(rhs) ||
+        /\./.test(rhs) ||
+        /\[/.test(rhs)
+      );
+    };
 
     const expectAllLengthReadsTraceToStringOrigin = (tac: string): void =>
       traceAllReadsToCtor(
         tac,
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.length$/,
         "`.length`",
-        isNonCopyOrigin,
+        isStringProducingOrigin,
       );
 
     it("(13a) inline class DataList field — every .Count read traces to a ctor", () => {
