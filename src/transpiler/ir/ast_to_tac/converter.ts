@@ -457,12 +457,12 @@ export class ASTToTACConverter {
 
   /**
    * Emit a TAC instruction. Skipped in metadata-only mode (Pass 1).
+   * Single-argument signature avoids rest-parameter array allocation
+   * on every call site.
    */
-  emit(...instructions: TACInstruction[]): void {
+  emit(instruction: TACInstruction): void {
     if (this.metadataOnlyMode) return;
-    for (const inst of instructions) {
-      this.instructions.push(inst);
-    }
+    this.instructions.push(instruction);
   }
 
   /**

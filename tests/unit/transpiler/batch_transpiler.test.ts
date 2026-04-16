@@ -68,22 +68,29 @@ describe("BatchTranspiler", () => {
     const transpiler = new BatchTranspiler();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = transpiler.transpile({
-      sourceDir,
-      outputDir,
-      excludeDirs: [],
-      outputExtension: "uasm",
-      heapLimit: 1,
-    });
+    try {
+      const result = transpiler.transpile({
+        sourceDir,
+        outputDir,
+        excludeDirs: [],
+        outputExtension: "uasm",
+        heapLimit: 1,
+      });
 
-    expect(result.outputs).toHaveLength(1);
-    const outputPath = result.outputs[0]?.outputPath as string;
-    expect(fs.existsSync(outputPath)).toBe(true);
-    expect(warnSpy).toHaveBeenCalled();
-    const warnCalls = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
-    expect(warnCalls).toContain("exceeds limit 1");
-    expect(warnCalls).toContain("Heap usage by class:");
-    warnSpy.mockRestore();
+      expect(result.outputs).toHaveLength(1);
+      const outputPath = result.outputs[0]?.outputPath as string;
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(warnSpy).toHaveBeenCalled();
+      // Flatten all call args into a single searchable string so multi-arg
+      // console.warn invocations are not silently truncated.
+      const warnCalls = warnSpy.mock.calls
+        .map((call) => call.map(String).join(" "))
+        .join("\n");
+      expect(warnCalls).toContain("exceeds limit 1");
+      expect(warnCalls).toContain("Heap usage by class:");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("should collect top-level consts from inline class files", () => {

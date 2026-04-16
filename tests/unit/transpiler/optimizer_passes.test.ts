@@ -1883,9 +1883,10 @@ describe("optimizer passes", () => {
       | ReturnInstruction
       | undefined;
     expect(retInst).toBeDefined();
-    if (!retInst?.value) return;
-    expect(retInst.value.kind).toBe(TACOperandKind.Constant);
-    const constOp = retInst.value as ConstantOperand;
+    expect(retInst?.value).toBeDefined();
+    const value = retInst?.value;
+    expect(value?.kind).toBe(TACOperandKind.Constant);
+    const constOp = value as ConstantOperand;
     expect(constOp.value).toBe(5);
   });
 

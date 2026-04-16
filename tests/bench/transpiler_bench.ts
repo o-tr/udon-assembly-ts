@@ -163,6 +163,7 @@ interface PhaseTimings {
   parse: number;
   registry: number;
   astToTac: number;
+  exposedLabels: number;
   optimize: number;
   codegen: number;
   assemble: number;
@@ -174,6 +175,7 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
     parse: 0,
     registry: 0,
     astToTac: 0,
+    exposedLabels: 0,
     optimize: 0,
     codegen: 0,
     assemble: 0,
@@ -261,16 +263,19 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
   let tacInstructions = tacConverter.convert(ast);
   timings.astToTac = performance.now() - t0;
 
+  // Phase 3b: compute exposed labels once — used by both optimizer and assembler.
+  // Measured separately so its cost does not shift between optimize/assemble
+  // depending on whether optimization is enabled.
+  t0 = performance.now();
+  const exposedLabels = entryClassName
+    ? computeExposedLabels(registry, udonBehaviourLayouts, entryClassName)
+    : undefined;
+  timings.exposedLabels = performance.now() - t0;
+
   // Phase 4: Optimize (optional)
   t0 = performance.now();
-  let exposedLabels: ReturnType<typeof computeExposedLabels> | undefined;
-  if (optimize && entryClassName) {
+  if (optimize && exposedLabels) {
     const optimizer = new TACOptimizer();
-    exposedLabels = computeExposedLabels(
-      registry,
-      udonBehaviourLayouts,
-      entryClassName,
-    );
     tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
   }
   timings.optimize = performance.now() - t0;
@@ -292,13 +297,6 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
 
   // Phase 6: Assemble
   t0 = performance.now();
-  if (!exposedLabels && entryClassName) {
-    exposedLabels = computeExposedLabels(
-      registry,
-      udonBehaviourLayouts,
-      entryClassName,
-    );
-  }
   const assembler = new UdonAssembler();
   assembler.assemble(
     udonInstructions,
@@ -340,6 +338,7 @@ function runBenchmarkSuite(
     "parse",
     "registry",
     "astToTac",
+    "exposedLabels",
     "optimize",
     "codegen",
     "assemble",
