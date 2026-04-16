@@ -2642,6 +2642,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
       // Must not fall back to Reference
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
@@ -2682,6 +2686,10 @@ describe("known transpiler bugs", () => {
       // Must not use Float ctor to wrap an Int32 field (root cause #24)
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
       );
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
@@ -2728,6 +2736,10 @@ describe("known transpiler bugs", () => {
       // No Reference fallback for any typed field
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // No Float ctor for the UdonInt (id) field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
       // SoA sentinels must use type-appropriate constructors
       expect(result.tac).toContain(STRING_SENTINEL_CTOR);
@@ -2817,6 +2829,10 @@ describe("known transpiler bugs", () => {
       // Must not use Float ctor to wrap an Int32 field (root cause #24)
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
       );
       // No Reference fallback
       expect(result.uasm).not.toContain(
