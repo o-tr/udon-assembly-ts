@@ -1765,21 +1765,22 @@ describe("known transpiler bugs", () => {
 
     /**
      * For `.length` reads the origin check is more permissive: any
-     * non-bare-identifier assignment counts as a concrete origin (string
-     * literal, property access like `.String`, call result, element
-     * access). This avoids false negatives from the many sources a string
-     * value can arrive from without type info. The predicate simply
-     * returns `false` for bare-identifier copies (which extend the alias
-     * chain instead) and `true` for everything else.
+     * non-bare-identifier, non-null assignment counts as a concrete
+     * origin (string literal, property access like `.String`, call
+     * result, element access). Bare null assignments (`x = null`) are
+     * rejected because calling `.length` on null would still crash at
+     * runtime, and accepting them would cause `it.fails` to flip
+     * prematurely if the transpiler emits null-init TAC for string
+     * fields.
      */
-    const isNonCopyOrigin = (_line: string): boolean =>
+    const isNonCopyOrigin = (line: string): boolean =>
       // Bare copies `a = b` are handled by the copyRe branch in
       // traceAllReadsToCtor (which extends the alias chain without
       // calling isOrigin). This function is only reached for non-copy
       // assignments (matched by the general assignRe after copyRe
-      // failed), so returning true marks any such line as a concrete
-      // origin.
-      true;
+      // failed). Reject bare null so that `x = null` does not count
+      // as a valid string origin.
+      !/\bnull$/.test(line.trim());
 
     const expectAllLengthReadsTraceToStringOrigin = (tac: string): void =>
       traceAllReadsToCtor(
