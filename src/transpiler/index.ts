@@ -182,8 +182,31 @@ export class TypeScriptToUdonTranspiler {
     const heapUsage = computeHeapUsage(dataSectionWithTypes);
     if (heapUsage > UASM_HEAP_LIMIT) {
       const entryLabel = entryClassName ? ` for ${entryClassName}` : "";
+      const usageByClass = udonConverter.getHeapUsageByClass();
+      // Attribute any gap between tracked per-class totals and actual heap
+      // usage to the entry class so the breakdown always sums to heapUsage.
+      // Only add the deficit when there is tracked usage or the entry class
+      // already appears, to avoid creating a phantom entry.
+      const defaultClass = entryClassName ?? "<global>";
+      const totalTracked = Array.from(usageByClass.values()).reduce(
+        (sum, n) => sum + n,
+        0,
+      );
+      if (
+        totalTracked < heapUsage &&
+        (totalTracked > 0 || usageByClass.has(defaultClass))
+      ) {
+        usageByClass.set(
+          defaultClass,
+          (usageByClass.get(defaultClass) ?? 0) + (heapUsage - totalTracked),
+        );
+      }
+      const breakdown = Array.from(usageByClass.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([cls, n]) => `  - ${cls}: ${n}`)
+        .join("\n");
       console.warn(
-        `UASM heap usage ${heapUsage} exceeds limit ${UASM_HEAP_LIMIT}${entryLabel}.`,
+        `UASM heap usage ${heapUsage} exceeds limit ${UASM_HEAP_LIMIT}${entryLabel}.\nHeap usage by class:\n${breakdown || "  - <no data>"}`,
       );
     }
 
