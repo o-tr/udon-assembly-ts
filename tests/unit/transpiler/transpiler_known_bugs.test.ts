@@ -103,24 +103,18 @@
  *         13-getItem-baseline and 13-length-baseline are positive guards
  *         for the two new helper functions (`expectAllGetItemReceiversTraceToCtor`
  *         and `expectAllLengthReadsTraceToStringOrigin`). They confirm the
- *         helper regexes actually match the TAC form the transpiler emits,
- *         so that the `it.fails` tests below cannot silently pass due to a
- *         regex mismatch (zero reads detected).
+ *         helper regexes actually match the TAC form the transpiler emits.
  *
- *         13i-13m (added on 10th run) are `it.fails` reproducers: they
- *         exercise the **actually failing** shape — a field declared
- *         without initializer is never ctor'd, so a subsequent `.Count` /
- *         `.length` / `.get_Item` read has a null receiver at runtime. The
- *         helper backward-trace throws because no origin assignment
- *         exists, and `it.fails` inverts the result so vitest treats the
- *         open bug as expected-failing. **When the fix lands** (the
- *         transpiler starts emitting a default ctor for declared reference-
- *         type fields, or rejects uninitialized reference fields outright),
- *         the helper trace will succeed, the test assertion will stop
- *         throwing, and vitest will flag the test as "expected to fail but
- *         passed". That is the signal to remove `.fails` from the affected
- *         test(s) so they become regular passing regression guards.
+ *         13i-13n (FIXED): previously `it.fails` reproducers for
+ *         uninitialized reference-type fields. Fixed by emitting
+ *         type-appropriate defaults (string → "", DataList → ctor,
+ *         DataDictionary → ctor) in emitInlinePropertyInitializersForClass.
+ *         Now passing regression guards.
  *         (root cause #22, #23, #18' in vm-test-failures-investigation.md)
+ *
+ *         13o-13p: negative guards verifying that @UdonSynced and
+ *         @SerializeField fields are excluded from synthetic default
+ *         emission (their values are managed externally by VRChat/Unity).
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -1644,8 +1638,8 @@ describe("known transpiler bugs", () => {
   // cross-method inline-tracking loss). These baseline tests are kept as
   // positive regression guards so that if a future refactor breaks the
   // simple-case invariant "ctor before get_Count", CI catches it
-  // immediately. Add `it.fails` reproducers alongside once a minimized shape
-  // of the real #22 bug is identified.
+  // immediately. Minimized shapes of the real #22 bug have been identified
+  // and are now passing regression tests (13i–13n) below.
 
   describe("Bug 13 baseline invariants: null-receiver family", () => {
     /**
@@ -2171,8 +2165,7 @@ describe("known transpiler bugs", () => {
     // -----------------------------------------------------------------------
     //
     // These validate that the regex patterns in the new helpers actually
-    // match the TAC form the transpiler emits. Without them, a silent
-    // regex mismatch in it.fails tests would invert for the wrong reason.
+    // match the TAC form the transpiler emits.
     // Analogous to 13a for expectAllCountReadsTraceToCtor.
 
     it("(13-getItem-baseline) initialized DataList field — get_Item receiver traces to ctor", () => {
@@ -2220,30 +2213,24 @@ describe("known transpiler bugs", () => {
     });
 
     // -----------------------------------------------------------------------
-    // 10th-run (2026-04-16) null-receiver family reproducers
+    // 10th-run (2026-04-16) null-receiver family reproducers (FIXED)
     // -----------------------------------------------------------------------
     //
-    // These fixtures reproduce the *actually failing* shapes from the 10th
-    // VM run: a field declared with no initializer is never ctor'd, so a
-    // subsequent `.Count` / `.length` / `.get_Item` read lands on a null
-    // receiver at runtime. Each test is marked `it.fails` because the
-    // transpiler currently emits no init for the field, so the helper
-    // backward-trace throws → vitest inverts the result and marks the test
-    // as passing for bookkeeping.
-    //
-    // **When the fix lands**: the transpiler will either emit a default
-    // ctor for the declared field type, or refuse to compile an uninitialized
-    // reference field. The helper trace will then succeed (or the source
-    // will fail to transpile) and the test assertion stops throwing. At
-    // that point remove `.fails` from the affected test(s) so the suite
-    // treats them as regular passing regression tests going forward.
+    // These fixtures reproduce shapes that previously failed at runtime:
+    // a field declared with no initializer was never ctor'd, so a
+    // subsequent `.Count` / `.length` / `.get_Item` read landed on a null
+    // receiver. Fixed by emitting type-appropriate defaults for
+    // uninitialized reference-type fields (string → "", DataList/Array →
+    // new DataList(), DataDictionary → new DataDictionary()) in
+    // emitInlinePropertyInitializersForClass.
     //
     // Mapping to root causes (vm-test-failures-investigation.md):
     //  - 13i / 13j → #23 (SystemString.__get_Length__ null, 2 VM tests)
     //  - 13k        → #18' (DataList.__get_Item__ null, hand_operations)
     //  - 13l / 13m → #22 (DataList.__get_Count__ null, 23 VM tests)
+    //  - 13n        → DataDictionary branch coverage
 
-    it.fails("(13i) #23 reproducer: uninitialized string field — .length read has no origin", () => {
+    it("(13i) #23 reproducer: uninitialized string field — .length read traces to string origin", () => {
       const source = `
           class Holder {
             name: string;
@@ -2261,10 +2248,10 @@ describe("known transpiler bugs", () => {
       expectAllLengthReadsTraceToStringOrigin(result.tac);
     });
 
-    it.fails("(13j) #23 reproducer: uninitialized string field returned via inline method — caller's .length has no origin", () => {
+    it("(13j) #23 reproducer: uninitialized string field returned via inline method — caller's .length traces to string origin", () => {
       // Deeper-chain variant: Holder.label() returns this.name, the
       // caller reads .length on the returned value. The inline return
-      // slot traces to __inst_Holder_0_name which was never assigned.
+      // slot traces to __inst_Holder_0_name which receives a synthetic "".
       const source = `
           class Holder {
             name: string;
@@ -2283,7 +2270,7 @@ describe("known transpiler bugs", () => {
       expectAllLengthReadsTraceToStringOrigin(result.tac);
     });
 
-    it.fails("(13k) #18' reproducer: uninitialized DataList field — get_Item receiver has no ctor", () => {
+    it("(13k) #18' reproducer: uninitialized DataList field — get_Item receiver traces to ctor", () => {
       // hand_operations minimal shape. The inline class declares a
       // DataList field without initializer; a method reads `.get_Item(0)`
       // on the field. The transpiler emits the field as
@@ -2306,7 +2293,7 @@ describe("known transpiler bugs", () => {
       expectAllGetItemReceiversTraceToCtor(result.tac);
     });
 
-    it.fails("(13l) #22 reproducer: uninitialized DataList field — .Count read has no preceding ctor", () => {
+    it("(13l) #22 reproducer: uninitialized DataList field — .Count read traces to ctor", () => {
       // Direct minimal shape for the 23-test #22 failure family.
       const source = `
           class Holder {
@@ -2325,11 +2312,11 @@ describe("known transpiler bugs", () => {
       expectAllCountReadsTraceToCtor(result.tac);
     });
 
-    it.fails("(13m) #22 reproducer: deep inline-method chain on uninitialized DataList field — .Count read has no preceding ctor", () => {
+    it("(13m) #22 reproducer: deep inline-method chain on uninitialized DataList field — .Count read traces to ctor", () => {
       // Two-level chain: Outer.count() → Inner.list() → this.data.Count.
-      // Inner.data is never initialized, so the alias walk across two
-      // inline frame boundaries (__inline_ret_1 → __inst_Inner_1_data)
-      // terminates without finding a DataList ctor.
+      // Inner.data receives a synthetic DataList ctor; the alias walk
+      // across two inline frame boundaries (__inline_ret_1 →
+      // __inst_Inner_1_data) resolves to it.
       const source = `
           class Inner {
             data: DataList;
@@ -2354,6 +2341,57 @@ describe("known transpiler bugs", () => {
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
       expectAllCountReadsTraceToCtor(result.tac);
+    });
+
+    it("(13n) uninitialized DataDictionary field — .Count read traces to a ctor", () => {
+      const source = `
+          class Store {
+            table: DataDictionary;
+            size(): number {
+              return this.table.Count;
+            }
+          }
+          class Main {
+            Start(): void {
+              Debug.Log(new Store().size());
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllCountReadsTraceToCtor(result.tac);
+    });
+
+    it("(13o) @UdonSynced string field must NOT receive a synthetic default", () => {
+      // Fields decorated with @UdonSynced have their values managed by
+      // VRChat's network sync layer. Emitting a synthetic "" default would
+      // overwrite the deserialized value at Start time.
+      const source = `
+          @UdonBehaviour({ syncMode: 'Manual' })
+          class SyncedHolder extends UdonSharpBehaviour {
+            @UdonSynced()
+            name: string;
+            Start(): void {
+              Debug.Log(this.name);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).not.toMatch(/name\s*=\s*""/);
+    });
+
+    it("(13p) @SerializeField string field must NOT receive a synthetic default", () => {
+      const source = `
+          @UdonBehaviour()
+          class SerialHolder extends UdonSharpBehaviour {
+            @SerializeField
+            label: string;
+            Start(): void {
+              Debug.Log(this.label);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).not.toMatch(/label\s*=\s*""/);
     });
   });
 
