@@ -111,6 +111,10 @@
  *         DataDictionary → ctor) in emitInlinePropertyInitializersForClass.
  *         Now passing regression guards.
  *         (root cause #22, #23, #18' in vm-test-failures-investigation.md)
+ *
+ *         13o-13p: negative guards verifying that @UdonSynced and
+ *         @SerializeField fields are excluded from synthetic default
+ *         emission (their values are managed externally by VRChat/Unity).
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -2355,6 +2359,39 @@ describe("known transpiler bugs", () => {
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
       expectAllCountReadsTraceToCtor(result.tac);
+    });
+
+    it("(13o) @UdonSynced string field must NOT receive a synthetic default", () => {
+      // Fields decorated with @UdonSynced have their values managed by
+      // VRChat's network sync layer. Emitting a synthetic "" default would
+      // overwrite the deserialized value at Start time.
+      const source = `
+          @UdonBehaviour({ syncMode: 'Manual' })
+          class SyncedHolder extends UdonSharpBehaviour {
+            @UdonSynced()
+            name: string;
+            Start(): void {
+              Debug.Log(this.name);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).not.toMatch(/\bname\s*=\s*""/);
+    });
+
+    it("(13p) @SerializeField string field must NOT receive a synthetic default", () => {
+      const source = `
+          @UdonBehaviour()
+          class SerialHolder extends UdonSharpBehaviour {
+            @SerializeField
+            label: string;
+            Start(): void {
+              Debug.Log(this.label);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).not.toMatch(/\blabel\s*=\s*""/);
     });
   });
 
