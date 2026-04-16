@@ -2658,6 +2658,7 @@ describe("known transpiler bugs", () => {
       expect(result.tac).toContain("__soa_Counter_value.get_Item");
       // OOB sentinel must use Int32 ctor, not Object or Float
       expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
     });
 
     it("14b: SoA inline class method returning Int32 through for-of uses Int32 accessor", () => {
@@ -2710,6 +2711,7 @@ describe("known transpiler bugs", () => {
       expect(result.tac).toContain("__soa_Slot_index.get_Item");
       // OOB sentinel must use Int32 ctor, not Object or Float
       expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
     });
 
     it("14c: SoA inline class with mixed types uses matching accessors per field", () => {
@@ -2829,6 +2831,7 @@ describe("known transpiler bugs", () => {
       expect(result.tac).toContain("__soa_Item_code.get_Item");
       // OOB sentinel must use Int32 ctor, not Object or Float
       expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
     });
 
     it("14e: SoA method dispatch with Int32 + String fields uses correct accessors", () => {
