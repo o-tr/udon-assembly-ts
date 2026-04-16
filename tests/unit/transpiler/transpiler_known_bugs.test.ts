@@ -2230,7 +2230,7 @@ describe("known transpiler bugs", () => {
     //  - 13l / 13m → #22 (DataList.__get_Count__ null, 23 VM tests)
     //  - 13n        → DataDictionary branch coverage
 
-    it("(13i) #23 reproducer: uninitialized string field — .length read has no origin", () => {
+    it("(13i) #23 reproducer: uninitialized string field — .length read traces to string origin", () => {
       const source = `
           class Holder {
             name: string;
@@ -2248,10 +2248,10 @@ describe("known transpiler bugs", () => {
       expectAllLengthReadsTraceToStringOrigin(result.tac);
     });
 
-    it("(13j) #23 reproducer: uninitialized string field returned via inline method — caller's .length has no origin", () => {
+    it("(13j) #23 reproducer: uninitialized string field returned via inline method — caller's .length traces to string origin", () => {
       // Deeper-chain variant: Holder.label() returns this.name, the
       // caller reads .length on the returned value. The inline return
-      // slot traces to __inst_Holder_0_name which was never assigned.
+      // slot traces to __inst_Holder_0_name which receives a synthetic "".
       const source = `
           class Holder {
             name: string;
@@ -2270,7 +2270,7 @@ describe("known transpiler bugs", () => {
       expectAllLengthReadsTraceToStringOrigin(result.tac);
     });
 
-    it("(13k) #18' reproducer: uninitialized DataList field — get_Item receiver has no ctor", () => {
+    it("(13k) #18' reproducer: uninitialized DataList field — get_Item receiver traces to ctor", () => {
       // hand_operations minimal shape. The inline class declares a
       // DataList field without initializer; a method reads `.get_Item(0)`
       // on the field. The transpiler emits the field as
@@ -2293,7 +2293,7 @@ describe("known transpiler bugs", () => {
       expectAllGetItemReceiversTraceToCtor(result.tac);
     });
 
-    it("(13l) #22 reproducer: uninitialized DataList field — .Count read has no preceding ctor", () => {
+    it("(13l) #22 reproducer: uninitialized DataList field — .Count read traces to ctor", () => {
       // Direct minimal shape for the 23-test #22 failure family.
       const source = `
           class Holder {
@@ -2312,11 +2312,11 @@ describe("known transpiler bugs", () => {
       expectAllCountReadsTraceToCtor(result.tac);
     });
 
-    it("(13m) #22 reproducer: deep inline-method chain on uninitialized DataList field — .Count read has no preceding ctor", () => {
+    it("(13m) #22 reproducer: deep inline-method chain on uninitialized DataList field — .Count read traces to ctor", () => {
       // Two-level chain: Outer.count() → Inner.list() → this.data.Count.
-      // Inner.data is never initialized, so the alias walk across two
-      // inline frame boundaries (__inline_ret_1 → __inst_Inner_1_data)
-      // terminates without finding a DataList ctor.
+      // Inner.data receives a synthetic DataList ctor; the alias walk
+      // across two inline frame boundaries (__inline_ret_1 →
+      // __inst_Inner_1_data) resolves to it.
       const source = `
           class Inner {
             data: DataList;
@@ -2376,7 +2376,7 @@ describe("known transpiler bugs", () => {
           }
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
-      expect(result.tac).not.toMatch(/\bname\s*=\s*""/);
+      expect(result.tac).not.toMatch(/name\s*=\s*""/);
     });
 
     it("(13p) @SerializeField string field must NOT receive a synthetic default", () => {
@@ -2391,7 +2391,7 @@ describe("known transpiler bugs", () => {
           }
         `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
-      expect(result.tac).not.toMatch(/\blabel\s*=\s*""/);
+      expect(result.tac).not.toMatch(/label\s*=\s*""/);
     });
   });
 
