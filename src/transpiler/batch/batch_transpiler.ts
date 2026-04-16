@@ -1308,7 +1308,7 @@ export class BatchTranspiler {
     return [...used];
   }
 
-  private pickEntryMethod(methods: MethodInfo[]): MethodInfo | null {
+  private pickEntryMethod(methods: readonly MethodInfo[]): MethodInfo | null {
     const start = methods.find((method) => method.name === "Start");
     if (start) return start;
     const underscore = methods.find((method) => method.name === "_start");
@@ -1316,18 +1316,18 @@ export class BatchTranspiler {
     return null;
   }
 
-  private orderEntryMethods(methods: MethodInfo[]): MethodInfo[] {
+  private orderEntryMethods(methods: readonly MethodInfo[]): MethodInfo[] {
     const entry = this.pickEntryMethod(methods);
-    if (!entry) return methods;
+    if (!entry) return [...methods];
     return [entry, ...methods.filter((method) => method !== entry)];
   }
 
   private filterMethodsByUsage(
-    methods: MethodInfo[],
+    methods: readonly MethodInfo[],
     className: string,
     usage: Map<string, Set<string>> | null,
   ): MethodInfo[] {
-    if (!usage) return methods;
+    if (!usage) return [...methods];
     const reachable = usage.get(className);
     if (!reachable) return [];
     return methods.filter((method) => reachable.has(method.name));
@@ -1473,8 +1473,8 @@ export class BatchTranspiler {
   private buildClassNode(
     name: string,
     baseClass: string | null,
-    methods: MethodInfo[],
-    properties: PropertyInfo[],
+    methods: readonly MethodInfo[],
+    properties: readonly PropertyInfo[],
     constructorInfo?: {
       parameters: Array<{ name: string; type: string }>;
       body: ASTNode;

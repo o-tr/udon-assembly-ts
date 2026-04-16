@@ -249,4 +249,4 @@ export class Type {
 @UdonStub("System.Collections.IEnumerator")
 export class SystemCollectionsIEnumerator {}
 
-export { SystemString as String, SystemMath as Math };
+export { SystemMath as Math, SystemString as String };

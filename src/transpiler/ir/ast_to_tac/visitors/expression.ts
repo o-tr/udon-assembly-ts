@@ -202,9 +202,10 @@ function resolvePropertyTypeFromType(
   if (converter.classRegistry) {
     const classMeta = converter.classRegistry.getClass(baseType.name);
     if (classMeta) {
-      const prop = converter.classRegistry
-        .getMergedProperties(baseType.name)
-        .find((candidate) => candidate.name === property);
+      const prop = converter.classRegistry.getMergedProperty(
+        baseType.name,
+        property,
+      );
       if (prop) {
         return converter.typeMapper.mapTypeScriptType(prop.type);
       }
@@ -358,9 +359,10 @@ function resolveMethodReturnType(
   if (converter.classRegistry) {
     const classMeta = converter.classRegistry.getClass(typeName);
     if (classMeta) {
-      const method = converter.classRegistry
-        .getMergedMethods(typeName)
-        .find((m) => m.name === methodName);
+      const method = converter.classRegistry.getMergedMethod(
+        typeName,
+        methodName,
+      );
       if (method) {
         return resolveReturnTypeStr(method.returnType);
       }
@@ -2263,9 +2265,10 @@ export function visitPropertyAccessExpression(
     } else if (this.classRegistry) {
       const classMeta = this.classRegistry.getClass(objectType.name);
       if (classMeta) {
-        const prop = this.classRegistry
-          .getMergedProperties(objectType.name)
-          .find((candidate) => candidate.name === node.property);
+        const prop = this.classRegistry.getMergedProperty(
+          objectType.name,
+          node.property,
+        );
         if (prop) {
           resultType = this.typeMapper.mapTypeScriptType(prop.type);
         }
@@ -2502,9 +2505,10 @@ export function visitOptionalChainingExpression(
     const objectType = this.getOperandType(objTemp);
     const classMeta = this.classRegistry.getClass(objectType.name);
     if (classMeta) {
-      const prop = this.classRegistry
-        .getMergedProperties(objectType.name)
-        .find((candidate) => candidate.name === node.property);
+      const prop = this.classRegistry.getMergedProperty(
+        objectType.name,
+        node.property,
+      );
       if (prop) {
         resultType = this.typeMapper.mapTypeScriptType(prop.type);
       }

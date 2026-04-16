@@ -59,7 +59,7 @@ const signaturesMatch = (
 export const buildUdonBehaviourLayouts = (
   classes: ClassLike[],
   interfaces?: InterfaceLike[],
-  classImplements?: Map<string, string[]>,
+  classImplements?: Map<string, readonly string[]>,
 ): UdonBehaviourLayouts => {
   const layouts: UdonBehaviourLayouts = new Map();
 
