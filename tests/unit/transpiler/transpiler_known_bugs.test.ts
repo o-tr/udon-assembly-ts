@@ -98,6 +98,13 @@
  *         on master and guard against future refactor regressions on the
  *         already-working simple shapes.
  *
+ *         13-getItem-baseline and 13-length-baseline are positive guards
+ *         for the two new helper functions (`expectAllGetItemReceiversTraceToCtor`
+ *         and `expectAllLengthReadsTraceToStringOrigin`). They confirm the
+ *         helper regexes actually match the TAC form the transpiler emits,
+ *         so that the `it.fails` tests below cannot silently pass due to a
+ *         regex mismatch (zero reads detected).
+ *
  *         13i-13m (added on 10th run) are `it.fails` reproducers: they
  *         exercise the **actually failing** shape — a field declared
  *         without initializer is never ctor'd, so a subsequent `.Count` /
@@ -2157,7 +2164,7 @@ describe("known transpiler bugs", () => {
     // regex mismatch in it.fails tests would invert for the wrong reason.
     // Analogous to 13a for expectAllCountReadsTraceToCtor.
 
-    it("(13i-baseline) initialized DataList field — get_Item receiver traces to ctor", () => {
+    it("(13-getItem-baseline) initialized DataList field — get_Item receiver traces to ctor", () => {
       const source = `
         class Bucket {
           items: DataList;
@@ -2180,7 +2187,7 @@ describe("known transpiler bugs", () => {
       expectAllGetItemReceiversTraceToCtor(result.tac);
     });
 
-    it("(13j-baseline) initialized string field — .length read traces to literal origin", () => {
+    it("(13-length-baseline) initialized string field — .length read traces to literal origin", () => {
       const source = `
         class Holder {
           name: string;
