@@ -68,7 +68,7 @@ export const deduplicateConstants = (
     group.sort((a, b) => a - b);
     const canonicalId = group[0];
     const canonicalEntry = tempInfo.get(canonicalId);
-    if (!canonicalEntry || !canonicalEntry.constOp) continue;
+    if (!canonicalEntry?.constOp) continue;
     const canonicalType = getOperandType(canonicalEntry.constOp);
     for (let i = 1; i < group.length; i++) {
       const tid = group[i];

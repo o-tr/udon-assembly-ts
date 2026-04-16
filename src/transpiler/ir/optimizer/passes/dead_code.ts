@@ -120,7 +120,7 @@ export const eliminateDeadStoresCFG = (
       inScratch.clear();
       if (use) for (const key of use) inScratch.add(key);
       for (const key of outScratch) {
-        if (!def || !def.has(key)) inScratch.add(key);
+        if (!def?.has(key)) inScratch.add(key);
       }
 
       const prevOut = liveOut.get(block.id) ?? new Set<string>();
