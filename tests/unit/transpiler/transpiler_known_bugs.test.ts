@@ -2750,6 +2750,13 @@ describe("known transpiler bugs", () => {
       expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
       expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
       expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
+      // Must use type-specific ctors to wrap actual field data (not Object)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken",
+      );
       // All three SoA DataLists must be exercised
       expect(result.tac).toContain("__soa_Record_id.get_Item");
       expect(result.tac).toContain("__soa_Record_name.get_Item");
