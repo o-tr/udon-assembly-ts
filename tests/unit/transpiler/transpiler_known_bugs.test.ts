@@ -2741,6 +2741,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
       // SoA sentinels must use type-appropriate constructors
       expect(result.tac).toContain(STRING_SENTINEL_CTOR);
       expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
@@ -2839,7 +2843,7 @@ describe("known transpiler bugs", () => {
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
       // No dispatch miss
-      expect(result.tac).not.toContain("dispatch miss");
+      expect(result.uasm).not.toContain("dispatch miss");
       // Both SoA DataLists exercised
       expect(result.tac).toContain("__soa_Tile_kind.get_Item");
       expect(result.tac).toContain("__soa_Tile_label.get_Item");
