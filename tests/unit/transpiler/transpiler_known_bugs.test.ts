@@ -66,28 +66,61 @@
  *         before field loads in SoA method dispatch and untracked property reads.
  *         (root cause #19/#20 in vm-test-failures-investigation.md)
  *
- * Bug 13 (OPEN — 9th-run main cause, 26/26 failing VM tests):
- *         VRCSDK3DataDataList.__get_Count__SystemInt32 runtime exception because
- *         the DataList receiver is null / never ctor'd. Root cause is not yet
- *         localized; candidate sources in the investigation report:
+ * Bug 13 (OPEN — 9th/10th-run main cause, null-receiver family):
+ *         A family of runtime exceptions caused by null / uninitialized
+ *         receivers on otherwise-valid EXTERN calls. 10th-run (2026-04-16)
+ *         failures split the shape into three sub-signatures:
+ *         - VRCSDK3DataDataList.__get_Count__SystemInt32 (23 tests) — #22
+ *         - SystemString.__get_Length__SystemInt32 (2 tests: hand_tenpai,
+ *             tenpai_edge) — #23 (new on 10th run)
+ *         - VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken
+ *             (1 test: hand_operations) — #18' (re-emergence)
+ *
+ *         Candidate sources in the investigation report:
  *         (a) inline-class DataList field not ctor'd in constructor,
  *         (b) inline-class Map/Set field not ctor'd in constructor,
  *         (c) SoA __soa_*_field DataList read on an execution path that never
- *             runs emitSoaInitGuard (no `new ClassName(...)` upstream), and
+ *             runs emitSoaInitGuard (no `new ClassName(...)` upstream),
  *         (d) for-of over a Map field before the backing DataDictionary is
- *             ctor'd.
+ *             ctor'd, and
+ *         (e) string value pulled from a null DataToken / uninitialized
+ *             parameter slot before `.length` is read.
  *
  *         The tests in the "Bug 13 baseline invariants" describe block below
- *         pin down the *simple* shape of each candidate and assert the static
- *         invariant "DataList.__ctor__ must appear before the first
- *         corresponding get_Count in UASM text order". They currently pass on
- *         master, which means the simple minimal reproducers are *not* the
- *         source of #22 — the real failure path is deeper in HandAnalyzer /
- *         yaku / scoring pipelines. Keeping these as positive regression
- *         guards prevents a future refactor from breaking the simple-case
- *         invariant while the full #22 fix is being developed. When a more
- *         minimal reproducer is identified, add it alongside as `it.fails`.
- *         (root cause #22 in vm-test-failures-investigation.md)
+ *         pin down the *simple* shape of each candidate and assert static
+ *         invariants: "DataList.__ctor__ must appear before the first
+ *         corresponding get_Count / get_Item in TAC order", "any string
+ *         .length read must trace back to a concrete string origin (literal,
+ *         call result, property access, or element access), not to a bare
+ *         unresolved parameter slot", and "constructor/method parameter
+ *         defaults (e.g. `= []`, `= true`) are emitted at bind time so
+ *         that omitted arguments receive the declared default value".
+ *
+ *         13a-13h-rec are positive baseline invariants that currently pass
+ *         on master and guard against future refactor regressions on the
+ *         already-working simple shapes.
+ *
+ *         13-getItem-baseline and 13-length-baseline are positive guards
+ *         for the two new helper functions (`expectAllGetItemReceiversTraceToCtor`
+ *         and `expectAllLengthReadsTraceToStringOrigin`). They confirm the
+ *         helper regexes actually match the TAC form the transpiler emits,
+ *         so that the `it.fails` tests below cannot silently pass due to a
+ *         regex mismatch (zero reads detected).
+ *
+ *         13i-13m (added on 10th run) are `it.fails` reproducers: they
+ *         exercise the **actually failing** shape — a field declared
+ *         without initializer is never ctor'd, so a subsequent `.Count` /
+ *         `.length` / `.get_Item` read has a null receiver at runtime. The
+ *         helper backward-trace throws because no origin assignment
+ *         exists, and `it.fails` inverts the result so vitest treats the
+ *         open bug as expected-failing. **When the fix lands** (the
+ *         transpiler starts emitting a default ctor for declared reference-
+ *         type fields, or rejects uninitialized reference fields outright),
+ *         the helper trace will succeed, the test assertion will stop
+ *         throwing, and vitest will flag the test as "expected to fail but
+ *         passed". That is the signal to remove `.fails` from the affected
+ *         test(s) so they become regular passing regression guards.
+ *         (root cause #22, #23, #18' in vm-test-failures-investigation.md)
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -1614,7 +1647,7 @@ describe("known transpiler bugs", () => {
   // immediately. Add `it.fails` reproducers alongside once a minimized shape
   // of the real #22 bug is identified.
 
-  describe("Bug 13 baseline invariants: DataList ctor precedes get_Count", () => {
+  describe("Bug 13 baseline invariants: null-receiver family", () => {
     /**
      * For every `x = y.Count` line in the TAC, verify that `y` traces back
      * (through an alias chain of plain `a = b` copy assignments) to a prior
@@ -1652,55 +1685,128 @@ describe("known transpiler bugs", () => {
      * fixtures inline-class SoA fields are flat identifiers, so the
      * limitation is moot.
      */
-    const expectAllCountReadsTraceToCtor = (tac: string): void => {
+    /**
+     * Generic backward-alias trace: for each read site collected by
+     * `readRe`, verify that the receiver traces back — through a chain
+     * of bare-identifier copies (`a = b`) — to a line accepted by
+     * `isOrigin`. The scan is linear (not control-flow-aware); see the
+     * Coverage boundary doc above for limitations.
+     *
+     * @param readRe    Regex with group 2 = receiver identifier. Applied
+     *                  to each trimmed TAC line; every match becomes a
+     *                  read site whose receiver is traced.
+     * @param readLabel Human-readable name for the read kind (e.g.
+     *                  "`.Count`"), used in assertion messages.
+     * @param isOrigin  Predicate called with (trimmedLine, lhsIdentifier)
+     *                  for each assignment whose LHS is in the alias set.
+     *                  Return `true` if the line constitutes a valid
+     *                  origin for the receiver (ctor call, GetKeys/Values,
+     *                  non-copy assignment, etc.).
+     */
+    const traceAllReadsToCtor = (
+      tac: string,
+      readRe: RegExp,
+      readLabel: string,
+      isOrigin: (line: string, lhs: string) => boolean,
+    ): void => {
       const lines = tac.split("\n").map((l) => l.trim());
-      const countRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/;
-      const ctorRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
-      const getKeysOrValuesRe =
-        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+[A-Za-z_][A-Za-z0-9_.]*\.(?:GetKeys|GetValues)\(/;
       const copyRe =
         /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)$/;
+      const assignRe = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*.+$/;
 
-      const countReads: Array<{ line: number; receiver: string }> = [];
+      const reads: Array<{ line: number; receiver: string }> = [];
       for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(countRe);
-        if (m) countReads.push({ line: i, receiver: m[2] });
+        const m = lines[i].match(readRe);
+        if (m) reads.push({ line: i, receiver: m[2] });
       }
 
-      // Fail the test explicitly if a fixture forgets to exercise a `.Count`
-      // read — that would make the invariant check vacuous and silently pass.
       expect(
-        countReads.length,
-        "fixture must exercise at least one `.Count` read for the invariant to be meaningful",
+        reads.length,
+        `fixture must exercise at least one ${readLabel} read for the invariant to be meaningful`,
       ).toBeGreaterThan(0);
 
-      for (const { line, receiver } of countReads) {
+      for (const { line, receiver } of reads) {
         const aliases = new Set<string>([receiver]);
         let traced = false;
         for (let j = line - 1; j >= 0; j--) {
-          const cm = lines[j].match(ctorRe);
-          if (cm && aliases.has(cm[1])) {
-            traced = true;
-            break;
-          }
-          const gm = lines[j].match(getKeysOrValuesRe);
-          if (gm && aliases.has(gm[1])) {
-            traced = true;
-            break;
-          }
+          // Bare-identifier copies always extend the alias chain.
           const am = lines[j].match(copyRe);
           if (am && aliases.has(am[1])) {
             aliases.add(am[2]);
+            continue;
+          }
+          // Non-copy assignments: check if this is a valid origin.
+          const gm = lines[j].match(assignRe);
+          if (gm && aliases.has(gm[1]) && isOrigin(lines[j], gm[1])) {
+            traced = true;
+            break;
           }
         }
         expect(
           traced,
-          `TAC line ${line} reads '.Count' on '${receiver}' with no preceding DataList/DataDictionary ctor or GetKeys/GetValues in its alias chain`,
+          `TAC line ${line} reads ${readLabel} on '${receiver}' with no preceding origin in its alias chain`,
         ).toBe(true);
       }
     };
+
+    const dataListCtorRe =
+      /=\s*call\s+VRCSDK3Data(?:DataList|DataDictionary)\.__ctor____VRCSDK3Data(?:DataList|DataDictionary)\(/;
+    const getKeysOrValuesRe =
+      /=\s*call\s+[A-Za-z_][A-Za-z0-9_.]*\.(?:GetKeys|GetValues)\(/;
+    const isDataListOrigin = (line: string): boolean =>
+      dataListCtorRe.test(line) || getKeysOrValuesRe.test(line);
+
+    const expectAllCountReadsTraceToCtor = (tac: string): void =>
+      traceAllReadsToCtor(
+        tac,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.Count$/,
+        "`.Count`",
+        isDataListOrigin,
+      );
+
+    const expectAllGetItemReceiversTraceToCtor = (tac: string): void =>
+      traceAllReadsToCtor(
+        tac,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*call\s+([A-Za-z_][A-Za-z0-9_]*)\.get_Item\(/,
+        "`.get_Item`",
+        isDataListOrigin,
+      );
+
+    /**
+     * For `.length` reads the origin check uses a whitelist of
+     * string-producing TAC RHS shapes:
+     *  - `"..."` — string literal (RHS starts with `"`)
+     *  - `x.prop` — property access, including `.String` DataToken
+     *    unwrap (RHS contains `.`)
+     *  - `call ...` — call result such as `SystemString.__Concat__`
+     *    (RHS contains `call`)
+     *  - `arr[idx]` — element access from a native string array
+     *    (RHS contains `[`)
+     *
+     * Numeric literals (`1`), booleans (`true`/`false`), and `null`
+     * are all correctly rejected because none match the patterns above.
+     * Bare-identifier copies are never seen here — they are caught by
+     * the `copyRe` branch in `traceAllReadsToCtor` first.
+     */
+    const isStringProducingOrigin = (line: string): boolean => {
+      const eqIdx = line.indexOf("=");
+      if (eqIdx < 0) return false;
+      const rhs = line.substring(eqIdx + 1).trim();
+      return (
+        /^"/.test(rhs) ||
+        /\bcall\b/.test(rhs) ||
+        /\./.test(rhs) ||
+        /\[/.test(rhs)
+      );
+    };
+
+    const expectAllLengthReadsTraceToStringOrigin = (tac: string): void =>
+      traceAllReadsToCtor(
+        tac,
+        /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.length$/,
+        "`.length`",
+        isStringProducingOrigin,
+      );
 
     it("(13a) inline class DataList field — every .Count read traces to a ctor", () => {
       const source = `
@@ -2058,6 +2164,196 @@ describe("known transpiler bugs", () => {
       );
       expect(seenTrueIdx).toBeGreaterThanOrEqual(0);
       expect(seenFalseIdx).toBeGreaterThan(seenTrueIdx);
+    });
+
+    // -----------------------------------------------------------------------
+    // Positive baselines for the get_Item and .length helpers
+    // -----------------------------------------------------------------------
+    //
+    // These validate that the regex patterns in the new helpers actually
+    // match the TAC form the transpiler emits. Without them, a silent
+    // regex mismatch in it.fails tests would invert for the wrong reason.
+    // Analogous to 13a for expectAllCountReadsTraceToCtor.
+
+    it("(13-getItem-baseline) initialized DataList field — get_Item receiver traces to ctor", () => {
+      const source = `
+        class Bucket {
+          items: DataList;
+          constructor() {
+            this.items = new DataList();
+            this.items.Add(new DataToken("a"));
+          }
+          first(): string {
+            return this.items.get_Item(0).String;
+          }
+        }
+        class Main {
+          Start(): void {
+            const b = new Bucket();
+            Debug.Log(b.first());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllGetItemReceiversTraceToCtor(result.tac);
+    });
+
+    it("(13-length-baseline) initialized string field — .length read traces to literal origin", () => {
+      const source = `
+        class Holder {
+          name: string;
+          constructor() {
+            this.name = "hello";
+          }
+          nameLen(): number {
+            return this.name.length;
+          }
+        }
+        class Main {
+          Start(): void {
+            Debug.Log(new Holder().nameLen());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllLengthReadsTraceToStringOrigin(result.tac);
+    });
+
+    // -----------------------------------------------------------------------
+    // 10th-run (2026-04-16) null-receiver family reproducers
+    // -----------------------------------------------------------------------
+    //
+    // These fixtures reproduce the *actually failing* shapes from the 10th
+    // VM run: a field declared with no initializer is never ctor'd, so a
+    // subsequent `.Count` / `.length` / `.get_Item` read lands on a null
+    // receiver at runtime. Each test is marked `it.fails` because the
+    // transpiler currently emits no init for the field, so the helper
+    // backward-trace throws → vitest inverts the result and marks the test
+    // as passing for bookkeeping.
+    //
+    // **When the fix lands**: the transpiler will either emit a default
+    // ctor for the declared field type, or refuse to compile an uninitialized
+    // reference field. The helper trace will then succeed (or the source
+    // will fail to transpile) and the test assertion stops throwing. At
+    // that point remove `.fails` from the affected test(s) so the suite
+    // treats them as regular passing regression tests going forward.
+    //
+    // Mapping to root causes (vm-test-failures-investigation.md):
+    //  - 13i / 13j → #23 (SystemString.__get_Length__ null, 2 VM tests)
+    //  - 13k        → #18' (DataList.__get_Item__ null, hand_operations)
+    //  - 13l / 13m → #22 (DataList.__get_Count__ null, 23 VM tests)
+
+    it.fails("(13i) #23 reproducer: uninitialized string field — .length read has no origin", () => {
+      const source = `
+          class Holder {
+            name: string;
+            nameLen(): number {
+              return this.name.length;
+            }
+          }
+          class Main {
+            Start(): void {
+              Debug.Log(new Holder().nameLen());
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllLengthReadsTraceToStringOrigin(result.tac);
+    });
+
+    it.fails("(13j) #23 reproducer: uninitialized string field returned via inline method — caller's .length has no origin", () => {
+      // Deeper-chain variant: Holder.label() returns this.name, the
+      // caller reads .length on the returned value. The inline return
+      // slot traces to __inst_Holder_0_name which was never assigned.
+      const source = `
+          class Holder {
+            name: string;
+            label(): string {
+              return this.name;
+            }
+          }
+          class Main {
+            Start(): void {
+              const h = new Holder();
+              Debug.Log(h.label().length);
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllLengthReadsTraceToStringOrigin(result.tac);
+    });
+
+    it.fails("(13k) #18' reproducer: uninitialized DataList field — get_Item receiver has no ctor", () => {
+      // hand_operations minimal shape. The inline class declares a
+      // DataList field without initializer; a method reads `.get_Item(0)`
+      // on the field. The transpiler emits the field as
+      // %VRCSDK3DataDataList in the data section but never calls the
+      // DataList ctor, so the get_Item receiver is null at runtime.
+      const source = `
+          class Bucket {
+            items: DataList;
+            first(): string {
+              return this.items.get_Item(0).String;
+            }
+          }
+          class Main {
+            Start(): void {
+              Debug.Log(new Bucket().first());
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllGetItemReceiversTraceToCtor(result.tac);
+    });
+
+    it.fails("(13l) #22 reproducer: uninitialized DataList field — .Count read has no preceding ctor", () => {
+      // Direct minimal shape for the 23-test #22 failure family.
+      const source = `
+          class Holder {
+            list: DataList;
+            count(): number {
+              return this.list.Count;
+            }
+          }
+          class Main {
+            Start(): void {
+              Debug.Log(new Holder().count());
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllCountReadsTraceToCtor(result.tac);
+    });
+
+    it.fails("(13m) #22 reproducer: deep inline-method chain on uninitialized DataList field — .Count read has no preceding ctor", () => {
+      // Two-level chain: Outer.count() → Inner.list() → this.data.Count.
+      // Inner.data is never initialized, so the alias walk across two
+      // inline frame boundaries (__inline_ret_1 → __inst_Inner_1_data)
+      // terminates without finding a DataList ctor.
+      const source = `
+          class Inner {
+            data: DataList;
+            list(): DataList {
+              return this.data;
+            }
+          }
+          class Outer {
+            inner: Inner;
+            constructor() {
+              this.inner = new Inner();
+            }
+            count(): number {
+              return this.inner.list().Count;
+            }
+          }
+          class Main {
+            Start(): void {
+              Debug.Log(new Outer().count());
+            }
+          }
+        `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expectAllCountReadsTraceToCtor(result.tac);
     });
   });
 
