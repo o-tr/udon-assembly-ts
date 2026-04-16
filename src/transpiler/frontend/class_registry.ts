@@ -86,25 +86,45 @@ export class ClassRegistry {
   private interfaces: Map<string, InterfaceMetadata> = new Map();
   private topLevelConsts: Map<string, TopLevelConstInfo[]> = new Map();
 
-  private inheritanceChainCache = new Map<string, string[]>();
-  private mergedMethodsCache = new Map<string, MethodInfo[]>();
-  private mergedPropertiesCache = new Map<string, PropertyInfo[]>();
+  private inheritanceChainCache = new Map<string, readonly string[]>();
+  private reversedInheritanceChainCache = new Map<string, readonly string[]>();
+  private mergedMethodsCache = new Map<string, readonly MethodInfo[]>();
+  private mergedPropertiesCache = new Map<string, readonly PropertyInfo[]>();
+  private mergedMethodByNameCache = new Map<
+    string,
+    Map<string, MethodInfo>
+  >();
+  private mergedPropertyByNameCache = new Map<
+    string,
+    Map<string, PropertyInfo>
+  >();
   private stubCache = new Map<string, boolean>();
-  private implementedInterfacesCache = new Map<string, string[]>();
-  private entryPointsCache: ClassMetadata[] | null = null;
+  private implementedInterfacesCache = new Map<string, readonly string[]>();
+  private entryPointsCache: readonly ClassMetadata[] | null = null;
+  private cachesDirty = false;
 
   register(classInfo: ClassMetadata): void {
     this.classes.set(classInfo.name, classInfo);
-    this.clearCaches();
+    this.cachesDirty = true;
   }
 
   private clearCaches(): void {
     this.inheritanceChainCache.clear();
+    this.reversedInheritanceChainCache.clear();
     this.mergedMethodsCache.clear();
     this.mergedPropertiesCache.clear();
+    this.mergedMethodByNameCache.clear();
+    this.mergedPropertyByNameCache.clear();
     this.stubCache.clear();
     this.implementedInterfacesCache.clear();
     this.entryPointsCache = null;
+  }
+
+  private ensureCachesClean(): void {
+    if (this.cachesDirty) {
+      this.clearCaches();
+      this.cachesDirty = false;
+    }
   }
 
   getClass(name: string): ClassMetadata | undefined {
@@ -115,9 +135,10 @@ export class ClassRegistry {
     return this.interfaces.get(name);
   }
 
-  getInheritanceChain(className: string): string[] {
+  getInheritanceChain(className: string): readonly string[] {
+    this.ensureCachesClean();
     const cached = this.inheritanceChainCache.get(className);
-    if (cached) return [...cached];
+    if (cached) return cached;
 
     const chain: string[] = [];
     let current = this.classes.get(className);
@@ -127,15 +148,26 @@ export class ClassRegistry {
       current = this.classes.get(current.baseClass);
     }
     this.inheritanceChainCache.set(className, chain);
-    return [...chain];
+    return chain;
   }
 
-  getEntryPoints(): ClassMetadata[] {
-    if (this.entryPointsCache) return [...this.entryPointsCache];
+  private getReversedInheritanceChain(
+    className: string,
+  ): readonly string[] {
+    const cached = this.reversedInheritanceChainCache.get(className);
+    if (cached) return cached;
+    const reversed = [...this.getInheritanceChain(className)].reverse();
+    this.reversedInheritanceChainCache.set(className, reversed);
+    return reversed;
+  }
+
+  getEntryPoints(): readonly ClassMetadata[] {
+    this.ensureCachesClean();
+    if (this.entryPointsCache) return this.entryPointsCache;
     this.entryPointsCache = Array.from(this.classes.values()).filter(
       (cls) => cls.isEntryPoint,
     );
-    return [...this.entryPointsCache];
+    return this.entryPointsCache;
   }
 
   getAllClasses(): ClassMetadata[] {
@@ -149,6 +181,7 @@ export class ClassRegistry {
   }
 
   isStub(className: string): boolean {
+    this.ensureCachesClean();
     const cached = this.stubCache.get(className);
     if (cached !== undefined) return cached;
 
@@ -164,11 +197,12 @@ export class ClassRegistry {
     return result;
   }
 
-  getMergedMethods(className: string): MethodInfo[] {
+  getMergedMethods(className: string): readonly MethodInfo[] {
+    this.ensureCachesClean();
     const cached = this.mergedMethodsCache.get(className);
-    if (cached) return [...cached];
+    if (cached) return cached;
 
-    const chain = this.getInheritanceChain(className).slice().reverse();
+    const chain = this.getReversedInheritanceChain(className);
     const merged = new Map<string, MethodInfo>();
 
     for (const name of chain) {
@@ -182,14 +216,29 @@ export class ClassRegistry {
 
     const result = Array.from(merged.values());
     this.mergedMethodsCache.set(className, result);
-    return [...result];
+    return result;
   }
 
-  getMergedProperties(className: string): PropertyInfo[] {
-    const cached = this.mergedPropertiesCache.get(className);
-    if (cached) return [...cached];
+  getMergedMethod(className: string, methodName: string): MethodInfo | undefined {
+    this.ensureCachesClean();
+    const byName = this.mergedMethodByNameCache.get(className);
+    if (byName) return byName.get(methodName);
 
-    const chain = this.getInheritanceChain(className).slice().reverse();
+    const methods = this.getMergedMethods(className);
+    const map = new Map<string, MethodInfo>();
+    for (const m of methods) {
+      map.set(m.name, m);
+    }
+    this.mergedMethodByNameCache.set(className, map);
+    return map.get(methodName);
+  }
+
+  getMergedProperties(className: string): readonly PropertyInfo[] {
+    this.ensureCachesClean();
+    const cached = this.mergedPropertiesCache.get(className);
+    if (cached) return cached;
+
+    const chain = this.getReversedInheritanceChain(className);
     const merged = new Map<string, PropertyInfo>();
 
     for (const name of chain) {
@@ -203,7 +252,24 @@ export class ClassRegistry {
 
     const result = Array.from(merged.values());
     this.mergedPropertiesCache.set(className, result);
-    return [...result];
+    return result;
+  }
+
+  getMergedProperty(
+    className: string,
+    propName: string,
+  ): PropertyInfo | undefined {
+    this.ensureCachesClean();
+    const byName = this.mergedPropertyByNameCache.get(className);
+    if (byName) return byName.get(propName);
+
+    const props = this.getMergedProperties(className);
+    const map = new Map<string, PropertyInfo>();
+    for (const p of props) {
+      map.set(p.name, p);
+    }
+    this.mergedPropertyByNameCache.set(className, map);
+    return map.get(propName);
   }
 
   getTopLevelConstsForFile(filePath: string): TopLevelConstInfo[] {
@@ -307,7 +373,7 @@ export class ClassRegistry {
       registeredAnyClass = true;
     }
     if (registeredAnyClass) {
-      this.clearCaches();
+      this.cachesDirty = true;
     }
   }
 
@@ -350,9 +416,10 @@ export class ClassRegistry {
    * return ["IYaku"], not ["IYaku", "IScorer"]. This requires parser
    * support for interface heritage clauses.
    */
-  getAllImplementedInterfaces(className: string): string[] {
+  getAllImplementedInterfaces(className: string): readonly string[] {
+    this.ensureCachesClean();
     const cached = this.implementedInterfacesCache.get(className);
-    if (cached !== undefined) return [...cached];
+    if (cached !== undefined) return cached;
     const result: string[] = [];
     const seen = new Set<string>();
     const visited = new Set<string>();
@@ -370,7 +437,7 @@ export class ClassRegistry {
       current = cls.baseClass ?? null;
     }
     this.implementedInterfacesCache.set(className, result);
-    return [...result];
+    return result;
   }
 
   /**
@@ -389,8 +456,8 @@ export class ClassRegistry {
 
   /** Returns ALL interfaces each class implements, including those
    *  inherited through the base-class chain (via getAllImplementedInterfaces). */
-  getClassImplementsMap(): Map<string, string[]> {
-    const result = new Map<string, string[]>();
+  getClassImplementsMap(): Map<string, readonly string[]> {
+    const result = new Map<string, readonly string[]>();
     for (const cls of this.classes.values()) {
       const impls = this.getAllImplementedInterfaces(cls.name);
       if (impls.length > 0) {

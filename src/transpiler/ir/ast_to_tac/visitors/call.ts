@@ -734,9 +734,10 @@ function tryUntrackedInlineDispatch(
   } | null => {
     for (const className of candidateClassNames) {
       if (converter.classRegistry?.getClass(className)) {
-        const method = converter.classRegistry
-          .getMergedMethods(className)
-          .find((candidate) => candidate.name === propAccess.property);
+        const method = converter.classRegistry.getMergedMethod(
+          className,
+          propAccess.property,
+        );
         if (method) {
           return {
             className,
@@ -3407,9 +3408,10 @@ export function visitCallExpression(
     if (this.classRegistry) {
       const classMeta = this.classRegistry.getClass(objectType.name);
       if (classMeta) {
-        const method = this.classRegistry
-          .getMergedMethods(objectType.name)
-          .find((candidate) => candidate.name === propAccess.property);
+        const method = this.classRegistry.getMergedMethod(
+          objectType.name,
+          propAccess.property,
+        );
         if (method) {
           resolvedReturnType = this.typeMapper.mapTypeScriptType(
             method.returnType,

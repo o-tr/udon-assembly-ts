@@ -74,8 +74,17 @@ const BOOLEAN_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
 /**
  * Udon assembler - generates .uasm output
  */
+type TypeCategory = "boolean" | "float" | "integer" | "string" | "other";
+
+interface TypeClassification {
+  category: TypeCategory;
+  csharpType: string;
+  udonType: string;
+}
+
 export class UdonAssembler {
   private warnings: string[] = [];
+  private typeClassificationCache = new Map<string, TypeClassification>();
 
   getWarnings(): string[] {
     return this.warnings.slice();
@@ -266,6 +275,47 @@ export class UdonAssembler {
     return toUdonTypeNameWithArray(csharpType);
   }
 
+  private classifyType(type: string): TypeClassification {
+    const cached = this.typeClassificationCache.get(type);
+    if (cached) return cached;
+
+    const csharpType = mapTypeScriptToCSharp(type);
+    const udonType = this.resolveUdonTypeName(type);
+
+    let category: TypeCategory;
+    if (
+      BOOLEAN_TYPES.has(type) ||
+      BOOLEAN_TYPES.has(csharpType) ||
+      BOOLEAN_TYPES.has(udonType)
+    ) {
+      category = "boolean";
+    } else if (
+      FLOAT_TYPES.has(type) ||
+      FLOAT_TYPES.has(csharpType) ||
+      FLOAT_TYPES.has(udonType)
+    ) {
+      category = "float";
+    } else if (
+      INTEGER_TYPES.has(type) ||
+      INTEGER_TYPES.has(csharpType) ||
+      INTEGER_TYPES.has(udonType)
+    ) {
+      category = "integer";
+    } else if (
+      STRING_TYPES.has(type) ||
+      STRING_TYPES.has(csharpType) ||
+      STRING_TYPES.has(udonType)
+    ) {
+      category = "string";
+    } else {
+      category = "other";
+    }
+
+    const result: TypeClassification = { category, csharpType, udonType };
+    this.typeClassificationCache.set(type, result);
+    return result;
+  }
+
   /**
    * Format byte address as hex string
    */
@@ -313,16 +363,13 @@ export class UdonAssembler {
 
     for (const entry of mutData) {
       const [name, , type, value] = entry;
-      const csharpType = mapTypeScriptToCSharp(type);
-      const udonType = this.resolveUdonTypeName(type);
+      const { csharpType, udonType, category } = this.classifyType(type);
 
       const isNullOnly = this.isNullOnlyType(type, csharpType, udonType);
       const isOverflowingFloat =
         !isNullOnly &&
         typeof value === "number" &&
-        (this.isFloatType(type) ||
-          this.isFloatType(csharpType) ||
-          this.isFloatType(udonType)) &&
+        category === "float" &&
         this.floatValueOverflowsScanner(value);
 
       if (!isNullOnly && !isOverflowingFloat) continue;
@@ -592,20 +639,15 @@ export class UdonAssembler {
 
       for (const [name, _address, type, value] of sortedData) {
         // Variable declaration: name: %Type, initialValue
-        const csharpType = mapTypeScriptToCSharp(type);
-        const udonType = this.resolveUdonTypeName(type);
+        const { csharpType, udonType, category } = this.classifyType(type);
 
         const resolvedValue = value;
 
         let initialValue: string;
-        const isBoolean =
-          this.isBooleanType(type) ||
-          this.isBooleanType(csharpType) ||
-          this.isBooleanType(udonType);
 
         if (resolvedValue === null) {
           initialValue = "null";
-        } else if (isBoolean) {
+        } else if (category === "boolean") {
           initialValue = resolvedValue === true ? "true" : "false";
         } else if (
           udonType === "SystemType" &&
@@ -615,23 +657,17 @@ export class UdonAssembler {
         } else if (
           typeof resolvedValue === "string" &&
           resolvedValue.startsWith("0x") &&
-          !this.isStringType(type) &&
-          !this.isStringType(csharpType) &&
-          !this.isStringType(udonType)
+          category !== "string"
         ) {
           initialValue = resolvedValue;
         } else if (
           typeof resolvedValue === "number" &&
-          (this.isFloatType(type) ||
-            this.isFloatType(csharpType) ||
-            this.isFloatType(udonType))
+          category === "float"
         ) {
           initialValue = this.formatFloatLiteral(resolvedValue);
         } else if (
           typeof resolvedValue === "number" &&
-          (this.isIntegerType(type) ||
-            this.isIntegerType(csharpType) ||
-            this.isIntegerType(udonType))
+          category === "integer"
         ) {
           const integerTypeName = this.isIntegerType(udonType)
             ? udonType
