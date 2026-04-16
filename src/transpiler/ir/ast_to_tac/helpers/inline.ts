@@ -950,10 +950,7 @@ function emitInlinePropertyInitializersForClass(
       // Emit type-appropriate default for reference-type fields that
       // would otherwise stay null. Skip @SerializeField / synced fields
       // whose values are set externally by Unity/VRChat.
-      if (
-        prop.isSerializeField ||
-        (prop.syncMode && prop.syncMode !== "None")
-      ) {
+      if (prop.isSerializeField || !!prop.syncMode) {
         continue;
       }
       const ut = prop.type.udonType;
