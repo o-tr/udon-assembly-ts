@@ -2755,6 +2755,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
       );
+      // Must not wrap UdonInt (id) field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
       // SoA sentinels must use type-appropriate constructors
       expect(result.tac).toContain(STRING_SENTINEL_CTOR);
       expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
