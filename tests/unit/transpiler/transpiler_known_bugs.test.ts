@@ -2805,6 +2805,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
       );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
       // Handle must not unwrap via Reference
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
@@ -2812,6 +2816,10 @@ describe("known transpiler bugs", () => {
       // Handle unwraps via Int (inline class handles are Int32)
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      // No Float accessor leaking
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
       );
       // Confirm SoA path is exercised for the code field
       expect(result.tac).toContain("__soa_Item_code.get_Item");
