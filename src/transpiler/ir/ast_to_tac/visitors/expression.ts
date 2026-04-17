@@ -80,6 +80,7 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
+  createSoaSentinelValue,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
@@ -87,7 +88,6 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
-  createSoaSentinelValue,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
