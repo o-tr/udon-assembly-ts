@@ -2973,5 +2973,48 @@ class Main extends UdonSharpBehaviour {
       expect(result.tac).toContain("dlgrow_start");
       expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
     });
+
+    it("14i: UdonInt field initializer coerced to Int32, not Single", () => {
+      // The bare `0` literal (without `as UdonInt`) is parsed as Single.
+      // coerceValueForParamSlot in emitInlinePropertyInitializersForClass
+      // must coerce it to Int32 to match the declared field type, so the
+      // SoA DataToken wraps via __ctor__SystemInt32 (not __ctor__SystemSingle).
+      const source = `
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+class Counter {
+  count: UdonInt = 0;
+  constructor() {}
+  inc(): void { this.count = ((this.count as number) + 1) as UdonInt; }
+}
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const items: Counter[] = [];
+    for (let i = 0; i < 3; i++) {
+      items.push(new Counter());
+    }
+    items[0].inc();
+    Debug.Log(items[0].count);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // SoA path must be exercised
+      expect(result.tac).toContain("__soa_Counter_count");
+      // Field initializer must wrap via Int32 ctor, not Single ctor
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+    });
   });
 });
