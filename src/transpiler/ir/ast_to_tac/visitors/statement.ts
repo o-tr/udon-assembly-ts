@@ -1826,11 +1826,12 @@ export function visitClassDeclaration(
             "Workaround: extract the forEach body into a separate non-recursive helper method.",
         );
       }
-      if (emitted < expectedSelfCallCount && !this.metadataOnlyMode) {
+      if (emitted < expectedSelfCallCount) {
         // Warn-only (not error): over-counted variables are added to the
         // push/pop set but never written or read by code-gen. They are
         // push/pop-balanced by construction, so correctness is preserved —
         // the only cost is slightly more stack save/restore overhead.
+        // warnAt() suppresses emission during pass 1 (metadataOnlyMode).
         this.warnAt(
           method,
           "RecursiveSelfCallOvercount",

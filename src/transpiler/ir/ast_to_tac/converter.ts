@@ -164,9 +164,10 @@ export class ASTToTACConverter {
   /**
    * When true, emit() is a no-op. Pass 1 runs in this mode to collect
    * metadata (allInlineInstances, interfaceClassIdMap, soaClasses) without
-   * producing TAC instructions or firing diagnostic warnings — visitors and
-   * helpers that emit console.warn should guard with !metadataOnlyMode to
-   * avoid duplicate output across the two passes.
+   * producing TAC instructions or firing diagnostic warnings — new warn
+   * sites must call warnAt() (which suppresses internally when this flag
+   * is set) rather than console.warn directly, otherwise diagnostics are
+   * duplicated across the two passes.
    */
   metadataOnlyMode = false;
   tempCounter = 0;
