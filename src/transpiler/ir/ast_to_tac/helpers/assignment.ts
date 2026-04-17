@@ -47,6 +47,7 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
+  createSoaSentinelValue,
   isInlineHandleType,
   resolveClassNode,
   resolveClassProperty,
@@ -99,8 +100,14 @@ export function assignToTarget(
     // exist, so we grow the list with Add until it is large enough.
     // DataToken is a C# struct (value type) — DataList.Add copies the value,
     // so reusing the same heap slot for defaultToken across iterations is safe.
+    const growElementType =
+      arrayType instanceof ArrayTypeSymbol
+        ? arrayType.elementType
+        : arrayType instanceof DataListTypeSymbol
+          ? arrayType.elementType
+          : ObjectType;
     const defaultToken = this.wrapDataToken(
-      createConstant(0, PrimitiveTypes.int32),
+      createSoaSentinelValue(this, growElementType),
     );
     const dlgrowStart = this.newLabel("dlgrow_start");
     const dlgrowEnd = this.newLabel("dlgrow_end");
