@@ -15,6 +15,7 @@ import {
   AggregateTranspileError,
   DuplicateTopLevelConstError,
   formatWarnings,
+  type TranspileWarning,
 } from "../errors/transpile_errors.js";
 import { computeExposedLabels } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
@@ -159,6 +160,7 @@ export interface BatchFileResult {
 
 export interface BatchResult {
   outputs: BatchFileResult[];
+  diagnostics?: TranspileWarning[];
 }
 
 export class BatchTranspiler {
@@ -761,7 +763,7 @@ export class BatchTranspiler {
     if (diagnostics.length > 0) {
       console.warn(formatWarnings(diagnostics));
     }
-    return { outputs };
+    return diagnostics.length > 0 ? { outputs, diagnostics } : { outputs };
   }
 
   private loadCache(cachePath: string): CacheV3 | null {

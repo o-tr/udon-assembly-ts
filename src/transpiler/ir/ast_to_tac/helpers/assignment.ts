@@ -151,16 +151,17 @@ export function assignToTarget(
       }
     }
     // Entry point class self-property WRITE: direct copy
+    const entryClassName = this.currentClassName;
     if (
       propAccess.object.kind === ASTNodeKind.ThisExpression &&
-      this.currentClassName &&
-      this.entryPointClasses.has(this.currentClassName) &&
+      entryClassName &&
+      this.entryPointClasses.has(entryClassName) &&
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
       const resolved = resolveClassProperty(
         this,
-        this.currentClassName,
+        entryClassName,
         propAccess.property,
       );
       if (resolved) {
@@ -176,16 +177,12 @@ export function assignToTarget(
         if (callback) {
           // Try to inline the callback method; fall back to MethodCallInstruction
           const inlined = this.withInlineCallSite(propAccess, () =>
-            this.visitInlineInstanceMethodCall(
-              this.currentClassName as string,
-              callback,
-              [],
-            ),
+            this.visitInlineInstanceMethodCall(entryClassName, callback, []),
           );
           if (inlined == null) {
             const thisVar = createVariable(
               "this",
-              this.typeMapper.mapTypeScriptType(this.currentClassName),
+              this.typeMapper.mapTypeScriptType(entryClassName),
             );
             this.emit(
               new MethodCallInstruction(undefined, thisVar, callback, []),

@@ -38,7 +38,7 @@ export function formatLocation(loc: TranspileErrorLocation): string {
   return `${loc.filePath}:${loc.line}:${loc.column}`;
 }
 
-function formatContext(context: TranspileWarning["context"]): string {
+export function formatContext(context: TranspileWarning["context"]): string {
   if (!context) return "";
   const { className, methodName } = context;
   if (className && methodName) return ` (${className}.${methodName})`;

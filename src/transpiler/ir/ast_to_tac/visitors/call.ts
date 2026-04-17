@@ -1173,14 +1173,11 @@ export function visitCallExpression(
   // super() constructor calls: when inside an inline constructor with a known
   // base class, inline the base class constructor body. Otherwise treat as void.
   if (callee.kind === ASTNodeKind.SuperExpression) {
-    if (this.currentInlineBaseClass) {
+    const baseClass = this.currentInlineBaseClass;
+    if (baseClass) {
       const superArgs = rawArgs.map((arg) => this.visitExpression(arg));
       this.withInlineCallSite(node, () =>
-        inlineSuperConstructorFromArgs(
-          this,
-          this.currentInlineBaseClass as string,
-          superArgs,
-        ),
+        inlineSuperConstructorFromArgs(this, baseClass, superArgs),
       );
       // Emit parameter property assignments for the current class right after
       // super() returns — matches TypeScript semantics where `this.prop = prop`
@@ -2804,16 +2801,16 @@ export function visitCallExpression(
       return VOID_RETURN;
     }
     // Inline context self-method: this.method() inside inline class body
+    const inlineCtx = this.currentInlineContext;
     if (
       propAccess.object.kind === ASTNodeKind.ThisExpression &&
-      this.currentInlineContext &&
+      inlineCtx &&
       !this.currentThisOverride
     ) {
       const inlineResult = this.withInlineCallSite(node, () =>
         this.visitInlineInstanceMethodCallWithContext(
-          (this.currentInlineContext as { className: string }).className,
-          (this.currentInlineContext as { instancePrefix: string })
-            .instancePrefix,
+          inlineCtx.className,
+          inlineCtx.instancePrefix,
           propAccess.property,
           evaluatedArgs,
         ),
@@ -3310,16 +3307,17 @@ export function visitCallExpression(
       }
     }
     // Entry point class self-method: inline the body
+    const currentClass = this.currentClassName;
     if (
       propAccess.object.kind === ASTNodeKind.ThisExpression &&
-      this.currentClassName &&
-      this.entryPointClasses.has(this.currentClassName) &&
+      currentClass &&
+      this.entryPointClasses.has(currentClass) &&
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
       const inlineResult = this.withInlineCallSite(node, () =>
         this.visitInlineInstanceMethodCall(
-          this.currentClassName as string,
+          currentClass,
           propAccess.property,
           evaluatedArgs,
         ),

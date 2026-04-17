@@ -63,10 +63,7 @@ export class TypeScriptToUdonTranspiler {
     const parser = new TypeScriptParser();
     const ast = parser.parse(source, sourceFilePath);
     const registry = new ClassRegistry();
-    registry.registerFromProgram(
-      ast,
-      TypeScriptToUdonTranspiler.INLINE_SOURCE_ID,
-    );
+    registry.registerFromProgram(ast, sourceFilePath);
     const symbolTable = parser.getSymbolTable();
     let program = ast;
     if (options.optimize === true) {

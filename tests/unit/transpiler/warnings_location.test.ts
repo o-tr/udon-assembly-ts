@@ -56,15 +56,23 @@ class Main extends UdonSharpBehaviour {
     expect(erased?.context?.methodName).toBe("Start");
   });
 
-  it("warning falls back to the sourceFilePath when no node is available", () => {
-    // Construct an intentionally tricky all-inline interface with no
-    // implementor instantiated — exercises the converter.ts warn site
-    // which has no AST node in scope.
+  it("AllInlineInterfaceFallback fires with sourceFilePath fallback when no node is in scope", () => {
+    // All-inline interface with no constructor called for any implementor —
+    // exercises the converter.ts warn site emitted between passes with no
+    // AST node in scope.
     const source = `
 import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 
 interface Item {
   tick(): void;
+}
+
+class ItemA implements Item {
+  tick(): void {}
+}
+
+class ItemB implements Item {
+  tick(): void {}
 }
 
 @UdonBehaviour()
@@ -78,14 +86,45 @@ class Main extends UdonSharpBehaviour {
 }
 `;
     const result = transpile(source, "tests/allinline.ts");
-    // Regardless of whether the warning fires (depends on inliner heuristics),
-    // if it fires, the filePath must at least be the one we passed.
     const anyAllInline = result.diagnostics?.find(
       (d) => d.code === "AllInlineInterfaceFallback",
     );
-    if (anyAllInline) {
-      expect(anyAllInline.location.filePath).toBe("tests/allinline.ts");
-    }
+    expect(anyAllInline).toBeDefined();
+    expect(anyAllInline?.location.filePath).toBe("tests/allinline.ts");
+    // This site has no node available, so it falls back to a filePath-only
+    // sentinel location — line/column are zero.
+    expect(anyAllInline?.location.line).toBe(0);
+    expect(anyAllInline?.location.column).toBe(0);
+  });
+
+  it("does NOT fire AllInlineInterfaceFallback when the interface's sole implementor IS the entry-point class", () => {
+    // Smoke test for the between-pass warn block: when the sole implementor
+    // is a UdonBehaviour-decorated entry-point class, isAllInlineInterface
+    // must return false and the warning must NOT fire. This covers
+    // classRegistry-driven detection (decorator + baseClass chain + entry
+    // flag all survive resetState), but does not fully pin down placement
+    // invariants for classMap/entryPointClasses — those are documented at
+    // the warn block in converter.ts rather than guarded by test.
+    const source = `
+import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
+
+interface IAdvancer {
+  advance(): void;
+}
+
+@UdonBehaviour()
+class Entry extends UdonSharpBehaviour implements IAdvancer {
+  advance(): void {}
+  Start(): void {
+    this.advance();
+  }
+}
+`;
+    const result = transpile(source, "tests/entry_advancer.ts");
+    const any = result.diagnostics?.find(
+      (d) => d.code === "AllInlineInterfaceFallback",
+    );
+    expect(any).toBeUndefined();
   });
 
   it("diagnostics is undefined when no warnings fire", () => {

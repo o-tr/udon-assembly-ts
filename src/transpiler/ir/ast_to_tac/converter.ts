@@ -3,9 +3,11 @@
  */
 
 import type { ErrorCollector } from "../../errors/error_collector.js";
-import type {
-  TranspileErrorLocation,
-  TranspileWarningCode,
+import {
+  formatContext,
+  formatLocation,
+  type TranspileErrorLocation,
+  type TranspileWarningCode,
 } from "../../errors/transpile_errors.js";
 import type { ClassRegistry } from "../../frontend/class_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
@@ -429,10 +431,13 @@ export class ASTToTACConverter {
     // warnings there so diagnostics are not duplicated between passes.
     if (this.metadataOnlyMode) return;
     const location = this.resolveWarnLocation(node);
+    // Report the caller's class/method — consistent with resolveWarnLocation's
+    // caller-first preference. Inside an inline body, currentInlineContext
+    // names the callee class but currentClassName still holds the caller, so
+    // always prefer currentClassName here to avoid a mixed (callee.caller)
+    // label.
     const context: { className?: string; methodName?: string } = {};
-    if (this.currentInlineContext?.className) {
-      context.className = this.currentInlineContext.className;
-    } else if (this.currentClassName) {
+    if (this.currentClassName) {
       context.className = this.currentClassName;
     }
     if (this.currentMethodName) {
@@ -451,11 +456,8 @@ export class ASTToTACConverter {
       return;
     }
 
-    const locStr = `${location.filePath}:${location.line}:${location.column}`;
-    const ctxStr = hasContext
-      ? ` (${context.className ?? ""}${context.className && context.methodName ? "." : ""}${context.methodName ?? ""})`
-      : "";
-    console.warn(`[${code}] ${locStr}${ctxStr} ${message}`);
+    const ctxStr = hasContext ? formatContext(context) : "";
+    console.warn(`[${code}] ${formatLocation(location)}${ctxStr} ${message}`);
   }
 
   withInlineCallSite<T>(node: ASTNode, fn: () => T): T {
@@ -545,6 +547,8 @@ export class ASTToTACConverter {
     this.loopContextStack = [];
     this.tryContextStack = [];
     this.inlineReturnStack = [];
+    this.inlineCallSiteStack = [];
+    this.currentInlineConstructionSite = undefined;
     this.currentReturnVar = undefined;
     this.currentClassName = undefined;
     this.currentMethodName = undefined;
@@ -585,6 +589,13 @@ export class ASTToTACConverter {
     // constructor for any of its implementors was ever called.  In that case
     // pass 2 will fall through to generic (EXTERN) handling rather than viface
     // dispatch — the same silent failure the old single-pass code had.
+    //
+    // Emitted here, between pass 1 and resetState(), so that post-pass-1 state
+    // (classMap, entryPointClasses, interfaceClassIdMap, …) is still populated
+    // — isAllInlineInterface transitively reads classMap / entryPointClasses
+    // via isUdonBehaviourClassName, so moving this after resetState() would
+    // produce false positives for non-decorated entry-point classes.
+    //
     // Only check interfaces whose implementors are actually part of the current
     // compilation unit (program statements), otherwise the warning fires for
     // every entry point that doesn't use the interface — a false positive.
@@ -600,17 +611,29 @@ export class ASTToTACConverter {
           relevantInterfaces.add(iface);
         }
       }
-      for (const ifaceName of relevantInterfaces) {
-        if (
-          isAllInlineInterface(this, ifaceName) &&
-          !this.interfaceClassIdMap.has(ifaceName)
-        ) {
-          this.warnAt(
-            undefined,
-            "AllInlineInterfaceFallback",
-            `all-inline interface "${ifaceName}" has no instantiated implementors — for-of loops over this type will fall back to EXTERN dispatch.`,
-          );
+      // Temporarily clear metadataOnlyMode so warnAt is not suppressed. The
+      // flag is only meaningful for emit() (skipping TAC output) and for the
+      // visitor-level diagnostics that fire twice across the two passes; this
+      // between-pass site fires exactly once so the guard is inappropriate
+      // here. Restore immediately so any later code that checks the flag
+      // before resetState() still sees the original value.
+      const savedMetadataOnlyMode = this.metadataOnlyMode;
+      this.metadataOnlyMode = false;
+      try {
+        for (const ifaceName of relevantInterfaces) {
+          if (
+            isAllInlineInterface(this, ifaceName) &&
+            !this.interfaceClassIdMap.has(ifaceName)
+          ) {
+            this.warnAt(
+              undefined,
+              "AllInlineInterfaceFallback",
+              `all-inline interface "${ifaceName}" has no instantiated implementors — for-of loops over this type will fall back to EXTERN dispatch.`,
+            );
+          }
         }
+      } finally {
+        this.metadataOnlyMode = savedMetadataOnlyMode;
       }
     }
 
