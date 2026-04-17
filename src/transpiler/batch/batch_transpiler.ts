@@ -159,6 +159,13 @@ export interface BatchTranspilerOptions {
   includeExternalDependencies?: boolean;
   outputExtension?: string;
   heapLimit?: number;
+  /**
+   * When true, suppress the terminal `console.warn(formatWarnings(...))`
+   * emission. Structured diagnostics are still returned on
+   * `BatchResult.diagnostics`. Per-entry per-file warnings from assembler /
+   * heap checks are unaffected (they remain on stderr).
+   */
+  silent?: boolean;
 }
 
 export interface BatchFileResult {
@@ -454,7 +461,7 @@ export class BatchTranspiler {
         computedHashes,
       );
       const diagnostics = errorCollector.getWarnings();
-      if (diagnostics.length > 0) {
+      if (diagnostics.length > 0 && !options.silent) {
         console.warn(formatWarnings(diagnostics));
       }
       return diagnostics.length > 0
@@ -810,7 +817,7 @@ export class BatchTranspiler {
       computedHashes,
     );
     const diagnostics = errorCollector.getWarnings();
-    if (diagnostics.length > 0) {
+    if (diagnostics.length > 0 && !options.silent) {
       console.warn(formatWarnings(diagnostics));
     }
     return diagnostics.length > 0 ? { outputs, diagnostics } : { outputs };

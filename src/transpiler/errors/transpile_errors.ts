@@ -15,7 +15,7 @@ export type TranspileWarningCode =
   | "InlineErasedReturnType"
   | "AllInlineInterfaceFallback"
   | "D3DispatchFallback"
-  | "InlineReturnTypeWidened"
+  | "SoAFieldListMissing"
   | "RecursiveSelfCallOvercount";
 
 export interface TranspileErrorLocation {
@@ -35,6 +35,11 @@ export interface TranspileWarning {
 }
 
 export function formatLocation(loc: TranspileErrorLocation): string {
+  // Callers may pass {line: 0, column: 0} as a sentinel when the warning
+  // has no source node (e.g. a between-pass diagnostic). Many editors and
+  // CI tools treat `path:0:0` as invalid, so emit just the file path in
+  // that case. Real locations are always 1-based.
+  if (loc.line === 0 && loc.column === 0) return loc.filePath;
   return `${loc.filePath}:${loc.line}:${loc.column}`;
 }
 

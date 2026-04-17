@@ -403,16 +403,20 @@ export class ASTToTACConverter {
 
   /**
    * Resolve source location for a warning emitted by warnAt().
-   * Preference order: inline call-site stack → passed node → inline constructor
-   * site → bare filePath fallback. This lets warnings from inside inline
-   * method bodies point at the caller's TS source position.
+   * Preference order: nearest inline call-site (scanning stack top-down
+   * for the first entry with a real `loc`) → passed node → inline
+   * constructor site → bare filePath fallback. Scanning skips synthetic
+   * AST nodes that were constructed without a tsNode (e.g. destructuring
+   * expansions) so warnings still report a useful caller position.
    */
   private resolveWarnLocation(
     node: ASTNode | undefined,
   ): TranspileErrorLocation {
-    const top = this.inlineCallSiteStack[this.inlineCallSiteStack.length - 1];
-    const candidate =
-      top?.loc ?? node?.loc ?? this.currentInlineConstructionSite?.loc;
+    for (let i = this.inlineCallSiteStack.length - 1; i >= 0; i -= 1) {
+      const loc = this.inlineCallSiteStack[i]?.loc;
+      if (loc) return loc;
+    }
+    const candidate = node?.loc ?? this.currentInlineConstructionSite?.loc;
     if (candidate) return candidate;
     return { filePath: this.sourceFilePath, line: 0, column: 0 };
   }

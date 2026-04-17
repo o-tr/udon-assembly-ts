@@ -35,6 +35,13 @@ export interface TranspilerOptions {
   reflect?: boolean;
   useStringBuilder?: boolean;
   sourceFilePath?: string;
+  /**
+   * When true, suppress the automatic `console.warn(formatWarnings(...))`
+   * emission at the end of transpile(). Structured diagnostics are still
+   * available on `result.diagnostics`. Useful for IDE integrations and
+   * test harnesses that render warnings themselves.
+   */
+  silent?: boolean;
 }
 
 /**
@@ -205,7 +212,7 @@ export class TypeScriptToUdonTranspiler {
 
     const warnings = assembler.getWarnings();
     const diagnostics = parser.getErrorCollector().getWarnings();
-    if (diagnostics.length > 0) {
+    if (diagnostics.length > 0 && !options.silent) {
       console.warn(formatWarnings(diagnostics));
     }
     return {

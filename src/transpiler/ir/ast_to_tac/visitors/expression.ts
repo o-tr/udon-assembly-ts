@@ -2040,7 +2040,7 @@ export function visitPropertyAccessExpression(
               // SoA handles are dynamic counters, not static instanceIds.
               this.warnAt(
                 node,
-                "InlineReturnTypeWidened",
+                "SoAFieldListMissing",
                 `SoA class "${soaClassName}" has no DataList for property "${node.property}". D3 dispatch will fall through to static-handle comparison which cannot match dynamic SoA handles.`,
               );
             }
