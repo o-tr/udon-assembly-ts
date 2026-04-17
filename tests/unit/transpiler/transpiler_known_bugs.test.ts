@@ -3017,4 +3017,73 @@ class Main extends UdonSharpBehaviour {
       );
     });
   });
+
+  // Regression test for the runtime exception observed in mahjong-t2 VM tests
+  // (12回目, 2026-04-17): 25/26 tests crash with
+  //   UdonVMException in EXTERN 'VRCSDK3DataDataToken.__get_Int__SystemInt32'
+  // on shared analyzer paths such as `counts[tiles[i].kind] = toUdonInt(
+  // (counts[tiles[i].kind] as number) + 1)` in Tile.countFromTiles.
+  //
+  // The downstream `.Int` unwrap crashes because the write path produces a
+  // Single-typed operand that gets stored either as a mismatched DataToken or
+  // routed through a type-erased inline setter (`SystemObject.__set_*__Single__`)
+  // that does not exist on the VM. This is a mirrored companion to Bug 14's
+  // matched-type guards, recorded here as `it.fails` so that once the type
+  // propagation is fixed, vitest flips this test red and prompts promotion to
+  // a regular `it` regression.
+  describe("Bug 15: DataToken type-erased inline setter on SoA field write (#24)", () => {
+    it.fails(
+      "15: Assigning a Single-typed expression to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern",
+      () => {
+        const source = `
+          import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+          class Counter {
+            constructor(public value: UdonInt) {}
+          }
+          class Main {
+            Start(): void {
+              const counters: Counter[] = [];
+              let i: number = 0;
+              while (i < 3) {
+                counters.push(new Counter(0 as UdonInt));
+                i = i + 1;
+              }
+              const v: number = (counters[0].value as number) + 1;
+              counters[0].value = v as UdonInt;
+              Debug.Log(counters[0].value);
+            }
+          }
+        `;
+        const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+        // Expected post-fix invariants. Under the current bug, the first two
+        // `not.toContain` checks fail because the transpiler routes the write
+        // through a type-erased setter on SystemObject with a SystemSingle
+        // parameter, and inserts an unnecessary Int32 → Single conversion.
+        expect(result.uasm).not.toContain(
+          "SystemObject.__set_value__SystemSingle__SystemVoid",
+        );
+        expect(result.uasm).not.toContain(
+          "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
+        );
+        // Wrap / unwrap accessor type consistency for the SoA UdonInt field.
+        expect(result.uasm).toContain(
+          "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+        );
+        expect(result.uasm).toContain(
+          "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+        );
+        expect(result.uasm).not.toContain(
+          "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+        );
+        expect(result.uasm).not.toContain(
+          "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+        );
+        expect(result.uasm).not.toContain(
+          "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+        );
+        expect(result.tac).toContain("__soa_Counter_value");
+      },
+    );
+  });
 });
