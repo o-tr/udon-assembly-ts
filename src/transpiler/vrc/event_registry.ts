@@ -191,28 +191,24 @@ const VRC_EVENTS: VrcEventDefinition[] = [
   { udonName: "_onDisable", tsName: "OnDisable", parameters: [] },
 ];
 
-// Lazy-initialised lookup Maps wrapped in IIFE closures so the cache state is
-// not visible at module scope. This keeps the module's public surface
-// immutable while still deferring the Map construction cost until first use.
-const getEventMap: () => Map<string, VrcEventDefinition> = (() => {
-  let cache: Map<string, VrcEventDefinition> | null = null;
-  return () => {
-    if (!cache) {
-      cache = new Map(VRC_EVENTS.map((event) => [event.tsName, event]));
-    }
-    return cache;
-  };
-})();
+// Lazy-initialised lookup Maps. Construction is deferred until first use;
+// after that the cached instance is reused.
+let _eventMap: Map<string, VrcEventDefinition> | undefined;
+let _udonNameMap: Map<string, VrcEventDefinition> | undefined;
 
-const getUdonNameMap: () => Map<string, VrcEventDefinition> = (() => {
-  let cache: Map<string, VrcEventDefinition> | null = null;
-  return () => {
-    if (!cache) {
-      cache = new Map(VRC_EVENTS.map((event) => [event.udonName, event]));
-    }
-    return cache;
-  };
-})();
+function getEventMap(): Map<string, VrcEventDefinition> {
+  if (!_eventMap) {
+    _eventMap = new Map(VRC_EVENTS.map((event) => [event.tsName, event]));
+  }
+  return _eventMap;
+}
+
+function getUdonNameMap(): Map<string, VrcEventDefinition> {
+  if (!_udonNameMap) {
+    _udonNameMap = new Map(VRC_EVENTS.map((event) => [event.udonName, event]));
+  }
+  return _udonNameMap;
+}
 
 export function isVrcEvent(methodName: string): boolean {
   return getEventMap().has(methodName);

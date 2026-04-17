@@ -522,9 +522,9 @@ export class ASTToTACConverter {
     );
     const soaClassesFromPass1 = new Set(this.soaClasses);
 
-    // Pass 2: actual codegen, pre-seeded with pass-1 metadata
+    // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
+    // resetState() already clears metadataOnlyMode, so no explicit reset here.
     this.resetState();
-    this.metadataOnlyMode = false;
     this.allInlineInstances = allInstancesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
