@@ -2343,7 +2343,7 @@ export function visitObjectLiteralExpression(
     }
     return instanceHandle;
   }
-  return this.emitDictionaryFromProperties(node.properties);
+  return this.emitDictionaryFromProperties(node.properties, node);
 }
 
 export function visitDeleteExpression(
