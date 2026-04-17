@@ -599,11 +599,13 @@ function trySoAMethodDispatch(
 
   // Inline the method body
   const instrBeforeInline = converter.instructions.length;
-  const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
-    soaClassName,
-    scratchPrefix,
-    propAccess.property,
-    soaDispatchArgs,
+  const inlineRes = converter.withInlineCallSite(propAccess, () =>
+    converter.visitInlineInstanceMethodCallWithContext(
+      soaClassName,
+      scratchPrefix,
+      propAccess.property,
+      soaDispatchArgs,
+    ),
   );
   if (!inlineRes) {
     // Rollback on failure
@@ -834,11 +836,13 @@ function tryUntrackedInlineDispatch(
     );
     converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-    const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
-      info.className,
-      info.prefix,
-      propAccess.property,
-      dispatchArgs,
+    const inlineRes = converter.withInlineCallSite(propAccess, () =>
+      converter.visitInlineInstanceMethodCallWithContext(
+        info.className,
+        info.prefix,
+        propAccess.property,
+        dispatchArgs,
+      ),
     );
     if (!inlineRes) {
       converter.instructions.length = savedInstructionCount;
@@ -1092,11 +1096,13 @@ function tryD3MethodDispatch(
     );
     converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-    const inlineRes = converter.visitInlineInstanceMethodCallWithContext(
-      info.className,
-      info.prefix,
-      propAccess.property,
-      dispatchArgs,
+    const inlineRes = converter.withInlineCallSite(propAccess, () =>
+      converter.visitInlineInstanceMethodCallWithContext(
+        info.className,
+        info.prefix,
+        propAccess.property,
+        dispatchArgs,
+      ),
     );
     if (!inlineRes) {
       converter.instructions.length = savedInstructionCount;
@@ -1169,10 +1175,12 @@ export function visitCallExpression(
   if (callee.kind === ASTNodeKind.SuperExpression) {
     if (this.currentInlineBaseClass) {
       const superArgs = rawArgs.map((arg) => this.visitExpression(arg));
-      inlineSuperConstructorFromArgs(
-        this,
-        this.currentInlineBaseClass,
-        superArgs,
+      this.withInlineCallSite(node, () =>
+        inlineSuperConstructorFromArgs(
+          this,
+          this.currentInlineBaseClass as string,
+          superArgs,
+        ),
       );
       // Emit parameter property assignments for the current class right after
       // super() returns — matches TypeScript semantics where `this.prop = prop`
@@ -1327,10 +1335,12 @@ export function visitCallExpression(
           this.emit(new CastInstruction(castResult, evaluatedArgs[0]));
           return castResult;
         }
-        const inlineResult = this.visitInlineStaticMethodCall(
-          objectName,
-          access.property,
-          evaluatedArgs,
+        const inlineResult = this.withInlineCallSite(node, () =>
+          this.visitInlineStaticMethodCall(
+            objectName,
+            access.property,
+            evaluatedArgs,
+          ),
         );
         if (inlineResult) return inlineResult;
         const paramTypeNamesForAccess = evaluatedArgs.map(
@@ -1477,7 +1487,11 @@ export function visitCallExpression(
         !this.classRegistry?.isStub(calleeName) &&
         !this.udonBehaviourClasses.has(calleeName);
       if (canInline) {
-        return this.visitInlineConstructor(calleeName, getArgs());
+        return this.withInlineConstructionSite(node, () =>
+          this.withInlineCallSite(node, () =>
+            this.visitInlineConstructor(calleeName, getArgs()),
+          ),
+        );
       }
     }
     if (
@@ -2006,10 +2020,12 @@ export function visitCallExpression(
 
     if (propAccess.object.kind === ASTNodeKind.Identifier) {
       const className = (propAccess.object as IdentifierNode).name;
-      const inlineResult = this.visitInlineStaticMethodCall(
-        className,
-        propAccess.property,
-        evaluatedArgs,
+      const inlineResult = this.withInlineCallSite(node, () =>
+        this.visitInlineStaticMethodCall(
+          className,
+          propAccess.property,
+          evaluatedArgs,
+        ),
       );
       if (inlineResult != null) return inlineResult;
     }
@@ -2793,11 +2809,14 @@ export function visitCallExpression(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
-      const inlineResult = this.visitInlineInstanceMethodCallWithContext(
-        this.currentInlineContext.className,
-        this.currentInlineContext.instancePrefix,
-        propAccess.property,
-        evaluatedArgs,
+      const inlineResult = this.withInlineCallSite(node, () =>
+        this.visitInlineInstanceMethodCallWithContext(
+          (this.currentInlineContext as { className: string }).className,
+          (this.currentInlineContext as { instancePrefix: string })
+            .instancePrefix,
+          propAccess.property,
+          evaluatedArgs,
+        ),
       );
       if (inlineResult != null) return inlineResult;
     }
@@ -2807,11 +2826,13 @@ export function visitCallExpression(
     if (methodInstanceKey) {
       const instanceInfo = this.resolveInlineInstance(methodInstanceKey);
       if (instanceInfo) {
-        const inlineResult = this.visitInlineInstanceMethodCallWithContext(
-          instanceInfo.className,
-          instanceInfo.prefix,
-          propAccess.property,
-          evaluatedArgs,
+        const inlineResult = this.withInlineCallSite(node, () =>
+          this.visitInlineInstanceMethodCallWithContext(
+            instanceInfo.className,
+            instanceInfo.prefix,
+            propAccess.property,
+            evaluatedArgs,
+          ),
         );
         if (inlineResult != null) return inlineResult;
 
@@ -2821,11 +2842,13 @@ export function visitCallExpression(
         // instead of the concrete class name.
         const concreteClass = resolveConcreteClassName(this, instanceInfo);
         if (concreteClass !== instanceInfo.className) {
-          const concreteResult = this.visitInlineInstanceMethodCallWithContext(
-            concreteClass,
-            instanceInfo.prefix,
-            propAccess.property,
-            evaluatedArgs,
+          const concreteResult = this.withInlineCallSite(node, () =>
+            this.visitInlineInstanceMethodCallWithContext(
+              concreteClass,
+              instanceInfo.prefix,
+              propAccess.property,
+              evaluatedArgs,
+            ),
           );
           if (concreteResult != null) return concreteResult;
         }
@@ -2897,11 +2920,13 @@ export function visitCallExpression(
             );
             this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-            const inlineRes = this.visitInlineInstanceMethodCallWithContext(
-              className,
-              instanceInfo.prefix,
-              propAccess.property,
-              evaluatedArgs,
+            const inlineRes = this.withInlineCallSite(node, () =>
+              this.visitInlineInstanceMethodCallWithContext(
+                className,
+                instanceInfo.prefix,
+                propAccess.property,
+                evaluatedArgs,
+              ),
             );
             if (!inlineRes) {
               // Inlining blocked (e.g. recursion guard); roll back the
@@ -3292,10 +3317,12 @@ export function visitCallExpression(
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
-      const inlineResult = this.visitInlineInstanceMethodCall(
-        this.currentClassName,
-        propAccess.property,
-        evaluatedArgs,
+      const inlineResult = this.withInlineCallSite(node, () =>
+        this.visitInlineInstanceMethodCall(
+          this.currentClassName as string,
+          propAccess.property,
+          evaluatedArgs,
+        ),
       );
       if (inlineResult != null) return inlineResult;
     }

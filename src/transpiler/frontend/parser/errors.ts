@@ -70,10 +70,12 @@ export function reportUnsupportedNode(
  */
 export function createUnsupportedExpressionPlaceholder(
   this: TypeScriptParser,
+  tsNode?: ts.Node,
 ): LiteralNode {
-  return {
+  const result: LiteralNode = {
     kind: ASTNodeKind.Literal,
     value: 0,
     type: this.typeMapper.mapTypeScriptType("number"),
   };
+  return tsNode ? this.attachLoc(tsNode, result) : result;
 }

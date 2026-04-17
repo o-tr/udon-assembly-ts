@@ -182,14 +182,16 @@ export function visitClassDeclaration(
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
           ) ?? !hasPropertyModifier;
-        properties.push({
-          kind: ASTNodeKind.PropertyDeclaration,
-          name: propName,
-          type: propType,
-          isPublic,
-          isStatic: false,
-          isSerializeField: serializeFieldParams.has(propName),
-        });
+        properties.push(
+          this.attachLoc(param, {
+            kind: ASTNodeKind.PropertyDeclaration,
+            name: propName,
+            type: propType,
+            isPublic,
+            isStatic: false,
+            isSerializeField: serializeFieldParams.has(propName),
+          }),
+        );
       }
     } else if (ts.isGetAccessorDeclaration(member)) {
       const propName = member.name.getText();
@@ -205,13 +207,15 @@ export function visitClassDeclaration(
           (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
         ) ?? true
       );
-      properties.push({
-        kind: ASTNodeKind.PropertyDeclaration,
-        name: propName,
-        type: propType,
-        isPublic,
-        isStatic,
-      });
+      properties.push(
+        this.attachLoc(member, {
+          kind: ASTNodeKind.PropertyDeclaration,
+          name: propName,
+          type: propType,
+          isPublic,
+          isStatic,
+        }),
+      );
     } else if (ts.isSetAccessorDeclaration(member)) {
       const propName = member.name.getText();
       if (properties.some((prop) => prop.name === propName)) continue;
@@ -227,13 +231,15 @@ export function visitClassDeclaration(
           (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
         ) ?? true
       );
-      properties.push({
-        kind: ASTNodeKind.PropertyDeclaration,
-        name: propName,
-        type: propType,
-        isPublic,
-        isStatic,
-      });
+      properties.push(
+        this.attachLoc(member, {
+          kind: ASTNodeKind.PropertyDeclaration,
+          name: propName,
+          type: propType,
+          isPublic,
+          isStatic,
+        }),
+      );
     } else if (ts.isIndexSignatureDeclaration(member)) {
     } else {
       this.reportUnsupportedNode(
@@ -253,7 +259,7 @@ export function visitClassDeclaration(
     }
   }
 
-  const result: ClassDeclarationNode = {
+  const result: ClassDeclarationNode = this.attachLoc(node, {
     kind: ASTNodeKind.ClassDeclaration,
     name: className,
     baseClass,
@@ -262,7 +268,7 @@ export function visitClassDeclaration(
     properties,
     methods,
     constructor: constructorNode,
-  };
+  });
 
   if (classTypeParams.size > 0) {
     this.genericTypeParamStack.pop();
@@ -355,12 +361,12 @@ export function visitInterfaceDeclaration(
     new InterfaceTypeSymbol(name, methodMap, propertyMap),
   );
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.InterfaceDeclaration,
     name,
     properties,
     methods,
-  };
+  });
 }
 
 export function visitDecorator(
@@ -391,17 +397,17 @@ export function visitDecorator(
       const text = arg.getText();
       return text.replace(/^['"]|['"]$/g, "");
     });
-    return {
+    return this.attachLoc(node, {
       kind: ASTNodeKind.Decorator,
       name,
       arguments: args,
-    };
+    });
   }
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.Decorator,
     name: expression.getText(),
     arguments: [],
-  };
+  });
 }
 
 export function visitPropertyDeclaration(
@@ -472,7 +478,7 @@ export function visitPropertyDeclaration(
     true
   );
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.PropertyDeclaration,
     name,
     type,
@@ -483,7 +489,7 @@ export function visitPropertyDeclaration(
     syncMode,
     fieldChangeCallback,
     isSerializeField,
-  };
+  });
 }
 
 export function visitMethodDeclaration(
@@ -553,7 +559,7 @@ export function visitMethodDeclaration(
     (decorator) => decorator.name === "UdonExport",
   );
 
-  const result: MethodDeclarationNode = {
+  const result: MethodDeclarationNode = this.attachLoc(node, {
     kind: ASTNodeKind.MethodDeclaration,
     name,
     parameters,
@@ -564,7 +570,7 @@ export function visitMethodDeclaration(
     isStatic,
     isRecursive,
     isExported,
-  };
+  });
 
   if (methodTypeParams.size > 0) {
     this.genericTypeParamStack.pop();
@@ -613,11 +619,13 @@ export function visitEnumDeclaration(
       enumKind = memberKind;
     }
 
-    members.push({
-      kind: ASTNodeKind.EnumMember,
-      name: member.name.getText(),
-      value,
-    });
+    members.push(
+      this.attachLoc(member, {
+        kind: ASTNodeKind.EnumMember,
+        name: member.name.getText(),
+        value,
+      }),
+    );
     if (memberKind === "number" && typeof value === "number") {
       autoValue = value + 1;
     }
@@ -629,11 +637,11 @@ export function visitEnumDeclaration(
     members.map((m) => ({ name: m.name, value: m.value })),
   );
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.EnumDeclaration,
     name: node.name.text,
     members,
-  };
+  });
 }
 
 function evaluateEnumInitializer(

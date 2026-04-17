@@ -175,10 +175,12 @@ export function assignToTarget(
         );
         if (callback) {
           // Try to inline the callback method; fall back to MethodCallInstruction
-          const inlined = this.visitInlineInstanceMethodCall(
-            this.currentClassName,
-            callback,
-            [],
+          const inlined = this.withInlineCallSite(propAccess, () =>
+            this.visitInlineInstanceMethodCall(
+              this.currentClassName as string,
+              callback,
+              [],
+            ),
           );
           if (inlined == null) {
             const thisVar = createVariable(

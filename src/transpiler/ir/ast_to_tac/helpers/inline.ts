@@ -1320,11 +1320,11 @@ export function visitInlineConstructor(
           this.emit(
             new MethodCallInstruction(undefined, listVar, "Add", [token]),
           );
-        } else if (!this.metadataOnlyMode) {
-          console.warn(
-            `transpiler: SoA epilogue for ${className}: mapInlineProperty returned ` +
-              `undefined for field "${fieldName}" (prefix ${instancePrefix}). ` +
-              `DataList index alignment may be broken.`,
+        } else {
+          this.warnAt(
+            undefined,
+            "InlineSoAEpilogue",
+            `SoA epilogue for ${className}: mapInlineProperty returned undefined for field "${fieldName}" (prefix ${instancePrefix}). DataList index alignment may be broken.`,
           );
         }
       }
@@ -1362,11 +1362,11 @@ export function visitInlineStaticMethodCall(
     // No matching recursive context — this can happen for non-recursive
     // methods that are already being inlined (mutual recursion, or a
     // method calling itself without countStaticSelfCalls detecting it).
-    if (!this.metadataOnlyMode) {
-      console.warn(
-        `transpiler: recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
-      );
-    }
+    this.warnAt(
+      undefined,
+      "InlineRecursiveReentry",
+      `recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+    );
     return null;
   }
 
@@ -1403,9 +1403,11 @@ export function visitInlineStaticMethodCall(
   if (selfCallCount > 0) {
     // TODO: erased return types on recursive paths need separate analysis;
     // DataToken promotion is not applied here.
-    if (isPlainObjectType(returnType) && !this.metadataOnlyMode) {
-      console.warn(
-        `transpiler: inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
+    if (isPlainObjectType(returnType)) {
+      this.warnAt(
+        undefined,
+        "InlineErasedReturnType",
+        `inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
       );
     }
     return emitInlineRecursiveStaticMethod(

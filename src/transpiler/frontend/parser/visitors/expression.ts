@@ -108,9 +108,9 @@ export function visitExpression(
         node as ts.ObjectLiteralExpression,
       );
     case ts.SyntaxKind.ThisKeyword:
-      return this.visitThisExpression();
+      return this.visitThisExpression(node);
     case ts.SyntaxKind.SuperKeyword:
-      return this.visitSuperExpression();
+      return this.visitSuperExpression(node);
     case ts.SyntaxKind.ArrowFunction:
     case ts.SyntaxKind.FunctionExpression:
       return this.visitFunctionLiteralExpression(
@@ -137,40 +137,40 @@ export function visitBinaryExpression(
 
   // Handle assignment separately
   if (operator === "=") {
-    return {
+    return this.attachLoc(node, {
       kind: ASTNodeKind.AssignmentExpression,
       target: this.visitExpression(node.left),
       value: this.visitExpression(node.right),
-    };
+    });
   }
 
   if (operator === "??") {
-    const coalesceNode: NullCoalescingExpressionNode = {
+    const coalesceNode: NullCoalescingExpressionNode = this.attachLoc(node, {
       kind: ASTNodeKind.NullCoalescingExpression,
       left: this.visitExpression(node.left),
       right: this.visitExpression(node.right),
-    };
+    });
     return coalesceNode;
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.BinaryExpression,
     operator,
     left: this.visitExpression(node.left),
     right: this.visitExpression(node.right),
-  };
+  });
 }
 
 export function visitConditionalExpression(
   this: TypeScriptParser,
   node: ts.ConditionalExpression,
 ): ConditionalExpressionNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.ConditionalExpression,
     condition: this.visitExpression(node.condition),
     whenTrue: this.visitExpression(node.whenTrue),
     whenFalse: this.visitExpression(node.whenFalse),
-  };
+  });
 }
 
 export function visitTemplateExpression(
@@ -178,10 +178,10 @@ export function visitTemplateExpression(
   node: ts.TemplateExpression | ts.NoSubstitutionTemplateLiteral,
 ): TemplateExpressionNode {
   if (ts.isNoSubstitutionTemplateLiteral(node)) {
-    return {
+    return this.attachLoc(node, {
       kind: ASTNodeKind.TemplateExpression,
       parts: [{ kind: "text", value: node.text }],
-    };
+    });
   }
 
   const parts: TemplateExpressionNode["parts"] = [];
@@ -198,21 +198,21 @@ export function visitTemplateExpression(
     }
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.TemplateExpression,
     parts,
-  };
+  });
 }
 
 export function visitUnaryExpression(
   this: TypeScriptParser,
   node: ts.PrefixUnaryExpression,
 ): UnaryExpressionNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.UnaryExpression,
     operator: node.operator === ts.SyntaxKind.ExclamationToken ? "!" : "-",
     operand: this.visitExpression(node.operand),
-  };
+  });
 }
 
 export function visitUpdateExpression(
@@ -221,12 +221,12 @@ export function visitUpdateExpression(
 ): UpdateExpressionNode {
   const operator = node.operator === ts.SyntaxKind.PlusPlusToken ? "+" : "-";
   const operand = this.visitExpression(node.operand);
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.UpdateExpression,
     operator,
     operand,
     isPostfix: ts.isPostfixUnaryExpression(node),
-  };
+  });
 }
 
 export function visitFunctionLiteralExpression(
@@ -251,24 +251,24 @@ export function visitFunctionLiteralExpression(
     ? this.mapTypeWithGenerics(node.type.getText(), node.type)
     : undefined;
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.FunctionExpression,
     parameters,
     body,
     isArrow: ts.isArrowFunction(node),
     returnType,
-  };
+  });
 }
 
 export function visitRegexLiteralExpression(
   this: TypeScriptParser,
   _node: ts.RegularExpressionLiteral,
 ): LiteralNode {
-  return {
+  return this.attachLoc(_node, {
     kind: ASTNodeKind.Literal,
     value: 0,
     type: this.typeMapper.mapTypeScriptType("object"),
-  };
+  });
 }
 
 export function visitNonNullExpression(
@@ -282,26 +282,30 @@ export function visitIdentifier(
   this: TypeScriptParser,
   node: ts.Identifier,
 ): IdentifierNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.Identifier,
     name: node.text,
-  };
+  });
 }
 
 export function visitThisExpression(
   this: TypeScriptParser,
+  node?: ts.Node,
 ): ThisExpressionNode {
-  return {
+  const result: ThisExpressionNode = {
     kind: ASTNodeKind.ThisExpression,
   };
+  return node ? this.attachLoc(node, result) : result;
 }
 
 export function visitSuperExpression(
   this: TypeScriptParser,
+  node?: ts.Node,
 ): SuperExpressionNode {
-  return {
+  const result: SuperExpressionNode = {
     kind: ASTNodeKind.SuperExpression,
   };
+  return node ? this.attachLoc(node, result) : result;
 }
 
 export function visitObjectLiteralExpression(
@@ -369,42 +373,42 @@ export function visitObjectLiteralExpression(
     );
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.ObjectLiteralExpression,
     properties,
-  };
+  });
 }
 
 export function visitDeleteExpression(
   this: TypeScriptParser,
   node: ts.DeleteExpression,
 ): DeleteExpressionNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.DeleteExpression,
     target: this.visitExpression(node.expression),
-  };
+  });
 }
 
 export function visitPropertyAccessExpression(
   this: TypeScriptParser,
   node: ts.PropertyAccessExpression,
 ): PropertyAccessExpressionNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.PropertyAccessExpression,
     object: this.visitExpression(node.expression),
     property: node.name.getText(),
-  };
+  });
 }
 
 export function visitOptionalChainingExpression(
   this: TypeScriptParser,
   node: ts.PropertyAccessChain,
 ): OptionalChainingExpressionNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.OptionalChainingExpression,
     object: this.visitExpression(node.expression),
     property: node.name.getText(),
-  };
+  });
 }
 
 export function visitLiteral(
@@ -446,11 +450,11 @@ export function visitLiteral(
       throw new Error(`Unsupported literal kind: ${ts.SyntaxKind[node.kind]}`);
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.Literal,
     value,
     type,
-  };
+  });
 }
 
 export function visitCallExpression(
@@ -467,12 +471,12 @@ export function visitCallExpression(
   const callee = this.visitExpression(node.expression);
   const args = node.arguments.map((arg) => this.visitExpression(arg));
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.CallExpression,
     callee,
     arguments: args,
     typeArguments: node.typeArguments?.map((arg) => arg.getText()),
-  };
+  });
 }
 
 export function visitNameofExpression(
@@ -485,7 +489,10 @@ export function visitNameofExpression(
       "nameof() requires exactly one argument",
       "Provide an identifier as argument.",
     );
-    return { kind: ASTNodeKind.NameofExpression, name: "" };
+    return this.attachLoc(node, {
+      kind: ASTNodeKind.NameofExpression,
+      name: "",
+    });
   }
   const arg = node.arguments[0];
   let name: string;
@@ -497,10 +504,10 @@ export function visitNameofExpression(
   } else {
     name = arg.getText();
   }
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.NameofExpression,
     name,
-  };
+  });
 }
 
 export function visitTypeofExpression(
@@ -515,10 +522,10 @@ export function visitTypeofExpression(
       typeName = symbol.type.name;
     }
   }
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.TypeofExpression,
     typeName,
-  };
+  });
 }
 
 export function visitElementAccessExpression(
@@ -532,18 +539,18 @@ export function visitElementAccessExpression(
       "Element access expression requires an index argument",
       "Provide an index inside the brackets.",
     );
-    return {
+    return this.attachLoc(node, {
       kind: ASTNodeKind.ArrayAccessExpression,
       array: arrayExpr,
-      index: this.createUnsupportedExpressionPlaceholder(),
-    };
+      index: this.createUnsupportedExpressionPlaceholder(node),
+    });
   }
   const indexExpr = this.visitExpression(node.argumentExpression);
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.ArrayAccessExpression,
     array: arrayExpr,
     index: indexExpr,
-  };
+  });
 }
 
 export function visitNewExpression(
@@ -553,13 +560,13 @@ export function visitNewExpression(
   // Treat `new X(args)` as a call expression for now
   const callee = this.visitExpression(node.expression as ts.Expression);
   const args = (node.arguments ?? []).map((arg) => this.visitExpression(arg));
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.CallExpression,
     callee,
     arguments: args,
     typeArguments: node.typeArguments?.map((arg) => arg.getText()),
     isNew: true,
-  };
+  });
 }
 
 export function visitArrayLiteralExpression(
@@ -584,11 +591,11 @@ export function visitArrayLiteralExpression(
     });
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.ArrayLiteralExpression,
     elements,
     typeHint,
-  };
+  });
 }
 
 export function visitParenthesizedExpression(
@@ -602,9 +609,9 @@ export function visitAsExpression(
   this: TypeScriptParser,
   node: ts.AsExpression,
 ) {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.AsExpression,
     expression: this.visitExpression(node.expression),
     targetType: node.type.getText(),
-  };
+  });
 }

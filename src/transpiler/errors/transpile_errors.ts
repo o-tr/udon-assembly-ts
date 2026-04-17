@@ -8,10 +8,54 @@ export type TranspileErrorCode =
   | "TypeError"
   | "InternalError";
 
+export type TranspileWarningCode =
+  | "ErasedReturnInline"
+  | "InlineSoAEpilogue"
+  | "InlineRecursiveReentry"
+  | "InlineErasedReturnType"
+  | "AllInlineInterfaceFallback"
+  | "D3DispatchFallback"
+  | "InlineReturnTypeWidened"
+  | "RecursiveSelfCallOvercount";
+
 export interface TranspileErrorLocation {
   filePath: string;
   line: number;
   column: number;
+}
+
+export interface TranspileWarning {
+  code: TranspileWarningCode;
+  message: string;
+  location: TranspileErrorLocation;
+  context?: {
+    className?: string;
+    methodName?: string;
+  };
+}
+
+export function formatLocation(loc: TranspileErrorLocation): string {
+  return `${loc.filePath}:${loc.line}:${loc.column}`;
+}
+
+function formatContext(context: TranspileWarning["context"]): string {
+  if (!context) return "";
+  const { className, methodName } = context;
+  if (className && methodName) return ` (${className}.${methodName})`;
+  if (className) return ` (${className})`;
+  if (methodName) return ` (${methodName})`;
+  return "";
+}
+
+export function formatWarnings(warnings: TranspileWarning[]): string {
+  if (warnings.length === 0) return "";
+  const header = `Transpile produced ${warnings.length} warning(s):`;
+  const lines = warnings.map((w) => {
+    const loc = formatLocation(w.location);
+    const ctx = formatContext(w.context);
+    return `- [${w.code}] ${loc}${ctx} ${w.message}`;
+  });
+  return [header, ...lines].join("\n");
 }
 
 export class TranspileError extends Error {
@@ -84,7 +128,7 @@ export class AggregateTranspileError extends Error {
   private static formatMessage(errors: TranspileError[]): string {
     const header = `Transpile failed with ${errors.length} error(s):`;
     const lines = errors.map((err) => {
-      const loc = `${err.location.filePath}:${err.location.line}:${err.location.column}`;
+      const loc = formatLocation(err.location);
       const suggestion = err.suggestion ? ` (hint: ${err.suggestion})` : "";
       return `- [${err.code}] ${loc} ${err.message}${suggestion}`;
     });

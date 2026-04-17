@@ -2,6 +2,11 @@
  * Convert AST to TAC (Three-Address Code)
  */
 
+import type { ErrorCollector } from "../../errors/error_collector.js";
+import type {
+  TranspileErrorLocation,
+  TranspileWarningCode,
+} from "../../errors/transpile_errors.js";
 import type { ClassRegistry } from "../../frontend/class_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
@@ -356,6 +361,16 @@ export class ASTToTACConverter {
    * Set by visitVariableDeclaration immediately before visiting the initializer.
    */
   currentNativeArrayVarName: string | null = null;
+  /** Source file path for diagnostic messages; populated from transpile options. */
+  sourceFilePath = "<unknown>";
+  /** Optional error collector used by warnAt() to record warnings with source locations. */
+  errorCollector?: ErrorCollector;
+  /** Stack of AST nodes representing active inline call sites (innermost last).
+   *  Used by warnAt() so warnings emitted inside an inline body report the
+   *  caller's source location instead of the inline definition. */
+  inlineCallSiteStack: ASTNode[] = [];
+  /** AST node for the current inline constructor invocation (SoA epilogue). */
+  currentInlineConstructionSite?: ASTNode;
 
   constructor(
     symbolTable: SymbolTable,
@@ -367,6 +382,8 @@ export class ASTToTACConverter {
       useStringBuilder?: boolean;
       stringBuilderThreshold?: number;
       typeMapper?: TypeMapper;
+      sourceFilePath?: string;
+      errorCollector?: ErrorCollector;
     },
   ) {
     this.symbolTable = symbolTable;
@@ -378,6 +395,86 @@ export class ASTToTACConverter {
     this.useStringBuilder = options?.useStringBuilder !== false;
     this.stringBuilderThreshold =
       options?.stringBuilderThreshold ?? this.stringBuilderThreshold;
+    if (options?.sourceFilePath) this.sourceFilePath = options.sourceFilePath;
+    this.errorCollector = options?.errorCollector;
+  }
+
+  /**
+   * Resolve source location for a warning emitted by warnAt().
+   * Preference order: inline call-site stack → passed node → inline constructor
+   * site → bare filePath fallback. This lets warnings from inside inline
+   * method bodies point at the caller's TS source position.
+   */
+  private resolveWarnLocation(
+    node: ASTNode | undefined,
+  ): TranspileErrorLocation {
+    const top = this.inlineCallSiteStack[this.inlineCallSiteStack.length - 1];
+    const candidate =
+      top?.loc ?? node?.loc ?? this.currentInlineConstructionSite?.loc;
+    if (candidate) return candidate;
+    return { filePath: this.sourceFilePath, line: 0, column: 0 };
+  }
+
+  /**
+   * Emit a warning with source location and class/method context.
+   * Routed through errorCollector when available; otherwise falls back
+   * to console.warn with a formatted prefix.
+   */
+  warnAt(
+    node: ASTNode | undefined,
+    code: TranspileWarningCode,
+    message: string,
+  ): void {
+    // Pass 1 (metadataOnlyMode) visits everything a second time; suppress
+    // warnings there so diagnostics are not duplicated between passes.
+    if (this.metadataOnlyMode) return;
+    const location = this.resolveWarnLocation(node);
+    const context: { className?: string; methodName?: string } = {};
+    if (this.currentInlineContext?.className) {
+      context.className = this.currentInlineContext.className;
+    } else if (this.currentClassName) {
+      context.className = this.currentClassName;
+    }
+    if (this.currentMethodName) {
+      context.methodName = this.currentMethodName;
+    }
+    const hasContext =
+      context.className !== undefined || context.methodName !== undefined;
+
+    if (this.errorCollector) {
+      this.errorCollector.addWarning({
+        code,
+        message,
+        location,
+        ...(hasContext ? { context } : {}),
+      });
+      return;
+    }
+
+    const locStr = `${location.filePath}:${location.line}:${location.column}`;
+    const ctxStr = hasContext
+      ? ` (${context.className ?? ""}${context.className && context.methodName ? "." : ""}${context.methodName ?? ""})`
+      : "";
+    console.warn(`[${code}] ${locStr}${ctxStr} ${message}`);
+  }
+
+  withInlineCallSite<T>(node: ASTNode, fn: () => T): T {
+    this.inlineCallSiteStack.push(node);
+    try {
+      return fn();
+    } finally {
+      this.inlineCallSiteStack.pop();
+    }
+  }
+
+  withInlineConstructionSite<T>(node: ASTNode, fn: () => T): T {
+    const previous = this.currentInlineConstructionSite;
+    this.currentInlineConstructionSite = node;
+    try {
+      return fn();
+    } finally {
+      this.currentInlineConstructionSite = previous;
+    }
   }
 
   /**
@@ -508,9 +605,10 @@ export class ASTToTACConverter {
           isAllInlineInterface(this, ifaceName) &&
           !this.interfaceClassIdMap.has(ifaceName)
         ) {
-          console.warn(
-            `transpiler: all-inline interface "${ifaceName}" has no instantiated implementors — ` +
-              `for-of loops over this type will fall back to EXTERN dispatch.`,
+          this.warnAt(
+            undefined,
+            "AllInlineInterfaceFallback",
+            `all-inline interface "${ifaceName}" has no instantiated implementors — for-of loops over this type will fall back to EXTERN dispatch.`,
           );
         }
       }

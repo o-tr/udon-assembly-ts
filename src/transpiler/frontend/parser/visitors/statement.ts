@@ -72,12 +72,12 @@ export function visitNode(
     case ts.SyntaxKind.Block:
       return this.visitBlock(node as ts.Block);
     case ts.SyntaxKind.ExpressionStatement:
-      return {
+      return this.attachLoc(node, {
         kind: ASTNodeKind.ExpressionStatement,
         expression: this.visitExpression(
           (node as ts.ExpressionStatement).expression,
         ),
-      } as ExpressionStatementNode;
+      } as ExpressionStatementNode);
     case ts.SyntaxKind.ReturnStatement:
       return this.visitReturnStatement(node as ts.ReturnStatement);
     case ts.SyntaxKind.ClassDeclaration:
@@ -128,13 +128,13 @@ export function visitVariableStatement(
     const tempType = this.inferType(initExpr);
     this.symbolTable.addSymbol(tempName, tempType, false, true);
 
-    const tempDecl: VariableDeclarationNode = {
+    const tempDecl: VariableDeclarationNode = this.attachLoc(declaration, {
       kind: ASTNodeKind.VariableDeclaration,
       name: tempName,
       type: tempType,
       isConst: true,
       initializer: this.visitExpression(initExpr),
-    };
+    });
 
     const elementType =
       tempType instanceof ArrayTypeSymbol ? tempType.elementType : ObjectType;
@@ -147,31 +147,33 @@ export function visitVariableStatement(
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, elementType, false, isConst);
       }
-      const arrayAccess: ArrayAccessExpressionNode = {
+      const arrayAccess: ArrayAccessExpressionNode = this.attachLoc(element, {
         kind: ASTNodeKind.ArrayAccessExpression,
-        array: {
+        array: this.attachLoc(element, {
           kind: ASTNodeKind.Identifier,
           name: tempName,
-        } as IdentifierNode,
-        index: {
+        } as IdentifierNode),
+        index: this.attachLoc(element, {
           kind: ASTNodeKind.Literal,
           value: i,
           type: PrimitiveTypes.int32,
-        } as LiteralNode,
-      };
-      statements.push({
-        kind: ASTNodeKind.VariableDeclaration,
-        name: varName,
-        type: elementType,
-        isConst,
-        initializer: arrayAccess,
-      } as VariableDeclarationNode);
+        } as LiteralNode),
+      });
+      statements.push(
+        this.attachLoc(element, {
+          kind: ASTNodeKind.VariableDeclaration,
+          name: varName,
+          type: elementType,
+          isConst,
+          initializer: arrayAccess,
+        } as VariableDeclarationNode),
+      );
     }
 
-    return {
+    return this.attachLoc(node, {
       kind: ASTNodeKind.BlockStatement,
       statements,
-    } as BlockStatementNode;
+    } as BlockStatementNode);
   }
 
   if (ts.isObjectBindingPattern(declaration.name)) {
@@ -191,13 +193,13 @@ export function visitVariableStatement(
     const tempInterfaceType =
       tempType instanceof InterfaceTypeSymbol ? tempType : null;
 
-    const tempDecl: VariableDeclarationNode = {
+    const tempDecl: VariableDeclarationNode = this.attachLoc(declaration, {
       kind: ASTNodeKind.VariableDeclaration,
       name: tempName,
       type: tempType,
       isConst: true,
       initializer: this.visitExpression(initExpr),
-    };
+    });
 
     const statements: ASTNode[] = [tempDecl];
     for (const element of declaration.name.elements) {
@@ -212,27 +214,32 @@ export function visitVariableStatement(
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, propType, false, isConst);
       }
-      const propertyAccess: PropertyAccessExpressionNode = {
-        kind: ASTNodeKind.PropertyAccessExpression,
-        object: {
-          kind: ASTNodeKind.Identifier,
-          name: tempName,
-        } as IdentifierNode,
-        property: propName,
-      };
-      statements.push({
-        kind: ASTNodeKind.VariableDeclaration,
-        name: varName,
-        type: propType,
-        isConst,
-        initializer: propertyAccess,
-      } as VariableDeclarationNode);
+      const propertyAccess: PropertyAccessExpressionNode = this.attachLoc(
+        element,
+        {
+          kind: ASTNodeKind.PropertyAccessExpression,
+          object: this.attachLoc(element, {
+            kind: ASTNodeKind.Identifier,
+            name: tempName,
+          } as IdentifierNode),
+          property: propName,
+        },
+      );
+      statements.push(
+        this.attachLoc(element, {
+          kind: ASTNodeKind.VariableDeclaration,
+          name: varName,
+          type: propType,
+          isConst,
+          initializer: propertyAccess,
+        } as VariableDeclarationNode),
+      );
     }
 
-    return {
+    return this.attachLoc(node, {
       kind: ASTNodeKind.BlockStatement,
       statements,
-    } as BlockStatementNode;
+    } as BlockStatementNode);
   }
 
   const name = declaration.name.getText();
@@ -251,13 +258,13 @@ export function visitVariableStatement(
   // Add to symbol table
   this.symbolTable.addSymbol(name, type, false, isConst);
 
-  const result: VariableDeclarationNode = {
+  const result: VariableDeclarationNode = this.attachLoc(node, {
     kind: ASTNodeKind.VariableDeclaration,
     name,
     type,
     originalTypeName,
     isConst,
-  };
+  });
 
   if (declaration.initializer) {
     if (ts.isArrayLiteralExpression(declaration.initializer)) {
@@ -311,12 +318,12 @@ export function visitTypeAliasDeclaration(
     new InterfaceTypeSymbol(name, methodMap, propertyMap),
   );
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.InterfaceDeclaration,
     name,
     properties,
     methods,
-  };
+  });
 }
 
 export function visitIfStatement(
@@ -332,14 +339,14 @@ export function visitIfStatement(
     );
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.IfStatement,
     condition: this.visitExpression(node.expression),
     thenBranch,
     elseBranch: node.elseStatement
       ? this.visitNode(node.elseStatement)
       : undefined,
-  };
+  });
 }
 
 export function visitWhileStatement(
@@ -355,11 +362,11 @@ export function visitWhileStatement(
     );
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.WhileStatement,
     condition: this.visitExpression(node.expression),
     body,
-  };
+  });
 }
 
 export function visitSwitchStatement(
@@ -369,28 +376,28 @@ export function visitSwitchStatement(
   const expression = this.visitExpression(node.expression);
   const cases: CaseClauseNode[] = node.caseBlock.clauses.map((clause) => {
     if (ts.isCaseClause(clause)) {
-      return {
+      return this.attachLoc(clause, {
         kind: ASTNodeKind.CaseClause,
         expression: this.visitExpression(clause.expression),
         statements: clause.statements
           .map((stmt) => this.visitNode(stmt))
           .filter((stmt): stmt is ASTNode => !!stmt),
-      };
+      });
     }
-    return {
+    return this.attachLoc(clause, {
       kind: ASTNodeKind.CaseClause,
       expression: null,
       statements: clause.statements
         .map((stmt) => this.visitNode(stmt))
         .filter((stmt): stmt is ASTNode => !!stmt),
-    };
+    });
   });
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.SwitchStatement,
     expression,
     cases,
-  };
+  });
 }
 
 export function visitDoWhileStatement(
@@ -406,11 +413,11 @@ export function visitDoWhileStatement(
     );
   }
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.DoWhileStatement,
     body,
     condition: this.visitExpression(node.expression),
-  };
+  });
 }
 
 export function visitBreakStatement(
@@ -433,10 +440,10 @@ export function visitReturnStatement(
   this: TypeScriptParser,
   node: ts.ReturnStatement,
 ): ReturnStatementNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.ReturnStatement,
     value: node.expression ? this.visitExpression(node.expression) : undefined,
-  };
+  });
 }
 
 export function visitTryStatement(
@@ -455,23 +462,23 @@ export function visitTryStatement(
     ? this.visitBlock(node.finallyBlock)
     : undefined;
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.TryCatchStatement,
     tryBody,
     catchVariable,
     catchBody,
     finallyBody,
-  };
+  });
 }
 
 export function visitThrowStatement(
   this: TypeScriptParser,
   node: ts.ThrowStatement,
 ): ThrowStatementNode {
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.ThrowStatement,
     expression: this.visitExpression(node.expression),
-  };
+  });
 }
 
 export function visitForStatement(
@@ -505,13 +512,13 @@ export function visitForStatement(
     );
   }
 
-  const result: ForStatementNode = {
+  const result: ForStatementNode = this.attachLoc(node, {
     kind: ASTNodeKind.ForStatement,
     initializer: initializer ?? undefined,
     condition,
     incrementor,
     body,
-  };
+  });
 
   this.symbolTable.exitScope();
   return result;
@@ -626,14 +633,14 @@ export function visitForOfStatement(
     );
   }
 
-  const result: ForOfStatementNode = {
+  const result: ForOfStatementNode = this.attachLoc(node, {
     kind: ASTNodeKind.ForOfStatement,
     variable: varName,
     variableType: variableTypeText,
     destructureProperties,
     iterable,
     body,
-  };
+  });
 
   this.symbolTable.exitScope();
   return result;
@@ -655,8 +662,8 @@ export function visitBlock(
 
   this.symbolTable.exitScope();
 
-  return {
+  return this.attachLoc(node, {
     kind: ASTNodeKind.BlockStatement,
     statements,
-  };
+  });
 }

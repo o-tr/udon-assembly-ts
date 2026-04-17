@@ -14,6 +14,7 @@ import { ErrorCollector } from "../errors/error_collector.js";
 import {
   AggregateTranspileError,
   DuplicateTopLevelConstError,
+  formatWarnings,
 } from "../errors/transpile_errors.js";
 import { computeExposedLabels } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
@@ -575,6 +576,8 @@ export class BatchTranspiler {
         {
           useStringBuilder: options.useStringBuilder,
           typeMapper,
+          sourceFilePath: entryPoint.filePath,
+          errorCollector,
         },
       );
       let tacInstructions = tacConverter.convert(methodProgram);
@@ -754,6 +757,10 @@ export class BatchTranspiler {
       cache,
       computedHashes,
     );
+    const diagnostics = errorCollector.getWarnings();
+    if (diagnostics.length > 0) {
+      console.warn(formatWarnings(diagnostics));
+    }
     return { outputs };
   }
 

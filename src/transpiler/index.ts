@@ -6,6 +6,10 @@ import { buildExternRegistryFromFiles } from "./codegen/extern_registry.js";
 import { appendReflectionData } from "./codegen/reflection.js";
 import { TACToUdonConverter } from "./codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "./codegen/udon_assembler.js";
+import {
+  formatWarnings,
+  type TranspileWarning,
+} from "./errors/transpile_errors.js";
 import { computeExportLabels, computeExposedLabels } from "./exposed_labels.js";
 import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
@@ -30,6 +34,7 @@ export interface TranspilerOptions {
   optimize?: boolean;
   reflect?: boolean;
   useStringBuilder?: boolean;
+  sourceFilePath?: string;
 }
 
 /**
@@ -39,6 +44,7 @@ export interface TranspilerResult {
   uasm: string;
   tac: string;
   warnings?: string[];
+  diagnostics?: TranspileWarning[];
 }
 
 /**
@@ -51,9 +57,11 @@ export class TypeScriptToUdonTranspiler {
    */
   transpile(source: string, options: TranspilerOptions = {}): TranspilerResult {
     buildExternRegistryFromFiles([]);
+    const sourceFilePath =
+      options.sourceFilePath ?? TypeScriptToUdonTranspiler.INLINE_SOURCE_ID;
     // Phase 1: Parse TypeScript to AST
     const parser = new TypeScriptParser();
-    const ast = parser.parse(source);
+    const ast = parser.parse(source, sourceFilePath);
     const registry = new ClassRegistry();
     registry.registerFromProgram(
       ast,
@@ -130,6 +138,8 @@ export class TypeScriptToUdonTranspiler {
       {
         useStringBuilder: options.useStringBuilder,
         typeMapper: parser.typeMapper,
+        sourceFilePath,
+        errorCollector: parser.getErrorCollector(),
       },
     );
     let tacInstructions = tacConverter.convert(program);
@@ -197,10 +207,15 @@ export class TypeScriptToUdonTranspiler {
     }
 
     const warnings = assembler.getWarnings();
+    const diagnostics = parser.getErrorCollector().getWarnings();
+    if (diagnostics.length > 0) {
+      console.warn(formatWarnings(diagnostics));
+    }
     return {
       uasm,
       tac: tacText,
       warnings: warnings.length > 0 ? warnings : undefined,
+      diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
     };
   }
 

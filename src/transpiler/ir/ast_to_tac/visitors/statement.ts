@@ -1358,11 +1358,11 @@ export function visitReturnStatement(
           // declared as `unknown`/`any` was not promoted to a concrete type
           // by saveAndBindInlineParams (e.g. a non-scalar arg such as a
           // DataToken or struct).
-          if (!this.metadataOnlyMode) {
-            console.warn(
-              "transpiler: erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
-            );
-          }
+          this.warnAt(
+            node,
+            "ErasedReturnInline",
+            "erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
+          );
         }
         returnPayload = this.wrapDataToken(value);
       }
@@ -1831,10 +1831,10 @@ export function visitClassDeclaration(
         // push/pop set but never written or read by code-gen. They are
         // push/pop-balanced by construction, so correctness is preserved —
         // the only cost is slightly more stack save/restore overhead.
-        console.warn(
-          `[WARN] countSelfCalls over-counted: expected ${expectedSelfCallCount} ` +
-            `but emitted ${emitted} self-call sites for ${node.name}.${method.name}. ` +
-            "Extra __selfCallResult_* variables waste stack space.",
+        this.warnAt(
+          method,
+          "RecursiveSelfCallOvercount",
+          `countSelfCalls over-counted: expected ${expectedSelfCallCount} but emitted ${emitted} self-call sites for ${node.name}.${method.name}. Extra __selfCallResult_* variables waste stack space.`,
         );
       }
     }

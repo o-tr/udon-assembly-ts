@@ -233,10 +233,12 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     this.emit(new ConditionalJumpInstruction(changed, skipLabel));
     this.emitCopyWithTracking(prevVar, currentVal);
     if (prop.fieldChangeCallback) {
-      const inlined = this.visitInlineInstanceMethodCall(
-        classNode.name,
-        prop.fieldChangeCallback,
-        [],
+      const inlined = this.withInlineCallSite(prop, () =>
+        this.visitInlineInstanceMethodCall(
+          classNode.name,
+          prop.fieldChangeCallback as string,
+          [],
+        ),
       );
       if (inlined == null) {
         this.emit(
