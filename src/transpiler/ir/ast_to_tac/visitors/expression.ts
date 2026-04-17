@@ -1987,11 +1987,15 @@ export function visitPropertyAccessExpression(
               // WARNING: mixed-class collections with this property will
               // silently return zero-init defaults for non-first-candidate
               // instances. Log at transpile time to aid debugging.
-              console.warn(
-                `transpiler: D3 dispatch narrowing failed for property "${node.property}" — ` +
-                  `${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), ` +
-                  `using "${firstCandidate}" only.`,
-              );
+              // Guard with !metadataOnlyMode so Pass 1 does not duplicate
+              // the diagnostic.
+              if (!this.metadataOnlyMode) {
+                console.warn(
+                  `transpiler: D3 dispatch narrowing failed for property "${node.property}" — ` +
+                    `${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), ` +
+                    `using "${firstCandidate}" only.`,
+                );
+              }
               for (const [instId, info] of this.allInlineInstances) {
                 if (info.className === firstCandidate) {
                   dispInstances.push([instId, info]);
@@ -2038,11 +2042,14 @@ export function visitPropertyAccessExpression(
               // SoA class property not in soaFieldLists — the fallthrough
               // to static-handle dispatch below will always miss because
               // SoA handles are dynamic counters, not static instanceIds.
-              console.warn(
-                `transpiler: SoA class "${soaClassName}" has no DataList for ` +
-                  `property "${node.property}". D3 dispatch will fall through ` +
-                  `to static-handle comparison which cannot match dynamic SoA handles.`,
-              );
+              // Guard with !metadataOnlyMode to avoid firing in Pass 1.
+              if (!this.metadataOnlyMode) {
+                console.warn(
+                  `transpiler: SoA class "${soaClassName}" has no DataList for ` +
+                    `property "${node.property}". D3 dispatch will fall through ` +
+                    `to static-handle comparison which cannot match dynamic SoA handles.`,
+                );
+              }
             }
 
             // Use the concrete inline field type for the dispatch result.

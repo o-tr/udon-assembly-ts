@@ -154,7 +154,14 @@ import {
  */
 export class ASTToTACConverter {
   instructions: TACInstruction[] = [];
-  private metadataOnlyMode = false;
+  /**
+   * When true, emit() is a no-op. Pass 1 runs in this mode to collect
+   * metadata (allInlineInstances, interfaceClassIdMap, soaClasses) without
+   * producing TAC instructions or firing diagnostic warnings — visitors and
+   * helpers that emit console.warn should guard with !metadataOnlyMode to
+   * avoid duplicate output across the two passes.
+   */
+  metadataOnlyMode = false;
   tempCounter = 0;
   labelCounter = 0;
   instanceCounter = 0;

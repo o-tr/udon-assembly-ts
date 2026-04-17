@@ -1358,9 +1358,11 @@ export function visitReturnStatement(
           // declared as `unknown`/`any` was not promoted to a concrete type
           // by saveAndBindInlineParams (e.g. a non-scalar arg such as a
           // DataToken or struct).
-          console.warn(
-            "transpiler: erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
-          );
+          if (!this.metadataOnlyMode) {
+            console.warn(
+              "transpiler: erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
+            );
+          }
         }
         returnPayload = this.wrapDataToken(value);
       }
@@ -1824,7 +1826,7 @@ export function visitClassDeclaration(
             "Workaround: extract the forEach body into a separate non-recursive helper method.",
         );
       }
-      if (emitted < expectedSelfCallCount) {
+      if (emitted < expectedSelfCallCount && !this.metadataOnlyMode) {
         // Warn-only (not error): over-counted variables are added to the
         // push/pop set but never written or read by code-gen. They are
         // push/pop-balanced by construction, so correctness is preserved —
