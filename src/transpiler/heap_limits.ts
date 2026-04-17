@@ -30,28 +30,32 @@ export const computeHeapUsage = (dataSection: HeapDataEntry[]): number => {
  * only added when there is tracked usage or the default class already has an
  * entry, to avoid creating a phantom entry on an empty map.
  *
+ * The input map is not mutated; a local copy is used for the deficit
+ * adjustment so callers may safely pass long-lived or shared maps.
+ *
  * Returns a string containing one "  - ClassName: N" line per entry, or a
  * "  - <no data>" fallback when the resulting map is empty.
  */
 export const buildSimpleHeapBreakdown = (
-  usageByClass: Map<string, number>,
+  usageByClass: ReadonlyMap<string, number>,
   heapUsage: number,
   defaultClass: string,
 ): string => {
-  const totalTracked = Array.from(usageByClass.values()).reduce(
+  const updatedUsage = new Map(usageByClass);
+  const totalTracked = Array.from(updatedUsage.values()).reduce(
     (sum, n) => sum + n,
     0,
   );
   if (
     totalTracked < heapUsage &&
-    (totalTracked > 0 || usageByClass.has(defaultClass))
+    (totalTracked > 0 || updatedUsage.has(defaultClass))
   ) {
-    usageByClass.set(
+    updatedUsage.set(
       defaultClass,
-      (usageByClass.get(defaultClass) ?? 0) + (heapUsage - totalTracked),
+      (updatedUsage.get(defaultClass) ?? 0) + (heapUsage - totalTracked),
     );
   }
-  const lines = Array.from(usageByClass.entries())
+  const lines = Array.from(updatedUsage.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([cls, n]) => `  - ${cls}: ${n}`)
     .join("\n");
