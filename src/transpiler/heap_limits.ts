@@ -21,3 +21,39 @@ export const computeHeapUsage = (dataSection: HeapDataEntry[]): number => {
   );
   return heapSize + 1;
 };
+
+/**
+ * Build a flat "Class: N" breakdown of heap usage, sorted descending.
+ *
+ * Any gap between tracked per-class totals and actual heap usage is attributed
+ * to defaultClass so the breakdown always sums to heapUsage. The deficit is
+ * only added when there is tracked usage or the default class already has an
+ * entry, to avoid creating a phantom entry on an empty map.
+ *
+ * Returns a string containing one "  - ClassName: N" line per entry, or a
+ * "  - <no data>" fallback when the resulting map is empty.
+ */
+export const buildSimpleHeapBreakdown = (
+  usageByClass: Map<string, number>,
+  heapUsage: number,
+  defaultClass: string,
+): string => {
+  const totalTracked = Array.from(usageByClass.values()).reduce(
+    (sum, n) => sum + n,
+    0,
+  );
+  if (
+    totalTracked < heapUsage &&
+    (totalTracked > 0 || usageByClass.has(defaultClass))
+  ) {
+    usageByClass.set(
+      defaultClass,
+      (usageByClass.get(defaultClass) ?? 0) + (heapUsage - totalTracked),
+    );
+  }
+  const lines = Array.from(usageByClass.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([cls, n]) => `  - ${cls}: ${n}`)
+    .join("\n");
+  return lines || "  - <no data>";
+};

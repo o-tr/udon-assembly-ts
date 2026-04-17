@@ -36,6 +36,7 @@ import {
   type VariableDeclarationNode,
 } from "../frontend/types.js";
 import {
+  buildSimpleHeapBreakdown,
   computeHeapUsage,
   TASM_HEAP_LIMIT,
   UASM_HEAP_LIMIT,
@@ -687,31 +688,13 @@ export class BatchTranspiler {
       }
       if (heapUsage > heapLimit) {
         const formatLabel = ext === "tasm" ? "TASM" : "UASM";
-        const usageByClass = udonConverter.getHeapUsageByClass();
-        // Attribute any gap between tracked per-class totals and actual heap
-        // usage to the entry class, so the breakdown always sums to heapUsage.
-        // Only add the deficit when there is tracked usage or the entry class
-        // already appears, to avoid creating a phantom entry.
-        const totalTracked = Array.from(usageByClass.values()).reduce(
-          (sum, n) => sum + n,
-          0,
+        const breakdown = buildSimpleHeapBreakdown(
+          udonConverter.getHeapUsageByClass(),
+          heapUsage,
+          entryPoint.name,
         );
-        if (
-          totalTracked < heapUsage &&
-          (totalTracked > 0 || usageByClass.has(entryPoint.name))
-        ) {
-          usageByClass.set(
-            entryPoint.name,
-            (usageByClass.get(entryPoint.name) ?? 0) +
-              (heapUsage - totalTracked),
-          );
-        }
-        const breakdown = Array.from(usageByClass.entries())
-          .sort((a, b) => b[1] - a[1])
-          .map(([cls, n]) => `  - ${cls}: ${n}`)
-          .join("\n");
         heapWarnings.push(
-          `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown || "  - <no data>"}`,
+          `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown}`,
         );
       }
       const assemblerWarnings = assembler.getWarnings();

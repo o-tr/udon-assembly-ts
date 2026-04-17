@@ -191,22 +191,28 @@ const VRC_EVENTS: VrcEventDefinition[] = [
   { udonName: "_onDisable", tsName: "OnDisable", parameters: [] },
 ];
 
-let _eventMap: Map<string, VrcEventDefinition> | null = null;
-let _udonNameMap: Map<string, VrcEventDefinition> | null = null;
+// Lazy-initialised lookup Maps wrapped in IIFE closures so the cache state is
+// not visible at module scope. This keeps the module's public surface
+// immutable while still deferring the Map construction cost until first use.
+const getEventMap: () => Map<string, VrcEventDefinition> = (() => {
+  let cache: Map<string, VrcEventDefinition> | null = null;
+  return () => {
+    if (!cache) {
+      cache = new Map(VRC_EVENTS.map((event) => [event.tsName, event]));
+    }
+    return cache;
+  };
+})();
 
-function getEventMap(): Map<string, VrcEventDefinition> {
-  if (!_eventMap) {
-    _eventMap = new Map(VRC_EVENTS.map((event) => [event.tsName, event]));
-  }
-  return _eventMap;
-}
-
-function getUdonNameMap(): Map<string, VrcEventDefinition> {
-  if (!_udonNameMap) {
-    _udonNameMap = new Map(VRC_EVENTS.map((event) => [event.udonName, event]));
-  }
-  return _udonNameMap;
-}
+const getUdonNameMap: () => Map<string, VrcEventDefinition> = (() => {
+  let cache: Map<string, VrcEventDefinition> | null = null;
+  return () => {
+    if (!cache) {
+      cache = new Map(VRC_EVENTS.map((event) => [event.udonName, event]));
+    }
+    return cache;
+  };
+})();
 
 export function isVrcEvent(methodName: string): boolean {
   return getEventMap().has(methodName);
