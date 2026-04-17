@@ -236,7 +236,7 @@ function coerceValueForParamSlot(
     isNumericUdonType(paramType.udonType)
   ) {
     const cast = converter.newTemp(paramType);
-    converter.instructions.push(new CastInstruction(cast, coerced));
+    converter.emit(new CastInstruction(cast, coerced));
     coerced = cast;
   }
   return coerced;
@@ -265,7 +265,7 @@ export function saveAndBindInlineParams(
     const argName = (arg as VariableOperand).name;
     if (!paramNameSet.has(argName) || snapshottedArgs.has(argName)) continue;
     const snap = converter.newTemp(converter.getOperandType(arg));
-    converter.instructions.push(new CopyInstruction(snap, arg));
+    converter.emit(new CopyInstruction(snap, arg));
     snapshottedArgs.set(argName, snap);
   }
   const saved: InlineParamSave = new Map();
@@ -307,7 +307,7 @@ export function saveAndBindInlineParams(
       // matches the original heap slot (avoids type-mismatch on restore).
       const slotType = collidingCallerSymbol.type;
       const backupTemp = converter.newTemp(slotType);
-      converter.instructions.push(
+      converter.emit(
         new CopyInstruction(
           backupTemp,
           createVariable(param.name, slotType, { isParameter: true }),
@@ -358,10 +358,10 @@ export function saveAndBindInlineParams(
         isNumericUdonType(effectiveParamType.udonType)
       ) {
         const coercedArg = converter.newTemp(effectiveParamType);
-        converter.instructions.push(new CastInstruction(coercedArg, argToUse));
+        converter.emit(new CastInstruction(coercedArg, argToUse));
         argToUse = coercedArg;
       }
-      converter.instructions.push(
+      converter.emit(
         new CopyInstruction(
           createVariable(param.name, effectiveParamType, { isParameter: true }),
           argToUse,
@@ -443,7 +443,7 @@ export function saveAndBindInlineParams(
         rawDefault,
         effectiveParamType,
       );
-      converter.instructions.push(
+      converter.emit(
         new CopyInstruction(
           createVariable(param.name, effectiveParamType, {
             isParameter: true,
@@ -463,7 +463,7 @@ export function saveAndBindInlineParams(
       // This fallback kicks in only for bare `foo?: boolean` params —
       // params with an explicit `= false` default now go through the
       // default-emission branch above.
-      converter.instructions.push(
+      converter.emit(
         new CopyInstruction(
           createVariable(param.name, param.type, { isParameter: true }),
           createConstant(false, PrimitiveTypes.boolean),
@@ -489,7 +489,7 @@ export function restoreInlineParams(
     // function's binding COPY would persist past the call boundary and
     // corrupt the caller's local of the same name.
     if (entry.valueBackup !== undefined) {
-      converter.instructions.push(
+      converter.emit(
         new CopyInstruction(
           createVariable(name, entry.valueBackup.slotType, {
             isParameter: true,
@@ -645,9 +645,7 @@ export function createSoaSentinelValue(
       [],
       "DataList",
     );
-    converter.instructions.push(
-      new CallInstruction(listValue, listCtorSig, []),
-    );
+    converter.emit(new CallInstruction(listValue, listCtorSig, []));
     return listValue;
   }
   if (fieldType.udonType === UdonType.DataDictionary) {
@@ -659,9 +657,7 @@ export function createSoaSentinelValue(
       [],
       "DataDictionary",
     );
-    converter.instructions.push(
-      new CallInstruction(dictValue, dictCtorSig, []),
-    );
+    converter.emit(new CallInstruction(dictValue, dictCtorSig, []));
     return dictValue;
   }
   return createConstant(null, ObjectType);
@@ -689,7 +685,7 @@ function emitSoaInitGuard(
   );
   const notYetInited = converter.newTemp(PrimitiveTypes.boolean);
   const skipInitLabel = converter.newLabel("soa_init_skip");
-  converter.instructions.push(
+  converter.emit(
     new BinaryOpInstruction(
       notYetInited,
       initedVar,
@@ -699,11 +695,9 @@ function emitSoaInitGuard(
   );
   // ConditionalJump uses JUMP_IF_FALSE: jumps when notYetInited is false
   // (i.e. already initialized) — skips the init block.
-  converter.instructions.push(
-    new ConditionalJumpInstruction(notYetInited, skipInitLabel),
-  );
+  converter.emit(new ConditionalJumpInstruction(notYetInited, skipInitLabel));
 
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       initedVar,
       createConstant(1, PrimitiveTypes.int32),
@@ -718,14 +712,14 @@ function emitSoaInitGuard(
     "DataList",
   );
   for (const [, listVar] of fieldLists) {
-    converter.instructions.push(new CallInstruction(listVar, listCtorSig, []));
+    converter.emit(new CallInstruction(listVar, listCtorSig, []));
   }
 
   // Counter starts at 1: Udon zero-initialises heap slots, so an
   // uninitialised array element holds 0. Reserving handle 0 as "no valid
   // instance" prevents false SoA lookups on partially-populated arrays
   // (consistent with the non-SoA nextInstanceId starting at 1).
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       counterVar,
       createConstant(1, PrimitiveTypes.int32),
@@ -739,12 +733,12 @@ function emitSoaInitGuard(
     const dummyToken = converter.wrapDataToken(
       createSoaSentinelValue(converter, fieldType),
     );
-    converter.instructions.push(
+    converter.emit(
       new MethodCallInstruction(undefined, listVar, "Add", [dummyToken]),
     );
   }
 
-  converter.instructions.push(new LabelInstruction(skipInitLabel));
+  converter.emit(new LabelInstruction(skipInitLabel));
 }
 
 /**
@@ -925,7 +919,7 @@ export function emitStaticPropertyInitializers(
     const value = converter.visitExpression(prop.initializer);
     converter.currentExpectedType = prevExpected;
     const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
-    converter.instructions.push(new AssignmentInstruction(propVar, coerced));
+    converter.emit(new AssignmentInstruction(propVar, coerced));
     converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
   }
 }
@@ -965,9 +959,7 @@ function emitInlinePropertyInitializersForClass(
         // createSoaSentinelValue emits CallInstruction side-effects for
         // DataList/DataDictionary constructors onto converter.instructions.
         const defaultValue = createSoaSentinelValue(converter, prop.type);
-        converter.instructions.push(
-          new AssignmentInstruction(propVar, defaultValue),
-        );
+        converter.emit(new AssignmentInstruction(propVar, defaultValue));
         converter.maybeTrackInlineInstanceAssignment(propVar, defaultValue);
       }
       continue;
@@ -1004,7 +996,7 @@ function emitInlinePropertyInitializersForClass(
     converter.currentExpectedType = prevExpected;
     converter.inSerializeFieldInitializer = previousSerializeFieldState;
     const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
-    converter.instructions.push(new AssignmentInstruction(propVar, coerced));
+    converter.emit(new AssignmentInstruction(propVar, coerced));
     converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
   }
 }
@@ -1161,19 +1153,19 @@ export function visitInlineConstructor(
     this.udonBehaviourClasses.has(className)
   ) {
     const fallback = this.newTemp(ObjectType);
-    this.instructions.push(new CallInstruction(fallback, className, args));
+    this.emit(new CallInstruction(fallback, className, args));
     return fallback;
   }
   if (this.entryPointClasses.has(className)) {
     const fallback = this.newTemp(ObjectType);
-    this.instructions.push(new CallInstruction(fallback, className, args));
+    this.emit(new CallInstruction(fallback, className, args));
     return fallback;
   }
 
   const classNode = resolveClassNode(this, className);
   if (!classNode) {
     const fallback = this.newTemp(ObjectType);
-    this.instructions.push(new CallInstruction(fallback, className, args));
+    this.emit(new CallInstruction(fallback, className, args));
     return fallback;
   }
 
@@ -1204,7 +1196,7 @@ export function visitInlineConstructor(
     initSoaForClass(this, className, classNode);
     const counterVar = this.soaCounterVars.get(className);
     if (counterVar) {
-      this.instructions.push(new CopyInstruction(instanceHandle, counterVar));
+      this.emit(new CopyInstruction(instanceHandle, counterVar));
     }
   } else {
     // Non-SoA: handle is a compile-time constant (instanceId).
@@ -1212,7 +1204,7 @@ export function visitInlineConstructor(
     // is CLR-boxed at the Object[] array boundary. The for-of dispatch
     // copies it back to an Int32-typed variable via CopyInstruction, which
     // the CLR runtime unboxes transparently at the typed heap slot.
-    this.instructions.push(
+    this.emit(
       new AssignmentInstruction(
         instanceHandle,
         createConstant(instanceId, PrimitiveTypes.int32),
@@ -1325,10 +1317,10 @@ export function visitInlineConstructor(
         );
         if (scratchVar) {
           const token = this.wrapDataToken(scratchVar);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(undefined, listVar, "Add", [token]),
           );
-        } else {
+        } else if (!this.metadataOnlyMode) {
           console.warn(
             `transpiler: SoA epilogue for ${className}: mapInlineProperty returned ` +
               `undefined for field "${fieldName}" (prefix ${instancePrefix}). ` +
@@ -1339,7 +1331,7 @@ export function visitInlineConstructor(
     }
     const counterVar = this.soaCounterVars.get(className);
     if (counterVar) {
-      this.instructions.push(
+      this.emit(
         new BinaryOpInstruction(
           counterVar,
           counterVar,
@@ -1370,9 +1362,11 @@ export function visitInlineStaticMethodCall(
     // No matching recursive context — this can happen for non-recursive
     // methods that are already being inlined (mutual recursion, or a
     // method calling itself without countStaticSelfCalls detecting it).
-    console.warn(
-      `transpiler: recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
-    );
+    if (!this.metadataOnlyMode) {
+      console.warn(
+        `transpiler: recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+      );
+    }
     return null;
   }
 
@@ -1409,7 +1403,7 @@ export function visitInlineStaticMethodCall(
   if (selfCallCount > 0) {
     // TODO: erased return types on recursive paths need separate analysis;
     // DataToken promotion is not applied here.
-    if (isPlainObjectType(returnType)) {
+    if (isPlainObjectType(returnType) && !this.metadataOnlyMode) {
       console.warn(
         `transpiler: inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
       );
@@ -1504,7 +1498,7 @@ export function visitInlineStaticMethodCall(
     // Emit the inline return label BEFORE restoring params so all early
     // `goto inline_return*` paths from the body fall through into the
     // restore COPYs. Otherwise the restore is dead code (gotos jump past it).
-    this.instructions.push(new LabelInstruction(returnLabel));
+    this.emit(new LabelInstruction(returnLabel));
     restoreInlineParams(this, savedParamEntries);
     this.symbolTable.exitScope();
   }
@@ -1594,7 +1588,7 @@ function emitInlineRecursiveStaticMethod(
     PrimitiveTypes.int32,
     { isLocal: true },
   );
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       returnSiteIdxVar,
       createConstant(0, PrimitiveTypes.int32),
@@ -1608,7 +1602,7 @@ function emitInlineRecursiveStaticMethod(
     PrimitiveTypes.boolean,
   );
   const notInitialized = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(
+  converter.emit(
     new BinaryOpInstruction(
       notInitialized,
       stackInitFlag,
@@ -1617,7 +1611,7 @@ function emitInlineRecursiveStaticMethod(
     ),
   );
   const skipAllocLabel = converter.newLabel("inline_rec_skip_alloc");
-  converter.instructions.push(
+  converter.emit(
     new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
   );
   {
@@ -1637,21 +1631,21 @@ function emitInlineRecursiveStaticMethod(
         [],
         "DataList",
       );
-      converter.instructions.push(new CallInstruction(stackVar, externSig, []));
+      converter.emit(new CallInstruction(stackVar, externSig, []));
       for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
-        converter.instructions.push(
+        converter.emit(
           new MethodCallInstruction(undefined, stackVar, "Add", [defaultToken]),
         );
       }
     }
   }
-  converter.instructions.push(new LabelInstruction(skipAllocLabel));
+  converter.emit(new LabelInstruction(skipAllocLabel));
 
   // Reset SP when at top level
   {
     const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
     const depthAtTopLevel = converter.newTemp(PrimitiveTypes.boolean);
-    converter.instructions.push(
+    converter.emit(
       new BinaryOpInstruction(
         depthAtTopLevel,
         depthVarOp,
@@ -1660,7 +1654,7 @@ function emitInlineRecursiveStaticMethod(
       ),
     );
     const skipSpResetLabel = converter.newLabel("inline_rec_skip_sp_reset");
-    converter.instructions.push(
+    converter.emit(
       new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
     );
     const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
@@ -1672,16 +1666,14 @@ function emitInlineRecursiveStaticMethod(
       depthVarOp,
       createConstant(0, PrimitiveTypes.int32),
     );
-    converter.instructions.push(new LabelInstruction(skipSpResetLabel));
+    converter.emit(new LabelInstruction(skipSpResetLabel));
   }
 
   // Overflow handler
   {
     const afterOverflowLabel = converter.newLabel("inline_rec_after_overflow");
-    converter.instructions.push(
-      new UnconditionalJumpInstruction(afterOverflowLabel),
-    );
-    converter.instructions.push(new LabelInstruction(overflowLabel));
+    converter.emit(new UnconditionalJumpInstruction(afterOverflowLabel));
+    converter.emit(new LabelInstruction(overflowLabel));
     const logErrorExtern = converter.requireExternSignature(
       "Debug",
       "LogError",
@@ -1693,7 +1685,7 @@ function emitInlineRecursiveStaticMethod(
       `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${className}.${methodName}.`,
       PrimitiveTypes.string,
     );
-    converter.instructions.push(
+    converter.emit(
       new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
     );
     // Reset depth and SP so subsequent invocations can re-enter cleanly.
@@ -1708,12 +1700,12 @@ function emitInlineRecursiveStaticMethod(
     );
     // Jump to done (return default value) instead of ReturnInstruction
     // because we're inside an inlined method, not a top-level method.
-    converter.instructions.push(new UnconditionalJumpInstruction(doneLabel));
-    converter.instructions.push(new LabelInstruction(afterOverflowLabel));
+    converter.emit(new UnconditionalJumpInstruction(doneLabel));
+    converter.emit(new LabelInstruction(afterOverflowLabel));
   }
 
   // --- Entry label (JUMP target for recursive calls) ---
-  converter.instructions.push(new LabelInstruction(entryLabel));
+  converter.emit(new LabelInstruction(entryLabel));
 
   // Set up inline recursive context
   const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
@@ -1796,7 +1788,7 @@ function emitInlineRecursiveStaticMethod(
   {
     const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
     const depthTmp = converter.newTemp(PrimitiveTypes.int32);
-    converter.instructions.push(
+    converter.emit(
       new BinaryOpInstruction(
         depthTmp,
         depthVarOp,
@@ -1805,13 +1797,11 @@ function emitInlineRecursiveStaticMethod(
       ),
     );
     converter.emitCopyWithTracking(depthVarOp, depthTmp);
-    converter.instructions.push(
-      new UnconditionalJumpInstruction(dispatchLabel),
-    );
+    converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
   }
 
   // --- Return site dispatch table ---
-  converter.instructions.push(new LabelInstruction(dispatchLabel));
+  converter.emit(new LabelInstruction(dispatchLabel));
   {
     const returnSiteIdxVarOp = createVariable(
       returnSiteIdxVarName,
@@ -1820,7 +1810,7 @@ function emitInlineRecursiveStaticMethod(
     );
     for (const site of ctx.returnSites) {
       const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
-      converter.instructions.push(
+      converter.emit(
         new BinaryOpInstruction(
           cmpResult,
           returnSiteIdxVarOp,
@@ -1829,15 +1819,13 @@ function emitInlineRecursiveStaticMethod(
         ),
       );
       const siteLabel = createLabel(site.labelName);
-      converter.instructions.push(
-        new ConditionalJumpInstruction(cmpResult, siteLabel),
-      );
+      converter.emit(new ConditionalJumpInstruction(cmpResult, siteLabel));
     }
     // Fallback: index 0 (initial caller) — jump to done
-    converter.instructions.push(new UnconditionalJumpInstruction(doneLabel));
+    converter.emit(new UnconditionalJumpInstruction(doneLabel));
   }
 
-  converter.instructions.push(new LabelInstruction(doneLabel));
+  converter.emit(new LabelInstruction(doneLabel));
   return result;
 }
 
@@ -1861,7 +1849,7 @@ function emitInlineRecursiveSelfCall(
   // 2. Increment depth
   const depthVarOp = createVariable(ctx.depthVar, PrimitiveTypes.int32);
   const depthInc = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
+  converter.emit(
     new BinaryOpInstruction(
       depthInc,
       depthVarOp,
@@ -1942,7 +1930,7 @@ function emitInlineRecursiveSelfCall(
     PrimitiveTypes.int32,
     { isLocal: true },
   );
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(
       returnSiteIdxVar,
       createConstant(returnSiteIdx, PrimitiveTypes.int32),
@@ -1950,10 +1938,10 @@ function emitInlineRecursiveSelfCall(
   );
 
   // 5. JUMP to method entry
-  converter.instructions.push(new UnconditionalJumpInstruction(ctx.entryLabel));
+  converter.emit(new UnconditionalJumpInstruction(ctx.entryLabel));
 
   // 6. Return label (dispatch brings us back here)
-  converter.instructions.push(new LabelInstruction(returnLabel));
+  converter.emit(new LabelInstruction(returnLabel));
 
   // 7. Read return value into temp BEFORE pop
   const capturedTemp = converter.newTemp(
@@ -2101,7 +2089,7 @@ function inlineInstanceMethodCallCore(
     converter.currentInlineBaseClass = savedBaseClass;
     // See visitInlineStaticMethodCall: emit the label BEFORE the restore so
     // early `goto inline_return*` paths fall through into the restore COPYs.
-    converter.instructions.push(new LabelInstruction(returnLabel));
+    converter.emit(new LabelInstruction(returnLabel));
     restoreInlineParams(converter, savedParamEntries);
     converter.symbolTable.exitScope();
   }
@@ -2311,7 +2299,7 @@ export function emitCopyWithTracking(
   src: TACOperand,
   clearIfUntracked = true,
 ): void {
-  this.instructions.push(new CopyInstruction(dest, src));
+  this.emit(new CopyInstruction(dest, src));
   const destName = operandTrackingKey(dest);
   if (!destName) return;
   const srcName = operandTrackingKey(src);
@@ -2648,7 +2636,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   // prologue) when false (i.e., depth >= MAX).
   const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
   const depthOk = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       depthOk,
       depthVar,
@@ -2656,13 +2644,11 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(
-    new ConditionalJumpInstruction(depthOk, context.overflowLabel),
-  );
+  this.emit(new ConditionalJumpInstruction(depthOk, context.overflowLabel));
 
   // SP++
   const spTemp = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       spTemp,
       spVar,
@@ -2681,7 +2667,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
       isLocal: true,
     });
     const token = this.wrapDataToken(localVar);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
         token,
@@ -2706,7 +2692,7 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
   // ConditionalJumpInstruction is "ifFalse goto", so we check (SP >= 0)
   // and jump to the underflow handler when false (i.e., SP < 0).
   const spOk = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       spOk,
       spVar,
@@ -2716,7 +2702,7 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
   );
   const underflowLabel = this.newLabel("pop_underflow");
   const afterPopLabel = this.newLabel("after_pop");
-  this.instructions.push(new ConditionalJumpInstruction(spOk, underflowLabel));
+  this.emit(new ConditionalJumpInstruction(spOk, underflowLabel));
 
   // Restore each local from stack[SP]
   for (let index = 0; index < context.locals.length; index++) {
@@ -2724,16 +2710,14 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
     const stackVarInfo = context.stackVars[index];
     const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
     const token = this.newTemp(ExternTypes.dataToken);
-    this.instructions.push(
-      new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
-    );
+    this.emit(new MethodCallInstruction(token, stackVar, "get_Item", [spVar]));
     const unwrapped = this.unwrapDataToken(token, local.type);
     // Plain copy: must NOT use emitCopyWithTracking here because
     // unwrapDataToken returns a fresh temp with no tracking info, and
     // emitCopyWithTracking would clear the local's pre-existing
     // inlineInstanceMap entry. The local's inline tracking remains valid
     // across the recursive call since the instance identity is unchanged.
-    this.instructions.push(
+    this.emit(
       new CopyInstruction(
         createVariable(local.name, local.type, { isLocal: true }),
         unwrapped,
@@ -2743,7 +2727,7 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
 
   // SP--
   const spTemp = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       spTemp,
       spVar,
@@ -2752,10 +2736,10 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
     ),
   );
   this.emitCopyWithTracking(spVar, spTemp);
-  this.instructions.push(new UnconditionalJumpInstruction(afterPopLabel));
+  this.emit(new UnconditionalJumpInstruction(afterPopLabel));
 
   // Underflow handler: log error and skip restore
-  this.instructions.push(new LabelInstruction(underflowLabel));
+  this.emit(new LabelInstruction(underflowLabel));
   const logErrorExtern = this.requireExternSignature(
     "Debug",
     "LogError",
@@ -2767,11 +2751,9 @@ export function emitCallSitePop(this: ASTToTACConverter): void {
     "[udon-assembly-ts] Stack underflow: pop without matching push.",
     PrimitiveTypes.string,
   );
-  this.instructions.push(
-    new CallInstruction(undefined, logErrorExtern, [underflowMsg]),
-  );
+  this.emit(new CallInstruction(undefined, logErrorExtern, [underflowMsg]));
 
-  this.instructions.push(new LabelInstruction(afterPopLabel));
+  this.emit(new LabelInstruction(afterPopLabel));
 }
 
 /**
@@ -3214,7 +3196,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   // and jump to overflow when false (i.e., depth >= MAX).
   const depthVar = createVariable(context.depthVar, PrimitiveTypes.int32);
   const depthOk = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       depthOk,
       depthVar,
@@ -3222,13 +3204,11 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
       createConstant(MAX_RECURSION_STACK_DEPTH, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(
-    new ConditionalJumpInstruction(depthOk, context.overflowLabel),
-  );
+  this.emit(new ConditionalJumpInstruction(depthOk, context.overflowLabel));
 
   // SP++
   const spTemp = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       spTemp,
       spVar,
@@ -3247,7 +3227,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
       isLocal: true,
     });
     const token = this.wrapDataToken(localVar);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
         token,
@@ -3268,7 +3248,7 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
 
   // Guard: SP must be >= 0 before pop.
   const spOk = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       spOk,
       spVar,
@@ -3278,7 +3258,7 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
   );
   const underflowLabel = this.newLabel("inline_rec_pop_underflow");
   const afterPopLabel = this.newLabel("inline_rec_after_pop");
-  this.instructions.push(new ConditionalJumpInstruction(spOk, underflowLabel));
+  this.emit(new ConditionalJumpInstruction(spOk, underflowLabel));
 
   // Restore each local from stack[SP].
   // Plain CopyInstruction (not emitCopyWithTracking): unwrapDataToken
@@ -3289,11 +3269,9 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
     const stackVarInfo = context.stackVars[index];
     const stackVar = createVariable(stackVarInfo.name, ExternTypes.dataList);
     const token = this.newTemp(ExternTypes.dataToken);
-    this.instructions.push(
-      new MethodCallInstruction(token, stackVar, "get_Item", [spVar]),
-    );
+    this.emit(new MethodCallInstruction(token, stackVar, "get_Item", [spVar]));
     const unwrapped = this.unwrapDataToken(token, local.type);
-    this.instructions.push(
+    this.emit(
       new CopyInstruction(
         createVariable(local.name, local.type, { isLocal: true }),
         unwrapped,
@@ -3303,7 +3281,7 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
 
   // SP--
   const spTemp = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       spTemp,
       spVar,
@@ -3312,10 +3290,10 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
     ),
   );
   this.emitCopyWithTracking(spVar, spTemp);
-  this.instructions.push(new UnconditionalJumpInstruction(afterPopLabel));
+  this.emit(new UnconditionalJumpInstruction(afterPopLabel));
 
   // Underflow handler
-  this.instructions.push(new LabelInstruction(underflowLabel));
+  this.emit(new LabelInstruction(underflowLabel));
   const logErrorExtern = this.requireExternSignature(
     "Debug",
     "LogError",
@@ -3327,11 +3305,9 @@ export function emitInlineRecursivePop(this: ASTToTACConverter): void {
     "[udon-assembly-ts] Inline recursive stack underflow.",
     PrimitiveTypes.string,
   );
-  this.instructions.push(
-    new CallInstruction(undefined, logErrorExtern, [underflowMsg]),
-  );
+  this.emit(new CallInstruction(undefined, logErrorExtern, [underflowMsg]));
 
-  this.instructions.push(new LabelInstruction(afterPopLabel));
+  this.emit(new LabelInstruction(afterPopLabel));
 }
 
 /**
@@ -3368,7 +3344,7 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
 
   for (const site of allSites) {
     const cmpResult = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(
         cmpResult,
         returnSiteIdxVar,
@@ -3377,16 +3353,12 @@ export function emitReturnSiteDispatch(this: ASTToTACConverter): void {
       ),
     );
     const siteLabel = createLabel(site.labelName);
-    this.instructions.push(
-      new ConditionalJumpInstruction(cmpResult, siteLabel),
-    );
+    this.emit(new ConditionalJumpInstruction(cmpResult, siteLabel));
   }
 
   // Defensive fallback: should be unreachable in correct code because every
   // return-site index that can be live at method exit is registered in allSites.
   // Reached only if the method is never called (allSites is empty) or if
   // returnSiteIdx holds an unregistered value.
-  this.instructions.push(
-    new ReturnInstruction(undefined, this.currentReturnVar),
-  );
+  this.emit(new ReturnInstruction(undefined, this.currentReturnVar));
 }

@@ -65,7 +65,7 @@ export function assignToTarget(
     const index = this.visitExpression(arrayAccess.index);
     const arrayType = this.getOperandType(array);
     if (arrayType instanceof CollectionTypeSymbol) {
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(undefined, array, "set_Item", [index, value]),
       );
       return value;
@@ -77,12 +77,10 @@ export function assignToTarget(
       const nativeIdxType = this.getOperandType(index);
       if (needsInt32IndexCoercion(nativeIdxType.udonType)) {
         const intIndex = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CastInstruction(intIndex, index));
+        this.emit(new CastInstruction(intIndex, index));
         nativeIndex = intIndex;
       }
-      this.instructions.push(
-        new ArrayAssignmentInstruction(array, nativeIndex, value),
-      );
+      this.emit(new ArrayAssignmentInstruction(array, nativeIndex, value));
       return value;
     }
     // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
@@ -92,7 +90,7 @@ export function assignToTarget(
     const idxType = this.getOperandType(index);
     if (needsInt32IndexCoercion(idxType.udonType)) {
       const intIndex = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(new CastInstruction(intIndex, index));
+      this.emit(new CastInstruction(intIndex, index));
       coercedIndex = intIndex;
     }
     // Bounds-check-and-grow loop: ensure Count > coercedIndex before set_Item.
@@ -111,26 +109,22 @@ export function assignToTarget(
     );
     const dlgrowStart = this.newLabel("dlgrow_start");
     const dlgrowEnd = this.newLabel("dlgrow_end");
-    this.instructions.push(new LabelInstruction(dlgrowStart));
+    this.emit(new LabelInstruction(dlgrowStart));
     const currentCount = this.newTemp(PrimitiveTypes.int32);
-    this.instructions.push(
-      new PropertyGetInstruction(currentCount, array, "Count"),
-    );
+    this.emit(new PropertyGetInstruction(currentCount, array, "Count"));
     const needsGrow = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(needsGrow, currentCount, "<=", coercedIndex),
     );
-    this.instructions.push(
-      new ConditionalJumpInstruction(needsGrow, dlgrowEnd),
-    );
-    this.instructions.push(
+    this.emit(new ConditionalJumpInstruction(needsGrow, dlgrowEnd));
+    this.emit(
       new MethodCallInstruction(undefined, array, "Add", [defaultToken]),
     );
-    this.instructions.push(new UnconditionalJumpInstruction(dlgrowStart));
-    this.instructions.push(new LabelInstruction(dlgrowEnd));
+    this.emit(new UnconditionalJumpInstruction(dlgrowStart));
+    this.emit(new LabelInstruction(dlgrowEnd));
 
     const token = this.wrapDataToken(value);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(undefined, array, "set_Item", [
         coercedIndex,
         token,
@@ -191,7 +185,7 @@ export function assignToTarget(
               "this",
               this.typeMapper.mapTypeScriptType(this.currentClassName),
             );
-            this.instructions.push(
+            this.emit(
               new MethodCallInstruction(undefined, thisVar, callback, []),
             );
           }
@@ -243,7 +237,7 @@ export function assignToTarget(
         propAccess.property,
         PrimitiveTypes.string,
       );
-      this.instructions.push(
+      this.emit(
         new CallInstruction(undefined, externSig, [object, propName, value]),
       );
       return value;
@@ -279,31 +273,25 @@ export function assignToTarget(
       const valueType = this.getOperandType(value);
       if (needsInt32IndexCoercion(valueType.udonType)) {
         const intValue = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(new CastInstruction(intValue, value));
+        this.emit(new CastInstruction(intValue, value));
         coercedValue = intValue;
       }
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(sliced, object, "GetRange", [
           createConstant(0, PrimitiveTypes.int32),
           coercedValue,
         ]),
       );
-      this.instructions.push(
-        new CopyInstruction(object as VariableOperand, sliced),
-      );
+      this.emit(new CopyInstruction(object as VariableOperand, sliced));
       return value;
     }
-    this.instructions.push(
-      new PropertySetInstruction(object, propAccess.property, value),
-    );
+    this.emit(new PropertySetInstruction(object, propAccess.property, value));
     const callback = this.resolveFieldChangeCallback(
       propAccess.object,
       propAccess.property,
     );
     if (callback) {
-      this.instructions.push(
-        new MethodCallInstruction(undefined, object, callback, []),
-      );
+      this.emit(new MethodCallInstruction(undefined, object, callback, []));
     }
     return value;
   }
@@ -353,7 +341,7 @@ export function visitUpdateExpression(
   }
 
   const newValue = this.newTemp(resultType);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(newValue, currentValue, node.operator, delta),
   );
   const assignedValue = this.assignToTarget(node.operand, newValue);
@@ -444,31 +432,27 @@ function emitCopyElementsLoop(
   dest: TACOperand,
 ): void {
   const len = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(new PropertyGetInstruction(len, source, "Count"));
+  converter.emit(new PropertyGetInstruction(len, source, "Count"));
 
   const idx = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
+  converter.emit(
     new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
   );
   const loopStart = converter.newLabel("dlconcat_start");
   const loopEnd = converter.newLabel("dlconcat_end");
-  converter.instructions.push(new LabelInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopStart));
   const cond = converter.newTemp(PrimitiveTypes.boolean);
-  converter.instructions.push(new BinaryOpInstruction(cond, idx, "<", len));
-  converter.instructions.push(new ConditionalJumpInstruction(cond, loopEnd));
+  converter.emit(new BinaryOpInstruction(cond, idx, "<", len));
+  converter.emit(new ConditionalJumpInstruction(cond, loopEnd));
 
   // token = source.get_Item(idx)
   const token = converter.newTemp(ExternTypes.dataToken);
-  converter.instructions.push(
-    new MethodCallInstruction(token, source, "get_Item", [idx]),
-  );
+  converter.emit(new MethodCallInstruction(token, source, "get_Item", [idx]));
   // dest.Add(token)
-  converter.instructions.push(
-    new MethodCallInstruction(undefined, dest, "Add", [token]),
-  );
+  converter.emit(new MethodCallInstruction(undefined, dest, "Add", [token]));
 
   const next = converter.newTemp(PrimitiveTypes.int32);
-  converter.instructions.push(
+  converter.emit(
     new BinaryOpInstruction(
       next,
       idx,
@@ -476,9 +460,9 @@ function emitCopyElementsLoop(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  converter.instructions.push(new CopyInstruction(idx, next));
-  converter.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  converter.instructions.push(new LabelInstruction(loopEnd));
+  converter.emit(new CopyInstruction(idx, next));
+  converter.emit(new UnconditionalJumpInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopEnd));
 }
 
 /**
@@ -516,7 +500,7 @@ export function emitArrayConcat(
     [],
     "DataList",
   );
-  converter.instructions.push(new CallInstruction(result, ctorExtern, []));
+  converter.emit(new CallInstruction(result, ctorExtern, []));
 
   // Copy all elements from a, then from b
   emitCopyElementsLoop(converter, a, result);
@@ -537,7 +521,7 @@ export function wrapDataToken(
   // so they can be unwrapped via DataToken.Int later.
   if (isInlineHandleType(this, valueType)) {
     const handle = this.newTemp(PrimitiveTypes.int32);
-    this.instructions.push(new CopyInstruction(handle, value));
+    this.emit(new CopyInstruction(handle, value));
     value = handle;
     valueType = PrimitiveTypes.int32;
   }
@@ -560,7 +544,7 @@ export function wrapDataToken(
     [valueType.name],
     "DataToken",
   );
-  this.instructions.push(new CallInstruction(token, externSig, [value]));
+  this.emit(new CallInstruction(token, externSig, [value]));
   return token;
 }
 
@@ -640,7 +624,7 @@ export function unwrapDataToken(
   }
 
   const result = this.newTemp(targetType);
-  this.instructions.push(new PropertyGetInstruction(result, token, property));
+  this.emit(new PropertyGetInstruction(result, token, property));
   return result;
 }
 

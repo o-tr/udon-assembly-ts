@@ -191,24 +191,35 @@ const VRC_EVENTS: VrcEventDefinition[] = [
   { udonName: "_onDisable", tsName: "OnDisable", parameters: [] },
 ];
 
-const EVENT_MAP = new Map<string, VrcEventDefinition>(
-  VRC_EVENTS.map((event) => [event.tsName, event]),
-);
+// Lazy-initialised lookup Maps. Construction is deferred until first use;
+// after that the cached instance is reused.
+let _eventMap: Map<string, VrcEventDefinition> | undefined;
+let _udonNameMap: Map<string, VrcEventDefinition> | undefined;
 
-const UDON_NAME_MAP = new Map<string, VrcEventDefinition>(
-  VRC_EVENTS.map((event) => [event.udonName, event]),
-);
+function getEventMap(): Map<string, VrcEventDefinition> {
+  if (!_eventMap) {
+    _eventMap = new Map(VRC_EVENTS.map((event) => [event.tsName, event]));
+  }
+  return _eventMap;
+}
+
+function getUdonNameMap(): Map<string, VrcEventDefinition> {
+  if (!_udonNameMap) {
+    _udonNameMap = new Map(VRC_EVENTS.map((event) => [event.udonName, event]));
+  }
+  return _udonNameMap;
+}
 
 export function isVrcEvent(methodName: string): boolean {
-  return EVENT_MAP.has(methodName);
+  return getEventMap().has(methodName);
 }
 
 export function getVrcEventDefinition(
   methodName: string,
 ): VrcEventDefinition | undefined {
-  return EVENT_MAP.get(methodName);
+  return getEventMap().get(methodName);
 }
 
 export function isVrcEventLabel(label: string): boolean {
-  return UDON_NAME_MAP.has(label);
+  return getUdonNameMap().has(label);
 }

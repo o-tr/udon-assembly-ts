@@ -66,13 +66,11 @@ export function coerceToBoolean(
   // String → !String.IsNullOrEmpty(str)  (null-safe)
   if (udonType === UdonType.String) {
     const isNullOrEmpty = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
+    this.emit(
       new CallInstruction(isNullOrEmpty, IS_NULL_OR_EMPTY_SIG, [operand]),
     );
     const boolTemp = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
-      new UnaryOpInstruction(boolTemp, "!", isNullOrEmpty),
-    );
+    this.emit(new UnaryOpInstruction(boolTemp, "!", isNullOrEmpty));
     return boolTemp;
   }
 
@@ -84,7 +82,7 @@ export function coerceToBoolean(
   // rare in VRChat scripts, we accept this divergence for now.
   if (isNumericUdonType(udonType)) {
     const boolTemp = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(boolTemp, operand, "!=", createConstant(0, type)),
     );
     return boolTemp;
@@ -106,7 +104,7 @@ export function coerceToBoolean(
 
   // Object / Class / other → value != null
   const boolTemp = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       boolTemp,
       operand,

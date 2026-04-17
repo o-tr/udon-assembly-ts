@@ -29,7 +29,7 @@ export function coerceSwitchOperand(
     this.isSwitchComparableType(targetType)
   ) {
     const casted = this.newTemp(targetType);
-    this.instructions.push(new CastInstruction(casted, operand));
+    this.emit(new CastInstruction(casted, operand));
     return casted;
   }
 

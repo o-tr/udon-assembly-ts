@@ -208,7 +208,7 @@ export function emitOnDeserializationForFieldChangeCallbacks(
   if (callbacks.length === 0) return;
 
   const label = createLabel("_onDeserialization");
-  this.instructions.push(new LabelInstruction(label));
+  this.emit(new LabelInstruction(label));
   this.currentReturnVar = "__returnValue_return";
   this.symbolTable.enterScope();
 
@@ -228,11 +228,9 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     this.emitCopyWithTracking(currentVal, fieldVar);
 
     const changed = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
-      new BinaryOpInstruction(changed, currentVal, "!=", prevVar),
-    );
+    this.emit(new BinaryOpInstruction(changed, currentVal, "!=", prevVar));
     const skipLabel = this.newLabel("fcb_skip");
-    this.instructions.push(new ConditionalJumpInstruction(changed, skipLabel));
+    this.emit(new ConditionalJumpInstruction(changed, skipLabel));
     this.emitCopyWithTracking(prevVar, currentVal);
     if (prop.fieldChangeCallback) {
       const inlined = this.visitInlineInstanceMethodCall(
@@ -241,7 +239,7 @@ export function emitOnDeserializationForFieldChangeCallbacks(
         [],
       );
       if (inlined == null) {
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(
             undefined,
             thisVar,
@@ -251,12 +249,10 @@ export function emitOnDeserializationForFieldChangeCallbacks(
         );
       }
     }
-    this.instructions.push(new LabelInstruction(skipLabel));
+    this.emit(new LabelInstruction(skipLabel));
   }
 
-  this.instructions.push(
-    new ReturnInstruction(undefined, this.currentReturnVar),
-  );
+  this.emit(new ReturnInstruction(undefined, this.currentReturnVar));
   this.symbolTable.exitScope();
   this.currentReturnVar = undefined;
 }

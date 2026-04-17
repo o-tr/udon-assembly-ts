@@ -154,6 +154,14 @@ import {
  */
 export class ASTToTACConverter {
   instructions: TACInstruction[] = [];
+  /**
+   * When true, emit() is a no-op. Pass 1 runs in this mode to collect
+   * metadata (allInlineInstances, interfaceClassIdMap, soaClasses) without
+   * producing TAC instructions or firing diagnostic warnings — visitors and
+   * helpers that emit console.warn should guard with !metadataOnlyMode to
+   * avoid duplicate output across the two passes.
+   */
+  metadataOnlyMode = false;
   tempCounter = 0;
   labelCounter = 0;
   instanceCounter = 0;
@@ -401,6 +409,7 @@ export class ASTToTACConverter {
    */
   private resetState(): void {
     this.instructions = [];
+    this.metadataOnlyMode = false;
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.instanceCounter = 0;
@@ -454,6 +463,16 @@ export class ASTToTACConverter {
   }
 
   /**
+   * Emit a TAC instruction. Skipped in metadata-only mode (Pass 1).
+   * Single-argument signature avoids rest-parameter array allocation
+   * on every call site.
+   */
+  emit(instruction: TACInstruction): void {
+    if (this.metadataOnlyMode) return;
+    this.instructions.push(instruction);
+  }
+
+  /**
    * Convert program to TAC (two-pass).
    * Pass 1 collects allInlineInstances and interfaceClassIdMap so that
    * forward references (e.g. a Meld instance created *after* the for-of
@@ -462,6 +481,7 @@ export class ASTToTACConverter {
   convert(program: ProgramNode): TACInstruction[] {
     // Pass 1: collect inline instance and interface metadata; discard output
     this.resetState();
+    this.metadataOnlyMode = true;
     this.convertImpl(program);
 
     // Diagnostic: warn when an all-inline interface is used in source but no
@@ -502,7 +522,8 @@ export class ASTToTACConverter {
     );
     const soaClassesFromPass1 = new Set(this.soaClasses);
 
-    // Pass 2: actual codegen, pre-seeded with pass-1 metadata
+    // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
+    // resetState() already clears metadataOnlyMode, so no explicit reset here.
     this.resetState();
     this.allInlineInstances = allInstancesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
@@ -669,7 +690,7 @@ export class ASTToTACConverter {
 
     // No Start method: generate _start with initialization
     const startLabel = createLabel("_start");
-    this.instructions.push(new LabelInstruction(startLabel));
+    this.emit(new LabelInstruction(startLabel));
 
     // 1. pendingTopLevelInits
     for (const tlc of this.pendingTopLevelInits) {
@@ -689,7 +710,7 @@ export class ASTToTACConverter {
       }
     }
 
-    this.instructions.push(new ReturnInstruction());
+    this.emit(new ReturnInstruction());
   }
 
   /**

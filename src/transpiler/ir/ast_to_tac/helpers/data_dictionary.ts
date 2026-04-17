@@ -44,7 +44,7 @@ export function emitDictionaryFromProperties(
       ) {
         // ShallowClone最適化パス
         const cloneResult = this.newTemp(ExternTypes.dataDictionary);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(
             cloneResult,
             spreadValue,
@@ -61,7 +61,7 @@ export function emitDictionaryFromProperties(
           );
           const value = this.visitExpression(prop.value);
           const valueToken = this.wrapDataToken(value);
-          this.instructions.push(
+          this.emit(
             new MethodCallInstruction(undefined, cloneResult, "SetValue", [
               keyToken,
               valueToken,
@@ -80,16 +80,16 @@ export function emitDictionaryFromProperties(
         [],
         "DataList",
       );
-      this.instructions.push(new CallInstruction(listResult, listCtorSig, []));
+      this.emit(new CallInstruction(listResult, listCtorSig, []));
       const spreadToken = this.wrapDataToken(spreadValue);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(undefined, listResult, "Add", [spreadToken]),
       );
       const remaining = properties.slice(1);
       if (remaining.length > 0) {
         const dictSegment = this.emitDictionaryFromProperties(remaining);
         const dictToken = this.wrapDataToken(dictSegment);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
         );
       }
@@ -111,14 +111,14 @@ export function emitDictionaryFromProperties(
       [],
       "DataList",
     );
-    this.instructions.push(new CallInstruction(listResult, listCtorSig, []));
+    this.emit(new CallInstruction(listResult, listCtorSig, []));
 
     let pendingProps: ObjectLiteralPropertyNode[] = [];
     const flushPending = (): void => {
       if (pendingProps.length === 0) return;
       const dictSegment = this.emitDictionaryFromProperties(pendingProps);
       const dictToken = this.wrapDataToken(dictSegment);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
       );
       pendingProps = [];
@@ -129,7 +129,7 @@ export function emitDictionaryFromProperties(
         flushPending();
         const spreadValue = this.visitExpression(prop.value);
         const spreadToken = this.wrapDataToken(spreadValue);
-        this.instructions.push(
+        this.emit(
           new MethodCallInstruction(undefined, listResult, "Add", [
             spreadToken,
           ]),
@@ -157,7 +157,7 @@ export function emitDictionaryFromProperties(
     [],
     "DataDictionary",
   );
-  this.instructions.push(new CallInstruction(dictResult, dictCtorSig, []));
+  this.emit(new CallInstruction(dictResult, dictCtorSig, []));
 
   for (const prop of properties) {
     if (prop.kind !== "property") continue;
@@ -166,7 +166,7 @@ export function emitDictionaryFromProperties(
     );
     const value = this.visitExpression(prop.value);
     const valueToken = this.wrapDataToken(value);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(undefined, dictResult, "SetValue", [
         keyToken,
         valueToken,
@@ -182,9 +182,7 @@ export function emitDataDictionaryKeys(
   target: TACOperand,
 ): TACOperand {
   const result = this.newTemp(ExternTypes.dataList);
-  this.instructions.push(
-    new MethodCallInstruction(result, target, "GetKeys", []),
-  );
+  this.emit(new MethodCallInstruction(result, target, "GetKeys", []));
   return result;
 }
 
@@ -193,9 +191,7 @@ export function emitDataDictionaryValues(
   target: TACOperand,
 ): TACOperand {
   const result = this.newTemp(ExternTypes.dataList);
-  this.instructions.push(
-    new MethodCallInstruction(result, target, "GetValues", []),
-  );
+  this.emit(new MethodCallInstruction(result, target, "GetValues", []));
   return result;
 }
 
@@ -211,67 +207,55 @@ export function emitDataDictionaryEntries(
     [],
     "DataList",
   );
-  this.instructions.push(new CallInstruction(result, listCtorSig, []));
+  this.emit(new CallInstruction(result, listCtorSig, []));
 
   const keysList = this.newTemp(ExternTypes.dataList);
-  this.instructions.push(
-    new MethodCallInstruction(keysList, target, "GetKeys", []),
-  );
+  this.emit(new MethodCallInstruction(keysList, target, "GetKeys", []));
   const valuesList = this.newTemp(ExternTypes.dataList);
-  this.instructions.push(
-    new MethodCallInstruction(valuesList, target, "GetValues", []),
-  );
+  this.emit(new MethodCallInstruction(valuesList, target, "GetValues", []));
 
   const indexVar = this.newTemp(PrimitiveTypes.int32);
   const lengthVar = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(
       indexVar,
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(
-    new PropertyGetInstruction(lengthVar, keysList, "Count"),
-  );
+  this.emit(new PropertyGetInstruction(lengthVar, keysList, "Count"));
 
   const loopStart = this.newLabel("entries_start");
   const loopContinue = this.newLabel("entries_continue");
   const loopEnd = this.newLabel("entries_end");
 
-  this.instructions.push(new LabelInstruction(loopStart));
+  this.emit(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
-  this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
+  this.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+  this.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
   const keyTemp = this.newTemp(ObjectType);
-  this.instructions.push(
+  this.emit(
     new MethodCallInstruction(keyTemp, keysList, "get_Item", [indexVar]),
   );
   const valueTemp = this.newTemp(ObjectType);
-  this.instructions.push(
+  this.emit(
     new MethodCallInstruction(valueTemp, valuesList, "get_Item", [indexVar]),
   );
 
   const pairList = this.newTemp(ExternTypes.dataList);
-  this.instructions.push(new CallInstruction(pairList, listCtorSig, []));
+  this.emit(new CallInstruction(pairList, listCtorSig, []));
   const keyToken = this.wrapDataToken(keyTemp);
   const valueToken = this.wrapDataToken(valueTemp);
-  this.instructions.push(
-    new MethodCallInstruction(undefined, pairList, "Add", [keyToken]),
-  );
-  this.instructions.push(
+  this.emit(new MethodCallInstruction(undefined, pairList, "Add", [keyToken]));
+  this.emit(
     new MethodCallInstruction(undefined, pairList, "Add", [valueToken]),
   );
 
   const pairToken = this.wrapDataToken(pairList);
-  this.instructions.push(
-    new MethodCallInstruction(undefined, result, "Add", [pairToken]),
-  );
+  this.emit(new MethodCallInstruction(undefined, result, "Add", [pairToken]));
 
-  this.instructions.push(new LabelInstruction(loopContinue));
-  this.instructions.push(
+  this.emit(new LabelInstruction(loopContinue));
+  this.emit(
     new BinaryOpInstruction(
       indexVar,
       indexVar,
@@ -279,8 +263,8 @@ export function emitDataDictionaryEntries(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  this.instructions.push(new LabelInstruction(loopEnd));
+  this.emit(new UnconditionalJumpInstruction(loopStart));
+  this.emit(new LabelInstruction(loopEnd));
 
   return result;
 }
@@ -302,75 +286,61 @@ function emitInlineDictionaryMerge(
     "DataDictionary",
   );
   const result = this.newTemp(ExternTypes.dataDictionary);
-  this.instructions.push(new CallInstruction(result, dictCtorSig, []));
+  this.emit(new CallInstruction(result, dictCtorSig, []));
 
   // Outer loop: iterate segments DataList
   const segCount = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
-    new PropertyGetInstruction(segCount, segments, "Count"),
-  );
+  this.emit(new PropertyGetInstruction(segCount, segments, "Count"));
   const segIdx = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(segIdx, createConstant(0, PrimitiveTypes.int32)),
   );
 
   const outerStart = this.newLabel("merge_outer");
   const outerEnd = this.newLabel("merge_outer_end");
-  this.instructions.push(new LabelInstruction(outerStart));
+  this.emit(new LabelInstruction(outerStart));
   const outerCond = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
-    new BinaryOpInstruction(outerCond, segIdx, "<", segCount),
-  );
+  this.emit(new BinaryOpInstruction(outerCond, segIdx, "<", segCount));
   // ConditionalJumpInstruction = JUMP_IF_FALSE: exits loop when segIdx >= segCount
-  this.instructions.push(new ConditionalJumpInstruction(outerCond, outerEnd));
+  this.emit(new ConditionalJumpInstruction(outerCond, outerEnd));
 
   // Get segment DataToken and unwrap to DataDictionary
   const segToken = this.newTemp(ExternTypes.dataToken);
-  this.instructions.push(
+  this.emit(
     new MethodCallInstruction(segToken, segments, "get_Item", [segIdx]),
   );
   const segDict = this.newTemp(ExternTypes.dataDictionary);
-  this.instructions.push(
-    new PropertyGetInstruction(segDict, segToken, "DataDictionary"),
-  );
+  this.emit(new PropertyGetInstruction(segDict, segToken, "DataDictionary"));
 
   // Inner loop: iterate keys of segment dictionary
   const keys = this.newTemp(ExternTypes.dataList);
-  this.instructions.push(
-    new MethodCallInstruction(keys, segDict, "GetKeys", []),
-  );
+  this.emit(new MethodCallInstruction(keys, segDict, "GetKeys", []));
   const keyCount = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(new PropertyGetInstruction(keyCount, keys, "Count"));
+  this.emit(new PropertyGetInstruction(keyCount, keys, "Count"));
   const keyIdx = this.newTemp(PrimitiveTypes.int32);
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(keyIdx, createConstant(0, PrimitiveTypes.int32)),
   );
 
   const innerStart = this.newLabel("merge_inner");
   const innerEnd = this.newLabel("merge_inner_end");
-  this.instructions.push(new LabelInstruction(innerStart));
+  this.emit(new LabelInstruction(innerStart));
   const innerCond = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
-    new BinaryOpInstruction(innerCond, keyIdx, "<", keyCount),
-  );
+  this.emit(new BinaryOpInstruction(innerCond, keyIdx, "<", keyCount));
   // ConditionalJumpInstruction = JUMP_IF_FALSE: exits loop when keyIdx >= keyCount
-  this.instructions.push(new ConditionalJumpInstruction(innerCond, innerEnd));
+  this.emit(new ConditionalJumpInstruction(innerCond, innerEnd));
 
   // Copy key-value pair
   const key = this.newTemp(ExternTypes.dataToken);
-  this.instructions.push(
-    new MethodCallInstruction(key, keys, "get_Item", [keyIdx]),
-  );
+  this.emit(new MethodCallInstruction(key, keys, "get_Item", [keyIdx]));
   const value = this.newTemp(ExternTypes.dataToken);
-  this.instructions.push(
-    new MethodCallInstruction(value, segDict, "GetValue", [key]),
-  );
-  this.instructions.push(
+  this.emit(new MethodCallInstruction(value, segDict, "GetValue", [key]));
+  this.emit(
     new MethodCallInstruction(undefined, result, "SetValue", [key, value]),
   );
 
   // Inner loop increment
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       keyIdx,
       keyIdx,
@@ -378,11 +348,11 @@ function emitInlineDictionaryMerge(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new UnconditionalJumpInstruction(innerStart));
-  this.instructions.push(new LabelInstruction(innerEnd));
+  this.emit(new UnconditionalJumpInstruction(innerStart));
+  this.emit(new LabelInstruction(innerEnd));
 
   // Outer loop increment
-  this.instructions.push(
+  this.emit(
     new BinaryOpInstruction(
       segIdx,
       segIdx,
@@ -390,8 +360,8 @@ function emitInlineDictionaryMerge(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new UnconditionalJumpInstruction(outerStart));
-  this.instructions.push(new LabelInstruction(outerEnd));
+  this.emit(new UnconditionalJumpInstruction(outerStart));
+  this.emit(new LabelInstruction(outerEnd));
 
   return result;
 }

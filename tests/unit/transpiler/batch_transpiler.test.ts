@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
-import { UASM_HEAP_LIMIT } from "../../../src/transpiler/heap_limits";
 
 describe("BatchTranspiler", () => {
   it("should generate output for entry point classes", () => {
@@ -51,17 +50,15 @@ describe("BatchTranspiler", () => {
     const outputDir = path.join(tempDir, "out");
     fs.mkdirSync(sourceDir, { recursive: true });
 
-    const overflowCount = UASM_HEAP_LIMIT + 8;
-    const filler = Array.from(
-      { length: overflowCount },
-      (_, i) => `let value${i}: number = ${i};`,
-    ).join("\n");
+    // Use a tiny heapLimit to force the warning without generating a huge program.
     const sourcePath = path.join(sourceDir, "HeapTest.ts");
     const source = `
       @UdonBehaviour()
       class HeapTest extends UdonSharpBehaviour {
         Start(): void {
-          ${filler}
+          let a: number = 1;
+          let b: number = 2;
+          let c: number = 3;
         }
       }
     `;
@@ -71,18 +68,29 @@ describe("BatchTranspiler", () => {
     const transpiler = new BatchTranspiler();
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = transpiler.transpile({
-      sourceDir,
-      outputDir,
-      excludeDirs: [],
-      outputExtension: "uasm",
-    });
+    try {
+      const result = transpiler.transpile({
+        sourceDir,
+        outputDir,
+        excludeDirs: [],
+        outputExtension: "uasm",
+        heapLimit: 1,
+      });
 
-    expect(result.outputs).toHaveLength(1);
-    const outputPath = result.outputs[0]?.outputPath as string;
-    expect(fs.existsSync(outputPath)).toBe(true);
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+      expect(result.outputs).toHaveLength(1);
+      const outputPath = result.outputs[0]?.outputPath as string;
+      expect(fs.existsSync(outputPath)).toBe(true);
+      expect(warnSpy).toHaveBeenCalled();
+      // Flatten all call args into a single searchable string so multi-arg
+      // console.warn invocations are not silently truncated.
+      const warnCalls = warnSpy.mock.calls
+        .map((call) => call.map(String).join(" "))
+        .join("\n");
+      expect(warnCalls).toContain("exceeds limit 1");
+      expect(warnCalls).toContain("Heap usage by class:");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("should collect top-level consts from inline class files", () => {

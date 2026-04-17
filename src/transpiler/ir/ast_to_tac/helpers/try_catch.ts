@@ -27,7 +27,7 @@ export function emitTryInstructionsWithChecks(
   errorTarget: TACOperand,
 ): void {
   for (const inst of instructions) {
-    this.instructions.push(inst);
+    this.emit(inst);
 
     const checkOperand = this.getCheckOperand(inst);
     if (!checkOperand) continue;
@@ -35,7 +35,7 @@ export function emitTryInstructionsWithChecks(
     if (!this.isNullableType(checkType)) continue;
 
     const isNullTemp = this.newTemp(PrimitiveTypes.boolean);
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(
         isNullTemp,
         checkOperand,
@@ -44,10 +44,8 @@ export function emitTryInstructionsWithChecks(
       ),
     );
     const continueLabel = this.newLabel("try_continue");
-    this.instructions.push(
-      new ConditionalJumpInstruction(isNullTemp, continueLabel),
-    );
-    this.instructions.push(
+    this.emit(new ConditionalJumpInstruction(isNullTemp, continueLabel));
+    this.emit(
       new AssignmentInstruction(
         errorFlag,
         createConstant(true, PrimitiveTypes.boolean),
@@ -55,9 +53,9 @@ export function emitTryInstructionsWithChecks(
     );
     // Plain copy: the error slot is a null sentinel path, not an inline
     // instance — tracking would incorrectly pollute inlineInstanceMap.
-    this.instructions.push(new CopyInstruction(errorValue, checkOperand));
-    this.instructions.push(new UnconditionalJumpInstruction(errorTarget));
-    this.instructions.push(new LabelInstruction(continueLabel));
+    this.emit(new CopyInstruction(errorValue, checkOperand));
+    this.emit(new UnconditionalJumpInstruction(errorTarget));
+    this.emit(new LabelInstruction(continueLabel));
   }
 }
 

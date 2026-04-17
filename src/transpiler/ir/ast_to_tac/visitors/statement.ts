@@ -332,7 +332,7 @@ export function visitVariableDeclaration(
   }
 
   if (src) {
-    this.instructions.push(new AssignmentInstruction(dest, src));
+    this.emit(new AssignmentInstruction(dest, src));
     // Preserve pre-existing tracking when src is untracked: a local variable
     // may shadow a same-named parameter/outer-scope variable whose tracking
     // is still valid (e.g. `const { hand } = context` inside an inlined method
@@ -349,20 +349,20 @@ export function visitIfStatement(
   const elseLabel = this.newLabel("else");
   const endLabel = this.newLabel("endif");
 
-  this.instructions.push(new ConditionalJumpInstruction(condition, elseLabel));
+  this.emit(new ConditionalJumpInstruction(condition, elseLabel));
 
   // Then branch
   this.visitStatement(node.thenBranch);
-  this.instructions.push(new UnconditionalJumpInstruction(endLabel));
+  this.emit(new UnconditionalJumpInstruction(endLabel));
 
   // Else branch
-  this.instructions.push(new LabelInstruction(elseLabel));
+  this.emit(new LabelInstruction(elseLabel));
   if (node.elseBranch) {
     this.visitStatement(node.elseBranch);
   }
 
   // End label
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
 }
 
 export function visitWhileStatement(
@@ -373,11 +373,11 @@ export function visitWhileStatement(
   const endLabel = this.newLabel("while_end");
 
   // Start label
-  this.instructions.push(new LabelInstruction(startLabel));
+  this.emit(new LabelInstruction(startLabel));
 
   // Condition
   const condition = this.coerceToBoolean(this.visitExpression(node.condition));
-  this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
+  this.emit(new ConditionalJumpInstruction(condition, endLabel));
 
   // Body
   this.loopContextStack.push({
@@ -388,10 +388,10 @@ export function visitWhileStatement(
   this.loopContextStack.pop();
 
   // Jump back to start
-  this.instructions.push(new UnconditionalJumpInstruction(startLabel));
+  this.emit(new UnconditionalJumpInstruction(startLabel));
 
   // End label
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
 }
 
 export function visitForStatement(
@@ -409,13 +409,13 @@ export function visitForStatement(
   const startLabel = this.newLabel("for_start");
   const endLabel = this.newLabel("for_end");
 
-  this.instructions.push(new LabelInstruction(startLabel));
+  this.emit(new LabelInstruction(startLabel));
 
   if (node.condition) {
     const condition = this.coerceToBoolean(
       this.visitExpression(node.condition),
     );
-    this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
+    this.emit(new ConditionalJumpInstruction(condition, endLabel));
   }
 
   const continueLabel = this.newLabel("for_continue");
@@ -426,13 +426,13 @@ export function visitForStatement(
   this.visitStatement(node.body);
   this.loopContextStack.pop();
 
-  this.instructions.push(new LabelInstruction(continueLabel));
+  this.emit(new LabelInstruction(continueLabel));
   if (node.incrementor) {
     this.visitExpression(node.incrementor);
   }
 
-  this.instructions.push(new UnconditionalJumpInstruction(startLabel));
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new UnconditionalJumpInstruction(startLabel));
+  this.emit(new LabelInstruction(endLabel));
 }
 
 export function visitForOfStatement(
@@ -462,7 +462,7 @@ export function visitForOfStatement(
     const elementType = inferredSetType.elementType ?? ObjectType;
     const listType = new DataListTypeSymbol(elementType);
     const listResult = this.newTemp(listType);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(listResult, iterableOperand, "GetKeys", []),
     );
     iterableOperand = listResult;
@@ -492,31 +492,25 @@ export function visitForOfStatement(
       const idxVar = this.newTemp(PrimitiveTypes.int32);
       const lenVar = this.newTemp(PrimitiveTypes.int32);
 
-      this.instructions.push(
+      this.emit(
         new AssignmentInstruction(
           idxVar,
           createConstant(0, PrimitiveTypes.int32),
         ),
       );
-      this.instructions.push(
-        new PropertyGetInstruction(lenVar, iterableOperand, "Length"),
-      );
+      this.emit(new PropertyGetInstruction(lenVar, iterableOperand, "Length"));
 
       const loopStart = this.newLabel("forof_start");
       const loopEnd = this.newLabel("forof_end");
-      this.instructions.push(new LabelInstruction(loopStart));
+      this.emit(new LabelInstruction(loopStart));
 
       const condVar = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
-        new BinaryOpInstruction(condVar, idxVar, "<", lenVar),
-      );
-      this.instructions.push(new ConditionalJumpInstruction(condVar, loopEnd));
+      this.emit(new BinaryOpInstruction(condVar, idxVar, "<", lenVar));
+      this.emit(new ConditionalJumpInstruction(condVar, loopEnd));
 
       const elemTemp = this.newTemp(elemType);
-      this.instructions.push(
-        new ArrayAccessInstruction(elemTemp, iterableOperand, idxVar),
-      );
-      this.instructions.push(new AssignmentInstruction(elemVar, elemTemp));
+      this.emit(new ArrayAccessInstruction(elemTemp, iterableOperand, idxVar));
+      this.emit(new AssignmentInstruction(elemVar, elemTemp));
 
       const loopIncrement = this.newLabel("forof_native_continue");
       this.loopContextStack.push({
@@ -526,9 +520,9 @@ export function visitForOfStatement(
       this.visitStatement(node.body);
       this.loopContextStack.pop();
 
-      this.instructions.push(new LabelInstruction(loopIncrement));
+      this.emit(new LabelInstruction(loopIncrement));
       const nextIdx = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
+      this.emit(
         new BinaryOpInstruction(
           nextIdx,
           idxVar,
@@ -536,9 +530,9 @@ export function visitForOfStatement(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      this.instructions.push(new AssignmentInstruction(idxVar, nextIdx));
-      this.instructions.push(new UnconditionalJumpInstruction(loopStart));
-      this.instructions.push(new LabelInstruction(loopEnd));
+      this.emit(new AssignmentInstruction(idxVar, nextIdx));
+      this.emit(new UnconditionalJumpInstruction(loopStart));
+      this.emit(new LabelInstruction(loopEnd));
       return;
     }
   }
@@ -625,31 +619,27 @@ export function visitForOfStatement(
     elementVar = createVariable(variableName, elementType, { isLocal: true });
   }
 
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(
       indexVar,
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
   // All arrays use DataList Count at runtime.
-  this.instructions.push(
-    new PropertyGetInstruction(lengthVar, iterableOperand, "Count"),
-  );
+  this.emit(new PropertyGetInstruction(lengthVar, iterableOperand, "Count"));
 
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
   const loopEnd = this.newLabel("forof_end");
 
-  this.instructions.push(new LabelInstruction(loopStart));
+  this.emit(new LabelInstruction(loopStart));
   const condTemp = this.newTemp(PrimitiveTypes.boolean);
-  this.instructions.push(
-    new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar),
-  );
-  this.instructions.push(new ConditionalJumpInstruction(condTemp, loopEnd));
+  this.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+  this.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
   {
     const tokenValue = this.newTemp(ExternTypes.dataToken);
-    this.instructions.push(
+    this.emit(
       new MethodCallInstruction(tokenValue, iterableOperand, "get_Item", [
         indexVar,
       ]),
@@ -679,7 +669,7 @@ export function visitForOfStatement(
         isLocal: true,
       });
       const elementValue = this.newTemp(destructuredType);
-      this.instructions.push(
+      this.emit(
         new MethodCallInstruction(elementValue, elementVar, "get_Item", [
           createConstant(i, PrimitiveTypes.int32),
         ]),
@@ -696,7 +686,7 @@ export function visitForOfStatement(
         isLocal: true,
       });
       const propValue = this.newTemp(ObjectType);
-      this.instructions.push(
+      this.emit(
         new PropertyGetInstruction(propValue, elementVar, entry.property),
       );
       this.emitCopyWithTracking(targetVar, propValue, true);
@@ -757,7 +747,7 @@ export function visitForOfStatement(
       for (const [instanceId, info] of vifaceRelevantInstances) {
         const nextLabel = this.newLabel("viface_wb_next");
         const cond = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
+        this.emit(
           new BinaryOpInstruction(
             cond,
             vifaceHandleVar,
@@ -765,7 +755,7 @@ export function visitForOfStatement(
             createConstant(instanceId, PrimitiveTypes.int32),
           ),
         );
-        this.instructions.push(new ConditionalJumpInstruction(cond, nextLabel));
+        this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
         // Use getAllClassProps to include inherited properties in write-back.
         const propsToWriteBack = getAllClassProps(info.className);
@@ -779,12 +769,10 @@ export function visitForOfStatement(
           this.emitCopyWithTracking(dst, src, true);
         }
 
-        this.instructions.push(
-          new UnconditionalJumpInstruction(writebackEndLabel),
-        );
-        this.instructions.push(new LabelInstruction(nextLabel));
+        this.emit(new UnconditionalJumpInstruction(writebackEndLabel));
+        this.emit(new LabelInstruction(nextLabel));
       }
-      this.instructions.push(new LabelInstruction(writebackEndLabel));
+      this.emit(new LabelInstruction(writebackEndLabel));
     }
 
     // Restore inlineInstanceMap: remove entries pointing to the virtual prefix.
@@ -808,7 +796,7 @@ export function visitForOfStatement(
     }
 
     if (targetLabel) {
-      this.instructions.push(new UnconditionalJumpInstruction(targetLabel));
+      this.emit(new UnconditionalJumpInstruction(targetLabel));
     }
   };
 
@@ -886,7 +874,7 @@ export function visitForOfStatement(
 
         // Reset classId to sentinel so an unmatched instanceId doesn't
         // silently reuse the previous iteration's stale value.
-        this.instructions.push(
+        this.emit(
           new AssignmentInstruction(
             classIdVar,
             createConstant(-1, PrimitiveTypes.int32),
@@ -897,7 +885,7 @@ export function visitForOfStatement(
         for (const [instanceId, info] of relevantInstances) {
           const nextLabel = this.newLabel("viface_next");
           const cond = this.newTemp(PrimitiveTypes.boolean);
-          this.instructions.push(
+          this.emit(
             new BinaryOpInstruction(
               cond,
               handleVar,
@@ -905,9 +893,7 @@ export function visitForOfStatement(
               createConstant(instanceId, PrimitiveTypes.int32),
             ),
           );
-          this.instructions.push(
-            new ConditionalJumpInstruction(cond, nextLabel),
-          );
+          this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
           // Copy all class properties (including inherited) to virtual variables
           // so inlined method bodies can access private/internal/inherited fields.
@@ -936,19 +922,17 @@ export function visitForOfStatement(
                 `This indicates a mismatch between allInlineInstances and interfaceClassIdMap.`,
             );
           }
-          this.instructions.push(
+          this.emit(
             new AssignmentInstruction(
               classIdVar,
               createConstant(classId, PrimitiveTypes.int32),
             ),
           );
 
-          this.instructions.push(
-            new UnconditionalJumpInstruction(dispatchEndLabel),
-          );
-          this.instructions.push(new LabelInstruction(nextLabel));
+          this.emit(new UnconditionalJumpInstruction(dispatchEndLabel));
+          this.emit(new LabelInstruction(nextLabel));
         }
-        this.instructions.push(new LabelInstruction(dispatchEndLabel));
+        this.emit(new LabelInstruction(dispatchEndLabel));
 
         // Register virtual prefix in inlineInstanceMap for the loop variable
         savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);
@@ -1004,10 +988,10 @@ export function visitForOfStatement(
     //   loopFinalizeBreak — reached ONLY via `break` (not from fall-through).
     //     Emits write-back, then jumps to loopEnd.
     // The two labels are sequential in TAC but represent disjoint runtime paths.
-    this.instructions.push(new LabelInstruction(loopFinalizeContinue));
+    this.emit(new LabelInstruction(loopFinalizeContinue));
     emitVirtualInterfaceIterationEpilogue(loopContinue);
 
-    this.instructions.push(new LabelInstruction(loopFinalizeBreak));
+    this.emit(new LabelInstruction(loopFinalizeBreak));
     emitVirtualInterfaceIterationEpilogue(loopEnd);
   } else {
     this.loopContextStack.push({
@@ -1022,8 +1006,8 @@ export function visitForOfStatement(
     }
   }
 
-  this.instructions.push(new LabelInstruction(loopContinue));
-  this.instructions.push(
+  this.emit(new LabelInstruction(loopContinue));
+  this.emit(
     new BinaryOpInstruction(
       indexVar,
       indexVar,
@@ -1031,8 +1015,8 @@ export function visitForOfStatement(
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  this.instructions.push(new UnconditionalJumpInstruction(loopStart));
-  this.instructions.push(new LabelInstruction(loopEnd));
+  this.emit(new UnconditionalJumpInstruction(loopStart));
+  this.emit(new LabelInstruction(loopEnd));
 }
 
 export function visitSwitchStatement(
@@ -1056,20 +1040,16 @@ export function visitSwitchStatement(
     const comparisonResult = this.newTemp(PrimitiveTypes.boolean);
     // Use "!=" because ConditionalJump jumps when the condition is false,
     // so we branch to the case label when values are equal.
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(comparisonResult, switchTemp, "!=", caseValue),
     );
-    this.instructions.push(
-      new ConditionalJumpInstruction(comparisonResult, entry.label),
-    );
+    this.emit(new ConditionalJumpInstruction(comparisonResult, entry.label));
   }
 
   const defaultEntry = caseEntries.find(
     (entry) => entry.node.expression === null,
   );
-  this.instructions.push(
-    new UnconditionalJumpInstruction(defaultEntry?.label ?? endLabel),
-  );
+  this.emit(new UnconditionalJumpInstruction(defaultEntry?.label ?? endLabel));
 
   const outerContext = this.loopContextStack[this.loopContextStack.length - 1];
   // Note: emitExitEpilogue is intentionally NOT forwarded from the outer loop.
@@ -1084,14 +1064,14 @@ export function visitSwitchStatement(
   });
 
   for (const entry of caseEntries) {
-    this.instructions.push(new LabelInstruction(entry.label));
+    this.emit(new LabelInstruction(entry.label));
     for (const statement of entry.node.statements) {
       this.visitStatement(statement);
     }
   }
 
   this.loopContextStack.pop();
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
 }
 
 export function visitDoWhileStatement(
@@ -1102,7 +1082,7 @@ export function visitDoWhileStatement(
   const conditionLabel = this.newLabel("do_condition");
   const endLabel = this.newLabel("do_end");
 
-  this.instructions.push(new LabelInstruction(startLabel));
+  this.emit(new LabelInstruction(startLabel));
 
   this.loopContextStack.push({
     breakLabel: endLabel,
@@ -1111,11 +1091,11 @@ export function visitDoWhileStatement(
   this.visitStatement(node.body);
   this.loopContextStack.pop();
 
-  this.instructions.push(new LabelInstruction(conditionLabel));
+  this.emit(new LabelInstruction(conditionLabel));
   const condition = this.coerceToBoolean(this.visitExpression(node.condition));
-  this.instructions.push(new ConditionalJumpInstruction(condition, endLabel));
-  this.instructions.push(new UnconditionalJumpInstruction(startLabel));
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new ConditionalJumpInstruction(condition, endLabel));
+  this.emit(new UnconditionalJumpInstruction(startLabel));
+  this.emit(new LabelInstruction(endLabel));
 }
 
 export function visitBreakStatement(
@@ -1126,7 +1106,7 @@ export function visitBreakStatement(
   if (!context) {
     throw new Error("Break statement used outside of loop or switch");
   }
-  this.instructions.push(new UnconditionalJumpInstruction(context.breakLabel));
+  this.emit(new UnconditionalJumpInstruction(context.breakLabel));
 }
 
 export function visitContinueStatement(
@@ -1137,9 +1117,7 @@ export function visitContinueStatement(
   if (!context) {
     throw new Error("Continue statement used outside of loop");
   }
-  this.instructions.push(
-    new UnconditionalJumpInstruction(context.continueLabel),
-  );
+  this.emit(new UnconditionalJumpInstruction(context.continueLabel));
 }
 
 export function visitReturnStatement(
@@ -1216,7 +1194,7 @@ export function visitReturnStatement(
   ) {
     emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
     if (value) {
-      this.instructions.push(
+      this.emit(
         new CopyInstruction(
           this.currentInlineRecursiveContext.returnVar,
           value,
@@ -1226,7 +1204,7 @@ export function visitReturnStatement(
     const { dispatchLabel, depthVar } = this.currentInlineRecursiveContext;
     const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
     const depthTemp = this.newTemp(PrimitiveTypes.int32);
-    this.instructions.push(
+    this.emit(
       new BinaryOpInstruction(
         depthTemp,
         depthVarOp,
@@ -1235,7 +1213,7 @@ export function visitReturnStatement(
       ),
     );
     this.emitCopyWithTracking(depthVarOp, depthTemp);
-    this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
+    this.emit(new UnconditionalJumpInstruction(dispatchLabel));
     return;
   }
 
@@ -1259,7 +1237,7 @@ export function visitReturnStatement(
     if (tempValue && value) {
       // Plain copy: the shared recursive return slot is used across dispatch
       // paths — tracking would leak stale provenance from one return path.
-      this.instructions.push(new CopyInstruction(tempValue, value));
+      this.emit(new CopyInstruction(tempValue, value));
     }
     // Copy return value to the return export variable before epilogue
     if (tempValue && this.currentReturnVar) {
@@ -1267,7 +1245,7 @@ export function visitReturnStatement(
         this.currentReturnVar,
         this.getOperandType(tempValue),
       );
-      this.instructions.push(new CopyInstruction(returnVar, tempValue));
+      this.emit(new CopyInstruction(returnVar, tempValue));
     }
     // Decrement depth and jump to dispatch.
     // dispatchLabel is always set when currentRecursiveContext is created,
@@ -1279,7 +1257,7 @@ export function visitReturnStatement(
         PrimitiveTypes.int32,
       );
       const depthTemp = this.newTemp(PrimitiveTypes.int32);
-      this.instructions.push(
+      this.emit(
         new BinaryOpInstruction(
           depthTemp,
           depthVar,
@@ -1288,7 +1266,7 @@ export function visitReturnStatement(
         ),
       );
       this.emitCopyWithTracking(depthVar, depthTemp);
-      this.instructions.push(new UnconditionalJumpInstruction(dispatchLabel));
+      this.emit(new UnconditionalJumpInstruction(dispatchLabel));
     }
     return;
   }
@@ -1339,11 +1317,9 @@ export function visitReturnStatement(
             `${returnInstancePrefix}_${propName}`,
             propType,
           );
-          this.instructions.push(new CopyInstruction(dstField, srcField));
+          this.emit(new CopyInstruction(dstField, srcField));
         }
-        this.instructions.push(
-          new CopyInstruction(inlineContext.returnVar, value),
-        );
+        this.emit(new CopyInstruction(inlineContext.returnVar, value));
         // Track returnTrackingInvalidated: if a previous return path used a
         // different interface name, the stable prefix is ambiguous.
         if (!inlineContext.returnTrackingInvalidated) {
@@ -1363,9 +1339,7 @@ export function visitReturnStatement(
             });
           }
         }
-        this.instructions.push(
-          new UnconditionalJumpInstruction(inlineContext.returnLabel),
-        );
+        this.emit(new UnconditionalJumpInstruction(inlineContext.returnLabel));
         return;
       }
     }
@@ -1384,15 +1358,15 @@ export function visitReturnStatement(
           // declared as `unknown`/`any` was not promoted to a concrete type
           // by saveAndBindInlineParams (e.g. a non-scalar arg such as a
           // DataToken or struct).
-          console.warn(
-            "transpiler: erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
-          );
+          if (!this.metadataOnlyMode) {
+            console.warn(
+              "transpiler: erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
+            );
+          }
         }
         returnPayload = this.wrapDataToken(value);
       }
-      this.instructions.push(
-        new CopyInstruction(inlineContext.returnVar, returnPayload),
-      );
+      this.emit(new CopyInstruction(inlineContext.returnVar, returnPayload));
       if (inlineContext.isErasedReturn) {
         // DataToken payload can never be an inline class handle.
         this.inlineInstanceMap.delete(inlineContext.returnVar.name);
@@ -1420,13 +1394,11 @@ export function visitReturnStatement(
       this.inlineInstanceMap.delete(inlineContext.returnVar.name);
       inlineContext.returnTrackingInvalidated = true;
     }
-    this.instructions.push(
-      new UnconditionalJumpInstruction(inlineContext.returnLabel),
-    );
+    this.emit(new UnconditionalJumpInstruction(inlineContext.returnLabel));
     return;
   }
   emitLoopExitEpilogues(this);
-  this.instructions.push(new ReturnInstruction(value, this.currentReturnVar));
+  this.emit(new ReturnInstruction(value, this.currentReturnVar));
 }
 
 export function visitBlockStatement(
@@ -1493,7 +1465,7 @@ export function visitClassDeclaration(
       this.currentMethodLayout = null;
     }
     const label = createLabel(labelName);
-    this.instructions.push(new LabelInstruction(label));
+    this.emit(new LabelInstruction(label));
 
     if (this.currentMethodLayout?.returnExportName) {
       this.currentReturnVar = this.currentMethodLayout.returnExportName;
@@ -1675,7 +1647,7 @@ export function visitClassDeclaration(
       // (i.e., already initialized) → skips allocation. Falls through when TRUE
       // (not initialized) → runs allocation.
       const notInitialized = this.newTemp(PrimitiveTypes.boolean);
-      this.instructions.push(
+      this.emit(
         new BinaryOpInstruction(
           notInitialized,
           stackInitFlag,
@@ -1684,9 +1656,7 @@ export function visitClassDeclaration(
         ),
       );
       const skipAllocLabel = this.newLabel("skip_stack_alloc");
-      this.instructions.push(
-        new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
-      );
+      this.emit(new ConditionalJumpInstruction(notInitialized, skipAllocLabel));
 
       {
         // Mark as initialized
@@ -1713,10 +1683,10 @@ export function visitClassDeclaration(
             [],
             "DataList",
           );
-          this.instructions.push(new CallInstruction(stackVar, externSig, []));
+          this.emit(new CallInstruction(stackVar, externSig, []));
           // Pre-populate with default tokens for indexed set_Item access
           for (let i = 0; i < maxRecursionDepth; i++) {
-            this.instructions.push(
+            this.emit(
               new MethodCallInstruction(undefined, stackVar, "Add", [
                 defaultToken,
               ]),
@@ -1727,7 +1697,7 @@ export function visitClassDeclaration(
         // always sets it before JUMP. The dispatch table's fallback
         // (JUMP 0xFFFFFFFC) handles any unmatched index defensively.
       }
-      this.instructions.push(new LabelInstruction(skipAllocLabel));
+      this.emit(new LabelInstruction(skipAllocLabel));
       // Always reset SP to -1 at top-level entry (both first and subsequent calls).
       // Uses depth <= 0 to cover both the heap-initialized state (depth == 0)
       // and the post-completion state (depth == -1) left after a compiled caller's
@@ -1736,7 +1706,7 @@ export function visitClassDeclaration(
       {
         const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
         const depthAtTopLevel = this.newTemp(PrimitiveTypes.boolean);
-        this.instructions.push(
+        this.emit(
           new BinaryOpInstruction(
             depthAtTopLevel,
             depthVarOp,
@@ -1745,7 +1715,7 @@ export function visitClassDeclaration(
           ),
         );
         const skipSpResetLabel = this.newLabel("skip_sp_reset");
-        this.instructions.push(
+        this.emit(
           new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
         );
         const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
@@ -1760,7 +1730,7 @@ export function visitClassDeclaration(
           depthVarOp,
           createConstant(0, PrimitiveTypes.int32),
         );
-        this.instructions.push(new LabelInstruction(skipSpResetLabel));
+        this.emit(new LabelInstruction(skipSpResetLabel));
       }
       // Shared overflow handler: emitted once per method, jumped to from each
       // call site's depth check in emitCallSitePush.
@@ -1769,12 +1739,8 @@ export function visitClassDeclaration(
       // entire active event handler.
       {
         const afterOverflowLabel = this.newLabel("after_overflow");
-        this.instructions.push(
-          new UnconditionalJumpInstruction(afterOverflowLabel),
-        );
-        this.instructions.push(
-          new LabelInstruction(recursionContext.overflowLabel),
-        );
+        this.emit(new UnconditionalJumpInstruction(afterOverflowLabel));
+        this.emit(new LabelInstruction(recursionContext.overflowLabel));
         const logErrorExtern = this.requireExternSignature(
           "Debug",
           "LogError",
@@ -1786,7 +1752,7 @@ export function visitClassDeclaration(
           `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${node.name}.${method.name}. Aborting event handler.`,
           PrimitiveTypes.string,
         );
-        this.instructions.push(
+        this.emit(
           new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
         );
         // Reset depth to 0 so a subsequent SendCustomEvent invocation
@@ -1796,10 +1762,8 @@ export function visitClassDeclaration(
           overflowDepthVar,
           createConstant(0, PrimitiveTypes.int32),
         );
-        this.instructions.push(
-          new ReturnInstruction(undefined, this.currentReturnVar),
-        );
-        this.instructions.push(new LabelInstruction(afterOverflowLabel));
+        this.emit(new ReturnInstruction(undefined, this.currentReturnVar));
+        this.emit(new LabelInstruction(afterOverflowLabel));
       }
     }
 
@@ -1862,7 +1826,7 @@ export function visitClassDeclaration(
             "Workaround: extract the forEach body into a separate non-recursive helper method.",
         );
       }
-      if (emitted < expectedSelfCallCount) {
+      if (emitted < expectedSelfCallCount && !this.metadataOnlyMode) {
         // Warn-only (not error): over-counted variables are added to the
         // push/pop set but never written or read by code-gen. They are
         // push/pop-balanced by construction, so correctness is preserved —
@@ -1905,7 +1869,7 @@ export function visitClassDeclaration(
           PrimitiveTypes.int32,
         );
         const depthTmpEnd = this.newTemp(PrimitiveTypes.int32);
-        this.instructions.push(
+        this.emit(
           new BinaryOpInstruction(
             depthTmpEnd,
             depthVarEnd,
@@ -1917,7 +1881,7 @@ export function visitClassDeclaration(
       }
       // Jump to dispatch (dispatch uses current siteIdx)
       if (this.currentRecursiveContext.dispatchLabel) {
-        this.instructions.push(
+        this.emit(
           new UnconditionalJumpInstruction(
             this.currentRecursiveContext.dispatchLabel,
           ),
@@ -1928,15 +1892,13 @@ export function visitClassDeclaration(
       // non-recursive methods are compiled first (see orderedMethods above),
       // so all external caller return sites are already registered.
       if (this.currentRecursiveContext.dispatchLabel) {
-        this.instructions.push(
+        this.emit(
           new LabelInstruction(this.currentRecursiveContext.dispatchLabel),
         );
       }
       this.emitReturnSiteDispatch();
     } else {
-      this.instructions.push(
-        new ReturnInstruction(undefined, this.currentReturnVar),
-      );
+      this.emit(new ReturnInstruction(undefined, this.currentReturnVar));
     }
     this.symbolTable.exitScope();
     this.currentReturnVar = undefined;
@@ -1994,13 +1956,13 @@ export function visitTryCatchStatement(
   const endLabel = this.newLabel(`try_end_${tryId}`);
   const errorTarget = catchLabel ?? finallyLabel ?? endLabel;
 
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(
       errorFlagVar,
       createConstant(false, PrimitiveTypes.boolean),
     ),
   );
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(errorValueVar, createConstant(null, ObjectType)),
   );
 
@@ -2026,10 +1988,8 @@ export function visitTryCatchStatement(
   );
 
   if (catchLabel) {
-    this.instructions.push(
-      new UnconditionalJumpInstruction(finallyLabel ?? endLabel),
-    );
-    this.instructions.push(new LabelInstruction(catchLabel));
+    this.emit(new UnconditionalJumpInstruction(finallyLabel ?? endLabel));
+    this.emit(new LabelInstruction(catchLabel));
     if (node.catchBody) {
       this.symbolTable.enterScope();
       if (node.catchVariable) {
@@ -2046,7 +2006,7 @@ export function visitTryCatchStatement(
         });
         // Plain copy: the error slot may receive values from multiple throw
         // paths — tracking would leak single-path inline provenance.
-        this.instructions.push(new CopyInstruction(catchVar, errorValueVar));
+        this.emit(new CopyInstruction(catchVar, errorValueVar));
       }
       this.scanDeclarations(node.catchBody.statements);
       for (const stmt of node.catchBody.statements) {
@@ -2057,12 +2017,12 @@ export function visitTryCatchStatement(
   }
 
   if (finallyLabel && node.finallyBody) {
-    this.instructions.push(new UnconditionalJumpInstruction(finallyLabel));
-    this.instructions.push(new LabelInstruction(finallyLabel));
+    this.emit(new UnconditionalJumpInstruction(finallyLabel));
+    this.emit(new LabelInstruction(finallyLabel));
     this.visitBlockStatement(node.finallyBody);
   }
 
-  this.instructions.push(new LabelInstruction(endLabel));
+  this.emit(new LabelInstruction(endLabel));
 }
 
 export function visitThrowStatement(
@@ -2079,14 +2039,12 @@ export function visitThrowStatement(
       ["object"],
       "void",
     );
-    this.instructions.push(new CallInstruction(undefined, externSig, [value]));
+    this.emit(new CallInstruction(undefined, externSig, [value]));
     const inlineContext =
       this.inlineReturnStack[this.inlineReturnStack.length - 1];
     if (inlineContext) {
       emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
-      this.instructions.push(
-        new UnconditionalJumpInstruction(inlineContext.returnLabel),
-      );
+      this.emit(new UnconditionalJumpInstruction(inlineContext.returnLabel));
     } else {
       emitLoopExitEpilogues(this);
       // If inside a recursive context, reset depth to 0 before aborting.
@@ -2102,9 +2060,7 @@ export function visitThrowStatement(
           createConstant(0, PrimitiveTypes.int32),
         );
       }
-      this.instructions.push(
-        new ReturnInstruction(undefined, this.currentReturnVar),
-      );
+      this.emit(new ReturnInstruction(undefined, this.currentReturnVar));
     }
     return;
   }
@@ -2112,7 +2068,7 @@ export function visitThrowStatement(
   // Emit loop exit epilogues for any loops entered since the try block started,
   // so viface write-back runs before jumping to the catch handler.
   emitLoopExitEpiloguesSinceDepth(this, context.loopDepth);
-  this.instructions.push(
+  this.emit(
     new AssignmentInstruction(
       context.errorFlag,
       createConstant(true, PrimitiveTypes.boolean),
@@ -2120,8 +2076,8 @@ export function visitThrowStatement(
   );
   // Plain copy: the shared error slot can receive values from multiple throw
   // sites — tracking would leak single-path inline provenance.
-  this.instructions.push(new CopyInstruction(context.errorValue, value));
-  this.instructions.push(new UnconditionalJumpInstruction(context.errorTarget));
+  this.emit(new CopyInstruction(context.errorValue, value));
+  this.emit(new UnconditionalJumpInstruction(context.errorTarget));
 }
 
 export function isDestructureBlock(
