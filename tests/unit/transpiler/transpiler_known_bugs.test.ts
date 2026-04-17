@@ -115,6 +115,15 @@
  *         13o-13p: negative guards verifying that @UdonSynced and
  *         @SerializeField fields are excluded from synthetic default
  *         emission (their values are managed externally by VRChat/Unity).
+ *
+ * Bug 14 (baseline invariants): SoA DataToken wrap/unwrap type consistency —
+ *         when inline class fields are stored in SoA DataLists, the
+ *         DataToken constructor used by wrapDataToken() must match the
+ *         accessor used by unwrapDataToken(). A UdonInt (Int32) field must
+ *         wrap via DataToken.__ctor__SystemInt32 and unwrap via
+ *         DataToken.__get_Int__SystemInt32, not __ctor__SystemSingle /
+ *         __get_Float__ or __ctor__SystemObject / __get_Reference__.
+ *         (root cause #24 in vm-test-failures-investigation.md)
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -2597,6 +2606,414 @@ describe("known transpiler bugs", () => {
 
       expect(result.uasm).not.toContain(
         "SystemConvert.__ToString__UnityEngineTransform__SystemString",
+      );
+    });
+  });
+
+  describe("Bug 14: SoA DataToken wrap/unwrap type consistency (root cause #24)", () => {
+    it("14a: SoA inline class with Int32 field wraps and unwraps as Int32", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Counter {
+          constructor(public value: UdonInt) {}
+        }
+        class Main {
+          Start(): void {
+            const counters: Counter[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              counters.push(new Counter(i as UdonInt));
+            }
+            const c = counters[1];
+            Debug.Log(c.value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Int32 accessor must be used for UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      // Must not use Float accessor (Single) for Int32 field
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      // Must not fall back to Reference
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // Must not wrap UdonInt field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+      // Confirm SoA path is exercised
+      expect(result.tac).toContain("__soa_Counter_value.get_Item");
+      // OOB sentinel must use Int32 ctor, not Object or Float
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
+    });
+
+    it("14b: SoA inline class method returning Int32 through for-of uses Int32 accessor", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Slot {
+          constructor(public index: UdonInt) {}
+          getIndex(): UdonInt {
+            return this.index;
+          }
+        }
+        class Main {
+          Start(): void {
+            const slots: Slot[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              slots.push(new Slot(i as UdonInt));
+            }
+            for (const s of slots) {
+              Debug.Log(s.getIndex());
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // Must not wrap UdonInt field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+      // No dispatch miss (guards against Bug 8 regression on SoA method dispatch)
+      expect(result.uasm).not.toContain("dispatch miss");
+      // Confirm SoA method dispatch path is exercised
+      expect(result.tac).toContain("__soa_Slot_index.get_Item");
+      // OOB sentinel must use Int32 ctor, not Object or Float
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
+    });
+
+    it("14c: SoA inline class with mixed types uses matching accessors per field", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Record {
+          constructor(
+            public id: UdonInt,
+            public name: string,
+            public active: boolean,
+          ) {}
+        }
+        class Main {
+          Start(): void {
+            const records: Record[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              records.push(new Record(i as UdonInt, "rec" + i, i === 0));
+            }
+            const r = records[0];
+            Debug.Log(r.id);
+            Debug.Log(r.name);
+            Debug.Log(r.active);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Each field type must use its matching DataToken accessor
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean",
+      );
+      // No Reference fallback for any typed field
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // No Float ctor for the UdonInt (id) field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      // Must not wrap UdonInt (id) field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+      // SoA sentinels must use type-appropriate constructors
+      expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+      expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
+      // Must use type-specific ctors to wrap actual field data (not Object)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken",
+      );
+      // All three SoA DataLists must be exercised
+      expect(result.tac).toContain("__soa_Record_id.get_Item");
+      expect(result.tac).toContain("__soa_Record_name.get_Item");
+      expect(result.tac).toContain("__soa_Record_active.get_Item");
+    });
+
+    it("14d: inline class handle stored in array literal wraps as Int32, not Object", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Item {
+          constructor(public code: UdonInt) {}
+        }
+        class Main {
+          Start(): void {
+            const items: Item[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              items.push(new Item(i as UdonInt));
+            }
+            const first = items[0];
+            const arr: Item[] = [first];
+            Debug.Log(arr[0].code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Handle must not wrap as Object
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+      // Handle must wrap as Int32 (inline class handles are Int32 row indices)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Handle must not unwrap via Reference
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // Handle unwraps via Int (inline class handles are Int32)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      // No Float accessor leaking
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Confirm SoA path is exercised for the code field
+      expect(result.tac).toContain("__soa_Item_code.get_Item");
+      // OOB sentinel must use Int32 ctor, not Object or Float
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
+    });
+
+    it("14e: SoA method dispatch with Int32 + String fields uses correct accessors", () => {
+      const source = `
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        class Tile {
+          constructor(public kind: UdonInt, public label: string) {}
+          getKind(): UdonInt {
+            return this.kind;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i as UdonInt, "tile" + i));
+            }
+            for (const t of tiles) {
+              Debug.Log(t.getKind());
+              Debug.Log(t.label);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Int32 accessor for kind field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      // String accessor for label field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_String__SystemString",
+      );
+      // SoA sentinels must use type-appropriate constructors
+      expect(result.tac).toContain(INT32_ZERO_SENTINEL_CTOR);
+      expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+      expect(result.tac).not.toContain(OBJECT_NULL_SENTINEL_CTOR);
+      // No Float accessor leaking from loop variable
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      // Must not use Float ctor to wrap an Int32 field (root cause #24)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      // Must use Int32 ctor to wrap a UdonInt field
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      // Must use String ctor to wrap the label field (matches __get_String__ getter)
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken",
+      );
+      // No Reference fallback
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      // Must not wrap UdonInt field as Object (Bug 2 regression guard)
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+      // No dispatch miss
+      expect(result.uasm).not.toContain("dispatch miss");
+      // Both SoA DataLists exercised
+      expect(result.tac).toContain("__soa_Tile_kind.get_Item");
+      expect(result.tac).toContain("__soa_Tile_label.get_Item");
+    });
+
+    it("14f: OOB sentinel for UdonInt[] bracket read uses Int32 ctor, not Object", () => {
+      const source = `
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const arr: UdonInt[] = [];
+    arr.push(1 as UdonInt);
+    arr.push(2 as UdonInt);
+    arr.push(3 as UdonInt);
+    let idx = 0 as UdonInt;
+    idx = (idx + 1) as UdonInt;
+    const val = arr[idx as number];
+    Debug.Log(val);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Array uses push() so it stays as DataList (not native array).
+      // OOB sentinel in the bounds guard must use Int32 ctor (matching element type)
+      // and NOT Object ctor which would crash on .Int unwrap.
+      expect(result.tac).toContain("dlrd_oob");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken",
+      );
+    });
+
+    it("14g: grow loop default for string[] uses String ctor, not Int32", () => {
+      const source = `
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const names: string[] = [];
+    names[2] = "hello";
+    Debug.Log(names[0]);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Grow loop fills indices 0-1 with default tokens.
+      // Those must use String ctor to match element type.
+      expect(result.tac).toContain("dlgrow_start");
+      expect(result.tac).toContain(STRING_SENTINEL_CTOR);
+    });
+
+    it("14h: grow loop default for boolean[] uses Boolean ctor, not Int32", () => {
+      const source = `
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const flags: boolean[] = [];
+    flags[1] = true;
+    Debug.Log(flags[0]);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).toContain("dlgrow_start");
+      expect(result.tac).toContain(BOOLEAN_SENTINEL_CTOR);
+    });
+
+    it("14i: UdonInt field initializer coerced to Int32, not Single", () => {
+      // The bare `0` literal (without `as UdonInt`) is parsed as Single.
+      // coerceValueForParamSlot in emitInlinePropertyInitializersForClass
+      // must coerce it to Int32 to match the declared field type, so the
+      // SoA DataToken wraps via __ctor__SystemInt32 (not __ctor__SystemSingle).
+      const source = `
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+class Counter {
+  count: UdonInt = 0;
+  constructor() {}
+  inc(): void { this.count = ((this.count as number) + 1) as UdonInt; }
+}
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const items: Counter[] = [];
+    for (let i = 0; i < 3; i++) {
+      items.push(new Counter());
+    }
+    items[0].inc();
+    Debug.Log(items[0].count);
+  }
+}`;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // SoA path must be exercised
+      expect(result.tac).toContain("__soa_Counter_count");
+      // Field initializer must wrap via Int32 ctor, not Single ctor
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
       );
     });
   });
