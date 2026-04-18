@@ -18,7 +18,8 @@ export type TranspileWarningCode =
   | "SoAFieldListMissing"
   | "RecursiveSelfCallOvercount"
   | "WriteToGetter"
-  | "EntryPointGetterUnsupported";
+  | "EntryPointGetterUnsupported"
+  | "SetterBodyUnsupported";
 
 export interface TranspileErrorLocation {
   filePath: string;

@@ -811,6 +811,19 @@ export function visitBinaryExpression(
 
     if (leftOriginal.kind === TACOperandKind.Variable) {
       const target = leftOriginal as VariableOperand;
+      // When the read came from `evaluateInlineGetter`, the returned
+      // variable is an `__inline_ret_*` temporary disconnected from the
+      // backing storage — writing to it would silently drop the
+      // compound-assigned value. Route through `assignToTarget` which
+      // runs `maybeWarnWriteToGetter` and short-circuits before emitting
+      // a phantom write.  Plain field reads return a Variable that is
+      // itself the SoA-backed storage, so the fast path remains correct
+      // for non-getter LHS and does not re-evaluate `node.left`'s object
+      // expression (important for side-effecting LHS such as
+      // `getBox().value += 1`).
+      if (target.name.startsWith("__inline_ret_")) {
+        return this.assignToTarget(node.left, assignValue);
+      }
       this.emitCopyWithTracking(target, assignValue);
       return assignValue;
     }
@@ -2037,12 +2050,27 @@ export function visitPropertyAccessExpression(
                 instanceInfo.prefix,
                 node.property,
               );
-              if (!concreteMapped) {
-                throw new Error(
-                  `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
+              if (concreteMapped) {
+                this.emitCopyWithTracking(result, concreteMapped);
+              } else {
+                // Both paths declined: resolveClassProperty succeeded but
+                // neither the getter-inline nor the variable-mapping path
+                // could produce an operand. The only reachable cause is a
+                // getter whose evaluation was skipped by
+                // `inlineMethodStack` recursion detection — e.g. an
+                // interface getter whose body accesses another instance of
+                // the same interface, causing classId dispatch to
+                // re-enter the same getter mid-inlining.  Previously this
+                // threw "Internal error"; now the arm falls through to the
+                // `endLabel` jump with the result variable left
+                // uninitialized for this classId. Warn so the condition is
+                // visible rather than silent.
+                this.warnAt(
+                  node,
+                  "D3DispatchFallback",
+                  `Interface classId dispatch could not produce an operand for getter "${className}.${node.property}" — likely recursion through interface dispatch. Arm for classId ${classId} is a no-op; the result is uninitialized when this arm fires at runtime.`,
                 );
               }
-              this.emitCopyWithTracking(result, concreteMapped);
             }
 
             this.emit(new UnconditionalJumpInstruction(endLabel));
@@ -2331,11 +2359,22 @@ export function visitPropertyAccessExpression(
                 );
                 if (pv) {
                   this.emitCopyWithTracking(dispResult, pv);
+                } else if (propertyIsGetter) {
+                  // Symmetric with the interface classId dispatch arm at
+                  // ~line 2045: when both paths decline for a getter the
+                  // only reachable cause is inline-stack recursion. Warn so
+                  // the condition is visible instead of silently skipping.
+                  this.warnAt(
+                    node,
+                    "D3DispatchFallback",
+                    `D3 dispatch arm for instance ${instId} could not produce an operand for getter "${info.className}.${node.property}" — likely recursion through dispatch. Arm is a no-op; the result is uninitialized when this arm fires at runtime.`,
+                  );
                 }
-                // If pv is undefined here it means mapInlineProperty failed for
-                // this instance. This should not happen: all entries in
-                // dispInstances share the same className (enforced by the filter
-                // above), so every instance must expose the same property set.
+                // If pv is undefined AND the property is not a getter, it
+                // means mapInlineProperty failed for this instance. This
+                // should not happen: all entries in dispInstances share
+                // the same className (enforced by the filter above), so
+                // every instance must expose the same property set.
               }
               this.emit(new UnconditionalJumpInstruction(dispEnd));
               this.emit(new LabelInstruction(dispNext));

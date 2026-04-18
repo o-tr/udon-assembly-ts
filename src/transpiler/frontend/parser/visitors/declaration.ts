@@ -231,6 +231,12 @@ export function visitClassDeclaration(
         kind: ASTNodeKind.PropertyDeclaration,
         name: propName,
         type: propType,
+        // Preserve the raw type text so `evaluateInlineGetter` can forward
+        // it to `method.originalReturnTypeName`, letting
+        // `inlineResolvedMethodBody`'s late-resolution branch recover the
+        // correct `InterfaceTypeSymbol` when the interface is defined
+        // after the class (same file) or in a later-parsed file.
+        originalTypeName: member.type?.getText(),
         isPublic,
         isStatic,
         isGetter: true,
@@ -256,9 +262,15 @@ export function visitClassDeclaration(
       if (member.body && member.body.statements.length > 0) {
         const sourceFile = this.sourceFile ?? member.getSourceFile();
         const pos = sourceFile.getLineAndCharacterOfPosition(member.getStart());
-        console.warn(
-          `SetterBodyUnsupported: Setter "${className}.${propName}" has a body that will be dropped. Writes land directly on the property slot, bypassing any validation or side effects declared inside the setter. Convert to an explicit method (e.g. set${propName[0]?.toUpperCase()}${propName.slice(1)}(v)) to preserve the logic. (${sourceFile.fileName || "<unknown>"}:${pos.line + 1}:${pos.character + 1})`,
-        );
+        this.errorCollector.addWarning({
+          code: "SetterBodyUnsupported",
+          message: `Setter "${className}.${propName}" has a body that will be dropped. Writes land directly on the property slot, bypassing any validation or side effects declared inside the setter. Convert to an explicit method (e.g. set${propName[0]?.toUpperCase()}${propName.slice(1)}(v)) to preserve the logic.`,
+          location: {
+            filePath: sourceFile.fileName || "<unknown>",
+            line: pos.line + 1,
+            column: pos.character + 1,
+          },
+        });
       }
       if (properties.some((prop) => prop.name === propName)) continue;
       const param = member.parameters[0];

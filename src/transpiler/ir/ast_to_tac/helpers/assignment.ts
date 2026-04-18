@@ -203,6 +203,9 @@ export function assignToTarget(
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      if (maybeWarnWriteToGetter(this, entryClassName, propAccess)) {
+        return value;
+      }
       const resolved = resolveClassProperty(
         this,
         entryClassName,
@@ -244,6 +247,9 @@ export function assignToTarget(
         resolveClassNode(this, objectName) &&
         !this.udonBehaviourClasses.has(objectName)
       ) {
+        if (maybeWarnWriteToGetter(this, objectName, propAccess)) {
+          return value;
+        }
         const mapped = this.mapStaticProperty(objectName, propAccess.property);
         if (mapped) {
           this.emitCopyWithTracking(mapped, value);
@@ -326,6 +332,9 @@ export function assignToTarget(
         this.soaClasses.has(handleClassName) &&
         this.soaFieldLists.has(handleClassName)
       ) {
+        if (maybeWarnWriteToGetter(this, handleClassName, propAccess)) {
+          return value;
+        }
         const fieldLists = this.soaFieldLists.get(handleClassName);
         const fieldList = fieldLists?.get(propAccess.property);
         const fieldType = this.soaFieldTypes
