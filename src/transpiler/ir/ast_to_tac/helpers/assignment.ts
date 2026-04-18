@@ -9,6 +9,7 @@ import {
   NativeArrayTypeSymbol,
   ObjectType,
   ObjectTypeSymbol,
+  PrimitiveTypeSymbol,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
@@ -17,6 +18,7 @@ import {
   ASTNodeKind,
   type AssignmentExpressionNode,
   type IdentifierNode,
+  isNumericUdonType,
   needsInt32IndexCoercion,
   type PropertyAccessExpressionNode,
   UdonType,
@@ -46,6 +48,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { resolveTypeFromNode } from "../visitors/expression.js";
 import {
   createSoaSentinelValue,
   isInlineHandleType,
@@ -53,6 +56,7 @@ import {
   resolveClassProperty,
   resolveInlineClassType,
 } from "./inline.js";
+import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 export function assignToTarget(
   this: ASTToTACConverter,
@@ -259,6 +263,55 @@ export function assignToTarget(
         }
       }
     }
+    // SoA inline-class field write: mirror the D3 SoA read fast-path at
+    // expression.ts:2017-2046. When `object` is an inline-class handle
+    // (Variable or Temporary) of a known SoA class and the property has a
+    // registered SoA DataList, emit DataList.set_Item on the per-field list
+    // at the handle index after coercing the RHS to the declared field type.
+    if (
+      object.kind === TACOperandKind.Variable ||
+      object.kind === TACOperandKind.Temporary
+    ) {
+      const handleType = this.getOperandType(object);
+      const handleClassName = handleType.name;
+      if (
+        handleClassName &&
+        isInlineHandleType(this, handleType) &&
+        this.soaClasses.has(handleClassName) &&
+        this.soaFieldLists.has(handleClassName)
+      ) {
+        const fieldLists = this.soaFieldLists.get(handleClassName);
+        const fieldList = fieldLists?.get(propAccess.property);
+        const fieldType = this.soaFieldTypes
+          .get(handleClassName)
+          ?.get(propAccess.property);
+        if (fieldList && fieldType) {
+          const hdlVar = normalizeOperandToInt32(this, object);
+          let coercedValue = value;
+          const valueType = this.getOperandType(value);
+          if (valueType.udonType !== fieldType.udonType) {
+            const casted = this.newTemp(fieldType);
+            this.emit(new CastInstruction(casted, value));
+            coercedValue = casted;
+          }
+          const token = this.wrapDataToken(coercedValue);
+          this.emit(
+            new MethodCallInstruction(undefined, fieldList, "set_Item", [
+              hdlVar,
+              token,
+            ]),
+          );
+          return value;
+        }
+        if (fieldLists && !fieldList) {
+          this.warnAt(
+            propAccess,
+            "SoAFieldListMissing",
+            `SoA class "${handleClassName}" has no DataList for property "${propAccess.property}". Write falls through to PropertySetInstruction.`,
+          );
+        }
+      }
+    }
     // Array length setter: array.length = n → array = array.GetRange(0, n)
     const objectType = this.getOperandType(object);
     if (
@@ -321,6 +374,24 @@ export function visitAssignmentExpression(
       this.currentExpectedType = prev;
       return this.assignToTarget(node.target, value);
     }
+  }
+  // Propagate numeric-primitive target type so numeric ConstantOperands in
+  // the RHS can be retyped at `widenNumericOperands` to keep arithmetic in
+  // the contextual lane instead of widening the integer side to Single.
+  const targetType = resolveTypeFromNode(this, node.target);
+  if (
+    targetType instanceof PrimitiveTypeSymbol &&
+    isNumericUdonType(targetType.udonType)
+  ) {
+    const prev = this.currentExpectedType;
+    this.currentExpectedType = targetType;
+    let value: TACOperand;
+    try {
+      value = this.visitExpression(node.value);
+    } finally {
+      this.currentExpectedType = prev;
+    }
+    return this.assignToTarget(node.target, value);
   }
   const value = this.visitExpression(node.value);
   return this.assignToTarget(node.target, value);

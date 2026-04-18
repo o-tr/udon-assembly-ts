@@ -13,6 +13,7 @@ import {
   mapCSharpTypeToTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
+  PrimitiveTypeSymbol,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import type { SymbolInfo } from "../../../frontend/types.js";
@@ -120,9 +121,117 @@ function tryMapInlinePropertyWithConcreteFallback(
   return undefined;
 }
 
+const NUMERIC_UDON_TYPES = new Set([
+  UdonType.Byte,
+  UdonType.SByte,
+  UdonType.Int16,
+  UdonType.UInt16,
+  UdonType.Int32,
+  UdonType.UInt32,
+  UdonType.Int64,
+  UdonType.UInt64,
+  UdonType.Single,
+  UdonType.Double,
+]);
+
+const FLOAT_UDON_TYPES = new Set([UdonType.Single, UdonType.Double]);
+
+/** Range bounds for integer types where evaluateCastValue does not clamp. */
+const INTEGER_RANGE: Partial<Record<string, [number, number]>> = {
+  Byte: [0, 255],
+  SByte: [-128, 127],
+  Int16: [-32768, 32767],
+  UInt16: [0, 65535],
+  Int32: [-2147483648, 2147483647],
+  UInt32: [0, 4294967295],
+};
+
+function canFoldNumericLiteral(
+  value: number | string | boolean | bigint,
+  targetUdonType: string,
+): boolean {
+  if (typeof value !== "number") return true;
+  if (!Number.isFinite(value)) return false;
+  const range = INTEGER_RANGE[targetUdonType];
+  if (!range) return true;
+  const trunc = Math.trunc(value);
+  return trunc >= range[0] && trunc <= range[1];
+}
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const UINT64_MAX = 2n ** 64n - 1n;
+
+/**
+ * Re-type a numeric ConstantOperand to a contextual target type, truncating
+ * fractional values when narrowing to an integer slot. Returns null when the
+ * conversion is unsafe (non-numeric value, non-finite → integer, or out-of-
+ * range integer) so the caller can fall through to rank-based widening.
+ *
+ * Int64/UInt64 targets use bigint to match `evaluateCastValue` in
+ * `constant_folding.ts`: 64-bit integer constants must survive round-trip
+ * through the optimizer's dedup/fold passes, which expect bigint values.
+ * Out-of-range values (e.g. `-1` targeting UInt64, or `2**63` targeting
+ * Int64) return null so the caller falls through to rank-based widening
+ * rather than emitting a bigint that would fail assembler range checks.
+ */
+function retypeNumericConstant(
+  c: ConstantOperand,
+  target: PrimitiveTypeSymbol,
+): ConstantOperand | null {
+  const targetIsFloat = FLOAT_UDON_TYPES.has(target.udonType);
+  const targetIs64 =
+    target.udonType === UdonType.Int64 || target.udonType === UdonType.UInt64;
+  if (targetIs64) {
+    const isUnsigned = target.udonType === UdonType.UInt64;
+    const [min, max] = isUnsigned ? [0n, UINT64_MAX] : [INT64_MIN, INT64_MAX];
+    try {
+      let bigValue: bigint;
+      if (typeof c.value === "bigint") {
+        bigValue = c.value;
+      } else if (typeof c.value === "number") {
+        if (!Number.isFinite(c.value)) return null;
+        bigValue = BigInt(Math.trunc(c.value));
+      } else {
+        return null;
+      }
+      if (bigValue < min || bigValue > max) return null;
+      return createConstant(bigValue, target) as ConstantOperand;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof c.value !== "number") return null;
+  if (!targetIsFloat && !Number.isFinite(c.value)) return null;
+  const newValue = targetIsFloat ? c.value : Math.trunc(c.value);
+  if (!targetIsFloat) {
+    const range = INTEGER_RANGE[target.udonType];
+    if (range && (newValue < range[0] || newValue > range[1])) return null;
+  }
+  return createConstant(newValue, target) as ConstantOperand;
+}
+
 /**
  * Widen operands to a common promoted numeric type when they differ.
  * Returns the (possibly widened) operands.
+ *
+ * Contextual preference: when `currentExpectedType` is a numeric primitive and
+ * exactly one operand already matches it, a numeric ConstantOperand on the
+ * other side is re-typed to the expected type (possibly lossy for fractional→
+ * integer). This keeps arithmetic in the contextual lane rather than widening
+ * the already-matching side and emitting a Convert.ToSingle(Int32)-shaped
+ * extern. The source must already have conceded precision via an enclosing
+ * integer assignment for this to fire on a fractional literal.
+ *
+ * Divergence note: `intField = intVar + 0.5` now truncates the constant to `0`
+ * BEFORE the add, so `intVar=-3` yields `-3` (not `-2` as the master widen-
+ * then-narrow path produced). Matches "the user wrote a fractional literal in
+ * an integer context" but is not arithmetically equivalent to the pre-change
+ * path. Variable+variable arithmetic is untouched.
+ *
+ * Note on scope: `visitAsExpression` save/restores `currentExpectedType` for
+ * its own inner subtree, so the right operand of an outer binary op sees the
+ * outer (assignment) context, not any brand-strip target inside the left.
  */
 function widenNumericOperands(
   converter: ASTToTACConverter,
@@ -133,6 +242,32 @@ function widenNumericOperands(
   const rightSym = converter.getOperandType(right);
   if (leftSym.udonType === rightSym.udonType) {
     return { left, right };
+  }
+  const expected = converter.currentExpectedType;
+  if (
+    expected instanceof PrimitiveTypeSymbol &&
+    NUMERIC_UDON_TYPES.has(expected.udonType)
+  ) {
+    const leftIsConst = left.kind === TACOperandKind.Constant;
+    const rightIsConst = right.kind === TACOperandKind.Constant;
+    const leftMatches = leftSym.udonType === expected.udonType;
+    const rightMatches = rightSym.udonType === expected.udonType;
+    if (
+      leftMatches &&
+      rightIsConst &&
+      NUMERIC_UDON_TYPES.has(rightSym.udonType)
+    ) {
+      const retyped = retypeNumericConstant(right as ConstantOperand, expected);
+      if (retyped) return { left, right: retyped };
+    }
+    if (
+      rightMatches &&
+      leftIsConst &&
+      NUMERIC_UDON_TYPES.has(leftSym.udonType)
+    ) {
+      const retyped = retypeNumericConstant(left as ConstantOperand, expected);
+      if (retyped) return { left: retyped, right };
+    }
   }
   const promoted = getPromotedType(leftSym, rightSym);
   if (!promoted) {
@@ -2512,43 +2647,6 @@ export function visitOptionalChainingExpression(
   this.emit(new LabelInstruction(endLabel));
 
   return result;
-}
-
-const NUMERIC_UDON_TYPES = new Set([
-  UdonType.Byte,
-  UdonType.SByte,
-  UdonType.Int16,
-  UdonType.UInt16,
-  UdonType.Int32,
-  UdonType.UInt32,
-  UdonType.Int64,
-  UdonType.UInt64,
-  UdonType.Single,
-  UdonType.Double,
-]);
-
-const FLOAT_UDON_TYPES = new Set([UdonType.Single, UdonType.Double]);
-
-/** Range bounds for integer types where evaluateCastValue does not clamp. */
-const INTEGER_RANGE: Partial<Record<string, [number, number]>> = {
-  Byte: [0, 255],
-  SByte: [-128, 127],
-  Int16: [-32768, 32767],
-  UInt16: [0, 65535],
-  Int32: [-2147483648, 2147483647],
-  UInt32: [0, 4294967295],
-};
-
-function canFoldNumericLiteral(
-  value: number | string | boolean | bigint,
-  targetUdonType: string,
-): boolean {
-  if (typeof value !== "number") return true;
-  if (!Number.isFinite(value)) return false;
-  const range = INTEGER_RANGE[targetUdonType];
-  if (!range) return true;
-  const trunc = Math.trunc(value);
-  return trunc >= range[0] && trunc <= range[1];
 }
 
 export function visitAsExpression(
