@@ -58,6 +58,31 @@ import {
 } from "./inline.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
+/**
+ * Emit a diagnostic when an assignment target resolves to a class getter.
+ * TypeScript already rejects writes to getter-only properties upstream, so
+ * this path is not reachable from valid source. The warning exists to
+ * surface transpiler bugs that synthesize such a write.
+ */
+function maybeWarnWriteToGetter(
+  converter: ASTToTACConverter,
+  className: string,
+  propAccess: PropertyAccessExpressionNode,
+): void {
+  const resolved = resolveClassProperty(
+    converter,
+    className,
+    propAccess.property,
+  );
+  if (resolved?.prop.isGetter) {
+    converter.warnAt(
+      propAccess,
+      "WriteToGetter",
+      `Write to getter-only property "${className}.${propAccess.property}" — TS normally rejects this, so reaching this point indicates a transpiler-synthesized write.`,
+    );
+  }
+}
+
 export function assignToTarget(
   this: ASTToTACConverter,
   target: ASTNode,
@@ -144,6 +169,11 @@ export function assignToTarget(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      maybeWarnWriteToGetter(
+        this,
+        this.currentInlineContext.className,
+        propAccess,
+      );
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
         this.currentInlineContext.instancePrefix,
@@ -216,6 +246,7 @@ export function assignToTarget(
         (propAccess.object as IdentifierNode).name,
       );
       if (instanceInfo) {
+        maybeWarnWriteToGetter(this, instanceInfo.className, propAccess);
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
           instanceInfo.prefix,
@@ -252,6 +283,7 @@ export function assignToTarget(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
+        maybeWarnWriteToGetter(this, instanceInfo.className, propAccess);
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
           instanceInfo.prefix,

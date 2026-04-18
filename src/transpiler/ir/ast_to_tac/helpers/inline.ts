@@ -565,7 +565,7 @@ function collectAllInstanceFields(
   const seen = new Set<string>();
   for (const cls of chain) {
     for (const prop of cls.properties) {
-      if (prop.isStatic || seen.has(prop.name)) continue;
+      if (prop.isStatic || prop.isGetter || seen.has(prop.name)) continue;
       seen.add(prop.name);
       fields.push({ name: prop.name, type: prop.type });
     }
@@ -930,7 +930,7 @@ function emitInlinePropertyInitializersForClass(
   state: InlineInitializerState,
 ): void {
   for (const prop of classNode.properties) {
-    if (prop.isStatic) continue;
+    if (prop.isStatic || prop.isGetter) continue;
 
     const propVarName =
       state.kind === "inline"
@@ -1985,14 +1985,43 @@ function inlineInstanceMethodCallCore(
   args: TACOperand[],
   instancePrefix: string | undefined,
 ): TACOperand | null {
+  // Walk inheritance chain to find the method (may be on a base class).
+  const resolved = resolveClassMethod(converter, className, methodName, false);
+  if (!resolved) return null;
+  return inlineResolvedMethodBody(
+    converter,
+    className,
+    methodName,
+    resolved.method,
+    args,
+    instancePrefix,
+  );
+}
+
+/**
+ * Body-inlining core for a pre-resolved MethodDeclarationNode. Shared by the
+ * normal method-call path (which resolves via resolveClassMethod) and the
+ * getter path (which synthesizes a zero-parameter method from the getter
+ * body). Keeping a single body-inlining implementation prevents divergence
+ * between method and getter inlining — divergence there is how the original
+ * getter bug appeared.
+ *
+ * `methodName` is used only for the inline-recursion-detection key; the
+ * getter path passes e.g. "get_tiles" to keep its namespace separate from a
+ * potential same-named method.
+ */
+function inlineResolvedMethodBody(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+): TACOperand | null {
   const inlineKey = `${className}::${methodName}`;
   if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
-  // Walk inheritance chain to find the method (may be on a base class).
-  const resolved = resolveClassMethod(converter, className, methodName, false);
-  if (!resolved) return null;
-  const method = resolved.method;
 
   let returnType: TypeSymbol = method.returnType;
   if (
@@ -2126,6 +2155,42 @@ export function visitInlineInstanceMethodCallWithContext(
     className,
     methodName,
     args,
+    instancePrefix,
+  );
+}
+
+/**
+ * Inline a getter body at a property-read site. Synthesizes a zero-parameter
+ * MethodDeclarationNode wrapping the getter body and dispatches through the
+ * same body-inlining core that handles methods, so the two paths cannot
+ * diverge. When the getter cannot be inlined (should not happen for
+ * well-formed input), returns null; callers are expected to fall through to
+ * their prior resolution strategy in that case.
+ */
+export function evaluateInlineGetter(
+  converter: ASTToTACConverter,
+  getterProp: PropertyDeclarationNode,
+  className: string,
+  instancePrefix: string,
+): TACOperand | null {
+  if (!getterProp.getterBody) return null;
+  const syntheticMethod: MethodDeclarationNode = {
+    kind: ASTNodeKind.MethodDeclaration,
+    name: getterProp.name,
+    parameters: [],
+    returnType: getterProp.getterReturnType ?? getterProp.type,
+    body: getterProp.getterBody,
+    isPublic: getterProp.isPublic,
+    isStatic: false,
+    isRecursive: false,
+    isExported: false,
+  };
+  return inlineResolvedMethodBody(
+    converter,
+    className,
+    `get_${getterProp.name}`,
+    syntheticMethod,
+    [],
     instancePrefix,
   );
 }
@@ -2349,6 +2414,12 @@ export function mapInlineProperty(
 ): VariableOperand | undefined {
   const resolved = resolveClassProperty(this, className, property);
   if (resolved) {
+    // Getters have no backing storage slot; they're inlined via
+    // evaluateInlineGetter at read sites. Returning a variable here would
+    // resurrect the phantom-slot bug (e.g. if evaluateInlineGetter declines
+    // due to recursion and the caller falls through). Force the caller to
+    // handle the getter explicitly.
+    if (resolved.prop.isGetter) return undefined;
     return createVariable(`${instancePrefix}_${property}`, resolved.prop.type);
   }
 

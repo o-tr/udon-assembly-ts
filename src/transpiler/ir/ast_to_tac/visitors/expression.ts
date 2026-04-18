@@ -82,6 +82,7 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   createSoaSentinelValue,
+  evaluateInlineGetter,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
@@ -97,12 +98,24 @@ import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 /**
  * Try to map an inline property, falling back to concrete class resolution
  * when the className is an interface/type alias.
+ *
+ * When the resolved property is a class getter, inline the getter body via
+ * evaluateInlineGetter (which reuses the method-inlining core). Plain
+ * fields continue to return a VariableOperand pointing at the SoA-backed
+ * slot.
  */
 function tryMapInlinePropertyWithConcreteFallback(
   converter: ASTToTACConverter,
   instanceInfo: { prefix: string; className: string },
   property: string,
-): VariableOperand | undefined {
+): TACOperand | undefined {
+  const primaryGetter = tryInlineGetter(
+    converter,
+    instanceInfo.className,
+    instanceInfo.prefix,
+    property,
+  );
+  if (primaryGetter !== undefined) return primaryGetter;
   const mapped = converter.mapInlineProperty(
     instanceInfo.className,
     instanceInfo.prefix,
@@ -112,6 +125,13 @@ function tryMapInlinePropertyWithConcreteFallback(
 
   const concreteClass = resolveConcreteClassName(converter, instanceInfo);
   if (concreteClass !== instanceInfo.className) {
+    const concreteGetter = tryInlineGetter(
+      converter,
+      concreteClass,
+      instanceInfo.prefix,
+      property,
+    );
+    if (concreteGetter !== undefined) return concreteGetter;
     return converter.mapInlineProperty(
       concreteClass,
       instanceInfo.prefix,
@@ -119,6 +139,29 @@ function tryMapInlinePropertyWithConcreteFallback(
     );
   }
   return undefined;
+}
+
+/**
+ * Resolve the property on `className` and, if it is a getter, inline its
+ * body. Returns the inlined result (possibly null → the getter body
+ * declined, caller should fall through to variable mapping). Returns
+ * undefined when the property is not a getter on this class.
+ */
+function tryInlineGetter(
+  converter: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  property: string,
+): TACOperand | undefined {
+  const resolved = resolveClassProperty(converter, className, property);
+  if (!resolved?.prop.isGetter) return undefined;
+  const inlined = evaluateInlineGetter(
+    converter,
+    resolved.prop,
+    resolved.declaringClassName,
+    instancePrefix,
+  );
+  return inlined ?? undefined;
 }
 
 const NUMERIC_UDON_TYPES = new Set([
@@ -1796,6 +1839,13 @@ export function visitPropertyAccessExpression(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      const getterResult = tryInlineGetter(
+        this,
+        this.currentInlineContext.className,
+        this.currentInlineContext.instancePrefix,
+        node.property,
+      );
+      if (getterResult !== undefined) return getterResult;
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
         this.currentInlineContext.instancePrefix,
@@ -1943,17 +1993,27 @@ export function visitPropertyAccessExpression(
             );
             this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-            const concreteMapped = this.mapInlineProperty(
+            const concreteGetter = tryInlineGetter(
+              this,
               className,
               instanceInfo.prefix,
               node.property,
             );
-            if (!concreteMapped) {
-              throw new Error(
-                `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
+            if (concreteGetter !== undefined) {
+              this.emitCopyWithTracking(result, concreteGetter);
+            } else {
+              const concreteMapped = this.mapInlineProperty(
+                className,
+                instanceInfo.prefix,
+                node.property,
               );
+              if (!concreteMapped) {
+                throw new Error(
+                  `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
+                );
+              }
+              this.emitCopyWithTracking(result, concreteMapped);
             }
-            this.emitCopyWithTracking(result, concreteMapped);
 
             this.emit(new UnconditionalJumpInstruction(endLabel));
             this.emit(new LabelInstruction(nextLabel));
@@ -2139,6 +2199,16 @@ export function visitPropertyAccessExpression(
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
           for (const [, info] of dispInstances) {
+            const probeResolved = resolveClassProperty(
+              this,
+              info.className,
+              node.property,
+            );
+            if (probeResolved?.prop.isGetter) {
+              untrackedPropType =
+                probeResolved.prop.getterReturnType ?? probeResolved.prop.type;
+              break;
+            }
             const pv = this.mapInlineProperty(
               info.className,
               info.prefix,
@@ -2206,18 +2276,28 @@ export function visitPropertyAccessExpression(
                 // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
                 new ConditionalJumpInstruction(dispCond, dispNext),
               );
-              const pv = this.mapInlineProperty(
+              const armGetter = tryInlineGetter(
+                this,
                 info.className,
                 info.prefix,
                 node.property,
               );
-              if (pv) {
-                this.emitCopyWithTracking(dispResult, pv);
+              if (armGetter !== undefined) {
+                this.emitCopyWithTracking(dispResult, armGetter);
+              } else {
+                const pv = this.mapInlineProperty(
+                  info.className,
+                  info.prefix,
+                  node.property,
+                );
+                if (pv) {
+                  this.emitCopyWithTracking(dispResult, pv);
+                }
+                // If pv is undefined here it means mapInlineProperty failed for
+                // this instance. This should not happen: all entries in
+                // dispInstances share the same className (enforced by the filter
+                // above), so every instance must expose the same property set.
               }
-              // If pv is undefined here it means mapInlineProperty failed for
-              // this instance. This should not happen: all entries in
-              // dispInstances share the same className (enforced by the filter
-              // above), so every instance must expose the same property set.
               this.emit(new UnconditionalJumpInstruction(dispEnd));
               this.emit(new LabelInstruction(dispNext));
             }

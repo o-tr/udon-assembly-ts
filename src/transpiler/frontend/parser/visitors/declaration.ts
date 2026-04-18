@@ -207,6 +207,17 @@ export function visitClassDeclaration(
           (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
         ) ?? true
       );
+      if (!member.body) {
+        this.reportUnsupportedNode(
+          member,
+          `Abstract getter "${propName}" is not supported`,
+          "Provide a concrete getter body.",
+        );
+        continue;
+      }
+      this.symbolTable.enterScope();
+      const getterBody = this.visitBlock(member.body);
+      this.symbolTable.exitScope();
       properties.push(
         this.attachLoc(member, {
           kind: ASTNodeKind.PropertyDeclaration,
@@ -214,9 +225,17 @@ export function visitClassDeclaration(
           type: propType,
           isPublic,
           isStatic,
+          isGetter: true,
+          getterBody,
+          getterReturnType: propType,
         }),
       );
     } else if (ts.isSetAccessorDeclaration(member)) {
+      // NOTE: Setter bodies are currently dropped (see PropertyDeclarationNode
+      // above — it stores only metadata, not the setter body). This mirrors
+      // the pre-fix behavior of getters; setters were not in scope for the
+      // getter-bug fix. A TS write to a getter-only property is a compile
+      // error upstream, so this is latent but not reachable via valid TS.
       const propName = member.name.getText();
       if (properties.some((prop) => prop.name === propName)) continue;
       const param = member.parameters[0];

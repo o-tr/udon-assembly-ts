@@ -2995,7 +2995,7 @@ export function visitCallExpression(
                     );
                     if (classNode) {
                       fieldsToCopy = classNode.properties
-                        .filter((p) => !p.isStatic)
+                        .filter((p) => !p.isStatic && !p.isGetter)
                         .map((p) => {
                           const resolvedType = p.type.name
                             ? (this.typeMapper.getAlias(p.type.name) ?? p.type)
