@@ -3018,8 +3018,8 @@ class Main extends UdonSharpBehaviour {
     });
   });
 
-  // Regression test for the runtime exception observed in mahjong-t2 VM tests
-  // (12回目, 2026-04-17): 25/26 tests crash with
+  // Regression marker for the runtime exception observed in mahjong-t2 VM
+  // tests (12回目, 2026-04-17): 25/26 tests crash with
   //   UdonVMException in EXTERN 'VRCSDK3DataDataToken.__get_Int__SystemInt32'
   // on shared analyzer paths in Tile / HandAnalyzer / ScoringService.
   //
@@ -3030,58 +3030,90 @@ class Main extends UdonSharpBehaviour {
   //   SystemObject.__set_value__SystemSingle__SystemVoid
   // — a type-erased inline setter EXTERN that does NOT exist on the Udon VM
   // and hard-crashes at load / runtime. The `__get_Int__` sequence sits on
-  // the immediate upstream: `.Int` unwrap → Int32→Single widen → the bad
+  // the immediate upstream: `.Int` unwrap → Int32 → Single widen → the bad
   // setter call.
   //
-  // A loop-local inline instance is required so SoA DataList backing is
-  // exercised (single-instance paths use plain heap vars, not DataTokens).
-  // `while` is used instead of `for (let i ...)` because the latter currently
-  // triggers a separate parser crash on synthetic VariableStatement position
-  // info — unrelated to this bug.
-  //
-  // Recorded as `it.fails` so that once type propagation on SoA writes is
-  // fixed (no more type-erased setter EXTERN, no more spurious Int→Single
-  // widening), vitest flips red and prompts promotion to a regular `it`.
+  // Split into a plain-`it` precondition (guards SoA shape so the reproducer
+  // can't silently degrade to a no-op) and a pure-negative `it.fails` marker
+  // (flips red the moment all bad emissions are cleaned up, prompting
+  // promotion to a regular `it` regression guard).
   describe("Bug 15: DataToken type-erased inline setter on SoA field write (#24)", () => {
-    it.fails("15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern", () => {
-      const source = `
-          import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
-          class Counter {
-            constructor(public value: UdonInt) {}
-          }
-          class Main {
-            Start(): void {
-              const counters: Counter[] = [];
-              let i: number = 0;
-              while (i < 3) {
-                counters.push(new Counter(0 as UdonInt));
-                i = i + 1;
-              }
-              const v: any = (counters[0].value as number) + 1.5;
-              counters[0].value = v;
-              Debug.Log(counters[0].value);
-            }
-          }
-        `;
-      const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Shared source across the two tests. Bug 14i-style imports + decorators
+    // make the reproducer robust against future tightening of entry-point
+    // detection / extern resolution. `while` is used instead of
+    // `for (let i ...)` because the latter currently triggers a separate
+    // parser crash on synthetic VariableStatement position info — unrelated
+    // to this bug.
+    const source = `
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
-      // Primary: the bad type-erased inline setter must not be emitted.
-      // Under the current bug this EXTERN IS emitted and would crash the VM.
-      expect(result.uasm).not.toContain(
-        "SystemObject.__set_value__SystemSingle__SystemVoid",
+class Counter {
+  constructor(public value: UdonInt) {}
+}
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  Start(): void {
+    const counters: Counter[] = [];
+    let i: number = 0;
+    while (i < 3) {
+      counters.push(new Counter(0 as UdonInt));
+      i = i + 1;
+    }
+    const v: any = (counters[0].value as number) + 1.5;
+    counters[0].value = v;
+    Debug.Log(counters[0].value);
+  }
+}
+`;
+
+    // Precondition guard (plain `it`): runs loudly today and after any fix.
+    // If a future refactor kills the SoA path or swaps the DataToken shape,
+    // this test fails visibly instead of silently keeping the companion
+    // `it.fails` green. Only asserts invariants that hold on current master.
+    it("15-precondition: reproducer exercises SoA DataList with Int32 DataToken shape", () => {
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // SoA DataList ctor + push (Add) and bracket read (get_Item) are all
+      // expected to remain after any legitimate fix to the write path.
+      expect(result.tac).toContain(
+        "__soa_Counter_value = call VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList()",
       );
-      // Secondary: no Int32 → Single widening on a path that writes back
-      // into a UdonInt slot. Also emitted today.
-      expect(result.uasm).not.toContain(
-        "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
-      );
-      // Wrap / unwrap accessor type consistency for the SoA UdonInt field.
+      expect(result.tac).toContain("__soa_Counter_value.Add");
+      expect(result.tac).toContain("__soa_Counter_value.get_Item");
+      // Inline handle wraps via Int32 ctor; field read unwraps via .Int.
+      // These hold today (push/read paths are correct) and must remain
+      // post-fix (the bug lives on the write path, not these).
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
       );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_Int__SystemInt32",
       );
+    });
+
+    // Bug-present marker (pure-negative `it.fails`): each `not.toContain`
+    // describes a bad extern / widening the transpiler emits on current
+    // master. While any one is violated, `it.fails` stays green. When all
+    // are cleaned up by a proper fix, vitest flips this test red and
+    // prompts promotion to a regular `it`.
+    it.fails("15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern", () => {
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      // Primary: type-erased inline setter EXTERN does not exist on the
+      // Udon VM and crashes at load / runtime. Emitted today.
+      expect(result.uasm).not.toContain(
+        "SystemObject.__set_value__SystemSingle__SystemVoid",
+      );
+      // Secondary: no Int32 → Single widening on a path that writes back
+      // into a UdonInt slot. Emitted today.
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
+      );
+      // Related DataToken shape guards — not hit today, kept as forward
+      // guards so a refactor that moves the bug sideways still trips.
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
       );
@@ -3091,7 +3123,6 @@ class Main extends UdonSharpBehaviour {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
-      expect(result.tac).toContain("__soa_Counter_value");
     });
   });
 });
