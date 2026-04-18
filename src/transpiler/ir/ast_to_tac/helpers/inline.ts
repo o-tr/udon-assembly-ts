@@ -2171,7 +2171,7 @@ export function evaluateInlineGetter(
   converter: ASTToTACConverter,
   getterProp: PropertyDeclarationNode,
   className: string,
-  instancePrefix: string,
+  instancePrefix: string | undefined,
 ): TACOperand | null {
   if (!getterProp.getterBody) return null;
   const syntheticMethod: MethodDeclarationNode = {
@@ -2189,6 +2189,10 @@ export function evaluateInlineGetter(
     isStatic: false,
     isRecursive: false,
     isExported: false,
+    // Forward the getter's source location so diagnostics emitted from
+    // inlineResolvedMethodBody (or any code that walks method.loc) point
+    // at the getter declaration rather than lacking a location.
+    loc: getterProp.loc,
   };
   // The inline-key namespace is shared with real methods. Use a separator
   // that is not a valid identifier character (`<get>`) so a user-defined

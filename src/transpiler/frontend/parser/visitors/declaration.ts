@@ -201,7 +201,9 @@ export function visitClassDeclaration(
       // PropertyDeclarationNode stays in `properties` without `isGetter`
       // and a phantom SoA slot gets allocated — the exact bug this fix
       // addresses, just triggered by member ordering.
-      const existingIdx = properties.findIndex((prop) => prop.name === propName);
+      const existingIdx = properties.findIndex(
+        (prop) => prop.name === propName,
+      );
       if (existingIdx !== -1 && properties[existingIdx]?.isGetter) continue;
       const propType = member.type
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
@@ -241,12 +243,23 @@ export function visitClassDeclaration(
         properties.push(getterEntry);
       }
     } else if (ts.isSetAccessorDeclaration(member)) {
-      // NOTE: Setter bodies are currently dropped (see PropertyDeclarationNode
-      // above — it stores only metadata, not the setter body). This mirrors
-      // the pre-fix behavior of getters; setters were not in scope for the
-      // getter-bug fix. A TS write to a getter-only property is a compile
-      // error upstream, so this is latent but not reachable via valid TS.
+      // NOTE: Setter bodies are currently dropped — PropertyDeclarationNode
+      // stores only metadata, not the setter body. A write to this property
+      // lands on the plain slot instead of running the setter body, so any
+      // validation / side-effect logic in the body is silently lost.
+      // Upstream TypeScript blocks writes to a setter-only property when no
+      // getter exists, but when a matched getter/setter pair is declared the
+      // setter is reachable and this issue becomes user-visible. Warn loudly
+      // so the scenario surfaces at transpile time. Full setter-body support
+      // requires a write-barrier design and is tracked as follow-up work.
       const propName = member.name.getText();
+      if (member.body && member.body.statements.length > 0) {
+        const sourceFile = this.sourceFile ?? member.getSourceFile();
+        const pos = sourceFile.getLineAndCharacterOfPosition(member.getStart());
+        console.warn(
+          `SetterBodyUnsupported: Setter "${className}.${propName}" has a body that will be dropped. Writes land directly on the property slot, bypassing any validation or side effects declared inside the setter. Convert to an explicit method (e.g. set${propName[0]?.toUpperCase()}${propName.slice(1)}(v)) to preserve the logic. (${sourceFile.fileName || "<unknown>"}:${pos.line + 1}:${pos.character + 1})`,
+        );
+      }
       if (properties.some((prop) => prop.name === propName)) continue;
       const param = member.parameters[0];
       const propType = param?.type

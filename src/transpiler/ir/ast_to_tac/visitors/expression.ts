@@ -1860,15 +1860,13 @@ export function visitPropertyAccessExpression(
       if (mapped) return mapped;
     }
 
-    // Entry point class self-property READ: direct variable reference.
-    // NOTE: Getters on @UdonBehaviour classes are currently unsupported
-    // for a self-property read. Reading one would return a phantom
-    // entry-point variable that `emitInlinePropertyInitializersForClass`
-    // intentionally does not initialize (getters are filtered). The
-    // inline-class getter-inlining machinery (`evaluateInlineGetter`)
-    // assumes an instance prefix, which entry-point classes do not
-    // have. Rather than silently returning an uninitialized slot, warn
-    // loudly so the scenario is visible; fix tracked separately.
+    // Entry point class self-property READ.
+    // For getters, inline the body with no instance prefix: the inlined
+    // body's `this.field` references re-enter this visitor and resolve
+    // via the same entry-point path below. `inlineResolvedMethodBody`
+    // clears currentInlineContext when the prefix is undefined, so the
+    // `!this.currentInlineContext` guard on this branch correctly fires
+    // during the nested resolution.
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
       this.currentClassName &&
@@ -1883,10 +1881,21 @@ export function visitPropertyAccessExpression(
       );
       if (resolved) {
         if (resolved.prop.isGetter) {
+          const inlined = evaluateInlineGetter(
+            this,
+            resolved.prop,
+            this.currentClassName,
+            undefined,
+          );
+          if (inlined !== null) return inlined;
+          // Recursion detected or missing body — fall through to the
+          // phantom-slot read so downstream code has a variable to work
+          // with, but surface the issue so it doesn't silently return
+          // uninitialized data.
           this.warnAt(
             node,
             "EntryPointGetterUnsupported",
-            `Getter "${this.currentClassName}.${node.property}" on @UdonBehaviour class is not yet supported by the inline-getter pass. Read returns an uninitialized slot; refactor to a plain method (e.g. get${node.property[0]?.toUpperCase()}${node.property.slice(1)}()).`,
+            `Getter "${this.currentClassName}.${node.property}" could not be inlined (likely recursive). The read returns an uninitialized slot — refactor to avoid recursion or use a method.`,
           );
         }
         return createVariable(
