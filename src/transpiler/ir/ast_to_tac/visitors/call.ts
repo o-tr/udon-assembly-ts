@@ -3226,7 +3226,7 @@ export function visitCallExpression(
               const selfCallResultVar = createVariable(
                 `__selfCallResult_${this.currentClassName}_${propAccess.property}_${selfCallIdx}`,
                 layout.returnType,
-                { isLocal: true },
+                { isLocal: true, isInlineReturn: true },
               );
               this.emitCopyWithTracking(selfCallResultVar, capturedTemp);
               result = selfCallResultVar;

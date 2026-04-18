@@ -852,9 +852,15 @@ export function mapStaticProperty(
   if (resolved) {
     // Static getters share the same phantom-slot risk as instance getters:
     // emitStaticPropertyInitializers skips getter properties, so a returned
-    // variable here would point at an uninitialized heap slot. Force callers
-    // to route through evaluateInlineGetter instead — mirrors the guard
-    // added to mapInlineProperty.
+    // variable here would point at an uninitialized heap slot. Current
+    // callers (visitPropertyAccessExpression's static branch and the
+    // static-write site in assignment.ts) do NOT yet have a static-getter
+    // inlining path — returning undefined here causes a read to fall
+    // through to the extern-signature lookup, which fails and emits a
+    // transpile error rather than silently producing bad data. Full
+    // static-getter inlining support would require a version of
+    // evaluateInlineGetter that runs with neither an instance prefix nor
+    // an entry-point class context; tracked as follow-up.
     if (resolved.prop.isGetter) return undefined;
     // Late-resolve originalTypeName to match emitStaticPropertyInitializers,
     // ensuring reads and writes use the same resolved type for the heap slot.
@@ -1434,7 +1440,7 @@ export function visitInlineStaticMethodCall(
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
     effectiveReturnType,
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   const returnLabel = this.newLabel("inline_return");
 
@@ -1576,7 +1582,7 @@ function emitInlineRecursiveStaticMethod(
   const result = createVariable(
     `${prefix}_retVal_${converter.tempCounter++}`,
     returnType,
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   const entryLabel = converter.newLabel("inline_rec_entry");
   const dispatchLabel = converter.newLabel("inline_rec_dispatch");
@@ -1973,7 +1979,7 @@ function emitInlineRecursiveSelfCall(
   const selfCallResultVar = createVariable(
     `${prefix}_selfCallResult_${selfCallIdx}`,
     converter.getOperandType(ctx.returnVar),
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   converter.emitCopyWithTracking(selfCallResultVar, capturedTemp);
   return selfCallResultVar;
@@ -2056,7 +2062,7 @@ function inlineResolvedMethodBody(
   const result = createVariable(
     `__inline_ret_${converter.tempCounter++}`,
     effectiveReturnType,
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   const returnLabel = converter.newLabel("inline_return");
 

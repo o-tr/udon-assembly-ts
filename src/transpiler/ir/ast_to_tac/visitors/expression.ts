@@ -820,17 +820,20 @@ export function visitBinaryExpression(
 
     if (leftOriginal.kind === TACOperandKind.Variable) {
       const target = leftOriginal as VariableOperand;
-      // When the read came from `evaluateInlineGetter`, the returned
-      // variable is an `__inline_ret_*` temporary disconnected from the
-      // backing storage — writing to it would silently drop the
-      // compound-assigned value. Route through `assignToTarget` which
-      // runs `maybeWarnWriteToGetter` and short-circuits before emitting
-      // a phantom write.  Plain field reads return a Variable that is
-      // itself the SoA-backed storage, so the fast path remains correct
-      // for non-getter LHS and does not re-evaluate `node.left`'s object
-      // expression (important for side-effecting LHS such as
-      // `getBox().value += 1`).
-      if (target.name.startsWith("__inline_ret_")) {
+      // When the read came from `evaluateInlineGetter` (or any other
+      // inlined method body), the returned variable is an
+      // `__inline_ret_*` temporary disconnected from the backing
+      // storage — writing to it would silently drop the
+      // compound-assigned value. The `isInlineReturn` flag is set by
+      // `inlineResolvedMethodBody` at creation time, so the check stays
+      // robust if the temp's naming convention ever changes. Route
+      // through `assignToTarget` which runs `maybeWarnWriteToGetter`
+      // and short-circuits before emitting a phantom write. Plain
+      // field reads return a Variable that is itself the SoA-backed
+      // storage, so the fast path remains correct for non-getter LHS
+      // and does not re-evaluate `node.left`'s object expression
+      // (important for side-effecting LHS such as `getBox().value += 1`).
+      if (target.isInlineReturn) {
         return this.assignToTarget(node.left, assignValue);
       }
       this.emitCopyWithTracking(target, assignValue);
