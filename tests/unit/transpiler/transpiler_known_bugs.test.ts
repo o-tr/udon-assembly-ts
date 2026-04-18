@@ -3094,11 +3094,13 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
-    // Bug-present marker (pure-negative `it.fails`): each `not.toContain`
-    // describes a bad extern / widening the transpiler emits on current
-    // master. While any one is violated, `it.fails` stays green. When all
-    // are cleaned up by a proper fix, vitest flips this test red and
-    // prompts promotion to a regular `it`.
+    // Bug-present marker (pure-negative `it.fails`): the first two
+    // `not.toContain` checks describe bad externs / widenings the
+    // transpiler emits on current master (primary + secondary); the last
+    // three are forward guards for sideways regressions that are NOT
+    // emitted today. While any assertion throws, `it.fails` stays green.
+    // When all pass (all bad patterns gone), vitest flips this test red
+    // and prompts promotion to a regular `it`.
     it.fails("15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
