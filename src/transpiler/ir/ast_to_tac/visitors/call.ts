@@ -2981,13 +2981,15 @@ export function visitCallExpression(
                       inlineMapping.className,
                     );
                     if (mergedProps.length > 0) {
-                      fieldsToCopy = mergedProps.map(
-                        (p) =>
-                          [
-                            p.name,
-                            this.typeMapper.mapTypeScriptType(p.type),
-                          ] as [string, TypeSymbol],
-                      );
+                      fieldsToCopy = mergedProps
+                        .filter((p) => !p.node.isGetter)
+                        .map(
+                          (p) =>
+                            [
+                              p.name,
+                              this.typeMapper.mapTypeScriptType(p.type),
+                            ] as [string, TypeSymbol],
+                        );
                     }
                   } else {
                     const classNode = this.classMap.get(

@@ -195,7 +195,14 @@ export function visitClassDeclaration(
       }
     } else if (ts.isGetAccessorDeclaration(member)) {
       const propName = member.name.getText();
-      if (properties.some((prop) => prop.name === propName)) continue;
+      // Skip only if an earlier getter for the same name was already
+      // registered (duplicate declaration, invalid TS). A preceding setter
+      // entry must be upgraded in place: otherwise the setter's bodiless
+      // PropertyDeclarationNode stays in `properties` without `isGetter`
+      // and a phantom SoA slot gets allocated — the exact bug this fix
+      // addresses, just triggered by member ordering.
+      const existingIdx = properties.findIndex((prop) => prop.name === propName);
+      if (existingIdx !== -1 && properties[existingIdx]?.isGetter) continue;
       const propType = member.type
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("object");
@@ -218,18 +225,21 @@ export function visitClassDeclaration(
       this.symbolTable.enterScope();
       const getterBody = this.visitBlock(member.body);
       this.symbolTable.exitScope();
-      properties.push(
-        this.attachLoc(member, {
-          kind: ASTNodeKind.PropertyDeclaration,
-          name: propName,
-          type: propType,
-          isPublic,
-          isStatic,
-          isGetter: true,
-          getterBody,
-          getterReturnType: propType,
-        }),
-      );
+      const getterEntry = this.attachLoc(member, {
+        kind: ASTNodeKind.PropertyDeclaration,
+        name: propName,
+        type: propType,
+        isPublic,
+        isStatic,
+        isGetter: true,
+        getterBody,
+        getterReturnType: propType,
+      });
+      if (existingIdx !== -1) {
+        properties[existingIdx] = getterEntry;
+      } else {
+        properties.push(getterEntry);
+      }
     } else if (ts.isSetAccessorDeclaration(member)) {
       // NOTE: Setter bodies are currently dropped (see PropertyDeclarationNode
       // above — it stores only metadata, not the setter body). This mirrors

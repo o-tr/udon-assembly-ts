@@ -155,10 +155,16 @@ function tryInlineGetter(
 ): TACOperand | undefined {
   const resolved = resolveClassProperty(converter, className, property);
   if (!resolved?.prop.isGetter) return undefined;
+  // Bind `this` to the receiver's class (`className`), not the getter's
+  // declaring class. Matches inlineInstanceMethodCallCore semantics: a
+  // base-class getter accessed on a derived instance sees the derived
+  // class's SoA prefix for `this.*` resolution via mapInlineProperty's
+  // derived-first walk. Using declaringClassName would wrongly hide
+  // derived-only fields from the inlined body.
   const inlined = evaluateInlineGetter(
     converter,
     resolved.prop,
-    resolved.declaringClassName,
+    className,
     instancePrefix,
   );
   return inlined ?? undefined;
@@ -1854,7 +1860,15 @@ export function visitPropertyAccessExpression(
       if (mapped) return mapped;
     }
 
-    // Entry point class self-property READ: direct variable reference
+    // Entry point class self-property READ: direct variable reference.
+    // NOTE: Getters on @UdonBehaviour classes are currently unsupported
+    // for a self-property read. Reading one would return a phantom
+    // entry-point variable that `emitInlinePropertyInitializersForClass`
+    // intentionally does not initialize (getters are filtered). The
+    // inline-class getter-inlining machinery (`evaluateInlineGetter`)
+    // assumes an instance prefix, which entry-point classes do not
+    // have. Rather than silently returning an uninitialized slot, warn
+    // loudly so the scenario is visible; fix tracked separately.
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
       this.currentClassName &&
@@ -1868,6 +1882,13 @@ export function visitPropertyAccessExpression(
         node.property,
       );
       if (resolved) {
+        if (resolved.prop.isGetter) {
+          this.warnAt(
+            node,
+            "EntryPointGetterUnsupported",
+            `Getter "${this.currentClassName}.${node.property}" on @UdonBehaviour class is not yet supported by the inline-getter pass. Read returns an uninitialized slot; refactor to a plain method (e.g. get${node.property[0]?.toUpperCase()}${node.property.slice(1)}()).`,
+          );
+        }
         return createVariable(
           this.entryPointPropName(node.property),
           resolved.prop.type,
@@ -2198,6 +2219,7 @@ export function visitPropertyAccessExpression(
         }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
+          let propertyIsGetter = false;
           for (const [, info] of dispInstances) {
             const probeResolved = resolveClassProperty(
               this,
@@ -2207,6 +2229,7 @@ export function visitPropertyAccessExpression(
             if (probeResolved?.prop.isGetter) {
               untrackedPropType =
                 probeResolved.prop.getterReturnType ?? probeResolved.prop.type;
+              propertyIsGetter = true;
               break;
             }
             const pv = this.mapInlineProperty(
@@ -2223,11 +2246,18 @@ export function visitPropertyAccessExpression(
             // SoA fast path: when ALL candidate instances belong to a single
             // SoA class, read the field from the per-field DataList at the
             // handle index. No per-instance branching needed.
+            //
+            // Skipped for getters: they intentionally have no soaFieldLists
+            // entry (filtered out of collectAllInstanceFields). Per-arm
+            // tryInlineGetter handles them correctly in the dispatch below;
+            // entering the fast-path here would emit a misleading
+            // SoAFieldListMissing warning.
             const soaClassName = dispInstances[0][1].className;
             const allSameClass = dispInstances.every(
               ([, i]) => i.className === soaClassName,
             );
             if (
+              !propertyIsGetter &&
               allSameClass &&
               this.soaClasses.has(soaClassName) &&
               this.soaFieldLists.has(soaClassName)

@@ -59,16 +59,20 @@ import {
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /**
- * Emit a diagnostic when an assignment target resolves to a class getter.
- * TypeScript already rejects writes to getter-only properties upstream, so
- * this path is not reachable from valid source. The warning exists to
- * surface transpiler bugs that synthesize such a write.
+ * When an assignment target resolves to a class getter, emit a diagnostic
+ * and return true. Callers must then short-circuit the lowering — emitting
+ * any kind of write (copy to a per-prefix variable, PropertySetInstruction,
+ * DataList.set_Item) would either resurrect the phantom-slot bug or store
+ * into storage that the read path ignores. TypeScript already rejects
+ * writes to getter-only properties upstream, so this path is not
+ * reachable from valid source; the guard exists to keep transpiler bugs
+ * that synthesize such a write from silently corrupting state.
  */
 function maybeWarnWriteToGetter(
   converter: ASTToTACConverter,
   className: string,
   propAccess: PropertyAccessExpressionNode,
-): void {
+): boolean {
   const resolved = resolveClassProperty(
     converter,
     className,
@@ -78,9 +82,11 @@ function maybeWarnWriteToGetter(
     converter.warnAt(
       propAccess,
       "WriteToGetter",
-      `Write to getter-only property "${className}.${propAccess.property}" — TS normally rejects this, so reaching this point indicates a transpiler-synthesized write.`,
+      `Write to getter-only property "${className}.${propAccess.property}" — TS normally rejects this, so reaching this point indicates a transpiler-synthesized write. The write is being dropped to avoid resurrecting the phantom-slot bug.`,
     );
+    return true;
   }
+  return false;
 }
 
 export function assignToTarget(
@@ -169,11 +175,15 @@ export function assignToTarget(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
-      maybeWarnWriteToGetter(
-        this,
-        this.currentInlineContext.className,
-        propAccess,
-      );
+      if (
+        maybeWarnWriteToGetter(
+          this,
+          this.currentInlineContext.className,
+          propAccess,
+        )
+      ) {
+        return value;
+      }
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
         this.currentInlineContext.instancePrefix,
@@ -246,7 +256,9 @@ export function assignToTarget(
         (propAccess.object as IdentifierNode).name,
       );
       if (instanceInfo) {
-        maybeWarnWriteToGetter(this, instanceInfo.className, propAccess);
+        if (maybeWarnWriteToGetter(this, instanceInfo.className, propAccess)) {
+          return value;
+        }
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
           instanceInfo.prefix,
@@ -283,7 +295,9 @@ export function assignToTarget(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
-        maybeWarnWriteToGetter(this, instanceInfo.className, propAccess);
+        if (maybeWarnWriteToGetter(this, instanceInfo.className, propAccess)) {
+          return value;
+        }
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
           instanceInfo.prefix,

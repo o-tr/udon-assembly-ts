@@ -2179,16 +2179,24 @@ export function evaluateInlineGetter(
     name: getterProp.name,
     parameters: [],
     returnType: getterProp.getterReturnType ?? getterProp.type,
+    // Preserve the original type name so inlineResolvedMethodBody's
+    // late-resolution step (which re-resolves interface-typed returns
+    // after all files have been parsed) behaves the same as for a real
+    // method.
+    originalReturnTypeName: getterProp.originalTypeName,
     body: getterProp.getterBody,
     isPublic: getterProp.isPublic,
     isStatic: false,
     isRecursive: false,
     isExported: false,
   };
+  // The inline-key namespace is shared with real methods. Use a separator
+  // that is not a valid identifier character (`<get>`) so a user-defined
+  // method named e.g. `get_foo` cannot collide with a getter named `foo`.
   return inlineResolvedMethodBody(
     converter,
     className,
-    `get_${getterProp.name}`,
+    `<get>${getterProp.name}`,
     syntheticMethod,
     [],
     instancePrefix,
