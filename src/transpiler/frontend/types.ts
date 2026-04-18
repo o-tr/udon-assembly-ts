@@ -2,6 +2,7 @@
  * Type definitions for TypeScript to Udon transpiler frontend
  */
 
+import type { TranspileErrorLocation } from "../errors/transpile_errors.js";
 import { NUMERIC_RANK } from "./numeric_rank.js";
 import type { TypeSymbol } from "./type_symbols.js";
 
@@ -125,6 +126,7 @@ export enum ASTNodeKind {
  */
 export interface ASTNode {
   kind: ASTNodeKind;
+  loc?: TranspileErrorLocation;
 }
 
 /**

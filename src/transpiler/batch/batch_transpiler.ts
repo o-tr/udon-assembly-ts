@@ -14,6 +14,8 @@ import { ErrorCollector } from "../errors/error_collector.js";
 import {
   AggregateTranspileError,
   DuplicateTopLevelConstError,
+  formatWarnings,
+  type TranspileWarning,
 } from "../errors/transpile_errors.js";
 import { computeExposedLabels } from "../exposed_labels.js";
 import { CallAnalyzer } from "../frontend/call_analyzer.js";
@@ -66,6 +68,15 @@ interface OutputCacheEntry {
   key: string;
   uasm: string;
   warnings?: string[];
+  /**
+   * Structured diagnostics emitted by tacConverter (warnAt) for this entry
+   * point. Saved per entry so the "no files changed" early-return path can
+   * still populate BatchResult.diagnostics by replaying the cached entries.
+   * NOTE: on a per-entry cache hit (line ~629), tacConverter already runs
+   * and re-adds these to errorCollector, so the cache-hit path does NOT
+   * replay from here — it would double-count.
+   */
+  diagnostics?: TranspileWarning[];
   transpilerHash?: string;
 }
 
@@ -148,6 +159,13 @@ export interface BatchTranspilerOptions {
   includeExternalDependencies?: boolean;
   outputExtension?: string;
   heapLimit?: number;
+  /**
+   * When true, suppress the terminal `console.warn(formatWarnings(...))`
+   * emission. Structured diagnostics are still returned on
+   * `BatchResult.diagnostics`. Per-entry per-file warnings from assembler /
+   * heap checks are unaffected (they remain on stderr).
+   */
+  silent?: boolean;
 }
 
 export interface BatchFileResult {
@@ -158,6 +176,7 @@ export interface BatchFileResult {
 
 export interface BatchResult {
   outputs: BatchFileResult[];
+  diagnostics?: TranspileWarning[];
 }
 
 export class BatchTranspiler {
@@ -403,6 +422,34 @@ export class BatchTranspiler {
 
     if (entryFilesToCompile.size === 0) {
       this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
+      // Replay structured diagnostics from the per-entry output cache so that
+      // BatchResult.diagnostics (used by CI gating, IDE integrations) is still
+      // populated on unchanged rebuilds. The per-entry cache-hit path inside
+      // the main loop does NOT replay because tacConverter reruns there and
+      // re-adds them; this no-op early-return has no other source.
+      const currentTranspilerHash = getTranspilerHash();
+      for (const entry of registry.getEntryPoints()) {
+        const slot = this.outputCacheFilePath(
+          optCacheDir,
+          entry.name,
+          reflect,
+          optimize,
+          useStringBuilder,
+          ext,
+          heapLimit,
+        );
+        const cached = this.loadOutputCacheAny(slot);
+        if (!cached?.diagnostics) continue;
+        // Defensive guard for hand-edited optcache directories: skip entries
+        // whose transpilerHash no longer matches this build.
+        if (
+          cached.transpilerHash &&
+          cached.transpilerHash !== currentTranspilerHash
+        ) {
+          continue;
+        }
+        for (const d of cached.diagnostics) errorCollector.addWarning(d);
+      }
       // Save trackedFiles (not just cacheFiles) so transitive dependencies
       // discovered in prior runs (e.g. base-class files with no explicit import)
       // continue to have their hashes persisted for future change detection.
@@ -413,7 +460,13 @@ export class BatchTranspiler {
         cache,
         computedHashes,
       );
-      return { outputs: [] };
+      const diagnostics = errorCollector.getWarnings();
+      if (diagnostics.length > 0 && !options.silent) {
+        console.warn(formatWarnings(diagnostics));
+      }
+      return diagnostics.length > 0
+        ? { outputs: [], diagnostics }
+        : { outputs: [] };
     }
 
     const outputs: BatchFileResult[] = [];
@@ -575,9 +628,17 @@ export class BatchTranspiler {
         {
           useStringBuilder: options.useStringBuilder,
           typeMapper,
+          sourceFilePath: entryPoint.filePath,
+          errorCollector,
         },
       );
+      // Snapshot the shared collector so we can extract per-entry diagnostics
+      // for the output cache (used on fully-cached subsequent runs).
+      const diagnosticsBefore = errorCollector.getWarnings().length;
       let tacInstructions = tacConverter.convert(methodProgram);
+      const entryDiagnostics = errorCollector
+        .getWarnings()
+        .slice(diagnosticsBefore);
       if (options?.verbose) {
         console.log(
           `  - Generated ${tacInstructions.length} TAC instructions.`,
@@ -712,6 +773,7 @@ export class BatchTranspiler {
         key: outputCacheKey,
         uasm,
         warnings,
+        diagnostics: entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
         transpilerHash: getTranspilerHash(),
       });
       // Tier 3: Record which files contributed to this entry point.
@@ -754,7 +816,11 @@ export class BatchTranspiler {
       cache,
       computedHashes,
     );
-    return { outputs };
+    const diagnostics = errorCollector.getWarnings();
+    if (diagnostics.length > 0 && !options.silent) {
+      console.warn(formatWarnings(diagnostics));
+    }
+    return diagnostics.length > 0 ? { outputs, diagnostics } : { outputs };
   }
 
   private loadCache(cachePath: string): CacheV3 | null {
@@ -981,6 +1047,22 @@ export class BatchTranspiler {
         return null;
       }
       return entry;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Load a cache entry without verifying its output key. Used by the
+   * no-changes early-return path to replay structured diagnostics: the
+   * trackedFiles hash check already established that nothing changed, so
+   * the cached diagnostics are still authoritative even if the key is not
+   * re-derived here.
+   */
+  private loadOutputCacheAny(filePath: string): OutputCacheEntry | null {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      return JSON.parse(fs.readFileSync(filePath, "utf8")) as OutputCacheEntry;
     } catch {
       return null;
     }

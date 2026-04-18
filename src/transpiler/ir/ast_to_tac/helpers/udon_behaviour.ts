@@ -232,18 +232,21 @@ export function emitOnDeserializationForFieldChangeCallbacks(
     const skipLabel = this.newLabel("fcb_skip");
     this.emit(new ConditionalJumpInstruction(changed, skipLabel));
     this.emitCopyWithTracking(prevVar, currentVal);
-    if (prop.fieldChangeCallback) {
-      const inlined = this.visitInlineInstanceMethodCall(
-        classNode.name,
-        prop.fieldChangeCallback,
-        [],
+    const fieldChangeCallback = prop.fieldChangeCallback;
+    if (fieldChangeCallback) {
+      const inlined = this.withInlineCallSite(prop, () =>
+        this.visitInlineInstanceMethodCall(
+          classNode.name,
+          fieldChangeCallback,
+          [],
+        ),
       );
       if (inlined == null) {
         this.emit(
           new MethodCallInstruction(
             undefined,
             thisVar,
-            prop.fieldChangeCallback,
+            fieldChangeCallback,
             [],
           ),
         );

@@ -5,13 +5,19 @@
 import {
   AggregateTranspileError,
   type TranspileError,
+  type TranspileWarning,
 } from "./transpile_errors.js";
 
 export class ErrorCollector {
   private errors: TranspileError[] = [];
+  private warnings: TranspileWarning[] = [];
 
   add(error: TranspileError): void {
     this.errors.push(error);
+  }
+
+  addWarning(warning: TranspileWarning): void {
+    this.warnings.push(warning);
   }
 
   hasErrors(): boolean {
@@ -20,6 +26,10 @@ export class ErrorCollector {
 
   getErrors(): TranspileError[] {
     return [...this.errors];
+  }
+
+  getWarnings(): TranspileWarning[] {
+    return [...this.warnings];
   }
 
   throwIfErrors(): void {

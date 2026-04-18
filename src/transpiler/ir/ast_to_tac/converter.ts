@@ -2,6 +2,13 @@
  * Convert AST to TAC (Three-Address Code)
  */
 
+import type { ErrorCollector } from "../../errors/error_collector.js";
+import {
+  formatContext,
+  formatLocation,
+  type TranspileErrorLocation,
+  type TranspileWarningCode,
+} from "../../errors/transpile_errors.js";
 import type { ClassRegistry } from "../../frontend/class_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
@@ -157,9 +164,10 @@ export class ASTToTACConverter {
   /**
    * When true, emit() is a no-op. Pass 1 runs in this mode to collect
    * metadata (allInlineInstances, interfaceClassIdMap, soaClasses) without
-   * producing TAC instructions or firing diagnostic warnings — visitors and
-   * helpers that emit console.warn should guard with !metadataOnlyMode to
-   * avoid duplicate output across the two passes.
+   * producing TAC instructions or firing diagnostic warnings — new warn
+   * sites must call warnAt() (which suppresses internally when this flag
+   * is set) rather than console.warn directly, otherwise diagnostics are
+   * duplicated across the two passes.
    */
   metadataOnlyMode = false;
   tempCounter = 0;
@@ -356,6 +364,16 @@ export class ASTToTACConverter {
    * Set by visitVariableDeclaration immediately before visiting the initializer.
    */
   currentNativeArrayVarName: string | null = null;
+  /** Source file path for diagnostic messages; populated from transpile options. */
+  sourceFilePath = "<unknown>";
+  /** Optional error collector used by warnAt() to record warnings with source locations. */
+  errorCollector?: ErrorCollector;
+  /** Stack of AST nodes representing active inline call sites (innermost last).
+   *  Used by warnAt() so warnings emitted inside an inline body report the
+   *  caller's source location instead of the inline definition. */
+  inlineCallSiteStack: ASTNode[] = [];
+  /** AST node for the current inline constructor invocation (SoA epilogue). */
+  currentInlineConstructionSite?: ASTNode;
 
   constructor(
     symbolTable: SymbolTable,
@@ -367,6 +385,8 @@ export class ASTToTACConverter {
       useStringBuilder?: boolean;
       stringBuilderThreshold?: number;
       typeMapper?: TypeMapper;
+      sourceFilePath?: string;
+      errorCollector?: ErrorCollector;
     },
   ) {
     this.symbolTable = symbolTable;
@@ -378,6 +398,90 @@ export class ASTToTACConverter {
     this.useStringBuilder = options?.useStringBuilder !== false;
     this.stringBuilderThreshold =
       options?.stringBuilderThreshold ?? this.stringBuilderThreshold;
+    if (options?.sourceFilePath) this.sourceFilePath = options.sourceFilePath;
+    this.errorCollector = options?.errorCollector;
+  }
+
+  /**
+   * Resolve source location for a warning emitted by warnAt().
+   * Preference order: nearest inline call-site (scanning stack top-down
+   * for the first entry with a real `loc`) → passed node → inline
+   * constructor site → bare filePath fallback. Scanning skips synthetic
+   * AST nodes that were constructed without a tsNode (e.g. destructuring
+   * expansions) so warnings still report a useful caller position.
+   */
+  private resolveWarnLocation(
+    node: ASTNode | undefined,
+  ): TranspileErrorLocation {
+    for (let i = this.inlineCallSiteStack.length - 1; i >= 0; i -= 1) {
+      const loc = this.inlineCallSiteStack[i]?.loc;
+      if (loc) return loc;
+    }
+    const candidate = node?.loc ?? this.currentInlineConstructionSite?.loc;
+    if (candidate) return candidate;
+    return { filePath: this.sourceFilePath, line: 0, column: 0 };
+  }
+
+  /**
+   * Emit a warning with source location and class/method context.
+   * Routed through errorCollector when available; otherwise falls back
+   * to console.warn with a formatted prefix.
+   */
+  warnAt(
+    node: ASTNode | undefined,
+    code: TranspileWarningCode,
+    message: string,
+  ): void {
+    // Pass 1 (metadataOnlyMode) visits everything a second time; suppress
+    // warnings there so diagnostics are not duplicated between passes.
+    if (this.metadataOnlyMode) return;
+    const location = this.resolveWarnLocation(node);
+    // Report the caller's class/method — consistent with resolveWarnLocation's
+    // caller-first preference. Inside an inline body, currentInlineContext
+    // names the callee class but currentClassName still holds the caller, so
+    // always prefer currentClassName here to avoid a mixed (callee.caller)
+    // label.
+    const context: { className?: string; methodName?: string } = {};
+    if (this.currentClassName) {
+      context.className = this.currentClassName;
+    }
+    if (this.currentMethodName) {
+      context.methodName = this.currentMethodName;
+    }
+    const hasContext =
+      context.className !== undefined || context.methodName !== undefined;
+
+    if (this.errorCollector) {
+      this.errorCollector.addWarning({
+        code,
+        message,
+        location,
+        ...(hasContext ? { context } : {}),
+      });
+      return;
+    }
+
+    const ctxStr = hasContext ? formatContext(context) : "";
+    console.warn(`[${code}] ${formatLocation(location)}${ctxStr} ${message}`);
+  }
+
+  withInlineCallSite<T>(node: ASTNode, fn: () => T): T {
+    this.inlineCallSiteStack.push(node);
+    try {
+      return fn();
+    } finally {
+      this.inlineCallSiteStack.pop();
+    }
+  }
+
+  withInlineConstructionSite<T>(node: ASTNode, fn: () => T): T {
+    const previous = this.currentInlineConstructionSite;
+    this.currentInlineConstructionSite = node;
+    try {
+      return fn();
+    } finally {
+      this.currentInlineConstructionSite = previous;
+    }
   }
 
   /**
@@ -448,6 +552,8 @@ export class ASTToTACConverter {
     this.loopContextStack = [];
     this.tryContextStack = [];
     this.inlineReturnStack = [];
+    this.inlineCallSiteStack = [];
+    this.currentInlineConstructionSite = undefined;
     this.currentReturnVar = undefined;
     this.currentClassName = undefined;
     this.currentMethodName = undefined;
@@ -488,6 +594,13 @@ export class ASTToTACConverter {
     // constructor for any of its implementors was ever called.  In that case
     // pass 2 will fall through to generic (EXTERN) handling rather than viface
     // dispatch — the same silent failure the old single-pass code had.
+    //
+    // Emitted here, between pass 1 and resetState(), so that post-pass-1 state
+    // (classMap, entryPointClasses, interfaceClassIdMap, …) is still populated
+    // — isAllInlineInterface transitively reads classMap / entryPointClasses
+    // via isUdonBehaviourClassName, so moving this after resetState() would
+    // produce false positives for non-decorated entry-point classes.
+    //
     // Only check interfaces whose implementors are actually part of the current
     // compilation unit (program statements), otherwise the warning fires for
     // every entry point that doesn't use the interface — a false positive.
@@ -503,16 +616,29 @@ export class ASTToTACConverter {
           relevantInterfaces.add(iface);
         }
       }
-      for (const ifaceName of relevantInterfaces) {
-        if (
-          isAllInlineInterface(this, ifaceName) &&
-          !this.interfaceClassIdMap.has(ifaceName)
-        ) {
-          console.warn(
-            `transpiler: all-inline interface "${ifaceName}" has no instantiated implementors — ` +
-              `for-of loops over this type will fall back to EXTERN dispatch.`,
-          );
+      // Temporarily clear metadataOnlyMode so warnAt is not suppressed. The
+      // flag is only meaningful for emit() (skipping TAC output) and for the
+      // visitor-level diagnostics that fire twice across the two passes; this
+      // between-pass site fires exactly once so the guard is inappropriate
+      // here. Restore immediately so any later code that checks the flag
+      // before resetState() still sees the original value.
+      const savedMetadataOnlyMode = this.metadataOnlyMode;
+      this.metadataOnlyMode = false;
+      try {
+        for (const ifaceName of relevantInterfaces) {
+          if (
+            isAllInlineInterface(this, ifaceName) &&
+            !this.interfaceClassIdMap.has(ifaceName)
+          ) {
+            this.warnAt(
+              undefined,
+              "AllInlineInterfaceFallback",
+              `all-inline interface "${ifaceName}" has no instantiated implementors — for-of loops over this type will fall back to EXTERN dispatch.`,
+            );
+          }
         }
+      } finally {
+        this.metadataOnlyMode = savedMetadataOnlyMode;
       }
     }
 

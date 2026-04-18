@@ -4,7 +4,10 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
-import type { ObjectLiteralPropertyNode } from "../../../frontend/types.js";
+import type {
+  ASTNode,
+  ObjectLiteralPropertyNode,
+} from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
@@ -21,7 +24,11 @@ import type { ASTToTACConverter } from "../converter.js";
 export function emitDictionaryFromProperties(
   this: ASTToTACConverter,
   properties: ObjectLiteralPropertyNode[],
+  callSite?: ASTNode,
 ): TACOperand {
+  const wrapMerge = callSite
+    ? <T>(fn: () => T): T => this.withInlineCallSite(callSite, fn)
+    : <T>(fn: () => T): T => fn();
   let spreadCount = 0;
   for (const p of properties) {
     if (p.kind === "spread") spreadCount++;
@@ -87,16 +94,19 @@ export function emitDictionaryFromProperties(
       );
       const remaining = properties.slice(1);
       if (remaining.length > 0) {
-        const dictSegment = this.emitDictionaryFromProperties(remaining);
+        const dictSegment = this.emitDictionaryFromProperties(
+          remaining,
+          callSite,
+        );
         const dictToken = this.wrapDataToken(dictSegment);
         this.emit(
           new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
         );
       }
-      const inlineResult = this.visitInlineStaticMethodCall(
-        "DataDictionaryHelpers",
-        "Merge",
-        [listResult],
+      const inlineResult = wrapMerge(() =>
+        this.visitInlineStaticMethodCall("DataDictionaryHelpers", "Merge", [
+          listResult,
+        ]),
       );
       if (inlineResult) return inlineResult;
       return emitInlineDictionaryMerge.call(this, listResult);
@@ -116,7 +126,10 @@ export function emitDictionaryFromProperties(
     let pendingProps: ObjectLiteralPropertyNode[] = [];
     const flushPending = (): void => {
       if (pendingProps.length === 0) return;
-      const dictSegment = this.emitDictionaryFromProperties(pendingProps);
+      const dictSegment = this.emitDictionaryFromProperties(
+        pendingProps,
+        callSite,
+      );
       const dictToken = this.wrapDataToken(dictSegment);
       this.emit(
         new MethodCallInstruction(undefined, listResult, "Add", [dictToken]),
@@ -140,10 +153,10 @@ export function emitDictionaryFromProperties(
     }
     flushPending();
 
-    const inlineResult = this.visitInlineStaticMethodCall(
-      "DataDictionaryHelpers",
-      "Merge",
-      [listResult],
+    const inlineResult = wrapMerge(() =>
+      this.visitInlineStaticMethodCall("DataDictionaryHelpers", "Merge", [
+        listResult,
+      ]),
     );
     if (inlineResult) return inlineResult;
     return emitInlineDictionaryMerge.call(this, listResult);

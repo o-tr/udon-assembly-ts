@@ -4,6 +4,7 @@
 
 import * as ts from "typescript";
 import { ErrorCollector } from "../../errors/error_collector.js";
+import type { TranspileErrorLocation } from "../../errors/transpile_errors.js";
 import { EnumRegistry } from "../enum_registry.js";
 import { SymbolTable } from "../symbol_table.js";
 import { TypeMapper } from "../type_mapper.js";
@@ -128,10 +129,10 @@ export class TypeScriptParser {
     }
     this.importCache.set(filePath, imports);
 
-    const program: ProgramNode = {
+    const program: ProgramNode = this.attachLoc(sourceFile, {
       kind: ASTNodeKind.Program,
       statements,
-    };
+    });
 
     this.errorCollector.throwIfErrors();
 
@@ -150,6 +151,34 @@ export class TypeScriptParser {
    */
   getErrorCollector(): ErrorCollector {
     return this.errorCollector;
+  }
+
+  createLoc(tsNode: ts.Node): TranspileErrorLocation {
+    const sourceFile = this.sourceFile;
+    if (!sourceFile) {
+      return { filePath: "<unknown>", line: 0, column: 0 };
+    }
+    // Synthesized nodes (created via ts.factory.*) have pos === -1 and no real
+    // source position. Fall back to a filePath-only location.
+    if (tsNode.pos < 0) {
+      return { filePath: sourceFile.fileName, line: 0, column: 0 };
+    }
+    const { line, character } = ts.getLineAndCharacterOfPosition(
+      sourceFile,
+      tsNode.getStart(sourceFile),
+    );
+    return {
+      filePath: sourceFile.fileName,
+      line: line + 1,
+      column: character + 1,
+    };
+  }
+
+  attachLoc<T extends ASTNode>(tsNode: ts.Node, node: T): T {
+    if (!node.loc) {
+      node.loc = this.createLoc(tsNode);
+    }
+    return node;
   }
 
   /**
