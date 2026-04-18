@@ -147,9 +147,14 @@ function tryMapInlinePropertyWithConcreteFallback(
  * when the property is not a getter on this class OR when inlining was
  * declined (e.g. inline-stack recursion detected by
  * `evaluateInlineGetter`, which returns null that this wrapper collapses
- * to `undefined`). Callers cannot distinguish the two `undefined` cases;
- * a recursive getter is invalid TypeScript and is rejected upstream, so
- * the ambiguity is not reachable from valid source.
+ * to `undefined`). Callers cannot distinguish the two `undefined` cases.
+ *
+ * TypeScript accepts self-referential getters with explicit return type
+ * annotations, so recursive getters can reach the transpiler. They are
+ * detected at IR-generation time via `inlineMethodStack`; on detection
+ * the read emits an `EntryPointGetterUnsupported` or
+ * `D3DispatchFallback` diagnostic and the caller takes a safe fallback
+ * (phantom-slot read or no-op dispatch arm).
  */
 function tryInlineGetter(
   converter: ASTToTACConverter,
