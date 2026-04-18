@@ -143,9 +143,13 @@ function tryMapInlinePropertyWithConcreteFallback(
 
 /**
  * Resolve the property on `className` and, if it is a getter, inline its
- * body. Returns the inlined result (possibly null → the getter body
- * declined, caller should fall through to variable mapping). Returns
- * undefined when the property is not a getter on this class.
+ * body. Returns the inlined result operand when successful, or `undefined`
+ * when the property is not a getter on this class OR when inlining was
+ * declined (e.g. inline-stack recursion detected by
+ * `evaluateInlineGetter`, which returns null that this wrapper collapses
+ * to `undefined`). Callers cannot distinguish the two `undefined` cases;
+ * a recursive getter is invalid TypeScript and is rejected upstream, so
+ * the ambiguity is not reachable from valid source.
  */
 function tryInlineGetter(
   converter: ASTToTACConverter,

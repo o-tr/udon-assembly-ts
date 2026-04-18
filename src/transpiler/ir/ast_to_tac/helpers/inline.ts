@@ -2007,8 +2007,10 @@ function inlineInstanceMethodCallCore(
  * getter bug appeared.
  *
  * `methodName` is used only for the inline-recursion-detection key; the
- * getter path passes e.g. "get_tiles" to keep its namespace separate from a
- * potential same-named method.
+ * getter path passes e.g. "<get>tiles" to keep its namespace separate from a
+ * potential same-named method. The angle-bracket prefix is intentional — `<`
+ * is not a valid identifier character, so `ClassName::<get>tiles` cannot
+ * collide with a user method named `get_tiles`.
  */
 function inlineResolvedMethodBody(
   converter: ASTToTACConverter,
