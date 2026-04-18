@@ -3021,19 +3021,30 @@ class Main extends UdonSharpBehaviour {
   // Regression test for the runtime exception observed in mahjong-t2 VM tests
   // (12回目, 2026-04-17): 25/26 tests crash with
   //   UdonVMException in EXTERN 'VRCSDK3DataDataToken.__get_Int__SystemInt32'
-  // on shared analyzer paths such as `counts[tiles[i].kind] = toUdonInt(
-  // (counts[tiles[i].kind] as number) + 1)` in Tile.countFromTiles.
+  // on shared analyzer paths in Tile / HandAnalyzer / ScoringService.
   //
-  // The downstream `.Int` unwrap crashes because the write path produces a
-  // Single-typed operand that gets stored either as a mismatched DataToken or
-  // routed through a type-erased inline setter (`SystemObject.__set_*__Single__`)
-  // that does not exist on the VM. This is a mirrored companion to Bug 14's
-  // matched-type guards, recorded here as `it.fails` so that once the type
-  // propagation is fixed, vitest flips this test red and prompts promotion to
-  // a regular `it` regression.
+  // Empirical probe: when a Single-typed value reaches a UdonInt SoA field
+  // through an `any` escape hatch (the minimal analogue of mahjong's
+  // inheritance / D3-dispatch / generic-erasure paths where the declared
+  // target type is lost), the transpiler emits
+  //   SystemObject.__set_value__SystemSingle__SystemVoid
+  // — a type-erased inline setter EXTERN that does NOT exist on the Udon VM
+  // and hard-crashes at load / runtime. The `__get_Int__` sequence sits on
+  // the immediate upstream: `.Int` unwrap → Int32→Single widen → the bad
+  // setter call.
+  //
+  // A loop-local inline instance is required so SoA DataList backing is
+  // exercised (single-instance paths use plain heap vars, not DataTokens).
+  // `while` is used instead of `for (let i ...)` because the latter currently
+  // triggers a separate parser crash on synthetic VariableStatement position
+  // info — unrelated to this bug.
+  //
+  // Recorded as `it.fails` so that once type propagation on SoA writes is
+  // fixed (no more type-erased setter EXTERN, no more spurious Int→Single
+  // widening), vitest flips red and prompts promotion to a regular `it`.
   describe("Bug 15: DataToken type-erased inline setter on SoA field write (#24)", () => {
     it.fails(
-      "15: Assigning a Single-typed expression to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern",
+      "15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern",
       () => {
         const source = `
           import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
@@ -3048,21 +3059,21 @@ class Main extends UdonSharpBehaviour {
                 counters.push(new Counter(0 as UdonInt));
                 i = i + 1;
               }
-              const v: number = (counters[0].value as number) + 1;
-              counters[0].value = v as UdonInt;
+              const v: any = (counters[0].value as number) + 1.5;
+              counters[0].value = v;
               Debug.Log(counters[0].value);
             }
           }
         `;
         const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // Expected post-fix invariants. Under the current bug, the first two
-        // `not.toContain` checks fail because the transpiler routes the write
-        // through a type-erased setter on SystemObject with a SystemSingle
-        // parameter, and inserts an unnecessary Int32 → Single conversion.
+        // Primary: the bad type-erased inline setter must not be emitted.
+        // Under the current bug this EXTERN IS emitted and would crash the VM.
         expect(result.uasm).not.toContain(
           "SystemObject.__set_value__SystemSingle__SystemVoid",
         );
+        // Secondary: no Int32 → Single widening on a path that writes back
+        // into a UdonInt slot. Also emitted today.
         expect(result.uasm).not.toContain(
           "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
         );
