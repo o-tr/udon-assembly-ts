@@ -465,6 +465,110 @@ exports[`JS Runtime Equivalence Tests > JS: for_of_with_break 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: getter_boolean_array 1`] = `
+[
+  "True",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: getter_for_of 1`] = `
+[
+  "10",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: getter_length_only 1`] = `
+[
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: getter_number_array 1`] = `
+[
+  "1.5",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: getter_single_tile 1`] = `
+[
+  "7",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: getter_udon_int_array 1`] = `
+[
+  "2",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_analyzer_result_object 1`] = `
+[
+  "11",
+  "1",
+  "True",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_analyzer_tile_read 1`] = `
+[
+  "10",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_getter_only 1`] = `
+[
+  "2",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_private_field_getter 1`] = `
+[
+  "2",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_readonly_param 1`] = `
+[
+  "2",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_spread_only 1`] = `
+[
+  "2",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_tile_count_method 1`] = `
+[
+  "3",
+  "3",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_tile_kind_readback 1`] = `
+[
+  "0",
+  "1",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: hand_waits_length_bool 1`] = `
+[
+  "True",
+  "2",
+  "5",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: increment_decrement 1`] = `
 [
   "1",
@@ -806,6 +910,13 @@ exports[`JS Runtime Equivalence Tests > JS: method_patterns 1`] = `
   "0",
   "10",
   "9",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: method_returns_array 1`] = `
+[
+  "2",
+  "3",
 ]
 `;
 
