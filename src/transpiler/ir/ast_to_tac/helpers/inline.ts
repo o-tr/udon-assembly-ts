@@ -850,6 +850,12 @@ export function mapStaticProperty(
 ): VariableOperand | undefined {
   const resolved = resolveStaticClassProperty(this, className, property);
   if (resolved) {
+    // Static getters share the same phantom-slot risk as instance getters:
+    // emitStaticPropertyInitializers skips getter properties, so a returned
+    // variable here would point at an uninitialized heap slot. Force callers
+    // to route through evaluateInlineGetter instead — mirrors the guard
+    // added to mapInlineProperty.
+    if (resolved.prop.isGetter) return undefined;
     // Late-resolve originalTypeName to match emitStaticPropertyInitializers,
     // ensuring reads and writes use the same resolved type for the heap slot.
     let propType = resolved.prop.type;

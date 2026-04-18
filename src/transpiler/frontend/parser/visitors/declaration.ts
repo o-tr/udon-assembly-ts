@@ -262,9 +262,16 @@ export function visitClassDeclaration(
       if (member.body && member.body.statements.length > 0) {
         const sourceFile = this.sourceFile ?? member.getSourceFile();
         const pos = sourceFile.getLineAndCharacterOfPosition(member.getStart());
+        // Pascal-case the first character only when propName is non-empty;
+        // TS ordinarily rejects empty accessor names at parse time, but the
+        // guard keeps the message clean if a synthetic/degenerate name ever
+        // reaches this point.
+        const suggestedMethod = propName
+          ? `set${propName[0]?.toUpperCase() ?? ""}${propName.slice(1)}(v)`
+          : "setValue(v)";
         this.errorCollector.addWarning({
           code: "SetterBodyUnsupported",
-          message: `Setter "${className}.${propName}" has a body that will be dropped. Writes land directly on the property slot, bypassing any validation or side effects declared inside the setter. Convert to an explicit method (e.g. set${propName[0]?.toUpperCase()}${propName.slice(1)}(v)) to preserve the logic.`,
+          message: `Setter "${className}.${propName}" has a body that will be dropped. Writes land directly on the property slot, bypassing any validation or side effects declared inside the setter. Convert to an explicit method (e.g. ${suggestedMethod}) to preserve the logic.`,
           location: {
             filePath: sourceFile.fileName || "<unknown>",
             line: pos.line + 1,
