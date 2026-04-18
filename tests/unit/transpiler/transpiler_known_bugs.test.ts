@@ -3116,6 +3116,16 @@ class Main extends UdonSharpBehaviour {
     // emitted today. While any assertion throws, `it.fails` stays green.
     // When all pass (all bad patterns gone), vitest flips this test red
     // and prompts promotion to a regular `it`.
+    //
+    // Current status (this branch):
+    // - Primary (`SystemObject.__set_value__SystemSingle__`) is suppressed by
+    //   the SoA write fast-path in `assignToTarget` (commit 48552a0).
+    // - Secondary (`SystemConvert.__ToSingle__SystemInt32__SystemSingle`) is
+    //   STILL emitted because the reproducer's `const v: any = ... + 1.5;`
+    //   declaration loses the ultimate-target-type information; the widening
+    //   happens inside the binary op before the assignment to `counters[0].value`
+    //   runs. Fixing it requires whole-program / single-use forwarding analysis
+    //   on `any`-typed intermediaries — intentionally scoped out.
     it.fails("15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 

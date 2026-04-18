@@ -10,6 +10,7 @@ import {
   ObjectType,
   ObjectTypeSymbol,
   PrimitiveTypes,
+  PrimitiveTypeSymbol,
 } from "../../../frontend/type_symbols.js";
 import {
   type ArrayAccessExpressionNode,
@@ -17,6 +18,7 @@ import {
   ASTNodeKind,
   type AssignmentExpressionNode,
   type IdentifierNode,
+  isNumericUdonType,
   needsInt32IndexCoercion,
   type PropertyAccessExpressionNode,
   UdonType,
@@ -46,6 +48,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { resolveTypeFromNode } from "../visitors/expression.js";
 import {
   createSoaSentinelValue,
   isInlineHandleType,
@@ -370,6 +373,23 @@ export function visitAssignmentExpression(
       const value = this.visitExpression(node.value);
       this.currentExpectedType = prev;
       return this.assignToTarget(node.target, value);
+    }
+  }
+  // Propagate numeric-primitive target type so numeric ConstantOperands in
+  // the RHS can be retyped at `widenNumericOperands` to keep arithmetic in
+  // the contextual lane instead of widening the integer side to Single.
+  const targetType = resolveTypeFromNode(this, node.target);
+  if (
+    targetType instanceof PrimitiveTypeSymbol &&
+    isNumericUdonType(targetType.udonType)
+  ) {
+    const prev = this.currentExpectedType;
+    this.currentExpectedType = targetType;
+    try {
+      const value = this.visitExpression(node.value);
+      return this.assignToTarget(node.target, value);
+    } finally {
+      this.currentExpectedType = prev;
     }
   }
   const value = this.visitExpression(node.value);
