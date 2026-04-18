@@ -9,8 +9,8 @@ import {
   NativeArrayTypeSymbol,
   ObjectType,
   ObjectTypeSymbol,
-  PrimitiveTypes,
   PrimitiveTypeSymbol,
+  PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import {
   type ArrayAccessExpressionNode,

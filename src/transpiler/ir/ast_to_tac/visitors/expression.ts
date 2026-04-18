@@ -13,8 +13,8 @@ import {
   mapCSharpTypeToTypeSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
-  PrimitiveTypes,
   PrimitiveTypeSymbol,
+  PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import type { SymbolInfo } from "../../../frontend/types.js";
 import {
@@ -163,13 +163,36 @@ function canFoldNumericLiteral(
  * fractional values when narrowing to an integer slot. Returns null when the
  * conversion is unsafe (non-numeric value, non-finite → integer, or out-of-
  * range integer) so the caller can fall through to rank-based widening.
+ *
+ * Int64/UInt64 targets use bigint to match `evaluateCastValue` in
+ * `constant_folding.ts`: 64-bit integer constants must survive round-trip
+ * through the optimizer's dedup/fold passes, which expect bigint values.
  */
 function retypeNumericConstant(
   c: ConstantOperand,
   target: PrimitiveTypeSymbol,
 ): ConstantOperand | null {
-  if (typeof c.value !== "number") return null;
   const targetIsFloat = FLOAT_UDON_TYPES.has(target.udonType);
+  const targetIs64 =
+    target.udonType === UdonType.Int64 || target.udonType === UdonType.UInt64;
+  if (targetIs64) {
+    try {
+      if (typeof c.value === "bigint") {
+        return createConstant(c.value, target) as ConstantOperand;
+      }
+      if (typeof c.value === "number") {
+        if (!Number.isFinite(c.value)) return null;
+        return createConstant(
+          BigInt(Math.trunc(c.value)),
+          target,
+        ) as ConstantOperand;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof c.value !== "number") return null;
   if (!targetIsFloat && !Number.isFinite(c.value)) return null;
   const newValue = targetIsFloat ? c.value : Math.trunc(c.value);
   if (!targetIsFloat) {
