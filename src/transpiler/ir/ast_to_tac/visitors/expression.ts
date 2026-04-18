@@ -158,6 +158,10 @@ function canFoldNumericLiteral(
   return trunc >= range[0] && trunc <= range[1];
 }
 
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+const UINT64_MAX = 2n ** 64n - 1n;
+
 /**
  * Re-type a numeric ConstantOperand to a contextual target type, truncating
  * fractional values when narrowing to an integer slot. Returns null when the
@@ -167,6 +171,9 @@ function canFoldNumericLiteral(
  * Int64/UInt64 targets use bigint to match `evaluateCastValue` in
  * `constant_folding.ts`: 64-bit integer constants must survive round-trip
  * through the optimizer's dedup/fold passes, which expect bigint values.
+ * Out-of-range values (e.g. `-1` targeting UInt64, or `2**63` targeting
+ * Int64) return null so the caller falls through to rank-based widening
+ * rather than emitting a bigint that would fail assembler range checks.
  */
 function retypeNumericConstant(
   c: ConstantOperand,
@@ -176,18 +183,20 @@ function retypeNumericConstant(
   const targetIs64 =
     target.udonType === UdonType.Int64 || target.udonType === UdonType.UInt64;
   if (targetIs64) {
+    const isUnsigned = target.udonType === UdonType.UInt64;
+    const [min, max] = isUnsigned ? [0n, UINT64_MAX] : [INT64_MIN, INT64_MAX];
     try {
+      let bigValue: bigint;
       if (typeof c.value === "bigint") {
-        return createConstant(c.value, target) as ConstantOperand;
-      }
-      if (typeof c.value === "number") {
+        bigValue = c.value;
+      } else if (typeof c.value === "number") {
         if (!Number.isFinite(c.value)) return null;
-        return createConstant(
-          BigInt(Math.trunc(c.value)),
-          target,
-        ) as ConstantOperand;
+        bigValue = BigInt(Math.trunc(c.value));
+      } else {
+        return null;
       }
-      return null;
+      if (bigValue < min || bigValue > max) return null;
+      return createConstant(bigValue, target) as ConstantOperand;
     } catch {
       return null;
     }
