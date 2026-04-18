@@ -377,11 +377,12 @@ export const VM_TEST_CASES: VmTestCase[] = [
   //   getter_for_of           → FAIL   silent data loss (sum returns 0)
   //   method_returns_array    → PASS   ← public method does NOT have the bug
   //
-  // Conclusions:
+  // Conclusions (from observed verdicts above):
   //   - Bug is GETTER-SPECIFIC: swapping `get x()` → `getX()` method fixes it.
-  //   - Bug is TYPE-AGNOSTIC: fails regardless of element type (Int/Float/
-  //     Boolean/inline-class), but the crash site changes to match the
-  //     element's unwrap accessor (.Int / .Float / .Boolean / .Reference).
+  //   - Crash accessor matches the primitive element type: Int32 → .Int,
+  //     Single → .Float, Boolean → .Boolean (verified). Non-primitive
+  //     element paths (inline-class / Object) exhibit silent data loss
+  //     instead of a DataToken accessor crash in the tests here.
   //   - Silent data loss (0/false) explains mahjong-t2 dora_calculator's
   //     countDora() === 0 value-mismatch failure — same root cause as
   //     the crashes, but with a downstream path that doesn't unwrap via
@@ -431,16 +432,16 @@ export const VM_TEST_CASES: VmTestCase[] = [
       "scope is 'any getter returning inline-class SoA data', not 'arrays'.",
   },
   {
-    name: "method_returns_array",
-    sourceFile: "datatoken_int_unwrap/method_returns_array.ts",
-  },
-  {
     name: "getter_for_of",
     sourceFile: "datatoken_int_unwrap/getter_for_of.ts",
     knownFail: true,
     knownFailReason:
       "getter bug scope — for-of iteration over `hand.tiles` (getter) sums " +
       "to 0 instead of 10. Same silent-data-loss pattern as getter_length_only.",
+  },
+  {
+    name: "method_returns_array",
+    sourceFile: "datatoken_int_unwrap/method_returns_array.ts",
   },
   { name: "numeric_cast_chain", sourceFile: "numeric_cast_chain.ts" },
   // --- Multi-part string concat ---
