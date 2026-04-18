@@ -385,12 +385,13 @@ export function visitAssignmentExpression(
   ) {
     const prev = this.currentExpectedType;
     this.currentExpectedType = targetType;
+    let value: TACOperand;
     try {
-      const value = this.visitExpression(node.value);
-      return this.assignToTarget(node.target, value);
+      value = this.visitExpression(node.value);
     } finally {
       this.currentExpectedType = prev;
     }
+    return this.assignToTarget(node.target, value);
   }
   const value = this.visitExpression(node.value);
   return this.assignToTarget(node.target, value);
