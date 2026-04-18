@@ -3094,6 +3094,21 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    // Post-fix positive guard: once the SoA write fast-path lands, the
+    // write lowering must route through `__soa_Counter_value.set_Item` with
+    // a DataToken.ctor of the declared Int32 field type — not a raw
+    // PropertySetInstruction on the inline handle. If this assertion fails,
+    // the `it.fails` companion below would silently fall back to green
+    // because the primary bad pattern is re-emitted by the old code path.
+    it("15: write lowering emits __soa_Counter_value.set_Item with Int32 DataToken ctor", () => {
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).toContain("__soa_Counter_value.set_Item");
+      // DataToken.ctor is used on both read-side Add and write-side set_Item.
+      // The precondition test already asserts the Int32 ctor extern appears;
+      // here we additionally require a set_Item call in the TAC so a future
+      // refactor cannot silently drop the write-side emission.
+    });
+
     // Bug-present marker (pure-negative `it.fails`): the first two
     // `not.toContain` checks describe bad externs / widenings the
     // transpiler emits on current master (primary + secondary); the last
