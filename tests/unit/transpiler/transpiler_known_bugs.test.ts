@@ -3043,10 +3043,8 @@ class Main extends UdonSharpBehaviour {
   // fixed (no more type-erased setter EXTERN, no more spurious Int→Single
   // widening), vitest flips red and prompts promotion to a regular `it`.
   describe("Bug 15: DataToken type-erased inline setter on SoA field write (#24)", () => {
-    it.fails(
-      "15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern",
-      () => {
-        const source = `
+    it.fails("15: Single-typed value assigned via any-escape to a UdonInt SoA field emits SystemObject.__set_*__SystemSingle__ bad extern", () => {
+      const source = `
           import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
           class Counter {
             constructor(public value: UdonInt) {}
@@ -3065,36 +3063,35 @@ class Main extends UdonSharpBehaviour {
             }
           }
         `;
-        const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-        // Primary: the bad type-erased inline setter must not be emitted.
-        // Under the current bug this EXTERN IS emitted and would crash the VM.
-        expect(result.uasm).not.toContain(
-          "SystemObject.__set_value__SystemSingle__SystemVoid",
-        );
-        // Secondary: no Int32 → Single widening on a path that writes back
-        // into a UdonInt slot. Also emitted today.
-        expect(result.uasm).not.toContain(
-          "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
-        );
-        // Wrap / unwrap accessor type consistency for the SoA UdonInt field.
-        expect(result.uasm).toContain(
-          "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
-        );
-        expect(result.uasm).toContain(
-          "VRCSDK3DataDataToken.__get_Int__SystemInt32",
-        );
-        expect(result.uasm).not.toContain(
-          "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
-        );
-        expect(result.uasm).not.toContain(
-          "VRCSDK3DataDataToken.__get_Float__SystemSingle",
-        );
-        expect(result.uasm).not.toContain(
-          "VRCSDK3DataDataToken.__get_Reference__SystemObject",
-        );
-        expect(result.tac).toContain("__soa_Counter_value");
-      },
-    );
+      // Primary: the bad type-erased inline setter must not be emitted.
+      // Under the current bug this EXTERN IS emitted and would crash the VM.
+      expect(result.uasm).not.toContain(
+        "SystemObject.__set_value__SystemSingle__SystemVoid",
+      );
+      // Secondary: no Int32 → Single widening on a path that writes back
+      // into a UdonInt slot. Also emitted today.
+      expect(result.uasm).not.toContain(
+        "SystemConvert.__ToSingle__SystemInt32__SystemSingle",
+      );
+      // Wrap / unwrap accessor type consistency for the SoA UdonInt field.
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Float__SystemSingle",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+      expect(result.tac).toContain("__soa_Counter_value");
+    });
   });
 });
