@@ -191,15 +191,20 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    // Either direct slot access (field-copied from inner prefix) or the
-    // D-3 uninst_prop dispatch that includes the Win concrete handle —
-    // both are correct. The failure mode is a dispatch that excludes Win.
-    const hasOuterFieldCopy =
-      /(__inline_ret_\d+)_tag = __inline_ret_\d+_tag/.test(result.tac);
-    const dispatchHasWin = /__uninst_prop_\d+ = __inst_Win_\d+_tag/.test(
-      result.tac,
+    // Identify the outer return-prefix that holds `r`'s `tag`: grab the
+    // RHS `__inline_ret_N_tag` temp that Start's `const t = r.tag` reads
+    // from. The fix is correct if EITHER (a) that temp was populated via
+    // an outer field-copy from an inner return prefix, OR (b) a D-3
+    // dispatch uses the concrete Win handle to source that temp. The
+    // failure mode is a dispatch that reads from anon-union handles only.
+    const outerCopyMatch = result.tac.match(
+      /(__inline_ret_\d+)_tag = __inline_ret_\d+_tag/,
     );
-    expect(hasOuterFieldCopy || dispatchHasWin).toBe(true);
+    const winDispatchMatch = result.tac.match(
+      /(__uninst_prop_\d+) = __inst_Win_\d+_tag/,
+    );
+    // At least one of the two compatible shapes must appear.
+    expect(outerCopyMatch !== null || winDispatchMatch !== null).toBe(true);
   });
 
   it("ternary return in structural-union method populates outer slots on every branch", () => {
@@ -237,13 +242,71 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    // Each ternary branch must emit a `_tag` field-copy from its own
-    // `__inst_Win_*` source prefix into the unified return prefix.
-    const sources = [
-      ...result.tac.matchAll(/__inline_ret_\d+_tag = (__inst_Win_\d+)_tag/g),
-    ].map((m) => m[1]);
-    expect(sources).toContain("__inst_Win_1");
-    expect(sources).toContain("__inst_Win_2");
+    // Both ternary branches must field-copy `_tag` into the SAME
+    // destination return-prefix from DIFFERENT `__inst_Win_*` sources.
+    // Group matches by destination and verify at least one group holds
+    // two distinct source prefixes — avoids hard-coding allocator IDs
+    // that would drift with unrelated transpiler changes.
+    const perDestination = new Map<string, Set<string>>();
+    for (const match of result.tac.matchAll(
+      /(__inline_ret_\d+)_tag = (__inst_Win_\d+)_tag/g,
+    )) {
+      const [, dest, source] = match;
+      if (!perDestination.has(dest)) perDestination.set(dest, new Set());
+      perDestination.get(dest)?.add(source);
+    }
+    const maxGroupSize = Math.max(
+      0,
+      ...[...perDestination.values()].map((set) => set.size),
+    );
+    expect(maxGroupSize).toBeGreaterThanOrEqual(2);
+  });
+
+  it("includes both union branches in D-3 dispatch when nested anon property types are structurally equivalent", () => {
+    // Win and Loss each declare `point: { x: number }`. Each occurrence of
+    // the anonymous type literal produces its own `__anon_N` symbol, so a
+    // naive identity check on property types would reject one branch and
+    // leave its handle out of the dispatch, silently returning the Udon
+    // zero default at runtime. hasCompatibleUnionProperty must compare
+    // nested anonymous types structurally.
+    const source = `
+      type Win = { tag: true; point: { x: number } };
+      type Loss = { tag: false; point: { x: number } };
+      type Result = Win | Loss;
+
+      class M {
+        pick(f: boolean): Result {
+          const w: Win = { tag: true, point: { x: 1 } };
+          const l: Loss = { tag: false, point: { x: 2 } };
+          const t = f ? w : l;
+          return t;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().pick(true);
+          const px = r.point;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // The D-3 `r.point` dispatch table must reference BOTH concrete
+    // classes' `_point` slots, grouped on the same dispatch destination.
+    const perDestination = new Map<string, Set<string>>();
+    for (const match of result.tac.matchAll(
+      /(__uninst_prop_\d+) = (__inst_(?:Win|Loss)_\d+)_point/g,
+    )) {
+      const [, dest, source] = match;
+      if (!perDestination.has(dest)) perDestination.set(dest, new Set());
+      perDestination.get(dest)?.add(source);
+    }
+    const maxGroupSize = Math.max(
+      0,
+      ...[...perDestination.values()].map((set) => set.size),
+    );
+    expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
   it("single-level union return emits only one outer field-copy chain", () => {

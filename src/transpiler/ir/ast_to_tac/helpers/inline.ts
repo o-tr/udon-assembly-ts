@@ -1,6 +1,8 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
+  ArrayTypeSymbol,
   ClassTypeSymbol,
+  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
@@ -136,6 +138,77 @@ export function isSubclassOf(
   );
 }
 
+function isAnonymousInterfaceName(name: string): boolean {
+  return name.startsWith("__anon_");
+}
+
+/**
+ * Structural equality for TypeSymbols used by D-3 union dispatch. Treats
+ * two anonymous InterfaceTypeSymbols as equal when their property maps are
+ * recursively structurally equal, and arrays as equal when their element
+ * types match. For named symbols falls back to `name` + `udonType`
+ * identity. Necessary because every occurrence of an anonymous type
+ * literal (e.g. `point: { x: number }`) produces a freshly-named
+ * `__anon_N` symbol, so two branches of a union that declare structurally
+ * identical nested object literals would otherwise fail a naive
+ * identity check and be excluded from the dispatch.
+ */
+function isStructurallyEqualType(left: TypeSymbol, right: TypeSymbol): boolean {
+  if (left === right) return true;
+  const leftIsAnonIface =
+    left instanceof InterfaceTypeSymbol && isAnonymousInterfaceName(left.name);
+  const rightIsAnonIface =
+    right instanceof InterfaceTypeSymbol &&
+    isAnonymousInterfaceName(right.name);
+  if (leftIsAnonIface && rightIsAnonIface) {
+    const leftIface = left as InterfaceTypeSymbol;
+    const rightIface = right as InterfaceTypeSymbol;
+    if (leftIface.properties.size !== rightIface.properties.size) return false;
+    for (const [propName, leftPropType] of leftIface.properties) {
+      const rightPropType = rightIface.properties.get(propName);
+      if (!rightPropType) return false;
+      if (!isStructurallyEqualType(leftPropType, rightPropType)) return false;
+    }
+    return true;
+  }
+  if (left instanceof ArrayTypeSymbol && right instanceof ArrayTypeSymbol) {
+    if (left.dimensions !== right.dimensions) return false;
+    return isStructurallyEqualType(left.elementType, right.elementType);
+  }
+  if (
+    left instanceof DataListTypeSymbol &&
+    right instanceof DataListTypeSymbol
+  ) {
+    return isStructurallyEqualType(left.elementType, right.elementType);
+  }
+  // CollectionTypeSymbol (UdonList/Map/Set/Dictionary/Queue/Stack) is
+  // constructed fresh per occurrence and its `name` returns only the bare
+  // typeName without baking in element/key/value types. Compare those
+  // inner types structurally to avoid the fallback `name === name` path
+  // spuriously accepting `UdonList<number>` as equal to `UdonList<string>`.
+  if (
+    left instanceof CollectionTypeSymbol &&
+    right instanceof CollectionTypeSymbol
+  ) {
+    if (left.name !== right.name) return false;
+    const eq = (
+      a: TypeSymbol | undefined,
+      b: TypeSymbol | undefined,
+    ): boolean =>
+      a === undefined && b === undefined
+        ? true
+        : a !== undefined && b !== undefined
+          ? isStructurallyEqualType(a, b)
+          : false;
+    return (
+      eq(left.elementType, right.elementType) &&
+      eq(left.keyType, right.keyType) &&
+      eq(left.valueType, right.valueType)
+    );
+  }
+  return left.name === right.name && left.udonType === right.udonType;
+}
+
 /**
  * Check whether a concrete class's registered InterfaceTypeSymbol carries the
  * specific property accessed from an anon-union-typed value, with a
@@ -159,10 +232,7 @@ export function hasCompatibleUnionProperty(
   if (!(concrete instanceof InterfaceTypeSymbol)) return false;
   const concreteProp = concrete.properties.get(propertyName);
   if (!concreteProp) return false;
-  return (
-    concreteProp.name === unionProp.name &&
-    concreteProp.udonType === unionProp.udonType
-  );
+  return isStructurallyEqualType(concreteProp, unionProp);
 }
 
 /**

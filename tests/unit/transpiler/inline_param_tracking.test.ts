@@ -372,14 +372,23 @@ describe("inline instance tracking across method boundaries", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     // No EXTERN property getter — inline slot access is used instead.
     expect(result.uasm).not.toMatch(/Pt\.__get_/);
-    // Each of the two object-literal Pt instances must appear as a source
-    // in a `_x` field-copy into the unified return prefix — the ternary
-    // split must have produced one field-copy per branch.
-    const copies = [
-      ...result.tac.matchAll(/__inline_ret_\d+_x = (__inst_Pt_\d+)_x/g),
-    ].map((m) => m[1]);
-    expect(copies).toContain("__inst_Pt_0");
-    expect(copies).toContain("__inst_Pt_1");
+    // Group `_x` field-copies by their destination return-prefix. The
+    // ternary split must produce two DIFFERENT `__inst_Pt_*` sources
+    // copying into the same destination prefix. Derive source IDs from
+    // the TAC instead of hard-coding allocator indices.
+    const perDestination = new Map<string, Set<string>>();
+    for (const match of result.tac.matchAll(
+      /(__inline_ret_\d+)_x = (__inst_Pt_\d+)_x/g,
+    )) {
+      const [, dest, source] = match;
+      if (!perDestination.has(dest)) perDestination.set(dest, new Set());
+      perDestination.get(dest)?.add(source);
+    }
+    const maxGroupSize = Math.max(
+      0,
+      ...[...perDestination.values()].map((set) => set.size),
+    );
+    expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
   it("dispatches inline method call for temporary arg from Map.get", () => {
