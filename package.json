@@ -44,7 +44,10 @@
     "format:fix": "biome format --write",
     "lint": "biome check",
     "lint:fix": "biome check --write --unsafe",
-    "bench": "tsx tests/bench/transpiler_bench.ts"
+    "bench": "tsx tests/bench/transpiler_bench.ts",
+    "bench:baseline": "tsx tests/bench/transpiler_bench.ts --baseline",
+    "bench:compare": "tsx tests/bench/transpiler_bench.ts --compare",
+    "test:time": "tsx tests/bench/test_walltime.ts"
   },
   "engines": {
     "node": ">=18"

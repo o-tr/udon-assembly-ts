@@ -319,6 +319,19 @@ export const computeFingerprintPair = (
 };
 
 /**
+ * Optional per-pass profiler sink. When provided to `optimize()`, each pass
+ * invocation's wall-clock time (ms) is accumulated here. The wrapper path is
+ * a single conditional when no sink is supplied, so production cost is zero.
+ */
+export interface PassProfileSink {
+  record(name: string, ms: number): void;
+}
+
+export interface OptimizeOptions {
+  profile?: PassProfileSink;
+}
+
+/**
  * TAC optimizer
  */
 export class TACOptimizer {
@@ -392,11 +405,23 @@ export class TACOptimizer {
   optimize(
     instructions: TACInstruction[],
     exposedLabels?: Set<string>,
+    options?: OptimizeOptions,
   ): TACInstruction[] {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
 
     const edgeLabelSeed: EdgeLabelSeed = { value: 0 };
+
+    // Opt-in per-pass profiler. When no sink is provided `timed` is effectively
+    // a passthrough: one `if (!profile)` branch + the underlying pass call.
+    const profile = options?.profile;
+    const timed = <T>(name: string, fn: () => T): T => {
+      if (!profile) return fn();
+      const t0 = performance.now();
+      const r = fn();
+      profile.record(name, performance.now() - t0);
+      return r;
+    };
 
     const runAnalysisPasses = (
       current: TACInstruction[],
@@ -425,32 +450,44 @@ export class TACOptimizer {
       };
 
       const getCFG = (): CFG => {
-        if (!cachedCFG) cachedCFG = buildCFG(next);
+        if (!cachedCFG) {
+          cachedCFG = profile
+            ? timed("[buildCFG]", () => buildCFG(next))
+            : buildCFG(next);
+        }
         return cachedCFG;
       };
 
       // Apply constant folding
-      run(constantFolding(next));
+      run(timed("constantFolding", () => constantFolding(next)));
       // Coalesce string concatenation chains
-      run(optimizeStringConcatenation(next));
+      run(timed("stringConcat", () => optimizeStringConcatenation(next)));
       // Apply SCCP and prune unreachable blocks (preserve exposedLabels)
-      run(sccpAndPrune(next, exposedLabels, { cachedCFG: getCFG() }));
+      run(
+        timed("sccpAndPrune", () =>
+          sccpAndPrune(next, exposedLabels, { cachedCFG: getCFG() }),
+        ),
+      );
       // Apply boolean simplifications
-      run(booleanSimplification(next));
+      run(timed("booleanSimplification", () => booleanSimplification(next)));
       // Simplify diamond patterns (ternary true/false → copy of condition)
-      run(simplifyDiamondPatterns(next));
+      run(timed("diamondSimplification", () => simplifyDiamondPatterns(next)));
       // Fuse negated comparisons
-      run(negatedComparisonFusion(next));
+      run(
+        timed("negatedComparisonFusion", () => negatedComparisonFusion(next)),
+      );
       // Eliminate double negations
-      run(doubleNegationElimination(next));
+      run(timed("doubleNegation", () => doubleNegationElimination(next)));
       // Apply algebraic simplifications and redundant cast removal
-      run(algebraicSimplification(next));
+      run(
+        timed("algebraicSimplification", () => algebraicSimplification(next)),
+      );
       // Fold cast chains
-      run(castChainFolding(next));
+      run(timed("castChainFolding", () => castChainFolding(next)));
       // Eliminate redundant widening casts used only in comparisons
-      run(narrowTypes(next));
+      run(timed("narrowTypes", () => narrowTypes(next)));
       // Reassociate partially-constant binary operations
-      run(reassociate(next));
+      run(timed("reassociate", () => reassociate(next)));
       // SSA window: build SSA, run SSA-aware passes, then deconstruct
       if (runExpensivePasses) {
         // Check reachable block count before SSA to avoid OOM on huge CFGs.
@@ -468,14 +505,22 @@ export class TACOptimizer {
         } else {
           const preSSAInstructions = next;
           const preSSALen = preSSAInstructions.length;
-          const ssa = buildSSA(next, { cachedCFG: getCFG() });
-          const ssaPre = performPRE(ssa.instructions, { useSSA: true });
-          const ssaGvn = globalValueNumbering(ssaPre.instructions, {
-            useSSA: true,
-          });
-          const ssaDecon = deconstructSSA(ssaGvn.instructions, {
-            edgeLabelSeed,
-          });
+          const ssa = timed("buildSSA", () =>
+            buildSSA(next, { cachedCFG: getCFG() }),
+          );
+          const ssaPre = timed("pre(ssa)", () =>
+            performPRE(ssa.instructions, { useSSA: true }),
+          );
+          const ssaGvn = timed("gvn(ssa)", () =>
+            globalValueNumbering(ssaPre.instructions, {
+              useSSA: true,
+            }),
+          );
+          const ssaDecon = timed("deconstructSSA", () =>
+            deconstructSSA(ssaGvn.instructions, {
+              edgeLabelSeed,
+            }),
+          );
           const postSSAInstructions = ssaDecon.instructions;
           if (postSSAInstructions.length > preSSALen) {
             next = preSSAInstructions;
@@ -490,44 +535,66 @@ export class TACOptimizer {
         }
       }
       // Optimize tail calls (call followed immediately by return)
-      run(optimizeTailCalls(next));
+      run(timed("tailCalls", () => optimizeTailCalls(next)));
       // Eliminate single-use temporaries inside basic blocks
-      run(eliminateSingleUseTemporaries(next, { cachedCFG: getCFG() }));
+      run(
+        timed("singleUseTemporaries", () =>
+          eliminateSingleUseTemporaries(next, { cachedCFG: getCFG() }),
+        ),
+      );
       // Remove no-op copies/assignments
-      run(eliminateNoopCopies(next));
+      run(timed("noopCopies", () => eliminateNoopCopies(next)));
       // Propagate copies within basic blocks
-      run(propagateCopies(next, { cachedCFG: getCFG() }));
+      run(
+        timed("copyPropagation", () =>
+          propagateCopies(next, { cachedCFG: getCFG() }),
+        ),
+      );
       // Remove dead stores using CFG liveness
-      run(eliminateDeadStoresCFG(next, { cachedCFG: getCFG() }));
+      run(
+        timed("deadStoresCFG", () =>
+          eliminateDeadStoresCFG(next, { cachedCFG: getCFG() }),
+        ),
+      );
       // Apply dead code elimination
-      run(deadCodeElimination(next));
+      run(timed("dce", () => deadCodeElimination(next)));
       // Sink computations closer to their only use
-      run(sinkCode(next, { cachedCFG: getCFG() }));
+      run(timed("sink", () => sinkCode(next, { cachedCFG: getCFG() })));
       // Reorder basic blocks to reduce jumps
-      run(optimizeBlockLayout(next, { cachedCFG: getCFG() }));
+      run(
+        timed("blockLayout", () =>
+          optimizeBlockLayout(next, { cachedCFG: getCFG() }),
+        ),
+      );
       // Remove jumps that fall through to the next label
-      run(eliminateFallthroughJumps(next));
+      run(timed("fallthrough", () => eliminateFallthroughJumps(next)));
       // Remove redundant jumps and thread jump chains
-      run(simplifyJumps(next, exposedLabels));
+      run(timed("simplifyJumps", () => simplifyJumps(next, exposedLabels)));
       if (runExpensivePasses) {
         // Hoist loop-invariant code
-        run(performLICM(next, { cachedCFG: getCFG() }));
+        run(timed("licm", () => performLICM(next, { cachedCFG: getCFG() })));
         // Unswitch loops with loop-invariant conditionals
-        run(unswitchLoops(next));
+        run(timed("unswitch", () => unswitchLoops(next)));
         // Optimize simple induction variables
-        run(optimizeInductionVariables(next, { cachedCFG: getCFG() }));
+        run(
+          timed("induction", () =>
+            optimizeInductionVariables(next, { cachedCFG: getCFG() }),
+          ),
+        );
         // Unroll simple fixed-count loops
-        run(optimizeLoopStructures(next));
+        run(timed("loopStructures", () => optimizeLoopStructures(next)));
         // Fold scalar Vector3 updates into vector ops
-        run(optimizeVectorSwizzle(next));
+        run(timed("vectorSwizzle", () => optimizeVectorSwizzle(next)));
       }
 
       // Remove unused temporary computations
-      run(eliminateDeadTemporaries(next));
+      run(timed("deadTemporaries", () => eliminateDeadTemporaries(next)));
       // Merge identical return tails
-      run(mergeTails(next));
+      run(timed("mergeTails", () => mergeTails(next)));
       // Remove unused labels (preserve externally exposed labels)
-      run(eliminateUnusedLabels(next, exposedLabels));
+      run(
+        timed("unusedLabels", () => eliminateUnusedLabels(next, exposedLabels)),
+      );
       return { instructions: next, changed: anyPassChanged };
     };
 
@@ -553,7 +620,11 @@ export class TACOptimizer {
     {
       let postCFG: CFG | null = null;
       const getPostCFG = (): CFG => {
-        if (!postCFG) postCFG = buildCFG(optimized);
+        if (!postCFG) {
+          postCFG = profile
+            ? timed("[buildCFG post]", () => buildCFG(optimized))
+            : buildCFG(optimized);
+        }
         return postCFG;
       };
       const runPost = (result: PassResult): void => {
@@ -562,16 +633,28 @@ export class TACOptimizer {
       };
 
       // Deduplicate temporaries holding the same constant value
-      runPost(deduplicateConstants(optimized));
+      runPost(timed("dedupConstants", () => deduplicateConstants(optimized)));
 
       // Apply copy-on-write temporary reuse to reduce heap usage
-      runPost(copyOnWriteTemporaries(optimized, { cachedCFG: getPostCFG() }));
+      runPost(
+        timed("cowTemporaries", () =>
+          copyOnWriteTemporaries(optimized, { cachedCFG: getPostCFG() }),
+        ),
+      );
 
       // Reuse temporary variables to reduce heap usage
-      runPost(reuseTemporaries(optimized, { cachedCFG: getPostCFG() }));
+      runPost(
+        timed("reuseTemporaries", () =>
+          reuseTemporaries(optimized, { cachedCFG: getPostCFG() }),
+        ),
+      );
 
       // Reuse local variables when lifetimes do not overlap
-      runPost(reuseLocalVariables(optimized, { cachedCFG: getPostCFG() }));
+      runPost(
+        timed("reuseLocalVariables", () =>
+          reuseLocalVariables(optimized, { cachedCFG: getPostCFG() }),
+        ),
+      );
     }
 
     // Final label integrity check after all passes
