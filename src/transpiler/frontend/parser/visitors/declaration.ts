@@ -204,7 +204,10 @@ export function visitClassDeclaration(
       const existingIdx = properties.findIndex(
         (prop) => prop.name === propName,
       );
-      if (existingIdx !== -1 && properties[existingIdx]?.isGetter) continue;
+      // `existingIdx !== -1` already proves the element exists; plain
+      // indexed access makes the control flow clearer than an optional
+      // chain that suggests the element might be missing.
+      if (existingIdx !== -1 && properties[existingIdx].isGetter) continue;
       const propType = member.type
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("object");
