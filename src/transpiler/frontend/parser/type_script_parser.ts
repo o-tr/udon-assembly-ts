@@ -11,7 +11,7 @@ import { TypeMapper } from "../type_mapper.js";
 import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
-  InterfaceTypeSymbol,
+  type InterfaceTypeSymbol,
   NativeArrayTypeSymbol,
 } from "../type_symbols.js";
 import { type ASTNode, ASTNodeKind, type ProgramNode } from "../types.js";

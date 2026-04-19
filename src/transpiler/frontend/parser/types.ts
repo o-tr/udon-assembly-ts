@@ -7,7 +7,6 @@ import {
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   ObjectType,
-  PrimitiveTypeSymbol,
   PrimitiveTypes,
 } from "../type_symbols.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
@@ -85,14 +84,12 @@ function parseTypeLiteralFromText(
 }
 
 function isNullishUnionBranch(node: ts.TypeNode): boolean {
-  if (
-    node.kind === ts.SyntaxKind.NullKeyword ||
-    node.kind === ts.SyntaxKind.UndefinedKeyword
-  ) {
+  if (node.kind === ts.SyntaxKind.UndefinedKeyword) {
     return true;
   }
   return (
-    ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword
+    ts.isLiteralTypeNode(node) &&
+    node.literal.kind === ts.SyntaxKind.NullKeyword
   );
 }
 
@@ -100,15 +97,7 @@ function isCompatibleUnionPropertyType(
   left: TypeSymbol,
   right: TypeSymbol,
 ): boolean {
-  if (left === right) return true;
-  if (
-    left instanceof PrimitiveTypeSymbol &&
-    right instanceof PrimitiveTypeSymbol &&
-    left.udonType === right.udonType
-  ) {
-    return true;
-  }
-  return false;
+  return left.name === right.name && left.udonType === right.udonType;
 }
 
 function getUnionSignature(properties: Map<string, TypeSymbol>): string {
@@ -154,7 +143,6 @@ export function resolveStructuralUnionType(
       .map((symbol) => symbol.properties.get(name))
       .filter((prop): prop is TypeSymbol => prop !== undefined);
 
-    if (propertyTypes.length === 0) continue;
     if (propertyTypes.length > 1) {
       const [first, ...rest] = propertyTypes;
       if (!rest.every((prop) => isCompatibleUnionPropertyType(first, prop))) {
