@@ -19,7 +19,8 @@ export type TranspileWarningCode =
   | "RecursiveSelfCallOvercount"
   | "WriteToGetter"
   | "EntryPointGetterUnsupported"
-  | "SetterBodyUnsupported";
+  | "SetterBodyUnsupported"
+  | "UntrackedStructuralUnionReturn";
 
 export interface TranspileErrorLocation {
   filePath: string;

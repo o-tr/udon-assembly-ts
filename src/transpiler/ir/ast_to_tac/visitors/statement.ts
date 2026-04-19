@@ -1551,6 +1551,16 @@ export function visitReturnStatement(
           // Temporary value operand is still handled by the invalidate
           // path below, so arbitrary complex-expression returns fall
           // through to D-3 dispatch as before.
+          //
+          // Emit an auditable diagnostic so that if a developer bypasses
+          // the narrowing (e.g. `return b as Result` or `return x!`),
+          // the reliance on sibling returns for unified-prefix
+          // population is visible at transpile time rather than silent.
+          this.warnAt(
+            node,
+            "UntrackedStructuralUnionReturn",
+            "untracked variable returned as structural union — relying on sibling returns to populate the unified return prefix; ensure null narrowing guards this path.",
+          );
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;

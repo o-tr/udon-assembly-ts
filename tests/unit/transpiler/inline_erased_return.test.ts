@@ -238,6 +238,45 @@ describe("inline erased return handling", () => {
     expect(result.tac).toContain(`${outerPrefix}_tag`);
   });
 
+  it("emits UntrackedStructuralUnionReturn diagnostic when the neutral guard fires", () => {
+    // Same shape as the null-branch fixture: `return b` with b bound to
+    // a bare null arg has no valueMapping and hits the stay-neutral
+    // branch. A diagnostic must fire so the assumption (TS null
+    // narrowing makes this return dead at runtime) is auditable at
+    // transpile time — catching cases where a developer bypasses the
+    // narrowing (e.g. `return b as Result`, `return b!`).
+    const source = `
+      type Win = { tag: true; value: number };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        private selectBest(a: Result | null, b: Result | null): Result {
+          if (a !== null && a.tag) return a;
+          if (b !== null && b.tag) return b;
+          return { tag: false };
+        }
+        run(v: number): Result {
+          const win: Win = { tag: true, value: v };
+          return this.selectBest(win, null);
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().run(9);
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const untrackedReturn = result.diagnostics?.find(
+      (d) => d.code === "UntrackedStructuralUnionReturn",
+    );
+    expect(untrackedReturn).toBeDefined();
+  });
+
   it("null-coalescing split covers `this.<field> ?? fallback` as a side-effect-free left", () => {
     // `this.<field>` reads are side-effect-free in typical UdonSharp code
     // (field slots are direct memory), so the split admits them. Verify the
