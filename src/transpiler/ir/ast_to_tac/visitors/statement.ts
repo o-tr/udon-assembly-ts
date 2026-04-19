@@ -1256,6 +1256,18 @@ export function visitReturnStatement(
         right: nullLiteral,
         loc: node.loc,
       };
+      // `nc.left` is the SAME ASTNode reference placed on both the
+      // synthesized null-check's `left` AND the then-branch's return
+      // value. `visitExpression` is later called on each site, so the
+      // node is traversed twice in two syntactic contexts. This is
+      // intentional and safe because (a) `isSideEffectFreeNullCoalesceLeft`
+      // rejects any node whose evaluation could have observable side
+      // effects (CallExpression, PropertyAccessExpression on getters,
+      // non-ThisExpression chains, etc.), and (b) the existing visitors
+      // treat AST nodes as read-only — no memoised fields are written
+      // back onto the node during visit. If a future visitor change
+      // starts mutating the node object, either clone `nc.left` for the
+      // two uses or narrow the gate further.
       this.visitIfStatement({
         kind: ASTNodeKind.IfStatement,
         condition: notNull,
@@ -1520,6 +1532,25 @@ export function visitReturnStatement(
               valueMapping,
             );
           }
+        } else if (
+          inlineContext.returnInstancePrefix &&
+          inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
+          inlineContext.returnVar.type.properties.size > 0 &&
+          value.kind === TACOperandKind.Variable
+        ) {
+          // Stay neutral when the return value is a named variable
+          // (param/local) whose inlineInstanceMap entry is missing for a
+          // structural-union return: siblings may still field-copy into
+          // the unified return prefix, and invalidating here would poison
+          // their tracked-path optimisations. Runtime safety rests on
+          // two pieces: (a) the ternary/NC split handles the easy
+          // over-eager case where `left` was a temporary, and (b) when
+          // the arg at the call site was genuinely untrackable (e.g. a
+          // bare `null` literal), TypeScript's null-check narrowing
+          // guarantees the `return <var>` path is dead at runtime. A
+          // Temporary value operand is still handled by the invalidate
+          // path below, so arbitrary complex-expression returns fall
+          // through to D-3 dispatch as before.
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;
