@@ -11,6 +11,7 @@ import { TypeMapper } from "../type_mapper.js";
 import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
+  InterfaceTypeSymbol,
   NativeArrayTypeSymbol,
 } from "../type_symbols.js";
 import { type ASTNode, ASTNodeKind, type ProgramNode } from "../types.js";
@@ -26,6 +27,7 @@ import {
   mapTypeWithGenerics,
   parseGenericType,
   resolveGenericParam,
+  resolveStructuralUnionType,
 } from "./types.js";
 import {
   visitClassDeclaration,
@@ -89,6 +91,8 @@ export class TypeScriptParser {
   genericTypeParamStack: Array<Set<string>> = [];
   destructureCounter = 0;
   anonTypeCounter = 0;
+  anonUnionCounter = 0;
+  anonUnionCache: Map<string, InterfaceTypeSymbol> = new Map();
   private readonly importCache: Map<string, string[]> = new Map();
 
   constructor(errorCollector?: ErrorCollector) {
@@ -104,6 +108,8 @@ export class TypeScriptParser {
   parse(sourceCode: string, filePath = "temp.ts"): ProgramNode {
     this.symbolTable = new SymbolTable();
     this.anonTypeCounter = 0;
+    this.anonUnionCounter = 0;
+    this.anonUnionCache = new Map();
     const sourceFile = ts.createSourceFile(
       filePath,
       sourceCode,
@@ -201,6 +207,7 @@ export class TypeScriptParser {
   resolveGenericParam = resolveGenericParam;
   parseGenericType = parseGenericType;
   inferType = inferType;
+  resolveStructuralUnionType = resolveStructuralUnionType;
 
   warnEnumInitializer = warnEnumInitializer;
   reportTypeError = reportTypeError;

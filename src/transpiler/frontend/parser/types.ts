@@ -7,6 +7,7 @@ import {
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   ObjectType,
+  PrimitiveTypeSymbol,
   PrimitiveTypes,
 } from "../type_symbols.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
@@ -81,6 +82,99 @@ function parseTypeLiteralFromText(
   if (propertyMap.size === 0) return null;
   const anonName = `__anon_${++parser.anonTypeCounter}`;
   return new InterfaceTypeSymbol(anonName, new Map(), propertyMap);
+}
+
+function isNullishUnionBranch(node: ts.TypeNode): boolean {
+  if (
+    node.kind === ts.SyntaxKind.NullKeyword ||
+    node.kind === ts.SyntaxKind.UndefinedKeyword
+  ) {
+    return true;
+  }
+  return (
+    ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword
+  );
+}
+
+function isCompatibleUnionPropertyType(
+  left: TypeSymbol,
+  right: TypeSymbol,
+): boolean {
+  if (left === right) return true;
+  if (
+    left instanceof PrimitiveTypeSymbol &&
+    right instanceof PrimitiveTypeSymbol &&
+    left.udonType === right.udonType
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function getUnionSignature(properties: Map<string, TypeSymbol>): string {
+  return [...properties.entries()]
+    .sort(([leftName], [rightName]) => leftName.localeCompare(rightName))
+    .map(([name, type]) => `${name}:${type.name}@${type.udonType}`)
+    .join("|");
+}
+
+export function resolveStructuralUnionType(
+  this: TypeScriptParser,
+  node: ts.UnionTypeNode,
+): InterfaceTypeSymbol | TypeSymbol | null {
+  const branches = node.types.filter((branch) => !isNullishUnionBranch(branch));
+  if (branches.length === 0) return null;
+  if (branches.length === 1) {
+    return this.mapTypeWithGenerics(branches[0].getText(), branches[0]);
+  }
+
+  const branchSymbols = branches.map((branch) =>
+    this.mapTypeWithGenerics(branch.getText(), branch),
+  );
+  if (
+    !branchSymbols.every(
+      (symbol) =>
+        symbol instanceof InterfaceTypeSymbol && symbol.properties.size > 0,
+    )
+  ) {
+    return null;
+  }
+  const interfaceBranches = branchSymbols as InterfaceTypeSymbol[];
+
+  const propertyNames = new Set<string>();
+  for (const symbol of interfaceBranches) {
+    for (const name of symbol.properties.keys()) {
+      propertyNames.add(name);
+    }
+  }
+
+  const mergedProperties = new Map<string, TypeSymbol>();
+  for (const name of [...propertyNames].sort()) {
+    const propertyTypes = interfaceBranches
+      .map((symbol) => symbol.properties.get(name))
+      .filter((prop): prop is TypeSymbol => prop !== undefined);
+
+    if (propertyTypes.length === 0) continue;
+    if (propertyTypes.length > 1) {
+      const [first, ...rest] = propertyTypes;
+      if (!rest.every((prop) => isCompatibleUnionPropertyType(first, prop))) {
+        return null;
+      }
+    }
+    mergedProperties.set(name, propertyTypes[0]);
+  }
+
+  const signature = getUnionSignature(mergedProperties);
+  const cached = this.anonUnionCache.get(signature);
+  if (cached) return cached;
+
+  const symbol = new InterfaceTypeSymbol(
+    `__anon_union_${++this.anonUnionCounter}`,
+    new Map(),
+    mergedProperties,
+  );
+  this.anonUnionCache.set(signature, symbol);
+  return symbol;
 }
 
 export function mapTypeWithGenerics(
@@ -175,6 +269,8 @@ export function mapTypeWithGenerics(
     if (node.types.every((t) => this.isStringTypeNode(t))) {
       return PrimitiveTypes.string;
     }
+    const structuralUnion = this.resolveStructuralUnionType(node);
+    if (structuralUnion) return structuralUnion;
   }
 
   if (trimmed.startsWith("{") && trimmed.endsWith("}")) {

@@ -295,7 +295,10 @@ export function visitTypeAliasDeclaration(
 ): InterfaceDeclarationNode | undefined {
   const name = node.name.getText();
   if (!ts.isTypeLiteralNode(node.type)) {
-    const mapped = this.mapTypeWithGenerics(node.type.getText(), node.type);
+    const mapped = ts.isUnionTypeNode(node.type)
+      ? this.resolveStructuralUnionType(node.type) ??
+        this.mapTypeWithGenerics(node.type.getText(), node.type)
+      : this.mapTypeWithGenerics(node.type.getText(), node.type);
     this.typeMapper.registerTypeAlias(name, mapped);
     if (ts.isUnionTypeNode(node.type)) {
       const parts = node.type.types
