@@ -13,9 +13,11 @@ import {
 import {
   type ASTNode,
   ASTNodeKind,
+  type BinaryExpressionNode,
   type BlockStatementNode,
   type BreakStatementNode,
   type ClassDeclarationNode,
+  type ConditionalExpressionNode,
   type ContinueStatementNode,
   type DoWhileStatementNode,
   type EnumDeclarationNode,
@@ -23,7 +25,10 @@ import {
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
+  type LiteralNode,
+  type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
+  type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
   type ThrowStatementNode,
@@ -84,6 +89,51 @@ function emitLoopExitEpiloguesSinceDepth(
   for (let i = converter.loopContextStack.length - 1; i >= depth; i -= 1) {
     converter.loopContextStack[i].emitExitEpilogue?.();
   }
+}
+
+/**
+ * Whether an expression can safely be re-evaluated twice by the NC split
+ * (once in the null-check condition, once in the then-branch return).
+ * Admits bare identifiers, `this`, and a single-step `this.<field>`
+ * read ONLY when the class declaration marks the member as a plain
+ * field (not `isGetter`): re-evaluating a user-defined getter would run
+ * its body twice and could produce observable side effects. Deeper
+ * chains (`this.a.b`) are rejected because intermediate steps could
+ * traverse getters we don't inspect here.
+ *
+ * Literal lefts are NOT admitted: `return <literal> ?? fallback` is
+ * either always-true (non-null literal → dead else branch) or
+ * always-false (`null` literal → dead then branch). Splitting would
+ * emit dead branches with no benefit over the fallthrough path.
+ */
+function isSideEffectFreeNullCoalesceLeft(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): boolean {
+  if (
+    node.kind === ASTNodeKind.Identifier ||
+    node.kind === ASTNodeKind.ThisExpression
+  ) {
+    return true;
+  }
+  if (node.kind === ASTNodeKind.PropertyAccessExpression) {
+    const access = node as PropertyAccessExpressionNode;
+    if (access.object.kind !== ASTNodeKind.ThisExpression) return false;
+    // Prefer the inline-call context's class name (the method body we're
+    // currently compiling is inlined from that class). Fall back to the
+    // enclosing class's name when not inlining.
+    const className =
+      converter.currentInlineContext?.className ?? converter.currentClassName;
+    if (!className) return false;
+    const classNode = converter.classMap.get(className);
+    if (!classNode) return false;
+    const member = classNode.properties.find((p) => p.name === access.property);
+    if (!member) return false;
+    // Admit only plain (non-getter) fields. Getters remain untouched and
+    // fall through to the D-3 dispatch fallback path.
+    return !member.isGetter;
+  }
+  return false;
 }
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
@@ -1142,6 +1192,97 @@ export function visitReturnStatement(
   const inlineContext =
     this.inlineReturnStack[this.inlineReturnStack.length - 1];
 
+  // `return cond ? a : b` (or `return a ?? b`) in a structural-union inline
+  // method would produce a temporary with no trackable provenance, so the
+  // unified-return-prefix field-copy block cannot fire and tracking is
+  // invalidated — which also suppresses tracking on sibling return paths.
+  // Split into per-branch returns so each branch carries its original
+  // trackable operand through visitReturnStatement independently.
+  // The split synthesises an `if/else` around two inner returns; note
+  // visitIfStatement unconditionally emits a fall-through `goto endLabel`
+  // and the `endLabel` itself after each branch, so the resulting TAC
+  // contains dead jumps after every branch that always exits via the
+  // earlier `goto inline_return*`. These are benign (unreachable) and
+  // exist for every ternary-split return — kept for visitor symmetry.
+  if (
+    inlineContext?.returnInstancePrefix &&
+    inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
+    inlineContext.returnVar.type.properties.size > 0 &&
+    node.value !== undefined
+  ) {
+    const synthReturn = (value: ASTNode): ReturnStatementNode => ({
+      kind: ASTNodeKind.ReturnStatement,
+      value,
+      loc: node.loc,
+    });
+    if (node.value.kind === ASTNodeKind.ConditionalExpression) {
+      const ternary = node.value as ConditionalExpressionNode;
+      this.visitIfStatement({
+        kind: ASTNodeKind.IfStatement,
+        condition: ternary.condition,
+        thenBranch: synthReturn(ternary.whenTrue),
+        elseBranch: synthReturn(ternary.whenFalse),
+        loc: node.loc,
+      });
+      return;
+    }
+    if (
+      node.value.kind === ASTNodeKind.NullCoalescingExpression &&
+      // Only split when `left` is side-effect-free. The split re-evaluates
+      // `left` in both the null-check condition and the then-branch return,
+      // so splitting a `fn() ?? b` would double-call `fn` — and, less
+      // obviously, a chain like `this.a.b.c` could traverse an intermediate
+      // user-defined getter with observable side effects, so we only admit
+      // single-step `this.<plainField>` after verifying via classMap that
+      // it is not declared as a getter.
+      isSideEffectFreeNullCoalesceLeft(
+        this,
+        (node.value as NullCoalescingExpressionNode).left,
+      )
+    ) {
+      const nc = node.value as NullCoalescingExpressionNode;
+      const nullLiteral: LiteralNode = {
+        kind: ASTNodeKind.Literal,
+        value: null,
+        type: ObjectType,
+        loc: node.loc,
+      };
+      // Shallow-clone `nc.left` for the two syntactic positions. The
+      // split places `left` on BOTH the null-check's LHS and the
+      // then-branch's return value, so `visitExpression` visits it
+      // twice. Cloning decouples the two visits defensively — any
+      // future visitor change that writes memoised fields onto the
+      // node object will no longer cross-contaminate between the
+      // condition and the return. A shallow clone is sufficient for
+      // the shapes admitted by `isSideEffectFreeNullCoalesceLeft`
+      // (Identifier / Literal / ThisExpression / single-step
+      // `this.<field>`), all of which have simple fields.
+      const leftForCondition: ASTNode = { ...nc.left };
+      const leftForReturn: ASTNode = { ...nc.left };
+      // JavaScript's `??` falls through for both `null` AND `undefined`,
+      // so the synthesized guard must use loose `!=` to match. Udon has
+      // no `undefined` at the runtime level — values are null or a typed
+      // heap slot — so in practice loose and strict behave the same,
+      // but aligning with language-spec semantics future-proofs the
+      // split if the gate is ever widened beyond side-effect-free lefts.
+      const notNull: BinaryExpressionNode = {
+        kind: ASTNodeKind.BinaryExpression,
+        left: leftForCondition,
+        operator: "!=",
+        right: nullLiteral,
+        loc: node.loc,
+      };
+      this.visitIfStatement({
+        kind: ASTNodeKind.IfStatement,
+        condition: notNull,
+        thenBranch: synthReturn(leftForReturn),
+        elseBranch: synthReturn(nc.right),
+        loc: node.loc,
+      });
+      return;
+    }
+  }
+
   // Set currentExpectedType from inline return context so that object literal
   // return values (e.g. `return { value: 42, ok: true }`) are recognised as
   // type-alias inline instances by visitObjectLiteralExpression.
@@ -1395,6 +1536,43 @@ export function visitReturnStatement(
               valueMapping,
             );
           }
+        } else if (
+          inlineContext.returnInstancePrefix &&
+          inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
+          inlineContext.returnVar.type.properties.size > 0 &&
+          value.kind === TACOperandKind.Variable
+        ) {
+          // Stay neutral when the return value is a named variable
+          // (param/local) whose inlineInstanceMap entry is missing for a
+          // structural-union return: siblings may still field-copy into
+          // the unified return prefix, and invalidating here would poison
+          // their tracked-path optimisations. Runtime safety rests on
+          // two pieces: (a) the ternary/NC split handles the easy
+          // over-eager case where `left` was a temporary, and (b) when
+          // the arg at the call site was genuinely untrackable (e.g. a
+          // bare `null` literal), TypeScript's null-check narrowing
+          // guarantees the `return <var>` path is dead at runtime. A
+          // Temporary value operand is still handled by the invalidate
+          // path below, so arbitrary complex-expression returns fall
+          // through to D-3 dispatch as before.
+          //
+          // Emit an auditable diagnostic so that if a developer bypasses
+          // the narrowing (e.g. `return b as Result` or `return x!`),
+          // the reliance on sibling returns for unified-prefix
+          // population is visible at transpile time rather than silent.
+          this.warnAt(
+            node,
+            "UntrackedStructuralUnionReturn",
+            "untracked variable returned as structural union — relying on sibling returns to populate the unified return prefix; ensure null narrowing guards this path.",
+          );
+          // Defensively clear any sibling-populated mapping so the state
+          // does not linger if this happens to be the last return path
+          // visited at TAC generation. Leaving
+          // `returnTrackingInvalidated=false` still allows subsequent
+          // tracked returns to re-set the mapping — so sibling
+          // field-copies emitted after this return continue to drive
+          // direct-slot access at the caller.
+          this.inlineInstanceMap.delete(inlineContext.returnVar.name);
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;

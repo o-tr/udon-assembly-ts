@@ -191,6 +191,12 @@ export function resolveStructuralUnionType(
     mergedProperties,
   );
   this.anonUnionCache.set(signature, symbol);
+  // Also register the synthetic symbol under its own name so downstream
+  // consumers (e.g. D-3 dispatch's structural-compatibility lookup via
+  // typeMapper.getAlias) can resolve it directly by its TypeSymbol.name.
+  // Without this, only the user-facing alias name (e.g. "Result") points
+  // at the symbol, leaving `__anon_union_N` unresolvable.
+  this.typeMapper.registerTypeAlias(symbol.name, symbol);
   return symbol;
 }
 

@@ -83,6 +83,7 @@ import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   createSoaSentinelValue,
   evaluateInlineGetter,
+  hasCompatibleUnionProperty,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
@@ -2172,11 +2173,38 @@ export function visitPropertyAccessExpression(
         }
         const implementorNames =
           this.implementorNamesCache.get(untrackedTypeName) ?? null;
+        // Structural anon-union return types (e.g. `type Result = Win | Loss`
+        // resolved to `__anon_union_N`) have no classRegistry entry and no
+        // explicit implementors. Admit concrete classes (Win, Loss, ...)
+        // whose declared InterfaceTypeSymbol carries the specific property
+        // being accessed with a type-compatible declaration. Matching on the
+        // accessed property rather than the full merged superset keeps every
+        // union branch's instances in the dispatch for that property —
+        // otherwise a branch carrying only a subset of the merged union's
+        // fields (e.g. Loss lacking Win's `value`/`list`) would silently fall
+        // off the end of the dispatch and return the Udon zero default in
+        // place of its real slot when the runtime handle points at that
+        // branch's instance.
+        const untrackedAnonUnion = untrackedTypeName.startsWith("__anon_union_")
+          ? this.typeMapper.getAlias(untrackedTypeName)
+          : undefined;
+        const anonUnionIface =
+          untrackedAnonUnion instanceof InterfaceTypeSymbol &&
+          untrackedAnonUnion.properties.size > 0
+            ? untrackedAnonUnion
+            : null;
         for (const [instId, info] of this.allInlineInstances) {
           if (
             info.className === untrackedTypeName ||
             implementorNames?.has(info.className) ||
-            isSubclassOf(this, info.className, untrackedTypeName)
+            isSubclassOf(this, info.className, untrackedTypeName) ||
+            (anonUnionIface !== null &&
+              hasCompatibleUnionProperty(
+                this,
+                info.className,
+                anonUnionIface,
+                node.property,
+              ))
           ) {
             dispInstances.push([instId, info]);
           }

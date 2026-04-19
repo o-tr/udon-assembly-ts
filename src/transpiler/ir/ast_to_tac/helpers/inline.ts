@@ -1,6 +1,9 @@
+import type { TypeMapper } from "../../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
+  ArrayTypeSymbol,
   ClassTypeSymbol,
+  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
@@ -134,6 +137,173 @@ export function isSubclassOf(
       ?.getInheritanceChain(className)
       .includes(baseName) ?? false
   );
+}
+
+function isAnonymousInterfaceName(name: string): boolean {
+  return name.startsWith("__anon_");
+}
+
+/**
+ * If `type.name` resolves to a registered alias different from `type`
+ * itself, return the alias. Otherwise return `type` unchanged. Handles
+ * the edge case where a property type was captured before its alias was
+ * registered (rare with in-order type declarations, but defensive
+ * against future call-sites that compose types across parse phases).
+ */
+function resolveTypeThroughAliases(
+  typeMapper: TypeMapper,
+  type: TypeSymbol,
+): TypeSymbol {
+  if (!type.name) return type;
+  const alias = typeMapper.getAlias(type.name);
+  return alias ?? type;
+}
+
+/**
+ * Structural equality for TypeSymbols used by D-3 union dispatch. Treats
+ * two anonymous InterfaceTypeSymbols as equal when their property maps are
+ * recursively structurally equal, and arrays/collections as equal when
+ * their inner types match. For named symbols falls back to `name` +
+ * `udonType` identity. Necessary because every occurrence of an anonymous
+ * type literal (e.g. `point: { x: number }`) produces a freshly-named
+ * `__anon_N` symbol, so two branches of a union that declare structurally
+ * identical nested object literals would otherwise fail a naive identity
+ * check and be excluded from the dispatch.
+ *
+ * Cycle guard: TypeScript permits indirectly self-referential types via
+ * named aliases (e.g. `type Node = { next: Node | null }`). The resolved
+ * named-symbol path short-circuits to the name-identity fallback, so the
+ * common case does not recurse infinitely. A `visited` set is carried
+ * through the recursion as a defensive measure against any future path
+ * that would synthesise a genuinely cyclic anonymous structure.
+ *
+ * Alias resolution: each recursive step resolves both operands through
+ * `typeMapper.getAlias(name)` first, so named property types (like
+ * `point: Pt` where `type Pt = { x: number }` is registered later than
+ * the enclosing interface) compare on their canonical definition
+ * instead of any stale placeholder captured at parse time.
+ */
+function isStructurallyEqualType(
+  rawLeft: TypeSymbol,
+  rawRight: TypeSymbol,
+  typeMapper: TypeMapper,
+  visited: Set<string> = new Set(),
+): boolean {
+  const left = resolveTypeThroughAliases(typeMapper, rawLeft);
+  const right = resolveTypeThroughAliases(typeMapper, rawRight);
+  if (left === right) return true;
+  const leftIsAnonIface =
+    left instanceof InterfaceTypeSymbol && isAnonymousInterfaceName(left.name);
+  const rightIsAnonIface =
+    right instanceof InterfaceTypeSymbol &&
+    isAnonymousInterfaceName(right.name);
+  if (leftIsAnonIface && rightIsAnonIface) {
+    const leftIface = left as InterfaceTypeSymbol;
+    const rightIface = right as InterfaceTypeSymbol;
+    const pairKey = `${leftIface.name}::${rightIface.name}`;
+    const reverseKey = `${rightIface.name}::${leftIface.name}`;
+    // Conservative break on cycle: returning false excludes the pair
+    // from D-3 dispatch rather than admitting a potentially unequal
+    // pair. Named-alias cycles already short-circuit through the
+    // name-identity fallback above, so only genuinely mutually-
+    // referential anonymous structures reach this branch — erring
+    // toward exclusion keeps the dispatch table from picking up an
+    // incompatible concrete class via structural misidentification.
+    // Record both orderings to catch recursions that revisit the same
+    // pair via the reverse ordering (left/right swapped through
+    // symmetric structural recursion).
+    if (visited.has(pairKey) || visited.has(reverseKey)) return false;
+    visited.add(pairKey);
+    visited.add(reverseKey);
+    if (leftIface.properties.size !== rightIface.properties.size) return false;
+    for (const [propName, leftPropType] of leftIface.properties) {
+      const rightPropType = rightIface.properties.get(propName);
+      if (!rightPropType) return false;
+      if (
+        !isStructurallyEqualType(
+          leftPropType,
+          rightPropType,
+          typeMapper,
+          visited,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (left instanceof ArrayTypeSymbol && right instanceof ArrayTypeSymbol) {
+    if (left.dimensions !== right.dimensions) return false;
+    return isStructurallyEqualType(
+      left.elementType,
+      right.elementType,
+      typeMapper,
+      visited,
+    );
+  }
+  if (
+    left instanceof DataListTypeSymbol &&
+    right instanceof DataListTypeSymbol
+  ) {
+    return isStructurallyEqualType(
+      left.elementType,
+      right.elementType,
+      typeMapper,
+      visited,
+    );
+  }
+  // CollectionTypeSymbol (UdonList/Map/Set/Dictionary/Queue/Stack) is
+  // constructed fresh per occurrence and its `name` returns only the bare
+  // typeName without baking in element/key/value types. Compare those
+  // inner types structurally to avoid the fallback `name === name` path
+  // spuriously accepting `UdonList<number>` as equal to `UdonList<string>`.
+  if (
+    left instanceof CollectionTypeSymbol &&
+    right instanceof CollectionTypeSymbol
+  ) {
+    if (left.name !== right.name) return false;
+    const eq = (
+      a: TypeSymbol | undefined,
+      b: TypeSymbol | undefined,
+    ): boolean =>
+      a === undefined && b === undefined
+        ? true
+        : a !== undefined && b !== undefined
+          ? isStructurallyEqualType(a, b, typeMapper, visited)
+          : false;
+    return (
+      eq(left.elementType, right.elementType) &&
+      eq(left.keyType, right.keyType) &&
+      eq(left.valueType, right.valueType)
+    );
+  }
+  return left.name === right.name && left.udonType === right.udonType;
+}
+
+/**
+ * Check whether a concrete class's registered InterfaceTypeSymbol carries the
+ * specific property accessed from an anon-union-typed value, with a
+ * type-compatible declaration. Used by D-3 dispatch to include concrete
+ * instances of every union branch (e.g. both Win and Loss for
+ * `Result = Win | Loss`) whose class declares the property being read. This
+ * avoids the superset-only filter that would exclude a branch carrying a
+ * strict subset of the merged union's properties and cause the dispatch to
+ * miss that handle — which would silently return the Udon zero default
+ * instead of reading the real slot.
+ */
+export function hasCompatibleUnionProperty(
+  converter: ASTToTACConverter,
+  concreteClassName: string,
+  anonUnion: InterfaceTypeSymbol,
+  propertyName: string,
+): boolean {
+  const unionProp = anonUnion.properties.get(propertyName);
+  if (!unionProp) return false;
+  const concrete = converter.typeMapper.getAlias(concreteClassName);
+  if (!(concrete instanceof InterfaceTypeSymbol)) return false;
+  const concreteProp = concrete.properties.get(propertyName);
+  if (!concreteProp) return false;
+  return isStructurallyEqualType(concreteProp, unionProp, converter.typeMapper);
 }
 
 /**

@@ -348,10 +348,11 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.uasm).not.toMatch(/Pair\.__get_/);
   });
 
-  it("dispatches by handle when ternary branches produce different inline instances", () => {
-    // Ternary writes a shared result temp from two diverging branches.
-    // Tracking is not set for the result, but handle-based dispatch is
-    // generated to correctly select the right instance at runtime.
+  it("splits ternary return branches so each populates the unified return prefix", () => {
+    // `return cond ? p1 : p2` in an inline method with a structural/interface
+    // return type is split into per-branch returns. Each branch field-copies
+    // into the unified return prefix, so the caller reads slots directly
+    // without needing a runtime handle-dispatch.
     const source = `
       type Pt = { x: number };
       class A {
@@ -369,9 +370,25 @@ describe("inline instance tracking across method boundaries", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    // Handle-based dispatch should be generated (no Pt.__get_ extern needed)
+    // No EXTERN property getter — inline slot access is used instead.
     expect(result.uasm).not.toMatch(/Pt\.__get_/);
-    expect(result.uasm).toMatch(/uninst_prop_next/);
+    // Group `_x` field-copies by their destination return-prefix. The
+    // ternary split must produce two DIFFERENT `__inst_Pt_*` sources
+    // copying into the same destination prefix. Derive source IDs from
+    // the TAC instead of hard-coding allocator indices.
+    const perDestination = new Map<string, Set<string>>();
+    for (const match of result.tac.matchAll(
+      /(__inline_ret_\d+)_x = (__inst_Pt_\d+)_x/g,
+    )) {
+      const [, dest, source] = match;
+      if (!perDestination.has(dest)) perDestination.set(dest, new Set());
+      perDestination.get(dest)?.add(source);
+    }
+    const maxGroupSize = Math.max(
+      0,
+      ...[...perDestination.values()].map((set) => set.size),
+    );
+    expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
   it("dispatches inline method call for temporary arg from Map.get", () => {
