@@ -72,6 +72,7 @@ import {
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
+  resolveClassProperty,
   resolveConcreteClassName,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
@@ -2962,17 +2963,32 @@ export function visitCallExpression(
                   returnType instanceof InterfaceTypeSymbol &&
                   returnType.properties.size > 0
                 ) {
-                  fieldsToCopy = Array.from(
-                    returnType.properties.entries(),
-                  ).map(
-                    ([name, sym]) =>
-                      [
+                  // Filter interface properties whose concrete
+                  // implementation on `inlineMapping.className` is a
+                  // getter — there is no backing slot to copy from.
+                  // Fallback strategy: when the concrete class cannot be
+                  // resolved here (alias not registered yet), keep the
+                  // property. That preserves the prior behavior for
+                  // non-getter implementations while still closing the
+                  // common case.
+                  fieldsToCopy = Array.from(returnType.properties.entries())
+                    .filter(([name]) => {
+                      const resolved = resolveClassProperty(
+                        this,
+                        inlineMapping.className,
                         name,
-                        sym.name
-                          ? (this.typeMapper.getAlias(sym.name) ?? sym)
-                          : sym,
-                      ] as [string, TypeSymbol],
-                  );
+                      );
+                      return !resolved?.prop.isGetter;
+                    })
+                    .map(
+                      ([name, sym]) =>
+                        [
+                          name,
+                          sym.name
+                            ? (this.typeMapper.getAlias(sym.name) ?? sym)
+                            : sym,
+                        ] as [string, TypeSymbol],
+                    );
                   effectiveClassName = returnType.name;
                 } else {
                   // Use merged class metadata to include inherited properties.

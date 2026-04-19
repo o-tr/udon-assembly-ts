@@ -826,14 +826,36 @@ export function visitBinaryExpression(
       // storage — writing to it would silently drop the
       // compound-assigned value. The `isInlineReturn` flag is set by
       // `inlineResolvedMethodBody` at creation time, so the check stays
-      // robust if the temp's naming convention ever changes. Route
-      // through `assignToTarget` which runs `maybeWarnWriteToGetter`
-      // and short-circuits before emitting a phantom write. Plain
+      // robust if the temp's naming convention ever changes. Plain
       // field reads return a Variable that is itself the SoA-backed
       // storage, so the fast path remains correct for non-getter LHS
       // and does not re-evaluate `node.left`'s object expression
       // (important for side-effecting LHS such as `getBox().value += 1`).
       if (target.isInlineReturn) {
+        // `node.left` must be a PropertyAccessExpression here: a plain
+        // identifier or method call cannot produce an isInlineReturn
+        // Variable that reaches the compound-assignment LHS slot — only
+        // getter-inlined property reads do, because methods are invoked
+        // via CallExpression (not PropertyAccess) as the assign target.
+        // We already evaluated the LHS fully (including any side effects
+        // in `node.left.object`); calling `assignToTarget` here would
+        // re-visit that object expression, double-firing effects such
+        // as `getBox()`. Emit the diagnostic directly and drop the
+        // write — the assignment semantics match
+        // `maybeWarnWriteToGetter`'s short-circuit, without the
+        // re-evaluation.
+        if (node.left.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propAccess = node.left as PropertyAccessExpressionNode;
+          this.warnAt(
+            propAccess,
+            "WriteToGetter",
+            `Compound write to getter-backed property "${propAccess.property}" — TS normally rejects this, so reaching this point indicates a transpiler-synthesized write. The write is being dropped to avoid resurrecting the phantom-slot bug.`,
+          );
+          return assignValue;
+        }
+        // Fallback for non-property LHS shapes that somehow reach here
+        // (should not occur in practice). Route through assignToTarget
+        // with the understanding that it may re-evaluate.
         return this.assignToTarget(node.left, assignValue);
       }
       this.emitCopyWithTracking(target, assignValue);
@@ -2019,7 +2041,14 @@ export function visitPropertyAccessExpression(
         for (const [className] of classIds) {
           const resolved = resolveClassProperty(this, className, node.property);
           if (resolved) {
-            propType = resolved.prop.type;
+            // For getters, `getterReturnType` is the authoritative return
+            // shape — today it matches `type`, but using it keeps the
+            // allocation correct if the two ever diverge (e.g. a future
+            // refinement where `type` is generic/erased while
+            // `getterReturnType` is concrete).
+            propType = resolved.prop.isGetter
+              ? (resolved.prop.getterReturnType ?? resolved.prop.type)
+              : resolved.prop.type;
             break;
           }
         }
