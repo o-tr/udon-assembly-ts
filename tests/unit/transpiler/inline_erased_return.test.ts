@@ -104,6 +104,124 @@ describe("inline erased return handling", () => {
     expect(result.tac).not.toContain("DataToken");
   });
 
+  it("propagates structural union field copies across nested inline returns", () => {
+    // Mirrors pr170_union_with_array_field VM fixture. The leading ternary
+    // return `return cond ? a : b` was the trigger: at TAC generation time
+    // it hits the plain-copy fallback in visitReturnStatement (no valueMapping
+    // for the ternary temp), which would historically set
+    // returnTrackingInvalidated=true and poison subsequent tracked returns.
+    const source = `
+      type Win = { tag: true; value: number; list: string[] };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        private selectBest(a: Result, b: Result): Result {
+          if (a.tag && b.tag) {
+            return (a.value as number) >= (b.value as number) ? a : b;
+          }
+          if (a.tag) return a;
+          if (b.tag) return b;
+          return { tag: false };
+        }
+        compute(v: number): Result {
+          const win: Win = { tag: true, value: v, list: ["alpha", "beta"] };
+          return this.selectBest(win, { tag: false });
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().compute(11);
+          const t = r.tag;
+          const lst = r.tag ? r.list.length : 0;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const tagMatch = result.tac.match(
+      /(__inline_ret_(\d+))_tag = (__inline_ret_(\d+))_tag/,
+    );
+    expect(tagMatch).not.toBeNull();
+    expect(tagMatch?.[2]).not.toBe(tagMatch?.[4]);
+    const listMatch = result.tac.match(
+      /(__inline_ret_(\d+))_list = (__inline_ret_(\d+))_list/,
+    );
+    expect(listMatch).not.toBeNull();
+    expect(listMatch?.[2]).not.toBe(listMatch?.[4]);
+    expect(result.tac).not.toMatch(/uninst_prop.*__inst_Win_/);
+  });
+
+  it("propagates union field copies across nested inline returns with null-typed param", () => {
+    const source = `
+      type Win = { tag: true; value: number };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        private selectBest(a: Result | null, b: Result | null): Result {
+          if (a !== null && a.tag && b !== null && b.tag) {
+            return (a.value as number) >= (b.value as number) ? a : b;
+          }
+          if (a !== null && a.tag) return a;
+          if (b !== null && b.tag) return b;
+          return { tag: false };
+        }
+        run(v: number): Result {
+          const win: Win = { tag: true, value: v };
+          return this.selectBest(win, null);
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().run(9);
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const tagMatch = result.tac.match(
+      /(__inline_ret_(\d+))_tag = (__inline_ret_(\d+))_tag/,
+    );
+    expect(tagMatch).not.toBeNull();
+    expect(tagMatch?.[2]).not.toBe(tagMatch?.[4]);
+    expect(result.tac).not.toMatch(/uninst_prop.*__inst_Win_/);
+  });
+
+  it("single-level union return emits only one outer field-copy chain", () => {
+    const source = `
+      type A = { tag: true; x: number };
+      type B = { tag: false };
+      type E = A | B;
+
+      class H {
+        pick(f: boolean): E {
+          return f ? { tag: true, x: 1 } : { tag: false };
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new H().pick(true);
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const outerCopies = new Set(
+      [
+        ...result.tac.matchAll(
+          /(__inline_ret_\d+)_tag = __inline_ret_\d+_tag/g,
+        ),
+      ].map((m) => m[1]),
+    );
+    expect(outerCopies.size).toBeLessThanOrEqual(1);
+  });
+
   it("still erases incompatible primitive unions", () => {
     const source = `
       class HandAnalyzer {

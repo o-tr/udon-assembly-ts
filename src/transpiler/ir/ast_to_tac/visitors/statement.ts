@@ -1395,6 +1395,18 @@ export function visitReturnStatement(
               valueMapping,
             );
           }
+        } else if (
+          inlineContext.returnInstancePrefix &&
+          inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
+          inlineContext.returnVar.type.properties.size > 0
+        ) {
+          // Structural-union return: this path has no trackable source
+          // (e.g. a ternary temporary), but sibling return paths may still
+          // field-copy into returnInstancePrefix. Stay neutral — don't
+          // invalidate (which would poison subsequent field-copy returns)
+          // and don't claim (slots weren't populated on this path). If
+          // later returns field-copy they'll set tracking via line 1346;
+          // if none do, the caller falls back to handle-based dispatch.
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;

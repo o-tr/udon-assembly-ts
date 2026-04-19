@@ -21,11 +21,11 @@ type Result = Win | Loss;
 
 class M {
   private selectBest(a: Result | null, b: Result | null): Result {
-    if (a !== null && a.tag && b !== null && b.tag) {
+    if (a?.tag && b !== null && b.tag) {
       return (a.value as number) >= (b.value as number) ? a : b;
     }
-    if (a !== null && a.tag) return a;
-    if (b !== null && b.tag) return b;
+    if (a?.tag) return a;
+    if (b?.tag) return b;
     return { tag: false };
   }
 
