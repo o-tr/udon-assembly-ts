@@ -1,13 +1,29 @@
 /**
  * Transpiler performance benchmark
  *
- * Measures each pipeline phase independently:
- *   Parse → ClassRegistry → AST→TAC → Optimize → Codegen → Assemble
+ * Three representative scenarios (per optimize-performance plan Step 0):
+ *   A) Hot path: small file, full top-level transpile (TypeScriptToUdonTranspiler)
+ *   B) Optimizer: medium file, optimize=true
+ *   C) Batch: BatchTranspiler over multiple entry points
  *
- * Usage: pnpm bench
+ * Also retains a phase-level breakdown (Parse / Registry / AST→TAC / ExposedLabels
+ * / Optimize / Codegen / Assemble) so individual phases can be attributed.
+ *
+ * Usage:
+ *   pnpm bench                       # run all scenarios, print table
+ *   pnpm bench --json out.json       # also write raw results as JSON
+ *   pnpm bench --baseline            # write tests/bench/baseline.json
+ *   pnpm bench --compare             # diff current run vs tests/bench/baseline.json
+ *   pnpm bench --runs 10             # override run count (default 7)
+ *   pnpm bench --only hot,batch      # run a subset of scenarios
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
+import { BatchTranspiler } from "../../src/transpiler/batch/batch_transpiler.js";
 import { buildExternRegistryFromFiles } from "../../src/transpiler/codegen/extern_registry.js";
 import { TACToUdonConverter } from "../../src/transpiler/codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "../../src/transpiler/codegen/udon_assembler.js";
@@ -20,12 +36,13 @@ import {
   ASTNodeKind,
   type ClassDeclarationNode,
 } from "../../src/transpiler/frontend/types.js";
+import { TypeScriptToUdonTranspiler } from "../../src/transpiler/index.js";
 import { ASTToTACConverter } from "../../src/transpiler/ir/ast_to_tac/index.js";
 import { TACOptimizer } from "../../src/transpiler/ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../../src/transpiler/ir/udon_behaviour_layout.js";
 
 // ---------------------------------------------------------------------------
-// Test inputs
+// Sample sources
 // ---------------------------------------------------------------------------
 
 const SMALL_SOURCE = `
@@ -156,7 +173,42 @@ class GameManager extends UdonSharpBehaviour {
 `;
 
 // ---------------------------------------------------------------------------
-// Benchmark runner
+// Statistics helpers
+// ---------------------------------------------------------------------------
+
+interface Stats {
+  runs: number;
+  min: number;
+  median: number;
+  mean: number;
+  p95: number;
+  max: number;
+}
+
+function summarize(values: number[]): Stats {
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const mid = Math.floor(n / 2);
+  const median =
+    n % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  const mean = sorted.reduce((a, b) => a + b, 0) / n;
+  const p95Index = Math.min(n - 1, Math.ceil(0.95 * n) - 1);
+  return {
+    runs: n,
+    min: sorted[0],
+    median,
+    mean,
+    p95: sorted[p95Index],
+    max: sorted[n - 1],
+  };
+}
+
+function fmt(n: number): string {
+  return `${n.toFixed(2)} ms`;
+}
+
+// ---------------------------------------------------------------------------
+// Scenario runners
 // ---------------------------------------------------------------------------
 
 interface PhaseTimings {
@@ -170,7 +222,7 @@ interface PhaseTimings {
   total: number;
 }
 
-function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
+function runPhaseBreakdown(source: string, optimize: boolean): PhaseTimings {
   const timings: PhaseTimings = {
     parse: 0,
     registry: 0,
@@ -184,19 +236,16 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
 
   const totalStart = performance.now();
 
-  // Phase 1: Parse
   let t0 = performance.now();
   const parser = new TypeScriptParser();
   const ast = parser.parse(source);
   timings.parse = performance.now() - t0;
 
-  // Phase 2: ClassRegistry
   t0 = performance.now();
   const registry = new ClassRegistry();
   registry.registerFromProgram(ast, "<bench>");
   timings.registry = performance.now() - t0;
 
-  // Setup for TAC conversion
   const symbolTable = parser.getSymbolTable();
   const entryClassName =
     registry.getEntryPoints()[0]?.name ??
@@ -250,7 +299,6 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
     classImplements,
   );
 
-  // Phase 3: AST → TAC
   t0 = performance.now();
   const tacConverter = new ASTToTACConverter(
     symbolTable,
@@ -263,16 +311,12 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
   let tacInstructions = tacConverter.convert(ast);
   timings.astToTac = performance.now() - t0;
 
-  // Phase 3b: compute exposed labels once — used by both optimizer and assembler.
-  // Measured separately so its cost does not shift between optimize/assemble
-  // depending on whether optimization is enabled.
   t0 = performance.now();
   const exposedLabels = entryClassName
     ? computeExposedLabels(registry, udonBehaviourLayouts, entryClassName)
     : undefined;
   timings.exposedLabels = performance.now() - t0;
 
-  // Phase 4: Optimize (optional)
   t0 = performance.now();
   if (optimize && exposedLabels) {
     const optimizer = new TACOptimizer();
@@ -280,12 +324,8 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
   }
   timings.optimize = performance.now() - t0;
 
-  // Phase 5: Codegen (TAC → Udon)
   t0 = performance.now();
   const udonConverter = new TACToUdonConverter();
-  // Scope callAnalyzer inside the branch so we avoid both the optional chain
-  // (which widens the result type to include undefined) and a non-null
-  // assertion (forbidden by biome's noNonNullAssertion rule).
   let inlineClassNames: ReadonlySet<string> = new Set<string>();
   if (entryClassName) {
     const callAnalyzer = new CallAnalyzer(registry);
@@ -299,7 +339,6 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
   const dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
   timings.codegen = performance.now() - t0;
 
-  // Phase 6: Assemble
   t0 = performance.now();
   const assembler = new UdonAssembler();
   assembler.assemble(
@@ -316,56 +355,331 @@ function runSingleBenchmark(source: string, optimize: boolean): PhaseTimings {
   return timings;
 }
 
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+// Scenario A/B: top-level API single transpile.
+function runTopLevel(source: string, optimize: boolean): number {
+  const transpiler = new TypeScriptToUdonTranspiler();
+  const t0 = performance.now();
+  transpiler.transpile(source, { optimize, silent: true });
+  return performance.now() - t0;
 }
 
-function runBenchmarkSuite(
+// Scenario C: batch transpile over a prepared temp directory.
+// The directory is created once per scenario (outside the timed region);
+// each timed iteration invokes BatchTranspiler.transpile() against it.
+// Cache is disabled between runs by wiping .transpiler-cache.json so we
+// measure the cold-batch path, which is what CI hits.
+function prepareBatchFixture(): { sourceDir: string; outputDir: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "uasm-bench-batch-"));
+  const sourceDir = path.join(root, "src");
+  const outputDir = path.join(root, "out");
+  fs.mkdirSync(sourceDir, { recursive: true });
+
+  // Two entry points so per-entry work (layout build, codegen) is exercised
+  // more than once — that is where batch-level redundancy surfaces.
+  fs.writeFileSync(
+    path.join(sourceDir, "EntryA.ts"),
+    SMALL_SOURCE.replace("class Main", "class EntryA"),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(sourceDir, "EntryB.ts"),
+    MEDIUM_SOURCE.replace("class GameManager", "class EntryB"),
+    "utf8",
+  );
+  return { sourceDir, outputDir };
+}
+
+function runBatch(fixture: { sourceDir: string; outputDir: string }): number {
+  // Wipe cache + outputs so every iteration is a cold batch.
+  const cachePath = path.join(fixture.sourceDir, ".transpiler-cache.json");
+  if (fs.existsSync(cachePath)) fs.rmSync(cachePath);
+  if (fs.existsSync(fixture.outputDir)) {
+    fs.rmSync(fixture.outputDir, { recursive: true, force: true });
+  }
+  const transpiler = new BatchTranspiler();
+  const t0 = performance.now();
+  transpiler.transpile({
+    sourceDir: fixture.sourceDir,
+    outputDir: fixture.outputDir,
+    excludeDirs: [],
+  });
+  return performance.now() - t0;
+}
+
+// ---------------------------------------------------------------------------
+// Scenario registry
+// ---------------------------------------------------------------------------
+
+interface ScenarioResult {
+  label: string;
+  id: string;
+  stats: Stats;
+  // Phase-level breakdown (median of each phase) when available.
+  phases?: Record<keyof PhaseTimings, number>;
+}
+
+function runScenario(
+  id: string,
   label: string,
-  source: string,
-  optimize: boolean,
-  runs: number = 5,
-): void {
-  const allTimings: PhaseTimings[] = [];
-  // Warmup (1 run, discarded)
-  runSingleBenchmark(source, optimize);
+  runs: number,
+  iter: () => number,
+  captureBreakdown?: () => PhaseTimings,
+): ScenarioResult {
+  // Warmup: 2 iterations, discarded.
+  iter();
+  iter();
 
+  const totals: number[] = [];
   for (let i = 0; i < runs; i++) {
-    allTimings.push(runSingleBenchmark(source, optimize));
+    totals.push(iter());
   }
 
-  const phases: (keyof PhaseTimings)[] = [
-    "parse",
-    "registry",
-    "astToTac",
-    "exposedLabels",
-    "optimize",
-    "codegen",
-    "assemble",
-    "total",
-  ];
-  const result: Record<string, string> = {};
-  for (const phase of phases) {
-    const values = allTimings.map((t) => t[phase]);
-    const med = median(values);
-    result[phase] = `${med.toFixed(2)} ms`;
+  const result: ScenarioResult = {
+    id,
+    label,
+    stats: summarize(totals),
+  };
+
+  if (captureBreakdown) {
+    const phaseRuns: PhaseTimings[] = [];
+    captureBreakdown(); // warmup
+    for (let i = 0; i < runs; i++) {
+      phaseRuns.push(captureBreakdown());
+    }
+    const phases: (keyof PhaseTimings)[] = [
+      "parse",
+      "registry",
+      "astToTac",
+      "exposedLabels",
+      "optimize",
+      "codegen",
+      "assemble",
+      "total",
+    ];
+    const medianByPhase: Partial<Record<keyof PhaseTimings, number>> = {};
+    for (const phase of phases) {
+      medianByPhase[phase] = summarize(phaseRuns.map((r) => r[phase])).median;
+    }
+    result.phases = medianByPhase as Record<keyof PhaseTimings, number>;
   }
 
-  console.log(`\n=== ${label} ===`);
-  console.table(result);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Output formatting
 // ---------------------------------------------------------------------------
 
-buildExternRegistryFromFiles([]);
+function printScenario(result: ScenarioResult): void {
+  console.log(`\n=== ${result.label} (${result.id}) ===`);
+  const { stats } = result;
+  console.table({
+    min: fmt(stats.min),
+    median: fmt(stats.median),
+    mean: fmt(stats.mean),
+    p95: fmt(stats.p95),
+    max: fmt(stats.max),
+    runs: String(stats.runs),
+  });
+  if (result.phases) {
+    const rows: Record<string, string> = {};
+    for (const [k, v] of Object.entries(result.phases)) {
+      rows[k] = fmt(v);
+    }
+    console.log("  phase-level medians:");
+    console.table(rows);
+  }
+}
 
-runBenchmarkSuite("Small (no optimize)", SMALL_SOURCE, false);
-runBenchmarkSuite("Small (optimize)", SMALL_SOURCE, true);
-runBenchmarkSuite("Medium (no optimize)", MEDIUM_SOURCE, false);
-runBenchmarkSuite("Medium (optimize)", MEDIUM_SOURCE, true);
+function percentDelta(current: number, baseline: number): string {
+  if (baseline === 0) return "n/a";
+  const pct = ((current - baseline) / baseline) * 100;
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}%`;
+}
+
+function printComparison(
+  current: ScenarioResult[],
+  baseline: ScenarioResult[],
+): void {
+  console.log("\n=== Comparison vs baseline ===");
+  const byId = new Map(baseline.map((b) => [b.id, b]));
+  const rows: Record<string, Record<string, string>> = {};
+  for (const cur of current) {
+    const base = byId.get(cur.id);
+    if (!base) {
+      rows[cur.id] = {
+        median: fmt(cur.stats.median),
+        baseline: "(missing)",
+        delta: "n/a",
+      };
+      continue;
+    }
+    rows[cur.id] = {
+      median: fmt(cur.stats.median),
+      baseline: fmt(base.stats.median),
+      delta: percentDelta(cur.stats.median, base.stats.median),
+    };
+  }
+  console.table(rows);
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+interface CliArgs {
+  runs: number;
+  json?: string;
+  baseline: boolean;
+  compare: boolean;
+  only?: Set<string>;
+}
+
+/** Reject values that look like a flag (start with "--"), to catch mistakes
+ * like `--json --runs 5` where the user forgot the path argument. */
+function requireNonFlagValue(flag: string, raw: string | undefined): string {
+  if (raw === undefined || raw === "" || raw.startsWith("--")) {
+    console.error(`${flag} requires a value (got "${raw ?? "<missing>"}")`);
+    process.exit(2);
+  }
+  return raw;
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  const args: CliArgs = { runs: 7, baseline: false, compare: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--runs") {
+      const raw = requireNonFlagValue("--runs", argv[++i]);
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        console.error(`--runs requires a positive integer (got "${raw}")`);
+        process.exit(2);
+      }
+      args.runs = n;
+    } else if (a === "--json") {
+      args.json = requireNonFlagValue("--json", argv[++i]);
+    } else if (a === "--baseline") {
+      args.baseline = true;
+    } else if (a === "--compare") {
+      args.compare = true;
+    } else if (a === "--only") {
+      const raw = requireNonFlagValue("--only", argv[++i]);
+      // IDs validated against the scenario list in main(), which is the
+      // single source of truth — keep raw form here.
+      args.only = new Set(raw.split(","));
+    } else {
+      console.warn(`Unknown bench arg: ${a}`);
+    }
+  }
+  return args;
+}
+
+const BASELINE_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "baseline.json",
+);
+
+function main(): void {
+  const args = parseArgs(process.argv.slice(2));
+  buildExternRegistryFromFiles([]);
+
+  const fixture = prepareBatchFixture();
+  try {
+    const scenarios: Array<{
+      id: string;
+      label: string;
+      run: () => number;
+      breakdown?: () => PhaseTimings;
+    }> = [
+      {
+        id: "hot",
+        label: "Small file, top-level transpile (no optimize)",
+        run: () => runTopLevel(SMALL_SOURCE, false),
+        breakdown: () => runPhaseBreakdown(SMALL_SOURCE, false),
+      },
+      {
+        id: "optimize",
+        label: "Medium file, top-level transpile (optimize=true)",
+        run: () => runTopLevel(MEDIUM_SOURCE, true),
+        breakdown: () => runPhaseBreakdown(MEDIUM_SOURCE, true),
+      },
+      {
+        id: "batch",
+        label: "BatchTranspiler, 2 entry points (cold cache)",
+        run: () => runBatch(fixture),
+      },
+    ];
+
+    // Validate `--only` IDs against the actual scenario list — the single
+    // source of truth — so adding a new scenario doesn't require updating a
+    // separate constant.
+    if (args.only) {
+      const knownIds = new Set(scenarios.map((s) => s.id));
+      const unknown = [...args.only].filter((id) => !knownIds.has(id));
+      if (unknown.length > 0) {
+        console.error(
+          `--only: unknown scenario id(s): ${unknown.join(", ")}. Known: ${[...knownIds].join(", ")}`,
+        );
+        process.exit(2);
+      }
+    }
+
+    const results: ScenarioResult[] = [];
+    for (const s of scenarios) {
+      if (args.only && !args.only.has(s.id)) continue;
+      const r = runScenario(s.id, s.label, args.runs, s.run, s.breakdown);
+      printScenario(r);
+      results.push(r);
+    }
+
+    // Baseline compare
+    if (args.compare) {
+      if (!fs.existsSync(BASELINE_PATH)) {
+        console.error(
+          `\nNo baseline file at ${BASELINE_PATH}. Run with --baseline first.`,
+        );
+        process.exitCode = 1;
+      } else {
+        const baseline = JSON.parse(
+          fs.readFileSync(BASELINE_PATH, "utf8"),
+        ) as ScenarioResult[];
+        printComparison(results, baseline);
+      }
+    }
+
+    // Refuse to write empty result sets to either baseline or --json so an
+    // invalid `--only` filter never overwrites a good baseline with nothing.
+    if ((args.baseline || args.json) && results.length === 0) {
+      console.error(
+        "No scenarios ran (check --only filter); refusing to write empty results.",
+      );
+      process.exitCode = 1;
+    } else {
+      if (args.baseline) {
+        fs.writeFileSync(
+          BASELINE_PATH,
+          `${JSON.stringify(results, null, 2)}\n`,
+        );
+        console.log(`\nWrote baseline to ${BASELINE_PATH}`);
+      }
+      if (args.json) {
+        fs.writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
+        console.log(`\nWrote results to ${args.json}`);
+      }
+    }
+  } finally {
+    // Always clean up the batch fixture root, even if a scenario threw.
+    try {
+      fs.rmSync(path.dirname(fixture.sourceDir), {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+main();

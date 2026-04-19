@@ -432,36 +432,76 @@ const collectTemps = (instructions: TACInstruction[]): number => {
 
 type ParallelMove = { dest: TACOperand; src: TACOperand };
 
+const moveKey = (operand: TACOperand): string => {
+  const baseKey = baseKeyForOperand(operand);
+  return baseKey ?? operandKey(operand);
+};
+
 const linearizeParallelCopies = (
   moves: ParallelMove[],
   createTemp: (source: TACOperand) => TACOperand,
 ): AssignmentInstruction[] => {
-  const pending = moves.map((move) => ({ ...move }));
+  // Cache src/dest keys per pending entry and maintain `sourceKeyCount`
+  // incrementally so each iteration of the outer loop is O(|pending|) work
+  // on Map operations and fixed-cost comparisons — not O(|pending|) string
+  // allocations as the original did. Also: swap-with-last + pop instead of
+  // splice, so removal is O(1).
+  type Entry = { move: ParallelMove; srcKey: string; destKey: string };
+  const pending: Entry[] = moves.map((move) => ({
+    move: { ...move },
+    srcKey: moveKey(move.src),
+    destKey: moveKey(move.dest),
+  }));
   const emitted: AssignmentInstruction[] = [];
-  const moveKey = (operand: TACOperand): string => {
-    const baseKey = baseKeyForOperand(operand);
-    return baseKey ?? operandKey(operand);
+
+  const sourceKeyCount = new Map<string, number>();
+  for (const e of pending) {
+    sourceKeyCount.set(e.srcKey, (sourceKeyCount.get(e.srcKey) ?? 0) + 1);
+  }
+  const decSourceCount = (key: string): void => {
+    const c = sourceKeyCount.get(key);
+    if (c === undefined) return;
+    if (c <= 1) sourceKeyCount.delete(key);
+    else sourceKeyCount.set(key, c - 1);
+  };
+  const incSourceCount = (key: string): void => {
+    sourceKeyCount.set(key, (sourceKeyCount.get(key) ?? 0) + 1);
   };
 
   while (pending.length > 0) {
-    const sourceKeys = new Set(pending.map((move) => moveKey(move.src)));
-    const readyIndex = pending.findIndex(
-      (move) => !sourceKeys.has(moveKey(move.dest)),
-    );
+    let readyIndex = -1;
+    for (let i = 0; i < pending.length; i++) {
+      if (!sourceKeyCount.has(pending[i].destKey)) {
+        readyIndex = i;
+        break;
+      }
+    }
 
     if (readyIndex >= 0) {
-      const [move] = pending.splice(readyIndex, 1);
-      emitted.push(new AssignmentInstruction(move.dest, move.src));
+      const entry = pending[readyIndex];
+      // swap-with-last + pop to remove in O(1); stable emission order is
+      // preserved because we always pick the first ready move encountered.
+      const last = pending.length - 1;
+      if (readyIndex !== last) pending[readyIndex] = pending[last];
+      pending.pop();
+      decSourceCount(entry.srcKey);
+      emitted.push(new AssignmentInstruction(entry.move.dest, entry.move.src));
       continue;
     }
 
-    const cycleMove = pending[0];
-    const temp = createTemp(cycleMove.src);
-    emitted.push(new AssignmentInstruction(temp, cycleMove.src));
-    const srcKey = moveKey(cycleMove.src);
-    for (const move of pending) {
-      if (moveKey(move.src) === srcKey) {
-        move.src = temp;
+    // No move is ready — break a cycle by saving the head's src to a fresh
+    // temp and rewriting every pending entry whose src shares that key.
+    const cycle = pending[0];
+    const temp = createTemp(cycle.move.src);
+    emitted.push(new AssignmentInstruction(temp, cycle.move.src));
+    const oldKey = cycle.srcKey;
+    const tempKey = moveKey(temp);
+    for (const entry of pending) {
+      if (entry.srcKey === oldKey) {
+        entry.move.src = temp;
+        decSourceCount(entry.srcKey);
+        entry.srcKey = tempKey;
+        incSourceCount(tempKey);
       }
     }
   }
@@ -779,7 +819,14 @@ export const deconstructSSA = (
   const seed = options?.edgeLabelSeed ?? { value: 0 };
 
   const blocks: BlockInsts = new Map();
-  const orderedBlockIds = cfg.blocks.map((block) => block.id);
+  // Emission-order bookkeeping for edge blocks created by `insertEdgeBlock`.
+  // `pendingBefore[t]` lists edge blocks to emit immediately before target t
+  // (where t is always an original cfg.blocks id — see Invariant #3 below),
+  // and `trailing` lists edge blocks emitted after all cfg blocks. Both are
+  // FIFO by push order. Together they replace an O(n²) `indexOf`+`splice`
+  // pattern; see tests/bench/FINDINGS.md for the profile data.
+  const pendingBefore = new Map<number, number[]>();
+  const trailing: number[] = [];
   let nextBlockId = cfg.blocks.length;
   let nextEdgeLabelId = seed.value;
   let nextTempId = collectTemps(instructions);
@@ -805,12 +852,15 @@ export const deconstructSSA = (
 
   const ensureBlockLabel = (blockId: number): LabelOperand => {
     const insts = blocks.get(blockId) ?? [];
-    const existing = insts.find(
-      (inst): inst is LabelInstruction =>
-        inst.kind === TACInstructionKind.Label,
-    );
-    if (existing && existing.label.kind === TACOperandKind.Label) {
-      return existing.label as LabelOperand;
+    // `splitBlockInstructions` emits [...labels, ...phis, ...body] so a label,
+    // if present, is always at index 0. This O(1) check replaces an O(block)
+    // `insts.find` that previously showed up in profiles.
+    const first = insts[0];
+    if (
+      first?.kind === TACInstructionKind.Label &&
+      (first as LabelInstruction).label.kind === TACOperandKind.Label
+    ) {
+      return (first as LabelInstruction).label as LabelOperand;
     }
     const label = createLabel(`ssa_block_${blockId}_${nextEdgeLabelId++}`);
     insts.unshift(new LabelInstruction(label));
@@ -832,14 +882,14 @@ export const deconstructSSA = (
     const newId = nextBlockId++;
     blocks.set(newId, edgeInsts);
     if (insertBeforeTarget !== undefined) {
-      const targetIndex = orderedBlockIds.indexOf(insertBeforeTarget);
-      if (targetIndex >= 0) {
-        orderedBlockIds.splice(targetIndex, 0, newId);
-      } else {
-        orderedBlockIds.push(newId);
+      let list = pendingBefore.get(insertBeforeTarget);
+      if (!list) {
+        list = [];
+        pendingBefore.set(insertBeforeTarget, list);
       }
+      list.push(newId);
     } else {
-      orderedBlockIds.push(newId);
+      trailing.push(newId);
     }
     return edgeLabel;
   };
@@ -911,10 +961,20 @@ export const deconstructSSA = (
   }
 
   const ordered: TACInstruction[] = [];
-  for (const blockId of orderedBlockIds) {
-    const insts = blocks.get(blockId);
-    if (insts) ordered.push(...insts);
+  const append = (src: TACInstruction[] | undefined): void => {
+    if (!src) return;
+    // Index-based push (not `...spread`) so pathological block sizes cannot
+    // hit V8's argument-count ceiling.
+    for (let i = 0; i < src.length; i++) ordered.push(src[i]);
+  };
+  for (const block of cfg.blocks) {
+    const pending = pendingBefore.get(block.id);
+    if (pending) {
+      for (const id of pending) append(blocks.get(id));
+    }
+    append(blocks.get(block.id));
   }
+  for (const id of trailing) append(blocks.get(id));
 
   seed.value = nextEdgeLabelId;
   return { instructions: stripSsaVersions(ordered), changed: true };
