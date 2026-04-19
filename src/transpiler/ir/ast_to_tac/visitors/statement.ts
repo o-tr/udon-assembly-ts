@@ -1243,6 +1243,18 @@ export function visitReturnStatement(
         type: ObjectType,
         loc: node.loc,
       };
+      // Shallow-clone `nc.left` for the two syntactic positions. The
+      // split places `left` on BOTH the null-check's LHS and the
+      // then-branch's return value, so `visitExpression` visits it
+      // twice. Cloning decouples the two visits defensively — any
+      // future visitor change that writes memoised fields onto the
+      // node object will no longer cross-contaminate between the
+      // condition and the return. A shallow clone is sufficient for
+      // the shapes admitted by `isSideEffectFreeNullCoalesceLeft`
+      // (Identifier / Literal / ThisExpression / single-step
+      // `this.<field>`), all of which have simple fields.
+      const leftForCondition: ASTNode = { ...nc.left };
+      const leftForReturn: ASTNode = { ...nc.left };
       // JavaScript's `??` falls through for both `null` AND `undefined`,
       // so the synthesized guard must use loose `!=` to match. Udon has
       // no `undefined` at the runtime level — values are null or a typed
@@ -1251,27 +1263,15 @@ export function visitReturnStatement(
       // split if the gate is ever widened beyond side-effect-free lefts.
       const notNull: BinaryExpressionNode = {
         kind: ASTNodeKind.BinaryExpression,
-        left: nc.left,
+        left: leftForCondition,
         operator: "!=",
         right: nullLiteral,
         loc: node.loc,
       };
-      // `nc.left` is the SAME ASTNode reference placed on both the
-      // synthesized null-check's `left` AND the then-branch's return
-      // value. `visitExpression` is later called on each site, so the
-      // node is traversed twice in two syntactic contexts. This is
-      // intentional and safe because (a) `isSideEffectFreeNullCoalesceLeft`
-      // rejects any node whose evaluation could have observable side
-      // effects (CallExpression, PropertyAccessExpression on getters,
-      // non-ThisExpression chains, etc.), and (b) the existing visitors
-      // treat AST nodes as read-only — no memoised fields are written
-      // back onto the node during visit. If a future visitor change
-      // starts mutating the node object, either clone `nc.left` for the
-      // two uses or narrow the gate further.
       this.visitIfStatement({
         kind: ASTNodeKind.IfStatement,
         condition: notNull,
-        thenBranch: synthReturn(nc.left),
+        thenBranch: synthReturn(leftForReturn),
         elseBranch: synthReturn(nc.right),
         loc: node.loc,
       });
@@ -1561,6 +1561,14 @@ export function visitReturnStatement(
             "UntrackedStructuralUnionReturn",
             "untracked variable returned as structural union — relying on sibling returns to populate the unified return prefix; ensure null narrowing guards this path.",
           );
+          // Defensively clear any sibling-populated mapping so the state
+          // does not linger if this happens to be the last return path
+          // visited at TAC generation. Leaving
+          // `returnTrackingInvalidated=false` still allows subsequent
+          // tracked returns to re-set the mapping — so sibling
+          // field-copies emitted after this return continue to drive
+          // direct-slot access at the caller.
+          this.inlineInstanceMap.delete(inlineContext.returnVar.name);
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;
