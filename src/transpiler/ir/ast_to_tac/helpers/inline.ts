@@ -137,6 +137,35 @@ export function isSubclassOf(
 }
 
 /**
+ * Check whether a concrete class's registered InterfaceTypeSymbol carries the
+ * specific property accessed from an anon-union-typed value, with a
+ * type-compatible declaration. Used by D-3 dispatch to include concrete
+ * instances of every union branch (e.g. both Win and Loss for
+ * `Result = Win | Loss`) whose class declares the property being read. This
+ * avoids the superset-only filter that would exclude a branch carrying a
+ * strict subset of the merged union's properties and cause the dispatch to
+ * miss that handle — which would silently return the Udon zero default
+ * instead of reading the real slot.
+ */
+export function hasCompatibleUnionProperty(
+  converter: ASTToTACConverter,
+  concreteClassName: string,
+  anonUnion: InterfaceTypeSymbol,
+  propertyName: string,
+): boolean {
+  const unionProp = anonUnion.properties.get(propertyName);
+  if (!unionProp) return false;
+  const concrete = converter.typeMapper.getAlias(concreteClassName);
+  if (!(concrete instanceof InterfaceTypeSymbol)) return false;
+  const concreteProp = concrete.properties.get(propertyName);
+  if (!concreteProp) return false;
+  return (
+    concreteProp.name === unionProp.name &&
+    concreteProp.udonType === unionProp.udonType
+  );
+}
+
+/**
  * Resolve a class node by name, checking classMap first then classRegistry.
  */
 export function resolveClassNode(

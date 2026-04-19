@@ -153,7 +153,15 @@ describe("inline erased return handling", () => {
     expect(result.tac).not.toMatch(/uninst_prop.*__inst_Win_/);
   });
 
-  it("propagates union field copies across nested inline returns with null-typed param", () => {
+  it("dispatches structurally-compatible concrete classes for anon-union returns with null-typed params", () => {
+    // Mirrors pr170_union_with_null_branch VM fixture. A `return <param>`
+    // where the param was bound to a bare null arg has no trackable source,
+    // so inline return tracking is invalidated and the caller falls back to
+    // D-3 handle dispatch. The dispatch table must include the concrete
+    // Win instance (className "Win") because Win is structurally assignable
+    // to the anon-union return type (Result = Win | Loss); excluding it
+    // leaves the Win handle out and the caller reads a default false,
+    // incorrectly taking the LOSS branch.
     const source = `
       type Win = { tag: true; value: number };
       type Loss = { tag: false };
@@ -183,12 +191,59 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const tagMatch = result.tac.match(
-      /(__inline_ret_(\d+))_tag = (__inline_ret_(\d+))_tag/,
+    // Either direct slot access (field-copied from inner prefix) or the
+    // D-3 uninst_prop dispatch that includes the Win concrete handle —
+    // both are correct. The failure mode is a dispatch that excludes Win.
+    const hasOuterFieldCopy =
+      /(__inline_ret_\d+)_tag = __inline_ret_\d+_tag/.test(result.tac);
+    const dispatchHasWin = /__uninst_prop_\d+ = __inst_Win_\d+_tag/.test(
+      result.tac,
     );
-    expect(tagMatch).not.toBeNull();
-    expect(tagMatch?.[2]).not.toBe(tagMatch?.[4]);
-    expect(result.tac).not.toMatch(/uninst_prop.*__inst_Win_/);
+    expect(hasOuterFieldCopy || dispatchHasWin).toBe(true);
+  });
+
+  it("ternary return in structural-union method populates outer slots on every branch", () => {
+    // Reviewer-surfaced correctness scenario: when both args are trackable
+    // (ternary IS taken at runtime), the unified return prefix must be
+    // populated on BOTH ternary branches. Otherwise the caller would read
+    // stale slots on the branch that didn't field-copy.
+    const source = `
+      type Win = { tag: true; value: number; list: string[] };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        private selectBest(a: Result, b: Result): Result {
+          if (a.tag && b.tag) {
+            return (a.value as number) >= (b.value as number) ? a : b;
+          }
+          if (a.tag) return a;
+          if (b.tag) return b;
+          return { tag: false };
+        }
+        compute(v1: number, v2: number): Result {
+          const w1: Win = { tag: true, value: v1, list: ["x"] };
+          const w2: Win = { tag: true, value: v2, list: ["y", "z"] };
+          return this.selectBest(w1, w2);
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().compute(5, 7);
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Each ternary branch must emit a `_tag` field-copy from its own
+    // `__inst_Win_*` source prefix into the unified return prefix.
+    const sources = [
+      ...result.tac.matchAll(/__inline_ret_\d+_tag = (__inst_Win_\d+)_tag/g),
+    ].map((m) => m[1]);
+    expect(sources).toContain("__inst_Win_1");
+    expect(sources).toContain("__inst_Win_2");
   });
 
   it("single-level union return emits only one outer field-copy chain", () => {

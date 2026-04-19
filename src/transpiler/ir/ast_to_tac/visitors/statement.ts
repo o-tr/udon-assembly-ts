@@ -16,6 +16,7 @@ import {
   type BlockStatementNode,
   type BreakStatementNode,
   type ClassDeclarationNode,
+  type ConditionalExpressionNode,
   type ContinueStatementNode,
   type DoWhileStatementNode,
   type EnumDeclarationNode,
@@ -1142,6 +1143,35 @@ export function visitReturnStatement(
   const inlineContext =
     this.inlineReturnStack[this.inlineReturnStack.length - 1];
 
+  // `return cond ? a : b` in a structural-union inline method would produce
+  // a ternary temp as the return value. Without trackable provenance, the
+  // unified-return-prefix field-copy block cannot fire and tracking is
+  // invalidated — which also suppresses tracking on sibling return paths.
+  // Split into per-branch returns so each branch carries its original
+  // trackable operand through visitReturnStatement independently.
+  if (
+    inlineContext?.returnInstancePrefix &&
+    inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
+    inlineContext.returnVar.type.properties.size > 0 &&
+    node.value?.kind === ASTNodeKind.ConditionalExpression
+  ) {
+    const ternary = node.value as ConditionalExpressionNode;
+    const synthReturn = (value: ASTNode): ReturnStatementNode => ({
+      kind: ASTNodeKind.ReturnStatement,
+      value,
+      loc: node.loc,
+    });
+    const synthIf: IfStatementNode = {
+      kind: ASTNodeKind.IfStatement,
+      condition: ternary.condition,
+      thenBranch: synthReturn(ternary.whenTrue),
+      elseBranch: synthReturn(ternary.whenFalse),
+      loc: node.loc,
+    };
+    this.visitIfStatement(synthIf);
+    return;
+  }
+
   // Set currentExpectedType from inline return context so that object literal
   // return values (e.g. `return { value: 42, ok: true }`) are recognised as
   // type-alias inline instances by visitObjectLiteralExpression.
@@ -1395,18 +1425,6 @@ export function visitReturnStatement(
               valueMapping,
             );
           }
-        } else if (
-          inlineContext.returnInstancePrefix &&
-          inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
-          inlineContext.returnVar.type.properties.size > 0
-        ) {
-          // Structural-union return: this path has no trackable source
-          // (e.g. a ternary temporary), but sibling return paths may still
-          // field-copy into returnInstancePrefix. Stay neutral — don't
-          // invalidate (which would poison subsequent field-copy returns)
-          // and don't claim (slots weren't populated on this path). If
-          // later returns field-copy they'll set tracking via line 1346;
-          // if none do, the caller falls back to handle-based dispatch.
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;
