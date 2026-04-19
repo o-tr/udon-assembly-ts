@@ -2200,7 +2200,14 @@ export function evaluateInlineGetter(
     originalReturnTypeName: getterProp.originalTypeName,
     body: getterProp.getterBody,
     isPublic: getterProp.isPublic,
-    isStatic: false,
+    // Forward the getter's isStatic so a future static-getter inlining
+    // path would carry the correct flag without editing this
+    // constructor. Current callers (mapStaticProperty) intercept
+    // static getters earlier and return undefined, so evaluateInlineGetter
+    // is unreachable for static getters today — but forwarding here
+    // keeps the invariant "synthetic method mirrors the getter's
+    // declared shape" so the trap doesn't surface later.
+    isStatic: getterProp.isStatic,
     isRecursive: false,
     isExported: false,
     // Forward the getter's source location so diagnostics emitted from

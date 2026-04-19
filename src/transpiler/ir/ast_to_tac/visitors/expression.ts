@@ -853,10 +853,20 @@ export function visitBinaryExpression(
           );
           return assignValue;
         }
-        // Fallback for non-property LHS shapes that somehow reach here
-        // (should not occur in practice). Route through assignToTarget
-        // with the understanding that it may re-evaluate.
-        return this.assignToTarget(node.left, assignValue);
+        // All isInlineReturn creation sites (see `isInlineReturn: true`
+        // in helpers/inline.ts and visitors/call.ts) produce the flag on
+        // return slots of inlined method/getter bodies. Only getter
+        // reads — which are PropertyAccessExpression nodes — can surface
+        // such a Variable as a compound-assignment LHS; methods reach
+        // the LHS slot via CallExpression, not PropertyAccess, so they
+        // land on the non-Variable branch below. If this line ever
+        // fires, some future inlining path produced an isInlineReturn
+        // Variable from a non-PropertyAccess expression and the silent
+        // assignToTarget fallback would re-evaluate `node.left`,
+        // duplicating side effects. Fail loudly instead.
+        throw new Error(
+          `Internal error: isInlineReturn Variable on compound-assignment LHS of unexpected AST kind ${ASTNodeKind[node.left.kind]}. Expected PropertyAccessExpression — investigate the inlining path that produced this operand.`,
+        );
       }
       this.emitCopyWithTracking(target, assignValue);
       return assignValue;
