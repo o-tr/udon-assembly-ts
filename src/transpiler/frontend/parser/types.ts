@@ -117,10 +117,21 @@ function isCompatibleUnionPropertyType(
   return left.name === right.name && left.udonType === right.udonType;
 }
 
+function getTypeSignature(type: TypeSymbol): string {
+  if (isAnonymousInterface(type)) {
+    const props = [...type.properties.entries()]
+      .sort(([leftName], [rightName]) => leftName.localeCompare(rightName))
+      .map(([name, inner]) => `${name}:${getTypeSignature(inner)}`)
+      .join(",");
+    return `{${props}}`;
+  }
+  return `${type.name}@${type.udonType}`;
+}
+
 function getUnionSignature(properties: Map<string, TypeSymbol>): string {
   return [...properties.entries()]
     .sort(([leftName], [rightName]) => leftName.localeCompare(rightName))
-    .map(([name, type]) => `${name}:${type.name}@${type.udonType}`)
+    .map(([name, type]) => `${name}:${getTypeSignature(type)}`)
     .join("|");
 }
 
