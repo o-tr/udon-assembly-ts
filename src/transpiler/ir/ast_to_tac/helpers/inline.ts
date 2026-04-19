@@ -1,3 +1,4 @@
+import type { TypeMapper } from "../../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -143,6 +144,22 @@ function isAnonymousInterfaceName(name: string): boolean {
 }
 
 /**
+ * If `type.name` resolves to a registered alias different from `type`
+ * itself, return the alias. Otherwise return `type` unchanged. Handles
+ * the edge case where a property type was captured before its alias was
+ * registered (rare with in-order type declarations, but defensive
+ * against future call-sites that compose types across parse phases).
+ */
+function resolveTypeThroughAliases(
+  typeMapper: TypeMapper,
+  type: TypeSymbol,
+): TypeSymbol {
+  if (!type.name) return type;
+  const alias = typeMapper.getAlias(type.name);
+  return alias ?? type;
+}
+
+/**
  * Structural equality for TypeSymbols used by D-3 union dispatch. Treats
  * two anonymous InterfaceTypeSymbols as equal when their property maps are
  * recursively structurally equal, and arrays/collections as equal when
@@ -159,12 +176,21 @@ function isAnonymousInterfaceName(name: string): boolean {
  * common case does not recurse infinitely. A `visited` set is carried
  * through the recursion as a defensive measure against any future path
  * that would synthesise a genuinely cyclic anonymous structure.
+ *
+ * Alias resolution: each recursive step resolves both operands through
+ * `typeMapper.getAlias(name)` first, so named property types (like
+ * `point: Pt` where `type Pt = { x: number }` is registered later than
+ * the enclosing interface) compare on their canonical definition
+ * instead of any stale placeholder captured at parse time.
  */
 function isStructurallyEqualType(
-  left: TypeSymbol,
-  right: TypeSymbol,
+  rawLeft: TypeSymbol,
+  rawRight: TypeSymbol,
+  typeMapper: TypeMapper,
   visited: Set<string> = new Set(),
 ): boolean {
+  const left = resolveTypeThroughAliases(typeMapper, rawLeft);
+  const right = resolveTypeThroughAliases(typeMapper, rawRight);
   if (left === right) return true;
   const leftIsAnonIface =
     left instanceof InterfaceTypeSymbol && isAnonymousInterfaceName(left.name);
@@ -181,7 +207,14 @@ function isStructurallyEqualType(
     for (const [propName, leftPropType] of leftIface.properties) {
       const rightPropType = rightIface.properties.get(propName);
       if (!rightPropType) return false;
-      if (!isStructurallyEqualType(leftPropType, rightPropType, visited)) {
+      if (
+        !isStructurallyEqualType(
+          leftPropType,
+          rightPropType,
+          typeMapper,
+          visited,
+        )
+      ) {
         return false;
       }
     }
@@ -192,6 +225,7 @@ function isStructurallyEqualType(
     return isStructurallyEqualType(
       left.elementType,
       right.elementType,
+      typeMapper,
       visited,
     );
   }
@@ -202,6 +236,7 @@ function isStructurallyEqualType(
     return isStructurallyEqualType(
       left.elementType,
       right.elementType,
+      typeMapper,
       visited,
     );
   }
@@ -222,7 +257,7 @@ function isStructurallyEqualType(
       a === undefined && b === undefined
         ? true
         : a !== undefined && b !== undefined
-          ? isStructurallyEqualType(a, b, visited)
+          ? isStructurallyEqualType(a, b, typeMapper, visited)
           : false;
     return (
       eq(left.elementType, right.elementType) &&
@@ -256,7 +291,7 @@ export function hasCompatibleUnionProperty(
   if (!(concrete instanceof InterfaceTypeSymbol)) return false;
   const concreteProp = concrete.properties.get(propertyName);
   if (!concreteProp) return false;
-  return isStructurallyEqualType(concreteProp, unionProp);
+  return isStructurallyEqualType(concreteProp, unionProp, converter.typeMapper);
 }
 
 /**

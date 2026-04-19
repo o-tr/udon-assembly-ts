@@ -384,6 +384,51 @@ describe("inline erased return handling", () => {
     expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
+  it("includes both union branches when a shared named alias appears as a property type", () => {
+    // Win and Loss share `point: Pt` where `Pt` is a named alias. Both
+    // branches' `point` property type is the same `Pt` InterfaceTypeSymbol
+    // after alias resolution. hasCompatibleUnionProperty must resolve
+    // property types through typeMapper so any stale pre-alias placeholder
+    // captured at parse time still compares equal to the canonical target.
+    const source = `
+      type Pt = { x: number };
+      type Win = { tag: true; point: Pt };
+      type Loss = { tag: false; point: Pt };
+      type Result = Win | Loss;
+
+      class M {
+        pick(f: boolean): Result {
+          const w: Win = { tag: true, point: { x: 1 } };
+          const l: Loss = { tag: false, point: { x: 2 } };
+          const t = f ? w : l;
+          return t;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().pick(true);
+          const p = r.point;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const perDestination = new Map<string, Set<string>>();
+    for (const match of result.tac.matchAll(
+      /(__uninst_prop_\d+) = (__inst_(?:Win|Loss)_\d+)_point/g,
+    )) {
+      const [, dest, source] = match;
+      if (!perDestination.has(dest)) perDestination.set(dest, new Set());
+      perDestination.get(dest)?.add(source);
+    }
+    const maxGroupSize = Math.max(
+      0,
+      ...[...perDestination.values()].map((set) => set.size),
+    );
+    expect(maxGroupSize).toBeGreaterThanOrEqual(2);
+  });
+
   it("single-level union return uses exactly one return prefix and no outer-to-outer chain", () => {
     // Negative control: a single-level inline method returning a union
     // must field-copy directly from its object-literal instance(s) into

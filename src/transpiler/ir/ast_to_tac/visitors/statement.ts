@@ -1201,10 +1201,16 @@ export function visitReturnStatement(
         type: ObjectType,
         loc: node.loc,
       };
+      // JavaScript's `??` falls through for both `null` AND `undefined`,
+      // so the synthesized guard must use loose `!=` to match. Udon has
+      // no `undefined` at the runtime level — values are null or a typed
+      // heap slot — so in practice loose and strict behave the same,
+      // but aligning with language-spec semantics future-proofs the
+      // split if the gate is ever widened beyond side-effect-free lefts.
       const notNull: BinaryExpressionNode = {
         kind: ASTNodeKind.BinaryExpression,
         left: nc.left,
-        operator: "!==",
+        operator: "!=",
         right: nullLiteral,
         loc: node.loc,
       };
