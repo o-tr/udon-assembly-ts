@@ -145,15 +145,26 @@ function isAnonymousInterfaceName(name: string): boolean {
 /**
  * Structural equality for TypeSymbols used by D-3 union dispatch. Treats
  * two anonymous InterfaceTypeSymbols as equal when their property maps are
- * recursively structurally equal, and arrays as equal when their element
- * types match. For named symbols falls back to `name` + `udonType`
- * identity. Necessary because every occurrence of an anonymous type
- * literal (e.g. `point: { x: number }`) produces a freshly-named
+ * recursively structurally equal, and arrays/collections as equal when
+ * their inner types match. For named symbols falls back to `name` +
+ * `udonType` identity. Necessary because every occurrence of an anonymous
+ * type literal (e.g. `point: { x: number }`) produces a freshly-named
  * `__anon_N` symbol, so two branches of a union that declare structurally
- * identical nested object literals would otherwise fail a naive
- * identity check and be excluded from the dispatch.
+ * identical nested object literals would otherwise fail a naive identity
+ * check and be excluded from the dispatch.
+ *
+ * Cycle guard: TypeScript permits indirectly self-referential types via
+ * named aliases (e.g. `type Node = { next: Node | null }`). The resolved
+ * named-symbol path short-circuits to the name-identity fallback, so the
+ * common case does not recurse infinitely. A `visited` set is carried
+ * through the recursion as a defensive measure against any future path
+ * that would synthesise a genuinely cyclic anonymous structure.
  */
-function isStructurallyEqualType(left: TypeSymbol, right: TypeSymbol): boolean {
+function isStructurallyEqualType(
+  left: TypeSymbol,
+  right: TypeSymbol,
+  visited: Set<string> = new Set(),
+): boolean {
   if (left === right) return true;
   const leftIsAnonIface =
     left instanceof InterfaceTypeSymbol && isAnonymousInterfaceName(left.name);
@@ -163,23 +174,36 @@ function isStructurallyEqualType(left: TypeSymbol, right: TypeSymbol): boolean {
   if (leftIsAnonIface && rightIsAnonIface) {
     const leftIface = left as InterfaceTypeSymbol;
     const rightIface = right as InterfaceTypeSymbol;
+    const pairKey = `${leftIface.name}::${rightIface.name}`;
+    if (visited.has(pairKey)) return true; // optimistic break on cycle
+    visited.add(pairKey);
     if (leftIface.properties.size !== rightIface.properties.size) return false;
     for (const [propName, leftPropType] of leftIface.properties) {
       const rightPropType = rightIface.properties.get(propName);
       if (!rightPropType) return false;
-      if (!isStructurallyEqualType(leftPropType, rightPropType)) return false;
+      if (!isStructurallyEqualType(leftPropType, rightPropType, visited)) {
+        return false;
+      }
     }
     return true;
   }
   if (left instanceof ArrayTypeSymbol && right instanceof ArrayTypeSymbol) {
     if (left.dimensions !== right.dimensions) return false;
-    return isStructurallyEqualType(left.elementType, right.elementType);
+    return isStructurallyEqualType(
+      left.elementType,
+      right.elementType,
+      visited,
+    );
   }
   if (
     left instanceof DataListTypeSymbol &&
     right instanceof DataListTypeSymbol
   ) {
-    return isStructurallyEqualType(left.elementType, right.elementType);
+    return isStructurallyEqualType(
+      left.elementType,
+      right.elementType,
+      visited,
+    );
   }
   // CollectionTypeSymbol (UdonList/Map/Set/Dictionary/Queue/Stack) is
   // constructed fresh per occurrence and its `name` returns only the bare
@@ -198,7 +222,7 @@ function isStructurallyEqualType(left: TypeSymbol, right: TypeSymbol): boolean {
       a === undefined && b === undefined
         ? true
         : a !== undefined && b !== undefined
-          ? isStructurallyEqualType(a, b)
+          ? isStructurallyEqualType(a, b, visited)
           : false;
     return (
       eq(left.elementType, right.elementType) &&

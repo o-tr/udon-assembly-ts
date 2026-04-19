@@ -13,6 +13,7 @@ import {
 import {
   type ASTNode,
   ASTNodeKind,
+  type BinaryExpressionNode,
   type BlockStatementNode,
   type BreakStatementNode,
   type ClassDeclarationNode,
@@ -24,6 +25,8 @@ import {
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
+  type LiteralNode,
+  type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
@@ -1143,33 +1146,77 @@ export function visitReturnStatement(
   const inlineContext =
     this.inlineReturnStack[this.inlineReturnStack.length - 1];
 
-  // `return cond ? a : b` in a structural-union inline method would produce
-  // a ternary temp as the return value. Without trackable provenance, the
+  // `return cond ? a : b` (or `return a ?? b`) in a structural-union inline
+  // method would produce a temporary with no trackable provenance, so the
   // unified-return-prefix field-copy block cannot fire and tracking is
   // invalidated — which also suppresses tracking on sibling return paths.
   // Split into per-branch returns so each branch carries its original
   // trackable operand through visitReturnStatement independently.
+  // The split synthesises an `if/else` around two inner returns; note
+  // visitIfStatement unconditionally emits a fall-through `goto endLabel`
+  // and the `endLabel` itself after each branch, so the resulting TAC
+  // contains dead jumps after every branch that always exits via the
+  // earlier `goto inline_return*`. These are benign (unreachable) and
+  // exist for every ternary-split return — kept for visitor symmetry.
   if (
     inlineContext?.returnInstancePrefix &&
     inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
     inlineContext.returnVar.type.properties.size > 0 &&
-    node.value?.kind === ASTNodeKind.ConditionalExpression
+    node.value !== undefined
   ) {
-    const ternary = node.value as ConditionalExpressionNode;
     const synthReturn = (value: ASTNode): ReturnStatementNode => ({
       kind: ASTNodeKind.ReturnStatement,
       value,
       loc: node.loc,
     });
-    const synthIf: IfStatementNode = {
-      kind: ASTNodeKind.IfStatement,
-      condition: ternary.condition,
-      thenBranch: synthReturn(ternary.whenTrue),
-      elseBranch: synthReturn(ternary.whenFalse),
-      loc: node.loc,
-    };
-    this.visitIfStatement(synthIf);
-    return;
+    if (node.value.kind === ASTNodeKind.ConditionalExpression) {
+      const ternary = node.value as ConditionalExpressionNode;
+      this.visitIfStatement({
+        kind: ASTNodeKind.IfStatement,
+        condition: ternary.condition,
+        thenBranch: synthReturn(ternary.whenTrue),
+        elseBranch: synthReturn(ternary.whenFalse),
+        loc: node.loc,
+      });
+      return;
+    }
+    if (
+      node.value.kind === ASTNodeKind.NullCoalescingExpression &&
+      // Only split when `left` is side-effect-free: a bare identifier is
+      // re-evaluated in both the null-check condition and the then-branch
+      // return value, so splitting a `fn() ?? b` would double-call `fn`.
+      // Identifier / Literal / This cover the common `param ?? fallback`
+      // pattern that matches the reviewer's concern.
+      ((node.value as NullCoalescingExpressionNode).left.kind ===
+        ASTNodeKind.Identifier ||
+        (node.value as NullCoalescingExpressionNode).left.kind ===
+          ASTNodeKind.Literal ||
+        (node.value as NullCoalescingExpressionNode).left.kind ===
+          ASTNodeKind.ThisExpression)
+    ) {
+      const nc = node.value as NullCoalescingExpressionNode;
+      const nullLiteral: LiteralNode = {
+        kind: ASTNodeKind.Literal,
+        value: null,
+        type: ObjectType,
+        loc: node.loc,
+      };
+      const notNull: BinaryExpressionNode = {
+        kind: ASTNodeKind.BinaryExpression,
+        left: nc.left,
+        operator: "!==",
+        right: nullLiteral,
+        loc: node.loc,
+      };
+      this.visitIfStatement({
+        kind: ASTNodeKind.IfStatement,
+        condition: notNull,
+        thenBranch: synthReturn(nc.left),
+        elseBranch: synthReturn(nc.right),
+        loc: node.loc,
+      });
+      return;
+    }
   }
 
   // Set currentExpectedType from inline return context so that object literal

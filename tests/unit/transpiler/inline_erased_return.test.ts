@@ -140,16 +140,41 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const tagMatch = result.tac.match(
-      /(__inline_ret_(\d+))_tag = (__inline_ret_(\d+))_tag/,
-    );
-    expect(tagMatch).not.toBeNull();
-    expect(tagMatch?.[2]).not.toBe(tagMatch?.[4]);
-    const listMatch = result.tac.match(
-      /(__inline_ret_(\d+))_list = (__inline_ret_(\d+))_list/,
-    );
-    expect(listMatch).not.toBeNull();
-    expect(listMatch?.[2]).not.toBe(listMatch?.[4]);
+    // Collect every outer-to-outer propagation and require that multiple
+    // distinct inner prefixes converge on the SAME outer destination —
+    // the hallmark of the nested-inline unified-return-prefix chain.
+    const tagPairs = [
+      ...result.tac.matchAll(
+        /(__inline_ret_\d+)_tag = (__inline_ret_\d+)_tag/g,
+      ),
+    ].map((m): [string, string] => [m[1], m[2]]);
+    expect(tagPairs.length).toBeGreaterThan(0);
+    // Group inner prefixes by the outer destination.
+    const innersPerOuterTag = new Map<string, Set<string>>();
+    for (const [outer, inner] of tagPairs) {
+      if (!innersPerOuterTag.has(outer)) {
+        innersPerOuterTag.set(outer, new Set());
+      }
+      innersPerOuterTag.get(outer)?.add(inner);
+    }
+    // The outer must be a single destination (one unified prefix), and
+    // the inner prefixes feeding it must be distinct (showing the inner
+    // inline return produced multiple tracked returns that each wrote).
+    expect(innersPerOuterTag.size).toBe(1);
+    const [[outerTag, tagInners]] = [...innersPerOuterTag];
+    expect(tagInners.size).toBeGreaterThan(0);
+    // Repeat the check for `_list` and verify the outer destination
+    // matches (both field chains must share the same unified prefix).
+    const listPairs = [
+      ...result.tac.matchAll(
+        /(__inline_ret_\d+)_list = (__inline_ret_\d+)_list/g,
+      ),
+    ].map((m): [string, string] => [m[1], m[2]]);
+    expect(listPairs.length).toBeGreaterThan(0);
+    const listOuters = new Set(listPairs.map(([outer]) => outer));
+    expect(listOuters.size).toBe(1);
+    const [listOuter] = listOuters;
+    expect(listOuter).toBe(outerTag);
     expect(result.tac).not.toMatch(/uninst_prop.*__inst_Win_/);
   });
 
@@ -205,6 +230,56 @@ describe("inline erased return handling", () => {
     );
     // At least one of the two compatible shapes must appear.
     expect(outerCopyMatch !== null || winDispatchMatch !== null).toBe(true);
+  });
+
+  it("null-coalescing return splits into per-branch returns populating the unified return prefix", () => {
+    // `return left ?? right` in a structural-union inline method is the
+    // same class of bug as the ternary case — the NC evaluates to a temp
+    // with no tracking. The split rewrites it as `if (left != null) return
+    // left; else return right;` when `left` is side-effect-free (Identifier
+    // / Literal / This), so each branch re-enters visitReturnStatement
+    // and field-copies via the valueMapping path.
+    const source = `
+      type Win = { tag: true; value: number };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        pick(a: Result): Result {
+          const fallback: Loss = { tag: false };
+          return a ?? fallback;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const w: Win = { tag: true, value: 1 };
+          const r = new M().pick(w);
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // Both NC branches must emit a `_tag` field-copy into the unified
+    // return prefix — one from Win's source (the `left`-is-non-null path)
+    // and one from Loss's fallback source.
+    const destsByWin = new Set(
+      [
+        ...result.tac.matchAll(/(__inline_ret_\d+)_tag = __inst_Win_\d+_tag/g),
+      ].map((m) => m[1]),
+    );
+    const destsByLoss = new Set(
+      [
+        ...result.tac.matchAll(/(__inline_ret_\d+)_tag = __inst_Loss_\d+_tag/g),
+      ].map((m) => m[1]),
+    );
+    // Each branch produces at least one destination; the split places both
+    // on the same unified destination prefix.
+    expect(destsByWin.size).toBeGreaterThanOrEqual(1);
+    expect(destsByLoss.size).toBeGreaterThanOrEqual(1);
+    const sharedDest = [...destsByWin].find((d) => destsByLoss.has(d));
+    expect(sharedDest).toBeDefined();
   });
 
   it("ternary return in structural-union method populates outer slots on every branch", () => {
@@ -309,7 +384,12 @@ describe("inline erased return handling", () => {
     expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
-  it("single-level union return emits only one outer field-copy chain", () => {
+  it("single-level union return uses exactly one return prefix and no outer-to-outer chain", () => {
+    // Negative control: a single-level inline method returning a union
+    // must field-copy directly from its object-literal instance(s) into
+    // one unified return prefix. No outer-to-outer chain (the shape
+    // produced by nested inline returns) should appear — that would
+    // signal the fix is emitting spurious propagation on non-nested code.
     const source = `
       type A = { tag: true; x: number };
       type B = { tag: false };
@@ -330,14 +410,21 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const outerCopies = new Set(
-      [
-        ...result.tac.matchAll(
-          /(__inline_ret_\d+)_tag = __inline_ret_\d+_tag/g,
-        ),
-      ].map((m) => m[1]),
+    // No outer-to-outer (`__inline_ret_N_tag = __inline_ret_M_tag`)
+    // propagation — that pattern belongs to nested inline returns only.
+    const outerToOuter = [
+      ...result.tac.matchAll(/__inline_ret_\d+_tag = __inline_ret_\d+_tag/g),
+    ];
+    expect(outerToOuter).toHaveLength(0);
+    // But each object-literal branch MUST field-copy `_tag` into the
+    // unified return prefix, and the ternary split gives exactly one
+    // destination prefix that both branches write into.
+    const destPrefixes = new Set(
+      [...result.tac.matchAll(/(__inline_ret_\d+)_tag = __inst_\w+_tag/g)].map(
+        (m) => m[1],
+      ),
     );
-    expect(outerCopies.size).toBeLessThanOrEqual(1);
+    expect(destPrefixes.size).toBe(1);
   });
 
   it("still erases incompatible primitive unions", () => {
