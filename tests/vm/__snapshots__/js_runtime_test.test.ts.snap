@@ -1088,6 +1088,21 @@ exports[`JS Runtime Equivalence Tests > JS: optional_chaining 1`] = `
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: pr170_union_with_array_field 1`] = `
+[
+  "WIN",
+  "11",
+  "2",
+]
+`;
+
+exports[`JS Runtime Equivalence Tests > JS: pr170_union_with_null_branch 1`] = `
+[
+  "WIN",
+  "9",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: property_access_type_fallback 1`] = `
 [
   "hello",
