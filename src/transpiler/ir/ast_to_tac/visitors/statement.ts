@@ -94,12 +94,17 @@ function emitLoopExitEpiloguesSinceDepth(
 /**
  * Whether an expression can safely be re-evaluated twice by the NC split
  * (once in the null-check condition, once in the then-branch return).
- * Admits bare identifiers/literals, `this`, and a single-step
- * `this.<field>` read ONLY when the class declaration marks the member
- * as a plain field (not `isGetter`): re-evaluating a user-defined getter
- * would run its body twice and could produce observable side effects.
- * Deeper chains (`this.a.b`) are rejected because intermediate steps
- * could traverse getters we don't inspect here.
+ * Admits bare identifiers, `this`, and a single-step `this.<field>`
+ * read ONLY when the class declaration marks the member as a plain
+ * field (not `isGetter`): re-evaluating a user-defined getter would run
+ * its body twice and could produce observable side effects. Deeper
+ * chains (`this.a.b`) are rejected because intermediate steps could
+ * traverse getters we don't inspect here.
+ *
+ * Literal lefts are NOT admitted: `return <literal> ?? fallback` is
+ * either always-true (non-null literal → dead else branch) or
+ * always-false (`null` literal → dead then branch). Splitting would
+ * emit dead branches with no benefit over the fallthrough path.
  */
 function isSideEffectFreeNullCoalesceLeft(
   converter: ASTToTACConverter,
@@ -107,7 +112,6 @@ function isSideEffectFreeNullCoalesceLeft(
 ): boolean {
   if (
     node.kind === ASTNodeKind.Identifier ||
-    node.kind === ASTNodeKind.Literal ||
     node.kind === ASTNodeKind.ThisExpression
   ) {
     return true;

@@ -201,6 +201,7 @@ function isStructurallyEqualType(
     const leftIface = left as InterfaceTypeSymbol;
     const rightIface = right as InterfaceTypeSymbol;
     const pairKey = `${leftIface.name}::${rightIface.name}`;
+    const reverseKey = `${rightIface.name}::${leftIface.name}`;
     // Conservative break on cycle: returning false excludes the pair
     // from D-3 dispatch rather than admitting a potentially unequal
     // pair. Named-alias cycles already short-circuit through the
@@ -208,8 +209,12 @@ function isStructurallyEqualType(
     // referential anonymous structures reach this branch — erring
     // toward exclusion keeps the dispatch table from picking up an
     // incompatible concrete class via structural misidentification.
-    if (visited.has(pairKey)) return false;
+    // Record both orderings to catch recursions that revisit the same
+    // pair via the reverse ordering (left/right swapped through
+    // symmetric structural recursion).
+    if (visited.has(pairKey) || visited.has(reverseKey)) return false;
     visited.add(pairKey);
+    visited.add(reverseKey);
     if (leftIface.properties.size !== rightIface.properties.size) return false;
     for (const [propName, leftPropType] of leftIface.properties) {
       const rightPropType = rightIface.properties.get(propName);
