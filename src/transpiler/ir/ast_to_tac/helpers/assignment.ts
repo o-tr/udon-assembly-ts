@@ -58,6 +58,37 @@ import {
 } from "./inline.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
+/**
+ * When an assignment target resolves to a class getter, emit a diagnostic
+ * and return true. Callers must then short-circuit the lowering — emitting
+ * any kind of write (copy to a per-prefix variable, PropertySetInstruction,
+ * DataList.set_Item) would either resurrect the phantom-slot bug or store
+ * into storage that the read path ignores. TypeScript already rejects
+ * writes to getter-only properties upstream, so this path is not
+ * reachable from valid source; the guard exists to keep transpiler bugs
+ * that synthesize such a write from silently corrupting state.
+ */
+function maybeWarnWriteToGetter(
+  converter: ASTToTACConverter,
+  className: string,
+  propAccess: PropertyAccessExpressionNode,
+): boolean {
+  const resolved = resolveClassProperty(
+    converter,
+    className,
+    propAccess.property,
+  );
+  if (resolved?.prop.isGetter) {
+    converter.warnAt(
+      propAccess,
+      "WriteToGetter",
+      `Write to getter-only property "${className}.${propAccess.property}" — TS normally rejects this, so reaching this point indicates a transpiler-synthesized write. The write is being dropped to avoid resurrecting the phantom-slot bug.`,
+    );
+    return true;
+  }
+  return false;
+}
+
 export function assignToTarget(
   this: ASTToTACConverter,
   target: ASTNode,
@@ -144,6 +175,15 @@ export function assignToTarget(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      if (
+        maybeWarnWriteToGetter(
+          this,
+          this.currentInlineContext.className,
+          propAccess,
+        )
+      ) {
+        return value;
+      }
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
         this.currentInlineContext.instancePrefix,
@@ -163,6 +203,9 @@ export function assignToTarget(
       !this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      if (maybeWarnWriteToGetter(this, entryClassName, propAccess)) {
+        return value;
+      }
       const resolved = resolveClassProperty(
         this,
         entryClassName,
@@ -204,6 +247,9 @@ export function assignToTarget(
         resolveClassNode(this, objectName) &&
         !this.udonBehaviourClasses.has(objectName)
       ) {
+        if (maybeWarnWriteToGetter(this, objectName, propAccess)) {
+          return value;
+        }
         const mapped = this.mapStaticProperty(objectName, propAccess.property);
         if (mapped) {
           this.emitCopyWithTracking(mapped, value);
@@ -216,6 +262,9 @@ export function assignToTarget(
         (propAccess.object as IdentifierNode).name,
       );
       if (instanceInfo) {
+        if (maybeWarnWriteToGetter(this, instanceInfo.className, propAccess)) {
+          return value;
+        }
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
           instanceInfo.prefix,
@@ -252,6 +301,9 @@ export function assignToTarget(
         (object as VariableOperand).name,
       );
       if (instanceInfo) {
+        if (maybeWarnWriteToGetter(this, instanceInfo.className, propAccess)) {
+          return value;
+        }
         const mapped = this.mapInlineProperty(
           instanceInfo.className,
           instanceInfo.prefix,
@@ -280,6 +332,9 @@ export function assignToTarget(
         this.soaClasses.has(handleClassName) &&
         this.soaFieldLists.has(handleClassName)
       ) {
+        if (maybeWarnWriteToGetter(this, handleClassName, propAccess)) {
+          return value;
+        }
         const fieldLists = this.soaFieldLists.get(handleClassName);
         const fieldList = fieldLists?.get(propAccess.property);
         const fieldType = this.soaFieldTypes

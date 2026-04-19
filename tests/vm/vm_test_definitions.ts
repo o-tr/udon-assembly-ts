@@ -324,32 +324,25 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "hand_analyzer_result_object",
     sourceFile: "datatoken_int_unwrap/hand_analyzer_result_object.ts",
   },
-  // --- mahjong-t2 #24 FAITHFUL REPRODUCER (iter 3) ---
-  // Triggers VRCSDK3DataDataToken.__get_Int__SystemInt32 at PC 0x00000F74.
-  // Confirmed reproduction (2026-04-18, Unity 2022.3.22f1). Minimal delta
-  // from iter 1/2 (which pass): Hand uses `private _tiles: Tile[]` + getter
-  // `get tiles()` + constructor body `this._tiles = [...tiles]` (spread of
-  // `readonly Tile[]` parameter). Matches mahjong-t2's actual Hand.ts shape.
-  //
-  // The specific axis (private+getter vs spread vs readonly param) that
-  // triggers reproduction is probed by the three iter-4 cases below.
+  // --- mahjong-t2 #24 faithful reproducer (iter 3) ---
+  // Hand uses `private _tiles: Tile[]` + getter `get tiles()` + constructor
+  // `this._tiles = [...tiles]` (spread of `readonly Tile[]` parameter). This
+  // matches the actual Hand.ts shape that produced the
+  // VRCSDK3DataDataToken.__get_Int__SystemInt32 crash. Resolved by routing
+  // inline-class getter reads through the method-inlining core
+  // (evaluateInlineGetter in helpers/inline.ts); see commit history.
   {
     name: "hand_private_field_getter",
     sourceFile: "datatoken_int_unwrap/hand_private_field_getter.ts",
-    knownFail: true,
-    knownFailReason:
-      "mahjong-t2 #24 — VRCSDK3DataDataToken.__get_Int__SystemInt32 " +
-      "at PC 0x00000F74. Trigger: `private _tiles` + getter + " +
-      "[...tiles] spread of readonly Tile[] parameter. Faithful to Hand.ts.",
   },
-  // --- iter 4: axis isolation probes (verdicts recorded) ---
-  // Splits iter-3's 3 combined axes to identify the minimal trigger.
-  // Result matrix (2026-04-18, Unity 2022.3.22f1):
-  //   spread only             → PASS (not a trigger)
-  //   private field + getter  → FAIL at PC 0x00000EA8  ← MINIMAL TRIGGER
-  //   readonly param + spread → PASS (not a trigger)
-  // Conclusion: the bug is specifically invoked by reading UdonInt through
-  // a getter that returns a private inline-class-array field.
+  // --- iter 4: axis isolation probes ---
+  // Originally split iter-3's combined axes to identify the minimal trigger.
+  // Historical matrix (pre-fix):
+  //   spread only             → PASS
+  //   private field + getter  → FAIL  ← minimal trigger
+  //   readonly param + spread → PASS
+  // The minimal trigger is resolved by the getter-inlining fix; all three
+  // now pass.
   {
     name: "hand_spread_only",
     sourceFile: "datatoken_int_unwrap/hand_spread_only.ts",
@@ -357,87 +350,44 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "hand_getter_only",
     sourceFile: "datatoken_int_unwrap/hand_getter_only.ts",
-    knownFail: true,
-    knownFailReason:
-      "mahjong-t2 #24 MINIMAL TRIGGER — VRCSDK3DataDataToken.__get_Int__" +
-      "SystemInt32 at PC 0x00000EA8. Isolated cause: private _tiles field + " +
-      "`get tiles()` getter. Neither spread nor readonly param is required.",
   },
   {
     name: "hand_readonly_param",
     sourceFile: "datatoken_int_unwrap/hand_readonly_param.ts",
   },
-  // --- iter 5: comprehensive getter-bug scope probes (verdicts recorded) ---
-  // Result matrix (2026-04-18, Unity 2022.3.22f1):
-  //   getter_udon_int_array   → FAIL   DataToken.__get_Int__
-  //   getter_number_array     → FAIL   DataToken.__get_Float__
-  //   getter_boolean_array    → FAIL   DataToken.__get_Boolean__
-  //   getter_length_only      → FAIL   silent data loss (.length returns 0)
-  //   getter_single_tile      → FAIL   silent data loss (tile.kind returns 0)
-  //   getter_for_of           → FAIL   silent data loss (sum returns 0)
-  //   method_returns_array    → PASS   ← public method does NOT have the bug
-  //
-  // Conclusions (from observed verdicts above):
-  //   - Bug is GETTER-SPECIFIC: swapping `get x()` → `getX()` method fixes it.
-  //   - Crash accessor matches the primitive element type: Int32 → .Int,
-  //     Single → .Float, Boolean → .Boolean (verified). Non-primitive
-  //     element paths (inline-class / Object) exhibit silent data loss
-  //     instead of a DataToken accessor crash in the tests here.
-  //   - Silent data loss (0/false) explains mahjong-t2 dora_calculator's
-  //     countDora() === 0 value-mismatch failure — same root cause as
-  //     the crashes, but with a downstream path that doesn't unwrap via
-  //     DataToken accessor.
+  // --- iter 5: comprehensive getter-bug scope probes ---
+  // Historical matrix (pre-fix):
+  //   getter_udon_int_array   → FAIL  DataToken.__get_Int__
+  //   getter_number_array     → FAIL  DataToken.__get_Float__
+  //   getter_boolean_array    → FAIL  DataToken.__get_Boolean__
+  //   getter_length_only      → FAIL  silent data loss (.length returns 0)
+  //   getter_single_tile      → FAIL  silent data loss (tile.kind returns 0)
+  //   getter_for_of           → FAIL  silent data loss (sum returns 0)
+  //   method_returns_array    → PASS  (public method never had the bug)
+  // All six failing cases are resolved by the getter-inlining fix.
   {
     name: "getter_udon_int_array",
     sourceFile: "datatoken_int_unwrap/getter_udon_int_array.ts",
-    knownFail: true,
-    knownFailReason:
-      "getter bug scope — VRCSDK3DataDataToken.__get_Int__ on primitive " +
-      "UdonInt[] accessed via getter. Same root as hand_getter_only but " +
-      "with primitive element type.",
   },
   {
     name: "getter_number_array",
     sourceFile: "datatoken_int_unwrap/getter_number_array.ts",
-    knownFail: true,
-    knownFailReason:
-      "getter bug scope — VRCSDK3DataDataToken.__get_Float__ on primitive " +
-      "number[] (Single) accessed via getter. Crash accessor tracks element " +
-      "type: Single → .Float.",
   },
   {
     name: "getter_boolean_array",
     sourceFile: "datatoken_int_unwrap/getter_boolean_array.ts",
-    knownFail: true,
-    knownFailReason:
-      "getter bug scope — VRCSDK3DataDataToken.__get_Boolean__ on boolean[] " +
-      "accessed via getter. Confirms the crash accessor matches element type.",
   },
   {
     name: "getter_length_only",
     sourceFile: "datatoken_int_unwrap/getter_length_only.ts",
-    knownFail: true,
-    knownFailReason:
-      "getter bug scope — silent data loss: hand.tiles.length returns 0 " +
-      "instead of 3 when tiles accessed via getter. No crash. Mirrors " +
-      "mahjong-t2 dora_calculator value-mismatch pattern.",
   },
   {
     name: "getter_single_tile",
     sourceFile: "datatoken_int_unwrap/getter_single_tile.ts",
-    knownFail: true,
-    knownFailReason:
-      "getter bug scope — bug also hits single (non-array) inline class " +
-      "fields via getter: holder.tile.kind returns 0 instead of 7. Confirms " +
-      "scope is 'any getter returning inline-class SoA data', not 'arrays'.",
   },
   {
     name: "getter_for_of",
     sourceFile: "datatoken_int_unwrap/getter_for_of.ts",
-    knownFail: true,
-    knownFailReason:
-      "getter bug scope — for-of iteration over `hand.tiles` (getter) sums " +
-      "to 0 instead of 10. Same silent-data-loss pattern as getter_length_only.",
   },
   {
     name: "method_returns_array",

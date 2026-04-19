@@ -452,6 +452,9 @@ export interface PropertyDeclarationNode extends ASTNode {
   syncMode?: "None" | "Linear" | "Smooth";
   fieldChangeCallback?: string;
   isSerializeField?: boolean;
+  isGetter?: boolean;
+  getterBody?: BlockStatementNode;
+  getterReturnType?: TypeSymbol;
 }
 
 /**

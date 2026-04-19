@@ -195,7 +195,19 @@ export function visitClassDeclaration(
       }
     } else if (ts.isGetAccessorDeclaration(member)) {
       const propName = member.name.getText();
-      if (properties.some((prop) => prop.name === propName)) continue;
+      // Skip only if an earlier getter for the same name was already
+      // registered (duplicate declaration, invalid TS). A preceding setter
+      // entry must be upgraded in place: otherwise the setter's bodiless
+      // PropertyDeclarationNode stays in `properties` without `isGetter`
+      // and a phantom SoA slot gets allocated — the exact bug this fix
+      // addresses, just triggered by member ordering.
+      const existingIdx = properties.findIndex(
+        (prop) => prop.name === propName,
+      );
+      // `existingIdx !== -1` already proves the element exists; plain
+      // indexed access makes the control flow clearer than an optional
+      // chain that suggests the element might be missing.
+      if (existingIdx !== -1 && properties[existingIdx].isGetter) continue;
       const propType = member.type
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
         : this.mapTypeWithGenerics("object");
@@ -207,17 +219,71 @@ export function visitClassDeclaration(
           (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
         ) ?? true
       );
-      properties.push(
-        this.attachLoc(member, {
-          kind: ASTNodeKind.PropertyDeclaration,
-          name: propName,
-          type: propType,
-          isPublic,
-          isStatic,
-        }),
-      );
+      if (!member.body) {
+        this.reportUnsupportedNode(
+          member,
+          `Abstract getter "${propName}" is not supported`,
+          "Provide a concrete getter body.",
+        );
+        continue;
+      }
+      this.symbolTable.enterScope();
+      const getterBody = this.visitBlock(member.body);
+      this.symbolTable.exitScope();
+      const getterEntry = this.attachLoc(member, {
+        kind: ASTNodeKind.PropertyDeclaration,
+        name: propName,
+        type: propType,
+        // Preserve the raw type text so `evaluateInlineGetter` can forward
+        // it to `method.originalReturnTypeName`, letting
+        // `inlineResolvedMethodBody`'s late-resolution branch recover the
+        // correct `InterfaceTypeSymbol` when the interface is defined
+        // after the class (same file) or in a later-parsed file.
+        originalTypeName: member.type?.getText(),
+        isPublic,
+        isStatic,
+        isGetter: true,
+        getterBody,
+        getterReturnType: propType,
+      });
+      if (existingIdx !== -1) {
+        properties[existingIdx] = getterEntry;
+      } else {
+        properties.push(getterEntry);
+      }
     } else if (ts.isSetAccessorDeclaration(member)) {
+      // NOTE: Setter bodies are currently dropped — PropertyDeclarationNode
+      // stores only metadata, not the setter body. A write to this property
+      // lands on the plain slot instead of running the setter body, so any
+      // validation / side-effect logic in the body is silently lost.
+      // Writes to a setter-only property are valid TypeScript (they are the
+      // only way to invoke the setter); it is reads that TS rejects on a
+      // setter-only property. Either way, when a getter/setter pair is
+      // declared both reads and writes are reachable, and any logic in the
+      // setter body is silently lost. Warn loudly so the scenario surfaces
+      // at transpile time. Full setter-body support requires a
+      // write-barrier design and is tracked as follow-up work.
       const propName = member.name.getText();
+      if (member.body && member.body.statements.length > 0) {
+        const sourceFile = this.sourceFile ?? member.getSourceFile();
+        const pos = sourceFile.getLineAndCharacterOfPosition(member.getStart());
+        // Pascal-case the first character only when propName is non-empty;
+        // TS ordinarily rejects empty accessor names at parse time, but the
+        // guard keeps the message clean if a synthetic/degenerate name ever
+        // reaches this point.
+        const suggestedMethod = propName
+          ? `set${propName[0]?.toUpperCase() ?? ""}${propName.slice(1)}(v)`
+          : "setValue(v)";
+        this.errorCollector.addWarning({
+          code: "SetterBodyUnsupported",
+          message: `Setter "${className}.${propName}" has a body that will be dropped. Writes land directly on the property slot, bypassing any validation or side effects declared inside the setter. Convert to an explicit method (e.g. ${suggestedMethod}) to preserve the logic.`,
+          location: {
+            filePath: sourceFile.fileName || "<unknown>",
+            line: pos.line + 1,
+            column: pos.character + 1,
+          },
+        });
+      }
       if (properties.some((prop) => prop.name === propName)) continue;
       const param = member.parameters[0];
       const propType = param?.type

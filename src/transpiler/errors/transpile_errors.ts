@@ -16,7 +16,10 @@ export type TranspileWarningCode =
   | "AllInlineInterfaceFallback"
   | "D3DispatchFallback"
   | "SoAFieldListMissing"
-  | "RecursiveSelfCallOvercount";
+  | "RecursiveSelfCallOvercount"
+  | "WriteToGetter"
+  | "EntryPointGetterUnsupported"
+  | "SetterBodyUnsupported";
 
 export interface TranspileErrorLocation {
   filePath: string;

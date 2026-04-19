@@ -710,21 +710,31 @@ export function visitForOfStatement(
   const getAllClassProps = (
     className: string,
   ): Array<{ name: string; type: TypeSymbol }> => {
+    // Getters are filtered from both branches — the virtual-interface
+    // dispatch pass copies to/from `${prefix}_${propName}`, which has no
+    // backing storage for a getter and would re-introduce the phantom-slot
+    // bug in virtual-interface form. Read paths handle getters through
+    // `tryInlineGetter` / `evaluateInlineGetter` instead.
     if (this.classRegistry) {
       // Always use getMergedProperties when available — it walks the full
       // inheritance chain. An empty result means the class genuinely has no
       // properties (not that registration is incomplete).
-      return this.classRegistry.getMergedProperties(className).map((p) => ({
-        name: p.name,
-        type: this.typeMapper.mapTypeScriptType(p.type),
-      }));
+      return this.classRegistry
+        .getMergedProperties(className)
+        .filter((p) => !p.node.isGetter)
+        .map((p) => ({
+          name: p.name,
+          type: this.typeMapper.mapTypeScriptType(p.type),
+        }));
     }
     const classNode = this.classMap.get(className);
     return (
-      classNode?.properties.map((p) => ({
-        name: p.name,
-        type: p.type,
-      })) ?? []
+      classNode?.properties
+        .filter((p) => !p.isGetter)
+        .map((p) => ({
+          name: p.name,
+          type: p.type,
+        })) ?? []
     );
   };
   // Note: this closure may be called multiple times at compile time — once

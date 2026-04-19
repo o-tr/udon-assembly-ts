@@ -565,7 +565,7 @@ function collectAllInstanceFields(
   const seen = new Set<string>();
   for (const cls of chain) {
     for (const prop of cls.properties) {
-      if (prop.isStatic || seen.has(prop.name)) continue;
+      if (prop.isStatic || prop.isGetter || seen.has(prop.name)) continue;
       seen.add(prop.name);
       fields.push({ name: prop.name, type: prop.type });
     }
@@ -850,6 +850,18 @@ export function mapStaticProperty(
 ): VariableOperand | undefined {
   const resolved = resolveStaticClassProperty(this, className, property);
   if (resolved) {
+    // Static getters share the same phantom-slot risk as instance getters:
+    // emitStaticPropertyInitializers skips getter properties, so a returned
+    // variable here would point at an uninitialized heap slot. Current
+    // callers (visitPropertyAccessExpression's static branch and the
+    // static-write site in assignment.ts) do NOT yet have a static-getter
+    // inlining path — returning undefined here causes a read to fall
+    // through to the extern-signature lookup, which fails and emits a
+    // transpile error rather than silently producing bad data. Full
+    // static-getter inlining support would require a version of
+    // evaluateInlineGetter that runs with neither an instance prefix nor
+    // an entry-point class context; tracked as follow-up.
+    if (resolved.prop.isGetter) return undefined;
     // Late-resolve originalTypeName to match emitStaticPropertyInitializers,
     // ensuring reads and writes use the same resolved type for the heap slot.
     let propType = resolved.prop.type;
@@ -930,7 +942,7 @@ function emitInlinePropertyInitializersForClass(
   state: InlineInitializerState,
 ): void {
   for (const prop of classNode.properties) {
-    if (prop.isStatic) continue;
+    if (prop.isStatic || prop.isGetter) continue;
 
     const propVarName =
       state.kind === "inline"
@@ -1428,7 +1440,7 @@ export function visitInlineStaticMethodCall(
   const result = createVariable(
     `__inline_ret_${this.tempCounter++}`,
     effectiveReturnType,
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   const returnLabel = this.newLabel("inline_return");
 
@@ -1570,7 +1582,7 @@ function emitInlineRecursiveStaticMethod(
   const result = createVariable(
     `${prefix}_retVal_${converter.tempCounter++}`,
     returnType,
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   const entryLabel = converter.newLabel("inline_rec_entry");
   const dispatchLabel = converter.newLabel("inline_rec_dispatch");
@@ -1967,7 +1979,7 @@ function emitInlineRecursiveSelfCall(
   const selfCallResultVar = createVariable(
     `${prefix}_selfCallResult_${selfCallIdx}`,
     converter.getOperandType(ctx.returnVar),
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   converter.emitCopyWithTracking(selfCallResultVar, capturedTemp);
   return selfCallResultVar;
@@ -1985,14 +1997,45 @@ function inlineInstanceMethodCallCore(
   args: TACOperand[],
   instancePrefix: string | undefined,
 ): TACOperand | null {
+  // Walk inheritance chain to find the method (may be on a base class).
+  const resolved = resolveClassMethod(converter, className, methodName, false);
+  if (!resolved) return null;
+  return inlineResolvedMethodBody(
+    converter,
+    className,
+    methodName,
+    resolved.method,
+    args,
+    instancePrefix,
+  );
+}
+
+/**
+ * Body-inlining core for a pre-resolved MethodDeclarationNode. Shared by the
+ * normal method-call path (which resolves via resolveClassMethod) and the
+ * getter path (which synthesizes a zero-parameter method from the getter
+ * body). Keeping a single body-inlining implementation prevents divergence
+ * between method and getter inlining — divergence there is how the original
+ * getter bug appeared.
+ *
+ * `methodName` is used only for the inline-recursion-detection key; the
+ * getter path passes e.g. "<get>tiles" to keep its namespace separate from a
+ * potential same-named method. The angle-bracket prefix is intentional — `<`
+ * is not a valid identifier character, so `ClassName::<get>tiles` cannot
+ * collide with a user method named `get_tiles`.
+ */
+function inlineResolvedMethodBody(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+): TACOperand | null {
   const inlineKey = `${className}::${methodName}`;
   if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
-  // Walk inheritance chain to find the method (may be on a base class).
-  const resolved = resolveClassMethod(converter, className, methodName, false);
-  if (!resolved) return null;
-  const method = resolved.method;
 
   let returnType: TypeSymbol = method.returnType;
   if (
@@ -2019,7 +2062,7 @@ function inlineInstanceMethodCallCore(
   const result = createVariable(
     `__inline_ret_${converter.tempCounter++}`,
     effectiveReturnType,
-    { isLocal: true },
+    { isLocal: true, isInlineReturn: true },
   );
   const returnLabel = converter.newLabel("inline_return");
 
@@ -2128,6 +2171,84 @@ export function visitInlineInstanceMethodCallWithContext(
     args,
     instancePrefix,
   );
+}
+
+/**
+ * Inline a getter body at a property-read site. Synthesizes a zero-parameter
+ * MethodDeclarationNode wrapping the getter body and dispatches through the
+ * same body-inlining core that handles methods, so the two paths cannot
+ * diverge. When the getter cannot be inlined (should not happen for
+ * well-formed input), returns null; callers are expected to fall through to
+ * their prior resolution strategy in that case.
+ */
+export function evaluateInlineGetter(
+  converter: ASTToTACConverter,
+  getterProp: PropertyDeclarationNode,
+  className: string,
+  instancePrefix: string | undefined,
+): TACOperand | null {
+  if (!getterProp.getterBody) return null;
+  const syntheticMethod: MethodDeclarationNode = {
+    kind: ASTNodeKind.MethodDeclaration,
+    name: getterProp.name,
+    parameters: [],
+    returnType: getterProp.getterReturnType ?? getterProp.type,
+    // Preserve the original type name so inlineResolvedMethodBody's
+    // late-resolution step (which re-resolves interface-typed returns
+    // after all files have been parsed) behaves the same as for a real
+    // method.
+    originalReturnTypeName: getterProp.originalTypeName,
+    body: getterProp.getterBody,
+    isPublic: getterProp.isPublic,
+    // Forward the getter's isStatic so a future static-getter inlining
+    // path would carry the correct flag without editing this
+    // constructor. Current callers (mapStaticProperty) intercept
+    // static getters earlier and return undefined, so evaluateInlineGetter
+    // is unreachable for static getters today — but forwarding here
+    // keeps the invariant "synthetic method mirrors the getter's
+    // declared shape" so the trap doesn't surface later.
+    isStatic: getterProp.isStatic,
+    isRecursive: false,
+    isExported: false,
+    // Forward the getter's source location so diagnostics emitted from
+    // inlineResolvedMethodBody (or any code that walks method.loc) point
+    // at the getter declaration rather than lacking a location.
+    loc: getterProp.loc,
+  };
+  // The inline-key namespace is shared with real methods. Use a separator
+  // that is not a valid identifier character (`<get>`) so a user-defined
+  // method named e.g. `get_foo` cannot collide with a getter named `foo`.
+  const result = inlineResolvedMethodBody(
+    converter,
+    className,
+    `<get>${getterProp.name}`,
+    syntheticMethod,
+    [],
+    instancePrefix,
+  );
+  // When inlining is declined (null) the only reachable cause is
+  // inline-stack recursion. For the entry-point class path the outer
+  // caller emits its own, more specific diagnostic and returns a
+  // phantom-slot Variable, so we skip handling here to avoid duplicating
+  // the warning. For inline-class instance paths (instancePrefix
+  // defined) no caller emits anything — every fallback silently returns
+  // undefined because the getter guard was added to mapInlineProperty —
+  // which would let the outer visitor fall through to a
+  // PropertyGetInstruction on the wrong receiver. Emit a diagnostic and
+  // return a typed sentinel so downstream TAC has a stable operand
+  // mirroring the entry-point class path's fallback.
+  if (result === null && instancePrefix !== undefined) {
+    converter.warnAt(
+      syntheticMethod,
+      "EntryPointGetterUnsupported",
+      `Getter "${className}.${getterProp.name}" could not be inlined (likely recursive). Returning a type-appropriate zero/default sentinel at the read site — refactor the getter to remove self-recursion, or expose the backing field through a plain method.`,
+    );
+    return createSoaSentinelValue(
+      converter,
+      getterProp.getterReturnType ?? getterProp.type,
+    );
+  }
+  return result;
 }
 
 /**
@@ -2349,6 +2470,12 @@ export function mapInlineProperty(
 ): VariableOperand | undefined {
   const resolved = resolveClassProperty(this, className, property);
   if (resolved) {
+    // Getters have no backing storage slot; they're inlined via
+    // evaluateInlineGetter at read sites. Returning a variable here would
+    // resurrect the phantom-slot bug (e.g. if evaluateInlineGetter declines
+    // due to recursion and the caller falls through). Force the caller to
+    // handle the getter explicitly.
+    if (resolved.prop.isGetter) return undefined;
     return createVariable(`${instancePrefix}_${property}`, resolved.prop.type);
   }
 

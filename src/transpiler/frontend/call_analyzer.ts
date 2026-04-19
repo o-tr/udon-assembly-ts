@@ -75,6 +75,13 @@ export class CallAnalyzer {
           calledUdonBehaviours,
         );
       }
+      if (prop.node.isGetter && prop.node.getterBody) {
+        this.visitNode(
+          prop.node.getterBody,
+          inlineClasses,
+          calledUdonBehaviours,
+        );
+      }
     }
 
     const meta = this.registry.getClass(className);

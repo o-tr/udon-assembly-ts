@@ -82,6 +82,7 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   createSoaSentinelValue,
+  evaluateInlineGetter,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
@@ -97,12 +98,24 @@ import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 /**
  * Try to map an inline property, falling back to concrete class resolution
  * when the className is an interface/type alias.
+ *
+ * When the resolved property is a class getter, inline the getter body via
+ * evaluateInlineGetter (which reuses the method-inlining core). Plain
+ * fields continue to return a VariableOperand pointing at the SoA-backed
+ * slot.
  */
 function tryMapInlinePropertyWithConcreteFallback(
   converter: ASTToTACConverter,
   instanceInfo: { prefix: string; className: string },
   property: string,
-): VariableOperand | undefined {
+): TACOperand | undefined {
+  const primaryGetter = tryInlineGetter(
+    converter,
+    instanceInfo.className,
+    instanceInfo.prefix,
+    property,
+  );
+  if (primaryGetter !== undefined) return primaryGetter;
   const mapped = converter.mapInlineProperty(
     instanceInfo.className,
     instanceInfo.prefix,
@@ -112,6 +125,13 @@ function tryMapInlinePropertyWithConcreteFallback(
 
   const concreteClass = resolveConcreteClassName(converter, instanceInfo);
   if (concreteClass !== instanceInfo.className) {
+    const concreteGetter = tryInlineGetter(
+      converter,
+      concreteClass,
+      instanceInfo.prefix,
+      property,
+    );
+    if (concreteGetter !== undefined) return concreteGetter;
     return converter.mapInlineProperty(
       concreteClass,
       instanceInfo.prefix,
@@ -119,6 +139,44 @@ function tryMapInlinePropertyWithConcreteFallback(
     );
   }
   return undefined;
+}
+
+/**
+ * Resolve the property on `className` and, if it is a getter, inline its
+ * body. Returns the inlined result operand when successful, or `undefined`
+ * when the property is not a getter on this class OR when inlining was
+ * declined (e.g. inline-stack recursion detected by
+ * `evaluateInlineGetter`, which returns null that this wrapper collapses
+ * to `undefined`). Callers cannot distinguish the two `undefined` cases.
+ *
+ * TypeScript accepts self-referential getters with explicit return type
+ * annotations, so recursive getters can reach the transpiler. They are
+ * detected at IR-generation time via `inlineMethodStack`; on detection
+ * the read emits an `EntryPointGetterUnsupported` or
+ * `D3DispatchFallback` diagnostic and the caller takes a safe fallback
+ * (phantom-slot read or no-op dispatch arm).
+ */
+function tryInlineGetter(
+  converter: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  property: string,
+): TACOperand | undefined {
+  const resolved = resolveClassProperty(converter, className, property);
+  if (!resolved?.prop.isGetter) return undefined;
+  // Bind `this` to the receiver's class (`className`), not the getter's
+  // declaring class. Matches inlineInstanceMethodCallCore semantics: a
+  // base-class getter accessed on a derived instance sees the derived
+  // class's SoA prefix for `this.*` resolution via mapInlineProperty's
+  // derived-first walk. Using declaringClassName would wrongly hide
+  // derived-only fields from the inlined body.
+  const inlined = evaluateInlineGetter(
+    converter,
+    resolved.prop,
+    className,
+    instancePrefix,
+  );
+  return inlined ?? undefined;
 }
 
 const NUMERIC_UDON_TYPES = new Set([
@@ -762,6 +820,54 @@ export function visitBinaryExpression(
 
     if (leftOriginal.kind === TACOperandKind.Variable) {
       const target = leftOriginal as VariableOperand;
+      // When the read came from `evaluateInlineGetter` (or any other
+      // inlined method body), the returned variable is an
+      // `__inline_ret_*` temporary disconnected from the backing
+      // storage — writing to it would silently drop the
+      // compound-assigned value. The `isInlineReturn` flag is set by
+      // `inlineResolvedMethodBody` at creation time, so the check stays
+      // robust if the temp's naming convention ever changes. Plain
+      // field reads return a Variable that is itself the SoA-backed
+      // storage, so the fast path remains correct for non-getter LHS
+      // and does not re-evaluate `node.left`'s object expression
+      // (important for side-effecting LHS such as `getBox().value += 1`).
+      if (target.isInlineReturn) {
+        // `node.left` must be a PropertyAccessExpression here: a plain
+        // identifier or method call cannot produce an isInlineReturn
+        // Variable that reaches the compound-assignment LHS slot — only
+        // getter-inlined property reads do, because methods are invoked
+        // via CallExpression (not PropertyAccess) as the assign target.
+        // We already evaluated the LHS fully (including any side effects
+        // in `node.left.object`); calling `assignToTarget` here would
+        // re-visit that object expression, double-firing effects such
+        // as `getBox()`. Emit the diagnostic directly and drop the
+        // write — the assignment semantics match
+        // `maybeWarnWriteToGetter`'s short-circuit, without the
+        // re-evaluation.
+        if (node.left.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propAccess = node.left as PropertyAccessExpressionNode;
+          this.warnAt(
+            propAccess,
+            "WriteToGetter",
+            `Compound write to getter-backed property "${propAccess.property}" — TS normally rejects this, so reaching this point indicates a transpiler-synthesized write. The write is being dropped to avoid resurrecting the phantom-slot bug.`,
+          );
+          return assignValue;
+        }
+        // All isInlineReturn creation sites (see `isInlineReturn: true`
+        // in helpers/inline.ts and visitors/call.ts) produce the flag on
+        // return slots of inlined method/getter bodies. Only getter
+        // reads — which are PropertyAccessExpression nodes — can surface
+        // such a Variable as a compound-assignment LHS; methods reach
+        // the LHS slot via CallExpression, not PropertyAccess, so they
+        // land on the non-Variable branch below. If this line ever
+        // fires, some future inlining path produced an isInlineReturn
+        // Variable from a non-PropertyAccess expression and the silent
+        // assignToTarget fallback would re-evaluate `node.left`,
+        // duplicating side effects. Fail loudly instead.
+        throw new Error(
+          `Internal error: isInlineReturn Variable on compound-assignment LHS of unexpected AST kind ${ASTNodeKind[node.left.kind]}. Expected PropertyAccessExpression — investigate the inlining path that produced this operand.`,
+        );
+      }
       this.emitCopyWithTracking(target, assignValue);
       return assignValue;
     }
@@ -1796,6 +1902,13 @@ export function visitPropertyAccessExpression(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      const getterResult = tryInlineGetter(
+        this,
+        this.currentInlineContext.className,
+        this.currentInlineContext.instancePrefix,
+        node.property,
+      );
+      if (getterResult !== undefined) return getterResult;
       const mapped = this.mapInlineProperty(
         this.currentInlineContext.className,
         this.currentInlineContext.instancePrefix,
@@ -1804,7 +1917,13 @@ export function visitPropertyAccessExpression(
       if (mapped) return mapped;
     }
 
-    // Entry point class self-property READ: direct variable reference
+    // Entry point class self-property READ.
+    // For getters, inline the body with no instance prefix: the inlined
+    // body's `this.field` references re-enter this visitor and resolve
+    // via the same entry-point path below. `inlineResolvedMethodBody`
+    // clears currentInlineContext when the prefix is undefined, so the
+    // `!this.currentInlineContext` guard on this branch correctly fires
+    // during the nested resolution.
     if (
       node.object.kind === ASTNodeKind.ThisExpression &&
       this.currentClassName &&
@@ -1818,6 +1937,24 @@ export function visitPropertyAccessExpression(
         node.property,
       );
       if (resolved) {
+        if (resolved.prop.isGetter) {
+          const inlined = evaluateInlineGetter(
+            this,
+            resolved.prop,
+            this.currentClassName,
+            undefined,
+          );
+          if (inlined !== null) return inlined;
+          // Recursion detected or missing body — fall through to the
+          // phantom-slot read so downstream code has a variable to work
+          // with, but surface the issue so it doesn't silently return
+          // uninitialized data.
+          this.warnAt(
+            node,
+            "EntryPointGetterUnsupported",
+            `Getter "${this.currentClassName}.${node.property}" could not be inlined (likely recursive). The read returns an uninitialized slot — refactor to avoid recursion or use a method.`,
+          );
+        }
         return createVariable(
           this.entryPointPropName(node.property),
           resolved.prop.type,
@@ -1914,7 +2051,14 @@ export function visitPropertyAccessExpression(
         for (const [className] of classIds) {
           const resolved = resolveClassProperty(this, className, node.property);
           if (resolved) {
-            propType = resolved.prop.type;
+            // For getters, `getterReturnType` is the authoritative return
+            // shape — today it matches `type`, but using it keeps the
+            // allocation correct if the two ever diverge (e.g. a future
+            // refinement where `type` is generic/erased while
+            // `getterReturnType` is concrete).
+            propType = resolved.prop.isGetter
+              ? (resolved.prop.getterReturnType ?? resolved.prop.type)
+              : resolved.prop.type;
             break;
           }
         }
@@ -1943,17 +2087,42 @@ export function visitPropertyAccessExpression(
             );
             this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-            const concreteMapped = this.mapInlineProperty(
+            const concreteGetter = tryInlineGetter(
+              this,
               className,
               instanceInfo.prefix,
               node.property,
             );
-            if (!concreteMapped) {
-              throw new Error(
-                `Internal error: mapInlineProperty returned undefined for property '${node.property}' on class '${className}', but resolveClassProperty succeeded. This indicates an inconsistency in class registration.`,
+            if (concreteGetter !== undefined) {
+              this.emitCopyWithTracking(result, concreteGetter);
+            } else {
+              const concreteMapped = this.mapInlineProperty(
+                className,
+                instanceInfo.prefix,
+                node.property,
               );
+              if (concreteMapped) {
+                this.emitCopyWithTracking(result, concreteMapped);
+              } else {
+                // Both paths declined: resolveClassProperty succeeded but
+                // neither the getter-inline nor the variable-mapping path
+                // could produce an operand. The only reachable cause is a
+                // getter whose evaluation was skipped by
+                // `inlineMethodStack` recursion detection — e.g. an
+                // interface getter whose body accesses another instance of
+                // the same interface, causing classId dispatch to
+                // re-enter the same getter mid-inlining.  Previously this
+                // threw "Internal error"; now the arm falls through to the
+                // `endLabel` jump with the result variable left
+                // uninitialized for this classId. Warn so the condition is
+                // visible rather than silent.
+                this.warnAt(
+                  node,
+                  "D3DispatchFallback",
+                  `Interface classId dispatch could not produce an operand for getter "${className}.${node.property}" — likely recursion through interface dispatch. Arm for classId ${classId} is a no-op; the result is uninitialized when this arm fires at runtime.`,
+                );
+              }
             }
-            this.emitCopyWithTracking(result, concreteMapped);
 
             this.emit(new UnconditionalJumpInstruction(endLabel));
             this.emit(new LabelInstruction(nextLabel));
@@ -2138,7 +2307,19 @@ export function visitPropertyAccessExpression(
         }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
+          let propertyIsGetter = false;
           for (const [, info] of dispInstances) {
+            const probeResolved = resolveClassProperty(
+              this,
+              info.className,
+              node.property,
+            );
+            if (probeResolved?.prop.isGetter) {
+              untrackedPropType =
+                probeResolved.prop.getterReturnType ?? probeResolved.prop.type;
+              propertyIsGetter = true;
+              break;
+            }
             const pv = this.mapInlineProperty(
               info.className,
               info.prefix,
@@ -2153,11 +2334,18 @@ export function visitPropertyAccessExpression(
             // SoA fast path: when ALL candidate instances belong to a single
             // SoA class, read the field from the per-field DataList at the
             // handle index. No per-instance branching needed.
+            //
+            // Skipped for getters: they intentionally have no soaFieldLists
+            // entry (filtered out of collectAllInstanceFields). Per-arm
+            // tryInlineGetter handles them correctly in the dispatch below;
+            // entering the fast-path here would emit a misleading
+            // SoAFieldListMissing warning.
             const soaClassName = dispInstances[0][1].className;
             const allSameClass = dispInstances.every(
               ([, i]) => i.className === soaClassName,
             );
             if (
+              !propertyIsGetter &&
               allSameClass &&
               this.soaClasses.has(soaClassName) &&
               this.soaFieldLists.has(soaClassName)
@@ -2206,18 +2394,39 @@ export function visitPropertyAccessExpression(
                 // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
                 new ConditionalJumpInstruction(dispCond, dispNext),
               );
-              const pv = this.mapInlineProperty(
+              const armGetter = tryInlineGetter(
+                this,
                 info.className,
                 info.prefix,
                 node.property,
               );
-              if (pv) {
-                this.emitCopyWithTracking(dispResult, pv);
+              if (armGetter !== undefined) {
+                this.emitCopyWithTracking(dispResult, armGetter);
+              } else {
+                const pv = this.mapInlineProperty(
+                  info.className,
+                  info.prefix,
+                  node.property,
+                );
+                if (pv) {
+                  this.emitCopyWithTracking(dispResult, pv);
+                } else if (propertyIsGetter) {
+                  // Symmetric with the interface classId dispatch arm at
+                  // ~line 2045: when both paths decline for a getter the
+                  // only reachable cause is inline-stack recursion. Warn so
+                  // the condition is visible instead of silently skipping.
+                  this.warnAt(
+                    node,
+                    "D3DispatchFallback",
+                    `D3 dispatch arm for instance ${instId} could not produce an operand for getter "${info.className}.${node.property}" — likely recursion through dispatch. Arm is a no-op; the result is uninitialized when this arm fires at runtime.`,
+                  );
+                }
+                // If pv is undefined AND the property is not a getter, it
+                // means mapInlineProperty failed for this instance. This
+                // should not happen: all entries in dispInstances share
+                // the same className (enforced by the filter above), so
+                // every instance must expose the same property set.
               }
-              // If pv is undefined here it means mapInlineProperty failed for
-              // this instance. This should not happen: all entries in
-              // dispInstances share the same className (enforced by the filter
-              // above), so every instance must expose the same property set.
               this.emit(new UnconditionalJumpInstruction(dispEnd));
               this.emit(new LabelInstruction(dispNext));
             }

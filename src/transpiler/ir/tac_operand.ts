@@ -40,6 +40,14 @@ export interface VariableOperand extends TACOperand {
   isLocal?: boolean;
   isParameter?: boolean;
   isExported?: boolean;
+  /**
+   * Set on the `__inline_ret_*` return-slot variable produced by
+   * `inlineResolvedMethodBody`. Consumers (compound-assignment lowering,
+   * optimizer passes) use this flag instead of string-matching the
+   * internal naming convention, so renaming the temp stays a local
+   * change.
+   */
+  isInlineReturn?: boolean;
 }
 
 /**
@@ -78,6 +86,7 @@ export function createVariable(
     isLocal?: boolean;
     isParameter?: boolean;
     isExported?: boolean;
+    isInlineReturn?: boolean;
   },
 ): VariableOperand {
   return {
