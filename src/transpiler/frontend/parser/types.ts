@@ -105,6 +105,7 @@ function isCompatibleUnionPropertyType(
   left: TypeSymbol,
   right: TypeSymbol,
 ): boolean {
+  if (left === right) return true;
   if (isAnonymousInterface(left) && isAnonymousInterface(right)) {
     if (left.properties.size !== right.properties.size) return false;
     for (const [name, leftType] of left.properties) {

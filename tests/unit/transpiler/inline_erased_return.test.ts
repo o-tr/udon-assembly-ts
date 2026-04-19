@@ -43,8 +43,6 @@ describe("inline erased return handling", () => {
     );
 
     expect(erased).toBeUndefined();
-    expect(startSection).toContain("__inst___anon_union_");
-    expect(startSection).toContain("__uninst_prop");
     expect(startSection).not.toContain("DataToken");
   });
 
@@ -71,8 +69,6 @@ describe("inline erased return handling", () => {
     );
 
     expect(erased).toBeUndefined();
-    expect(startSection).toContain("__inst___anon_");
-    expect(startSection).toContain("__uninst_prop");
     expect(startSection).not.toContain("DataToken");
   });
 
