@@ -256,11 +256,13 @@ export function visitClassDeclaration(
       // stores only metadata, not the setter body. A write to this property
       // lands on the plain slot instead of running the setter body, so any
       // validation / side-effect logic in the body is silently lost.
-      // Upstream TypeScript blocks writes to a setter-only property when no
-      // getter exists, but when a matched getter/setter pair is declared the
-      // setter is reachable and this issue becomes user-visible. Warn loudly
-      // so the scenario surfaces at transpile time. Full setter-body support
-      // requires a write-barrier design and is tracked as follow-up work.
+      // Writes to a setter-only property are valid TypeScript (they are the
+      // only way to invoke the setter); it is reads that TS rejects on a
+      // setter-only property. Either way, when a getter/setter pair is
+      // declared both reads and writes are reachable, and any logic in the
+      // setter body is silently lost. Warn loudly so the scenario surfaces
+      // at transpile time. Full setter-body support requires a
+      // write-barrier design and is tracked as follow-up work.
       const propName = member.name.getText();
       if (member.body && member.body.statements.length > 0) {
         const sourceFile = this.sourceFile ?? member.getSourceFile();

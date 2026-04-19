@@ -2228,18 +2228,24 @@ export function evaluateInlineGetter(
   );
   // When inlining is declined (null) the only reachable cause is
   // inline-stack recursion. For the entry-point class path the outer
-  // caller emits its own, more specific diagnostic and falls through to
-  // a phantom-slot read, so we skip the emit here to avoid duplicating
+  // caller emits its own, more specific diagnostic and returns a
+  // phantom-slot Variable, so we skip handling here to avoid duplicating
   // the warning. For inline-class instance paths (instancePrefix
   // defined) no caller emits anything — every fallback silently returns
   // undefined because the getter guard was added to mapInlineProperty —
-  // so emit here to mirror the entry-point diagnostic and prevent
-  // silent wrong output.
+  // which would let the outer visitor fall through to a
+  // PropertyGetInstruction on the wrong receiver. Emit a diagnostic and
+  // return a typed sentinel so downstream TAC has a stable operand
+  // mirroring the entry-point class path's fallback.
   if (result === null && instancePrefix !== undefined) {
     converter.warnAt(
       syntheticMethod,
       "EntryPointGetterUnsupported",
-      `Getter "${className}.${getterProp.name}" could not be inlined (likely recursive). No operand is produced at the read site — refactor the getter to remove self-recursion, or expose the backing field through a plain method.`,
+      `Getter "${className}.${getterProp.name}" could not be inlined (likely recursive). Returning a type-appropriate zero/default sentinel at the read site — refactor the getter to remove self-recursion, or expose the backing field through a plain method.`,
+    );
+    return createSoaSentinelValue(
+      converter,
+      getterProp.getterReturnType ?? getterProp.type,
     );
   }
   return result;
