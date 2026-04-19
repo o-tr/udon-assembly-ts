@@ -93,10 +93,27 @@ function isNullishUnionBranch(node: ts.TypeNode): boolean {
   );
 }
 
+function isAnonymousInterface(
+  symbol: TypeSymbol,
+): symbol is InterfaceTypeSymbol {
+  return (
+    symbol instanceof InterfaceTypeSymbol && symbol.name.startsWith("__anon")
+  );
+}
+
 function isCompatibleUnionPropertyType(
   left: TypeSymbol,
   right: TypeSymbol,
 ): boolean {
+  if (isAnonymousInterface(left) && isAnonymousInterface(right)) {
+    if (left.properties.size !== right.properties.size) return false;
+    for (const [name, leftType] of left.properties) {
+      const rightType = right.properties.get(name);
+      if (!rightType) return false;
+      if (!isCompatibleUnionPropertyType(leftType, rightType)) return false;
+    }
+    return true;
+  }
   return left.name === right.name && left.udonType === right.udonType;
 }
 

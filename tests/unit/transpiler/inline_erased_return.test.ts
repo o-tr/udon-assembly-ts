@@ -76,6 +76,38 @@ describe("inline erased return handling", () => {
     expect(startSection).not.toContain("DataToken");
   });
 
+  it("resolves unions with structurally identical nested anonymous struct properties", () => {
+    const source = `
+      type Left = { point: { x: number }; tag: number };
+      type Right = { point: { x: number }; tag: number };
+      type Either = Left | Right;
+
+      class HandAnalyzer {
+        pick(flag: boolean): Either {
+          return flag
+            ? { point: { x: 1 }, tag: 1 }
+            : { point: { x: 2 }, tag: 2 };
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        private analyzer: HandAnalyzer = new HandAnalyzer();
+        Start(): void {
+          const r = this.analyzer.pick(true);
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const erased = result.diagnostics?.find(
+      (diagnostic) => diagnostic.code === "ErasedReturnInline",
+    );
+
+    expect(erased).toBeUndefined();
+    expect(result.tac).not.toContain("DataToken");
+  });
+
   it("still erases incompatible primitive unions", () => {
     const source = `
       class HandAnalyzer {
