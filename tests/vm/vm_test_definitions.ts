@@ -634,4 +634,36 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "control_flow_ternary_continue",
     sourceFile: "control_flow_ternary_continue.ts",
   },
+  // --- PR #170 residual regressions (2026-04-19) ---
+  // PR #170 (#989eb96) resolves the ErasedReturnInline root cause for most
+  // discriminated-union inline returns. Two axes still produce silent
+  // VM/JS divergence (VM takes LOSS branch even when a WIN was constructed):
+  //
+  //   a) pr170_union_with_array_field : WIN branch carries `list: string[]`,
+  //      LOSS branch does not. `resolveStructuralUnionType` merges compatible
+  //      property sets but array-typed fields present only in one branch
+  //      appear to corrupt the merged interface's field population.
+  //
+  //   b) pr170_union_with_null_branch : caller passes a bare `null` literal
+  //      as an arg of type `Result | null`. The callee's narrowing picks the
+  //      wrong branch at runtime even though the paired non-null arg holds
+  //      a valid WIN object.
+  //
+  // Both probes emit no transpiler warning — the structural merge succeeds
+  // but the downstream field copy / branch selection diverges from JS.
+  // Registered with knownFail: true; flip to passing when fixed.
+  {
+    name: "pr170_union_with_array_field",
+    sourceFile: "datatoken_int_unwrap/pr170_union_with_array_field.ts",
+    knownFail: true,
+    knownFailReason:
+      "PR #170 residual: union branch with array field absent from other branch — VM takes LOSS even when WIN is constructed",
+  },
+  {
+    name: "pr170_union_with_null_branch",
+    sourceFile: "datatoken_int_unwrap/pr170_union_with_null_branch.ts",
+    knownFail: true,
+    knownFailReason:
+      "PR #170 residual: null-literal arg into `Result | null` param — VM takes LOSS even when WIN is constructed",
+  },
 ];
