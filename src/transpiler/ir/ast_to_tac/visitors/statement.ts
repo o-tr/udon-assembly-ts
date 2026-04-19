@@ -28,6 +28,7 @@ import {
   type LiteralNode,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
+  type PropertyAccessExpressionNode,
   type ReturnStatementNode,
   type SwitchStatementNode,
   type ThrowStatementNode,
@@ -88,6 +89,47 @@ function emitLoopExitEpiloguesSinceDepth(
   for (let i = converter.loopContextStack.length - 1; i >= depth; i -= 1) {
     converter.loopContextStack[i].emitExitEpilogue?.();
   }
+}
+
+/**
+ * Whether an expression can safely be re-evaluated twice by the NC split
+ * (once in the null-check condition, once in the then-branch return).
+ * Admits bare identifiers/literals, `this`, and a single-step
+ * `this.<field>` read ONLY when the class declaration marks the member
+ * as a plain field (not `isGetter`): re-evaluating a user-defined getter
+ * would run its body twice and could produce observable side effects.
+ * Deeper chains (`this.a.b`) are rejected because intermediate steps
+ * could traverse getters we don't inspect here.
+ */
+function isSideEffectFreeNullCoalesceLeft(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): boolean {
+  if (
+    node.kind === ASTNodeKind.Identifier ||
+    node.kind === ASTNodeKind.Literal ||
+    node.kind === ASTNodeKind.ThisExpression
+  ) {
+    return true;
+  }
+  if (node.kind === ASTNodeKind.PropertyAccessExpression) {
+    const access = node as PropertyAccessExpressionNode;
+    if (access.object.kind !== ASTNodeKind.ThisExpression) return false;
+    // Prefer the inline-call context's class name (the method body we're
+    // currently compiling is inlined from that class). Fall back to the
+    // enclosing class's name when not inlining.
+    const className =
+      converter.currentInlineContext?.className ?? converter.currentClassName;
+    if (!className) return false;
+    const classNode = converter.classMap.get(className);
+    if (!classNode) return false;
+    const member = classNode.properties.find((p) => p.name === access.property);
+    if (!member) return false;
+    // Admit only plain (non-getter) fields. Getters remain untouched and
+    // fall through to the D-3 dispatch fallback path.
+    return !member.isGetter;
+  }
+  return false;
 }
 
 export function visitStatement(this: ASTToTACConverter, node: ASTNode): void {
@@ -1182,17 +1224,17 @@ export function visitReturnStatement(
     }
     if (
       node.value.kind === ASTNodeKind.NullCoalescingExpression &&
-      // Only split when `left` is side-effect-free: a bare identifier is
-      // re-evaluated in both the null-check condition and the then-branch
-      // return value, so splitting a `fn() ?? b` would double-call `fn`.
-      // Identifier / Literal / This cover the common `param ?? fallback`
-      // pattern that matches the reviewer's concern.
-      ((node.value as NullCoalescingExpressionNode).left.kind ===
-        ASTNodeKind.Identifier ||
-        (node.value as NullCoalescingExpressionNode).left.kind ===
-          ASTNodeKind.Literal ||
-        (node.value as NullCoalescingExpressionNode).left.kind ===
-          ASTNodeKind.ThisExpression)
+      // Only split when `left` is side-effect-free. The split re-evaluates
+      // `left` in both the null-check condition and the then-branch return,
+      // so splitting a `fn() ?? b` would double-call `fn` — and, less
+      // obviously, a chain like `this.a.b.c` could traverse an intermediate
+      // user-defined getter with observable side effects, so we only admit
+      // single-step `this.<plainField>` after verifying via classMap that
+      // it is not declared as a getter.
+      isSideEffectFreeNullCoalesceLeft(
+        this,
+        (node.value as NullCoalescingExpressionNode).left,
+      )
     ) {
       const nc = node.value as NullCoalescingExpressionNode;
       const nullLiteral: LiteralNode = {

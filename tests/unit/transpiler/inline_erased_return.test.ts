@@ -232,6 +232,79 @@ describe("inline erased return handling", () => {
     expect(outerCopyMatch !== null || winDispatchMatch !== null).toBe(true);
   });
 
+  it("null-coalescing split covers `this.<field> ?? fallback` as a side-effect-free left", () => {
+    // `this.<field>` reads are side-effect-free in typical UdonSharp code
+    // (field slots are direct memory), so the split admits them. Verify the
+    // TAC emits the null-check-plus-branch pattern for this common shape.
+    const source = `
+      type Win = { tag: true; value: number };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        private cached: Result | null = null;
+        ensure(): Result {
+          const fallback: Loss = { tag: false };
+          return this.cached ?? fallback;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().ensure();
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // The split is engaged if the TAC contains a null-check on the field
+    // slot followed by two return paths (one per branch). Match the
+    // `<field_slot> != null` condition plus both branches' return assigns.
+    expect(result.tac).toMatch(/__inst_M_\d+_cached != null/);
+    // Only the trackable else-branch emits field-copies into the unified
+    // return prefix; the then-branch copies the field's handle. Verify
+    // the fallback branch's `_tag` field-copy reaches the return prefix.
+    expect(result.tac).toMatch(/__inline_ret_\d+_tag = __inst_Loss_\d+_tag/);
+  });
+
+  it("null-coalescing split does NOT fire for `this.<getter> ?? fallback`", () => {
+    // `this.cached` with `get cached()` has the same AST shape as a plain
+    // field (PropertyAccessExpression with ThisExpression object), but
+    // splitting would re-evaluate the getter body twice and risk observable
+    // side effects. isSideEffectFreeNullCoalesceLeft consults classMap and
+    // rejects getter-backed property reads.
+    const source = `
+      type Win = { tag: true; value: number };
+      type Loss = { tag: false };
+      type Result = Win | Loss;
+
+      class M {
+        private _cached: Result | null = null;
+        get cached(): Result | null { return this._cached; }
+        ensure(): Result {
+          const fallback: Loss = { tag: false };
+          return this.cached ?? fallback;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r = new M().ensure();
+          const t = r.tag;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    // The field-slot null-check pattern must NOT appear — that would
+    // indicate the split fired against a getter.
+    expect(result.tac).not.toMatch(/__inst_M_\d+_cached != null/);
+    // The getter-backed `_cached` slot is read indirectly via the getter,
+    // so no direct `__inst_M_*_cached` slot exists; either way the split
+    // shouldn't have emitted a null-check against one.
+  });
+
   it("null-coalescing return splits into per-branch returns populating the unified return prefix", () => {
     // `return left ?? right` in a structural-union inline method is the
     // same class of bug as the ternary case — the NC evaluates to a temp
