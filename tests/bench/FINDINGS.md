@@ -59,13 +59,13 @@ dominates; marginal per-entry work is small.
 ### 4. Extern registry guarded-call cost
 
 - First (cold) call:  **36.7 ms** — full stub scan, once per process
-- 10,000 guarded calls:  2.5 ms total, **0.25 ns/call average** — no-op
+- 10,000 guarded calls:  2.5 ms total, **250 ns/call (0.25 µs/call) average** — effectively no-op
 
 ## Verdicts on each plan item
 
 | # | Plan claim | Verdict | Evidence |
 |---|-----------|---------|----------|
-| 1 | Extern registry guard cost | **Micro** — 0.25 ns/call. Ignore in-process. | §4 |
+| 1 | Extern registry guard cost | **Micro** — 250 ns/call. Ignore in-process. | §4 |
 | 5 | SSA splice O(n²) | **Confirmed**. deconstructSSA is 16% → 45% of optimize as TAC grows 4.2×, with 25× time growth (vs 4.2× data). | §2 |
 | 7 | Per-entry layout redundancy creates super-linear batch growth | **Refuted**. Per-entry time *decreases* with entry count. Fixed setup dominates. | §3 |
 | 3 | MethodUsage BFS queue O(n) shift | Not measured; not visible at these scales. Keep low-priority. | — |
@@ -103,7 +103,7 @@ Re-ordered from the original plan based on evidence:
 **Drop from scope:**
 - Plan Step 4 (batch layout sharing) — refuted by §3.
 - Plan Step 2 (extern registry Maps module-scope) — refuted by §4; the
-  guarded path is already 0.25 ns/call.
+  guarded path is already 250 ns/call.
 
 ## How to reproduce
 

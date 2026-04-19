@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import {
   type ArrayAccessInstruction,
   type ArrayAssignmentInstruction,
@@ -450,11 +451,7 @@ export class TACOptimizer {
       };
 
       const getCFG = (): CFG => {
-        if (!cachedCFG) {
-          cachedCFG = profile
-            ? timed("[buildCFG]", () => buildCFG(next))
-            : buildCFG(next);
-        }
+        if (!cachedCFG) cachedCFG = timed("[buildCFG]", () => buildCFG(next));
         return cachedCFG;
       };
 
@@ -621,9 +618,7 @@ export class TACOptimizer {
       let postCFG: CFG | null = null;
       const getPostCFG = (): CFG => {
         if (!postCFG) {
-          postCFG = profile
-            ? timed("[buildCFG post]", () => buildCFG(optimized))
-            : buildCFG(optimized);
+          postCFG = timed("[buildCFG post]", () => buildCFG(optimized));
         }
         return postCFG;
       };

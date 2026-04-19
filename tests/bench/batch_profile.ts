@@ -28,8 +28,27 @@ function parseArgs(argv: string[]): Args {
   const a: Args = { entries: [1, 2, 4, 8, 16], runs: 3 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--entries") a.entries = argv[++i].split(",").map(Number);
-    else if (arg === "--runs") a.runs = Number(argv[++i]);
+    if (arg === "--entries") {
+      const raw = argv[++i];
+      if (!raw) {
+        console.error("--entries requires a comma-separated list");
+        process.exit(2);
+      }
+      const parsed = raw.split(",").map(Number);
+      if (parsed.some((n) => !Number.isInteger(n) || n <= 0)) {
+        console.error(`--entries requires positive integers (got "${raw}")`);
+        process.exit(2);
+      }
+      a.entries = parsed;
+    } else if (arg === "--runs") {
+      const raw = argv[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        console.error(`--runs requires a positive integer (got "${raw}")`);
+        process.exit(2);
+      }
+      a.runs = n;
+    }
   }
   return a;
 }
@@ -106,23 +125,31 @@ function main(): void {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "uasm-batch-profile-"));
     const sourceDir = path.join(root, "src");
     fs.mkdirSync(sourceDir, { recursive: true });
-    writeFixture(sourceDir, entryCount);
+    try {
+      writeFixture(sourceDir, entryCount);
 
-    // Warmup
-    runBatchOnce(root);
+      // Warmup
+      runBatchOnce(root);
 
-    const times: number[] = [];
-    for (let i = 0; i < args.runs; i++) times.push(runBatchOnce(root));
-    times.sort((a, b) => a - b);
-    const med = times[Math.floor(times.length / 2)];
-    results.push({
-      entries: entryCount,
-      median: med,
-      perEntry: med / entryCount,
-    });
-
-    // Cleanup
-    fs.rmSync(root, { recursive: true, force: true });
+      const times: number[] = [];
+      for (let i = 0; i < args.runs; i++) times.push(runBatchOnce(root));
+      times.sort((a, b) => a - b);
+      const mid = Math.floor(times.length / 2);
+      const med =
+        times.length % 2 !== 0 ? times[mid] : (times[mid - 1] + times[mid]) / 2;
+      results.push({
+        entries: entryCount,
+        median: med,
+        perEntry: med / entryCount,
+      });
+    } finally {
+      // Always clean up the tempdir so failed runs don't leak into /tmp.
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
   }
 
   console.log("\n=== BatchTranspiler scaling ===");

@@ -536,20 +536,39 @@ interface CliArgs {
   only?: Set<string>;
 }
 
+/** Reject values that look like a flag (start with "--"), to catch mistakes
+ * like `--json --runs 5` where the user forgot the path argument. */
+function requireNonFlagValue(flag: string, raw: string | undefined): string {
+  if (raw === undefined || raw === "" || raw.startsWith("--")) {
+    console.error(`${flag} requires a value (got "${raw ?? "<missing>"}")`);
+    process.exit(2);
+  }
+  return raw;
+}
+
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { runs: 7, baseline: false, compare: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--runs") {
-      args.runs = Number(argv[++i]);
+      const raw = requireNonFlagValue("--runs", argv[++i]);
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        console.error(`--runs requires a positive integer (got "${raw}")`);
+        process.exit(2);
+      }
+      args.runs = n;
     } else if (a === "--json") {
-      args.json = argv[++i];
+      args.json = requireNonFlagValue("--json", argv[++i]);
     } else if (a === "--baseline") {
       args.baseline = true;
     } else if (a === "--compare") {
       args.compare = true;
     } else if (a === "--only") {
-      args.only = new Set(argv[++i].split(","));
+      const raw = requireNonFlagValue("--only", argv[++i]);
+      // IDs validated against the scenario list in main(), which is the
+      // single source of truth — keep raw form here.
+      args.only = new Set(raw.split(","));
     } else {
       console.warn(`Unknown bench arg: ${a}`);
     }
@@ -567,75 +586,99 @@ function main(): void {
   buildExternRegistryFromFiles([]);
 
   const fixture = prepareBatchFixture();
+  try {
+    const scenarios: Array<{
+      id: string;
+      label: string;
+      run: () => number;
+      breakdown?: () => PhaseTimings;
+    }> = [
+      {
+        id: "hot",
+        label: "Small file, top-level transpile (no optimize)",
+        run: () => runTopLevel(SMALL_SOURCE, false),
+        breakdown: () => runPhaseBreakdown(SMALL_SOURCE, false),
+      },
+      {
+        id: "optimize",
+        label: "Medium file, top-level transpile (optimize=true)",
+        run: () => runTopLevel(MEDIUM_SOURCE, true),
+        breakdown: () => runPhaseBreakdown(MEDIUM_SOURCE, true),
+      },
+      {
+        id: "batch",
+        label: "BatchTranspiler, 2 entry points (cold cache)",
+        run: () => runBatch(fixture),
+      },
+    ];
 
-  const scenarios: Array<{
-    id: string;
-    label: string;
-    run: () => number;
-    breakdown?: () => PhaseTimings;
-  }> = [
-    {
-      id: "hot",
-      label: "Small file, top-level transpile (no optimize)",
-      run: () => runTopLevel(SMALL_SOURCE, false),
-      breakdown: () => runPhaseBreakdown(SMALL_SOURCE, false),
-    },
-    {
-      id: "optimize",
-      label: "Medium file, top-level transpile (optimize=true)",
-      run: () => runTopLevel(MEDIUM_SOURCE, true),
-      breakdown: () => runPhaseBreakdown(MEDIUM_SOURCE, true),
-    },
-    {
-      id: "batch",
-      label: "BatchTranspiler, 2 entry points (cold cache)",
-      run: () => runBatch(fixture),
-    },
-  ];
+    // Validate `--only` IDs against the actual scenario list — the single
+    // source of truth — so adding a new scenario doesn't require updating a
+    // separate constant.
+    if (args.only) {
+      const knownIds = new Set(scenarios.map((s) => s.id));
+      const unknown = [...args.only].filter((id) => !knownIds.has(id));
+      if (unknown.length > 0) {
+        console.error(
+          `--only: unknown scenario id(s): ${unknown.join(", ")}. Known: ${[...knownIds].join(", ")}`,
+        );
+        process.exit(2);
+      }
+    }
 
-  const results: ScenarioResult[] = [];
-  for (const s of scenarios) {
-    if (args.only && !args.only.has(s.id)) continue;
-    const r = runScenario(s.id, s.label, args.runs, s.run, s.breakdown);
-    printScenario(r);
-    results.push(r);
-  }
+    const results: ScenarioResult[] = [];
+    for (const s of scenarios) {
+      if (args.only && !args.only.has(s.id)) continue;
+      const r = runScenario(s.id, s.label, args.runs, s.run, s.breakdown);
+      printScenario(r);
+      results.push(r);
+    }
 
-  // Baseline compare
-  if (args.compare) {
-    if (!fs.existsSync(BASELINE_PATH)) {
+    // Baseline compare
+    if (args.compare) {
+      if (!fs.existsSync(BASELINE_PATH)) {
+        console.error(
+          `\nNo baseline file at ${BASELINE_PATH}. Run with --baseline first.`,
+        );
+        process.exitCode = 1;
+      } else {
+        const baseline = JSON.parse(
+          fs.readFileSync(BASELINE_PATH, "utf8"),
+        ) as ScenarioResult[];
+        printComparison(results, baseline);
+      }
+    }
+
+    // Refuse to write empty result sets to either baseline or --json so an
+    // invalid `--only` filter never overwrites a good baseline with nothing.
+    if ((args.baseline || args.json) && results.length === 0) {
       console.error(
-        `\nNo baseline file at ${BASELINE_PATH}. Run with --baseline first.`,
+        "No scenarios ran (check --only filter); refusing to write empty results.",
       );
       process.exitCode = 1;
     } else {
-      const baseline = JSON.parse(
-        fs.readFileSync(BASELINE_PATH, "utf8"),
-      ) as ScenarioResult[];
-      printComparison(results, baseline);
+      if (args.baseline) {
+        fs.writeFileSync(
+          BASELINE_PATH,
+          `${JSON.stringify(results, null, 2)}\n`,
+        );
+        console.log(`\nWrote baseline to ${BASELINE_PATH}`);
+      }
+      if (args.json) {
+        fs.writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
+        console.log(`\nWrote results to ${args.json}`);
+      }
     }
-  }
-
-  // Write baseline file
-  if (args.baseline) {
-    fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(results, null, 2)}\n`);
-    console.log(`\nWrote baseline to ${BASELINE_PATH}`);
-  }
-
-  // Optional JSON dump
-  if (args.json) {
-    fs.writeFileSync(args.json, `${JSON.stringify(results, null, 2)}\n`);
-    console.log(`\nWrote results to ${args.json}`);
-  }
-
-  // Best-effort cleanup of the batch fixture root (parent of sourceDir).
-  try {
-    fs.rmSync(path.dirname(fixture.sourceDir), {
-      recursive: true,
-      force: true,
-    });
-  } catch {
-    // ignore
+  } finally {
+    // Always clean up the batch fixture root, even if a scenario threw.
+    try {
+      fs.rmSync(path.dirname(fixture.sourceDir), {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // ignore
+    }
   }
 }
 

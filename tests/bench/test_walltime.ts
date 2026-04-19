@@ -26,9 +26,20 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--runs") {
-      args.runs = Number(argv[++i]);
+      const raw = argv[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n <= 0) {
+        console.error(`--runs requires a positive integer (got "${raw}")`);
+        process.exit(2);
+      }
+      args.runs = n;
     } else if (a === "--json") {
-      args.json = argv[++i];
+      const p = argv[++i];
+      if (!p || p.startsWith("--")) {
+        console.error(`--json requires a path (got "${p ?? "<missing>"}")`);
+        process.exit(2);
+      }
+      args.json = p;
     } else if (a === "--") {
       args.cmd = argv.slice(i + 1);
       break;
@@ -43,8 +54,18 @@ function runOnce(cmd: string[]): Promise<{ ms: number; code: number }> {
   return new Promise((resolve) => {
     const start = performance.now();
     const child = spawn(cmd[0], cmd.slice(1), { stdio: "inherit" });
+    let settled = false;
+    const finish = (code: number): void => {
+      if (settled) return;
+      settled = true;
+      resolve({ ms: performance.now() - start, code });
+    };
+    child.on("error", (err) => {
+      console.error(`spawn error: ${err.message}`);
+      finish(-1);
+    });
     child.on("close", (code) => {
-      resolve({ ms: performance.now() - start, code: code ?? -1 });
+      finish(code ?? -1);
     });
   });
 }
