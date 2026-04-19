@@ -2218,7 +2218,7 @@ export function evaluateInlineGetter(
   // The inline-key namespace is shared with real methods. Use a separator
   // that is not a valid identifier character (`<get>`) so a user-defined
   // method named e.g. `get_foo` cannot collide with a getter named `foo`.
-  return inlineResolvedMethodBody(
+  const result = inlineResolvedMethodBody(
     converter,
     className,
     `<get>${getterProp.name}`,
@@ -2226,6 +2226,23 @@ export function evaluateInlineGetter(
     [],
     instancePrefix,
   );
+  // When inlining is declined (null) the only reachable cause is
+  // inline-stack recursion. For the entry-point class path the outer
+  // caller emits its own, more specific diagnostic and falls through to
+  // a phantom-slot read, so we skip the emit here to avoid duplicating
+  // the warning. For inline-class instance paths (instancePrefix
+  // defined) no caller emits anything — every fallback silently returns
+  // undefined because the getter guard was added to mapInlineProperty —
+  // so emit here to mirror the entry-point diagnostic and prevent
+  // silent wrong output.
+  if (result === null && instancePrefix !== undefined) {
+    converter.warnAt(
+      syntheticMethod,
+      "EntryPointGetterUnsupported",
+      `Getter "${className}.${getterProp.name}" could not be inlined (likely recursive). No operand is produced at the read site — refactor the getter to remove self-recursion, or expose the backing field through a plain method.`,
+    );
+  }
+  return result;
 }
 
 /**

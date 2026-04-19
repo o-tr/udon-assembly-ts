@@ -119,6 +119,35 @@ describe("entry-point class getter inlining", () => {
     );
   });
 
+  it("warns when an inline-class getter would recurse into itself", () => {
+    // Recursive getter on an inline (non-@UdonBehaviour) class. Every
+    // read-path fallback silently returns undefined for a getter, so
+    // without the diagnostic inside evaluateInlineGetter the user would
+    // get no signal at all. Regression for the inline-class side of
+    // EntryPointGetterUnsupported.
+    const source = `
+      class Box {
+        get value(): number {
+          return this.value;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const b = new Box();
+          Debug.Log(b.value);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const diagnostics = result.diagnostics ?? [];
+    expect(
+      diagnostics.some((d) => d.code === "EntryPointGetterUnsupported"),
+    ).toBe(true);
+  });
+
   it("warns when an entry-point getter would recurse into itself", () => {
     const source = `
       @UdonBehaviour()
