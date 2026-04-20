@@ -129,7 +129,7 @@ export function convertInstruction(
           this.variableTypes.set(tmpName, promotedType);
           if (promotedType === UdonType.Int32 && this.isFloatType(srcType)) {
             // Float→Int32: truncate to Double first, then convert.
-            let doubleSrc: string;
+            let doubleSrc: string | number;
             if (srcType === "Double") {
               // Already Double — use the operand directly as truncation input.
               doubleSrc = this.getOperandAddress(operand);
