@@ -2286,18 +2286,24 @@ export function visitPropertyAccessExpression(
               if (candidateClasses.has(astName)) {
                 narrowedClass = astName;
               } else {
-                // AST type may be an interface — check implementors
+                // AST type may be an interface — check implementors.
+                // Collect ALL implementors that appear in candidateClasses:
+                // if exactly one matches, narrowing succeeds; if two or more
+                // match, leave narrowedClass undefined so the else branch below
+                // includes all candidates (same fix as the !narrowedClass path).
                 const implNames = this.classRegistry
                   ? this.classRegistry
                       .getImplementorsOfInterface(astName)
                       .map((i) => i.name)
                   : [];
-                for (const impl of implNames) {
-                  if (candidateClasses.has(impl)) {
-                    narrowedClass = impl;
-                    break;
-                  }
+                const matchedImpls = implNames.filter((impl) =>
+                  candidateClasses.has(impl),
+                );
+                if (matchedImpls.length === 1) {
+                  narrowedClass = matchedImpls[0];
                 }
+                // matchedImpls.length > 1: narrowedClass stays undefined,
+                // falling through to the else branch (all-candidates dispatch).
               }
             }
             if (narrowedClass) {
