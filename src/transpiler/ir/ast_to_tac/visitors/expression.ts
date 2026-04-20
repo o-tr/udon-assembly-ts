@@ -2354,6 +2354,40 @@ export function visitPropertyAccessExpression(
               break;
             }
           }
+          // When the multi-class fallback path (D3DispatchFallback) populated
+          // dispInstances from several candidate classes, warn if their property
+          // types diverge: dispResult is typed from the first resolved class, so
+          // emitCopyWithTracking for another class's arm writes a mismatched type
+          // into the same heap slot.
+          if (untrackedPropType && dispInstances.length > 1) {
+            // dispInstances.length > 1 guarantees [0] exists (no optional chaining needed).
+            const firstClass = dispInstances[0][1].className;
+            const checkedClasses = new Set<string>([firstClass]);
+            for (const [, info] of dispInstances) {
+              if (checkedClasses.has(info.className)) continue;
+              checkedClasses.add(info.className);
+              const probe = resolveClassProperty(
+                this,
+                info.className,
+                node.property,
+              );
+              const probeType = probe
+                ? (probe.prop.getterReturnType ?? probe.prop.type)
+                : this.mapInlineProperty(
+                    info.className,
+                    info.prefix,
+                    node.property,
+                  )?.type;
+              if (probeType && probeType.name !== untrackedPropType.name) {
+                this.warnAt(
+                  node,
+                  "D3DispatchFallback",
+                  `D3 dispatch: property "${node.property}" type diverges across candidate classes — dispResult typed "${untrackedPropType.name}" but "${info.className}" has "${probeType.name}". Heap slot mismatch possible.`,
+                );
+                break;
+              }
+            }
+          }
           if (untrackedPropType) {
             // SoA fast path: when ALL candidate instances belong to a single
             // SoA class, read the field from the per-field DataList at the
@@ -2447,9 +2481,11 @@ export function visitPropertyAccessExpression(
                 }
                 // If pv is undefined AND the property is not a getter, it
                 // means mapInlineProperty failed for this instance. This
-                // should not happen: all entries in dispInstances share
-                // the same className (enforced by the filter above), so
-                // every instance must expose the same property set.
+                // can occur in the multi-class fallback (D3DispatchFallback)
+                // where dispInstances may contain instances from several
+                // candidate classes; an arm from one class may not find its
+                // property mapping in another class's prefix layout. The arm
+                // is silently skipped (dispResult retains its zero-init default).
               }
               this.emit(new UnconditionalJumpInstruction(dispEnd));
               this.emit(new LabelInstruction(dispNext));
