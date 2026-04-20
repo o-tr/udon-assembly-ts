@@ -2824,6 +2824,24 @@ export function visitCallExpression(
     if (methodInstanceKey) {
       const instanceInfo = this.resolveInlineInstance(methodInstanceKey);
       if (instanceInfo) {
+        // SoA handle restore: body-caching causes multiple constructions of
+        // the same class to share a prefix, so __handle holds the last
+        // construction's value. Restore it from the receiver operand before
+        // inlining so DataList reads inside the body use the correct slot.
+        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        if (this.soaClasses.has(concreteClass)) {
+          const hdlVar = normalizeOperandToInt32(this, object);
+          this.emit(
+            new CopyInstruction(
+              createVariable(
+                `${instanceInfo.prefix}__handle`,
+                PrimitiveTypes.int32,
+              ),
+              hdlVar,
+            ),
+          );
+        }
+
         const inlineResult = this.withInlineCallSite(node, () =>
           this.visitInlineInstanceMethodCallWithContext(
             instanceInfo.className,
@@ -2838,7 +2856,7 @@ export function visitCallExpression(
         // class via allInlineInstances and retry. This handles cases where
         // copy tracking or saveAndBindInlineParams stored the interface name
         // instead of the concrete class name.
-        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        // concreteClass was already resolved above for the SoA guard.
         if (concreteClass !== instanceInfo.className) {
           const concreteResult = this.withInlineCallSite(node, () =>
             this.visitInlineInstanceMethodCallWithContext(

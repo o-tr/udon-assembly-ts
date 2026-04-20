@@ -2022,6 +2022,24 @@ export function visitPropertyAccessExpression(
         (node.object as IdentifierNode).name,
       );
       if (instanceInfo) {
+        // SoA handle restore: same fix as the post-evaluation path below.
+        // The identifier holds the handle value captured at construction time;
+        // restore it into __handle so that tryReadSoAField reads the right slot.
+        const soaClass = resolveConcreteClassName(this, instanceInfo);
+        if (this.soaClasses.has(soaClass)) {
+          const identVar = this.visitExpression(node.object);
+          const hdlVar = normalizeOperandToInt32(this, identVar);
+          this.emit(
+            new CopyInstruction(
+              createVariable(
+                `${instanceInfo.prefix}__handle`,
+                PrimitiveTypes.int32,
+              ),
+              hdlVar,
+            ),
+          );
+        }
+
         const mapped = tryMapInlinePropertyWithConcreteFallback(
           this,
           instanceInfo,
@@ -2086,6 +2104,24 @@ export function visitPropertyAccessExpression(
       : undefined;
 
     if (instanceInfo) {
+      // SoA handle restore: parallel to the tracked dispatch fix in call.ts.
+      // Multiple body-cached constructions share a prefix; restore the handle
+      // from the receiver so that tryReadSoAField inside
+      // tryMapInlinePropertyWithConcreteFallback reads the correct DataList slot.
+      const soaClass = resolveConcreteClassName(this, instanceInfo);
+      if (this.soaClasses.has(soaClass)) {
+        const hdlVar = normalizeOperandToInt32(this, object);
+        this.emit(
+          new CopyInstruction(
+            createVariable(
+              `${instanceInfo.prefix}__handle`,
+              PrimitiveTypes.int32,
+            ),
+            hdlVar,
+          ),
+        );
+      }
+
       const mapped = tryMapInlinePropertyWithConcreteFallback(
         this,
         instanceInfo,
