@@ -2282,22 +2282,31 @@ export function visitPropertyAccessExpression(
             const astType = resolveTypeFromNode(this, node.object);
             const astName = astType?.name;
             let narrowedClass: string | undefined;
+            // Implementors of the declared interface that appear in
+            // candidateClasses.  Populated only when astName is an interface;
+            // hoisted here so the else-if branch below can reference it.
+            let matchedImpls: string[] = [];
             if (astName) {
               if (candidateClasses.has(astName)) {
                 narrowedClass = astName;
               } else {
-                // AST type may be an interface — check implementors
+                // AST type may be an interface — collect ALL implementors
+                // that appear in candidateClasses so we can prefer the
+                // semantically correct subset over the full property-match set.
                 const implNames = this.classRegistry
                   ? this.classRegistry
                       .getImplementorsOfInterface(astName)
                       .map((i) => i.name)
                   : [];
-                for (const impl of implNames) {
-                  if (candidateClasses.has(impl)) {
-                    narrowedClass = impl;
-                    break;
-                  }
+                matchedImpls = implNames.filter((impl) =>
+                  candidateClasses.has(impl),
+                );
+                if (matchedImpls.length === 1) {
+                  narrowedClass = matchedImpls[0];
                 }
+                // matchedImpls.length > 1 → narrowedClass stays undefined;
+                // the else-if branch dispatches exactly the matched set.
+                // matchedImpls.length === 0 → falls to the final else branch.
               }
             }
             if (narrowedClass) {
@@ -2307,31 +2316,44 @@ export function visitPropertyAccessExpression(
                 }
               }
               if (dispInstances.length > 0) usedErasedFallback = true;
+            } else if (matchedImpls.length > 1) {
+              // The declared interface has multiple implementors in
+              // candidateClasses.  Restrict dispatch to exactly those
+              // implementors rather than the full candidateClasses set
+              // (which may include unrelated classes that share only the
+              // property name, not the interface).
+              const matchedImplSet = new Set(matchedImpls);
+              for (const [instId, info] of this.allInlineInstances) {
+                if (matchedImplSet.has(info.className)) {
+                  dispInstances.push([instId, info]);
+                }
+              }
+              if (dispInstances.length > 0) usedErasedFallback = true;
             } else {
-              // Narrowing failed — force safe path. Pick the first
-              // candidate (by allInlineInstances insertion order) to
-              // produce a dispatch table rather than falling through
-              // to a raw PropertyGetInstruction that would generate an
-              // invalid EXTERN. Instances of other candidate classes
-              // will hit the miss path and receive the zero-init default.
-              const firstCandidate = candidateClasses.values().next()
-                .value as string;
-              // WARNING: mixed-class collections with this property will
-              // silently return zero-init defaults for non-first-candidate
-              // instances. Log at transpile time to aid debugging.
+              // Narrowing failed entirely — include instances from ALL
+              // candidate classes so the dispatch table handles any
+              // concrete class at runtime.  Log at transpile time so
+              // developers can track mixed-class collections.
               this.warnAt(
                 node,
                 "D3DispatchFallback",
-                `D3 dispatch narrowing failed for property "${node.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), using "${firstCandidate}" only.`,
+                `D3 dispatch narrowing failed for property "${node.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
               );
               for (const [instId, info] of this.allInlineInstances) {
-                if (info.className === firstCandidate) {
+                if (candidateClasses.has(info.className)) {
                   dispInstances.push([instId, info]);
                 }
               }
               if (dispInstances.length > 0) usedErasedFallback = true;
             }
           }
+        }
+        if (usedErasedFallback && dispInstances.length > 100) {
+          this.warnAt(
+            node,
+            "D3DispatchFallback",
+            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: 100) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
+          );
         }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
@@ -2356,6 +2378,40 @@ export function visitPropertyAccessExpression(
             if (pv) {
               untrackedPropType = pv.type;
               break;
+            }
+          }
+          // When the multi-class fallback path (D3DispatchFallback) populated
+          // dispInstances from several candidate classes, warn if their property
+          // types diverge: dispResult is typed from the first resolved class, so
+          // emitCopyWithTracking for another class's arm writes a mismatched type
+          // into the same heap slot.
+          if (untrackedPropType && dispInstances.length > 1) {
+            // dispInstances.length > 1 guarantees [0] exists (no optional chaining needed).
+            const firstClass = dispInstances[0][1].className;
+            const checkedClasses = new Set<string>([firstClass]);
+            for (const [, info] of dispInstances) {
+              if (checkedClasses.has(info.className)) continue;
+              checkedClasses.add(info.className);
+              const probe = resolveClassProperty(
+                this,
+                info.className,
+                node.property,
+              );
+              const probeType = probe
+                ? (probe.prop.getterReturnType ?? probe.prop.type)
+                : this.mapInlineProperty(
+                    info.className,
+                    info.prefix,
+                    node.property,
+                  )?.type;
+              if (probeType && probeType.name !== untrackedPropType.name) {
+                this.warnAt(
+                  node,
+                  "D3DispatchFallback",
+                  `D3 dispatch: property "${node.property}" type diverges across candidate classes — dispResult typed "${untrackedPropType.name}" but "${info.className}" has "${probeType.name}". Heap slot mismatch possible.`,
+                );
+                break;
+              }
             }
           }
           if (untrackedPropType) {
@@ -2451,9 +2507,17 @@ export function visitPropertyAccessExpression(
                 }
                 // If pv is undefined AND the property is not a getter, it
                 // means mapInlineProperty failed for this instance. This
-                // should not happen: all entries in dispInstances share
-                // the same className (enforced by the filter above), so
-                // every instance must expose the same property set.
+                // can occur in the multi-class fallback (D3DispatchFallback)
+                // where dispInstances may contain instances from several
+                // candidate classes; an arm from one class may not find its
+                // property mapping in another class's prefix layout.
+                else {
+                  this.warnAt(
+                    node,
+                    "D3DispatchFallback",
+                    `D3 dispatch arm for instance ${instId} (class "${info.className}") could not map property "${node.property}" — arm emits no copy; dispResult retains zero-init default.`,
+                  );
+                }
               }
               this.emit(new UnconditionalJumpInstruction(dispEnd));
               this.emit(new LabelInstruction(dispNext));
