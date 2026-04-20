@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
-import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction.js";
 

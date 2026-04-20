@@ -130,27 +130,15 @@ export function convertInstruction(
           if (promotedType === UdonType.Int32 && this.isFloatType(srcType)) {
             // Float→Int32: truncate to Double first, then convert.
             let doubleSrc: string;
-            if (srcType === "Single") {
+            if (srcType === "Double") {
+              // Already Double — use the operand directly as truncation input.
+              doubleSrc = this.getOperandAddress(operand);
+            } else {
               const dblTmp = `__tcoerce_dbl_${this.nextAddress}`;
               this.variableAddresses.set(dblTmp, this.nextAddress++);
               this.variableTypes.set(dblTmp, "Double");
               this.pushOperand(operand);
               this.instructions.push(new PushInstruction(dblTmp));
-              const toDblSig = this.getConvertExternSignature(
-                "Single",
-                "Double",
-              );
-              this.externSignatures.add(toDblSig);
-              this.instructions.push(
-                new ExternInstruction(this.getExternSymbol(toDblSig), true),
-              );
-              doubleSrc = dblTmp;
-            } else {
-              doubleSrc = `__tcoerce_dbl_${this.nextAddress}`;
-              this.variableAddresses.set(doubleSrc, this.nextAddress++);
-              this.variableTypes.set(doubleSrc, "Double");
-              this.pushOperand(operand);
-              this.instructions.push(new PushInstruction(doubleSrc));
               const toDblSig = this.getConvertExternSignature(
                 srcType,
                 "Double",
@@ -159,6 +147,7 @@ export function convertInstruction(
               this.instructions.push(
                 new ExternInstruction(this.getExternSymbol(toDblSig), true),
               );
+              doubleSrc = dblTmp;
             }
             const truncTmp = `__tcoerce_trunc_${this.nextAddress}`;
             this.variableAddresses.set(truncTmp, this.nextAddress++);
