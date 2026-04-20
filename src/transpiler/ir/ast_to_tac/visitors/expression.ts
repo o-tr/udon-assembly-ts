@@ -2308,24 +2308,20 @@ export function visitPropertyAccessExpression(
               }
               if (dispInstances.length > 0) usedErasedFallback = true;
             } else {
-              // Narrowing failed — force safe path. Pick the first
-              // candidate (by allInlineInstances insertion order) to
-              // produce a dispatch table rather than falling through
-              // to a raw PropertyGetInstruction that would generate an
-              // invalid EXTERN. Instances of other candidate classes
-              // will hit the miss path and receive the zero-init default.
-              const firstCandidate = candidateClasses.values().next()
-                .value as string;
-              // WARNING: mixed-class collections with this property will
-              // silently return zero-init defaults for non-first-candidate
-              // instances. Log at transpile time to aid debugging.
+              // Narrowing failed — include instances from ALL candidate
+              // classes so that the dispatch table handles any concrete
+              // class at runtime.  Instances whose class is not in
+              // candidateClasses will still miss the table and fall through
+              // to the zero-init miss path, but that is correct (they do
+              // not expose the property at all). Log at transpile time so
+              // developers can track mixed-class collections.
               this.warnAt(
                 node,
                 "D3DispatchFallback",
-                `D3 dispatch narrowing failed for property "${node.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), using "${firstCandidate}" only.`,
+                `D3 dispatch narrowing failed for property "${node.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
               );
               for (const [instId, info] of this.allInlineInstances) {
-                if (info.className === firstCandidate) {
+                if (candidateClasses.has(info.className)) {
                   dispInstances.push([instId, info]);
                 }
               }
