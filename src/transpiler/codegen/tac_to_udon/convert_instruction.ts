@@ -91,7 +91,11 @@ export function convertInstruction(
       let promotedType = leftType;
       if (isNullComparison) {
         promotedType = UdonType.Object;
-      } else if (!isShift && leftType !== rightType) {
+      } else if (isShift) {
+        // Shift operators always operate in the Int32 domain in Udon VM.
+        // Coerce both operands to Int32; result is also Int32.
+        promotedType = UdonType.Int32;
+      } else if (leftType !== rightType) {
         const leftIsNum = this.isNumericType(leftType);
         const rightIsNum = this.isNumericType(rightType);
         if (leftIsNum && rightIsNum) {
@@ -107,13 +111,14 @@ export function convertInstruction(
       }
 
       if (
-        !isShift &&
         this.isNumericType(leftType) &&
         this.isNumericType(rightType) &&
         promotedType !== UdonType.Object &&
         (promotedType !== leftType || promotedType !== rightType)
       ) {
-        // Helper: coerce a single operand, returning the push-able name
+        // Helper: coerce a single operand, returning the push-able name.
+        // For float→Int32 (shift operands), truncate toward zero first to
+        // match JavaScript's ToInt32 semantics (Convert.ToInt32 rounds).
         const coerceOperand = (
           operand: typeof binInst.left,
           srcType: string,
@@ -122,13 +127,57 @@ export function convertInstruction(
           const tmpName = `__tcoerce_${this.nextAddress}`;
           this.variableAddresses.set(tmpName, this.nextAddress++);
           this.variableTypes.set(tmpName, promotedType);
-          this.pushOperand(operand);
-          this.instructions.push(new PushInstruction(tmpName));
-          const sig = this.getConvertExternSignature(srcType, promotedType);
-          this.externSignatures.add(sig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(sig), true),
-          );
+          if (promotedType === UdonType.Int32 && this.isFloatType(srcType)) {
+            // Float→Int32: truncate to Double first, then convert.
+            let doubleSrc: string | number;
+            if (srcType === "Double") {
+              // Already Double — use the operand directly as truncation input.
+              doubleSrc = this.getOperandAddress(operand);
+            } else {
+              const dblTmp = `__tcoerce_dbl_${this.nextAddress}`;
+              this.variableAddresses.set(dblTmp, this.nextAddress++);
+              this.variableTypes.set(dblTmp, "Double");
+              this.pushOperand(operand);
+              this.instructions.push(new PushInstruction(dblTmp));
+              const toDblSig = this.getConvertExternSignature(
+                srcType,
+                "Double",
+              );
+              this.externSignatures.add(toDblSig);
+              this.instructions.push(
+                new ExternInstruction(this.getExternSymbol(toDblSig), true),
+              );
+              doubleSrc = dblTmp;
+            }
+            const truncTmp = `__tcoerce_trunc_${this.nextAddress}`;
+            this.variableAddresses.set(truncTmp, this.nextAddress++);
+            this.variableTypes.set(truncTmp, "Double");
+            this.instructions.push(new PushInstruction(doubleSrc));
+            this.instructions.push(new PushInstruction(truncTmp));
+            const truncSig = this.getTruncateExternSignature();
+            this.externSignatures.add(truncSig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(truncSig), true),
+            );
+            this.instructions.push(new PushInstruction(truncTmp));
+            this.instructions.push(new PushInstruction(tmpName));
+            const toIntSig = this.getConvertExternSignature(
+              "Double",
+              promotedType,
+            );
+            this.externSignatures.add(toIntSig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(toIntSig), true),
+            );
+          } else {
+            this.pushOperand(operand);
+            this.instructions.push(new PushInstruction(tmpName));
+            const sig = this.getConvertExternSignature(srcType, promotedType);
+            this.externSignatures.add(sig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(sig), true),
+            );
+          }
           return tmpName;
         };
 
@@ -146,28 +195,6 @@ export function convertInstruction(
         } else {
           this.pushOperand(binInst.right);
         }
-      } else if (isShift && rightType !== UdonType.Int32) {
-        // Shift operators require Int32 right operand; coerce if needed.
-        // NOTE: This block pushes [left, coerced-right] onto the stack,
-        // matching the operand layout expected by the needsResultConversion
-        // and non-conversion paths below.
-        this.pushOperand(binInst.left);
-        const shiftTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(shiftTmpName, this.nextAddress++);
-        this.variableTypes.set(shiftTmpName, UdonType.Int32);
-        this.pushOperand(binInst.right);
-        this.instructions.push(new PushInstruction(shiftTmpName));
-        const shiftSig = this.getConvertExternSignature(
-          rightType,
-          UdonType.Int32,
-        );
-        this.externSignatures.add(shiftSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(shiftSig), true),
-        );
-        // Re-push coerced Int32 value as the right operand for the binary op.
-        // Stack is now [left, shiftTmpName] — matching the plain-push path.
-        this.instructions.push(new PushInstruction(shiftTmpName));
       } else {
         this.pushOperand(binInst.left);
         this.pushOperand(binInst.right);

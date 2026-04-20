@@ -85,10 +85,11 @@ export function getExternForBinaryOp(
       throw new Error(`Unsupported binary operator: ${operator}`);
   }
 
-  const csharpType = udonTypeToCSharp(typeStr);
-  const csharpReturn = udonTypeToCSharp(returnType);
-  // Shift operators always take Int32 as the right (shift-amount) operand in C#
+  // Shift operators operate exclusively in the Int32 domain in Udon —
+  // SystemSingle.__op_RightShift__ does not exist in the VM.
   const isShift = operator === "<<" || operator === ">>";
+  const csharpType = isShift ? "System.Int32" : udonTypeToCSharp(typeStr);
+  const csharpReturn = isShift ? "System.Int32" : udonTypeToCSharp(returnType);
   const rightParamType = isShift ? "System.Int32" : csharpType;
   return createUdonExternSignature(
     methodName,

@@ -84,7 +84,7 @@ const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // D3 method dispatch inlines full method bodies per instance, so use a
 // stricter limit than property dispatch to avoid excessive code bloat.
-const MAX_D3_METHOD_DISPATCH_CANDIDATES = 20;
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 50;
 
 /**
  * Build a fallback IPC method layout from interface metadata when the

@@ -1111,6 +1111,42 @@ function emitInlinePropertyInitializersForClass(
   classNode: ClassDeclarationNode,
   state: InlineInitializerState,
 ): void {
+  // For inline instances, emit a per-instance once-flag guard so that
+  // re-entering from a different inline context (a fresh emittedClassNames set)
+  // does not re-run initializers and wipe already-populated container fields
+  // (e.g. a DataDictionary filled in the constructor body).
+  let propInitSkipLabel: TACOperand | null = null;
+  if (state.kind === "inline") {
+    // Include classNode.name so base and derived classes sharing the same
+    // instancePrefix each get an independent once-flag. Without this, the
+    // base-class guard (set to 1 on first run) would silently suppress derived-
+    // class initializers in subsequent calls from the same inline context.
+    const initedVar = createVariable(
+      `${state.instancePrefix}__${classNode.name}__inited`,
+      PrimitiveTypes.int32,
+    );
+    const notYetInited = converter.newTemp(PrimitiveTypes.boolean);
+    propInitSkipLabel = converter.newLabel("prop_init_skip");
+    converter.emit(
+      new BinaryOpInstruction(
+        notYetInited,
+        initedVar,
+        "==",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+    );
+    // ifFalse notYetInited → jumps when already initialized, skipping the block
+    converter.emit(
+      new ConditionalJumpInstruction(notYetInited, propInitSkipLabel),
+    );
+    converter.emit(
+      new AssignmentInstruction(
+        initedVar,
+        createConstant(1, PrimitiveTypes.int32),
+      ),
+    );
+  }
+
   for (const prop of classNode.properties) {
     if (prop.isStatic || prop.isGetter) continue;
 
@@ -1180,6 +1216,10 @@ function emitInlinePropertyInitializersForClass(
     const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
     converter.emit(new AssignmentInstruction(propVar, coerced));
     converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
+  }
+
+  if (propInitSkipLabel !== null) {
+    converter.emit(new LabelInstruction(propInitSkipLabel));
   }
 }
 
@@ -1442,6 +1482,12 @@ export function visitInlineConstructor(
   this.currentInlineConstructorClassName = className;
   this.currentThisOverride = null;
   this.currentInlineBaseClass = classNode.baseClass ?? undefined;
+  // Mark this prefix as under construction so that field reads inside the
+  // constructor body and any methods called from it use the scratch variable
+  // (not the DataList, which isn't populated until the epilogue below).
+  if (isSoA) {
+    this.soaConstructionPrefixes.add(instancePrefix);
+  }
   try {
     if (classNode.constructor) {
       this.symbolTable.enterScope();
@@ -1484,10 +1530,17 @@ export function visitInlineConstructor(
     this.currentThisOverride = previousThisOverride;
     this.currentInlineBaseClass = previousBaseClass;
     this.currentInlineInitializerState = previousInitializerState;
+    // Clean up even on error: a prefix left in the set would cause subsequent
+    // reads on this instance to use the scratch variable instead of the DataList.
+    if (isSoA) {
+      this.soaConstructionPrefixes.delete(instancePrefix);
+    }
   }
 
   // SoA epilogue: snapshot scratch-variable values into per-field DataLists
   // and increment the counter so the next construction gets a fresh index.
+  // Runs only on success (outside finally) because DataList slot alignment
+  // must not be corrupted by a partially-constructed instance.
   if (isSoA) {
     const fieldLists = this.soaFieldLists.get(className);
     if (fieldLists) {

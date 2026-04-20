@@ -282,6 +282,13 @@ export class ASTToTACConverter {
   soaCounterVars: Map<string, VariableOperand> = new Map();
   /** Tracks whether SoA DataLists + counter have been initialized for each class. */
   soaInitialized: Set<string> = new Set();
+  /**
+   * Tracks SoA instance prefixes currently being constructed (between the start
+   * of visitInlineConstructor and the SoA epilogue). Used to distinguish
+   * in-constructor field reads (which must use the scratch variable) from
+   * post-construction reads (which must go through the per-field DataList).
+   */
+  soaConstructionPrefixes: Set<string> = new Set();
   // Start at 1: Udon zero-initialises heap slots, so an uninitialised
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
@@ -530,6 +537,7 @@ export class ASTToTACConverter {
     this.soaFieldTypes = new Map();
     this.soaCounterVars = new Map();
     this.soaInitialized = new Set();
+    this.soaConstructionPrefixes = new Set();
     this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
     this.methodBodyInstanceCache = new Map();
