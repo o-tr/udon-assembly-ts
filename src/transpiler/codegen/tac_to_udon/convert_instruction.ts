@@ -91,7 +91,11 @@ export function convertInstruction(
       let promotedType = leftType;
       if (isNullComparison) {
         promotedType = UdonType.Object;
-      } else if (!isShift && leftType !== rightType) {
+      } else if (isShift) {
+        // Shift operators always operate in the Int32 domain in Udon VM.
+        // Coerce both operands to Int32; result is also Int32.
+        promotedType = UdonType.Int32;
+      } else if (leftType !== rightType) {
         const leftIsNum = this.isNumericType(leftType);
         const rightIsNum = this.isNumericType(rightType);
         if (leftIsNum && rightIsNum) {
@@ -107,7 +111,6 @@ export function convertInstruction(
       }
 
       if (
-        !isShift &&
         this.isNumericType(leftType) &&
         this.isNumericType(rightType) &&
         promotedType !== UdonType.Object &&
@@ -146,28 +149,6 @@ export function convertInstruction(
         } else {
           this.pushOperand(binInst.right);
         }
-      } else if (isShift && rightType !== UdonType.Int32) {
-        // Shift operators require Int32 right operand; coerce if needed.
-        // NOTE: This block pushes [left, coerced-right] onto the stack,
-        // matching the operand layout expected by the needsResultConversion
-        // and non-conversion paths below.
-        this.pushOperand(binInst.left);
-        const shiftTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(shiftTmpName, this.nextAddress++);
-        this.variableTypes.set(shiftTmpName, UdonType.Int32);
-        this.pushOperand(binInst.right);
-        this.instructions.push(new PushInstruction(shiftTmpName));
-        const shiftSig = this.getConvertExternSignature(
-          rightType,
-          UdonType.Int32,
-        );
-        this.externSignatures.add(shiftSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(shiftSig), true),
-        );
-        // Re-push coerced Int32 value as the right operand for the binary op.
-        // Stack is now [left, shiftTmpName] — matching the plain-push path.
-        this.instructions.push(new PushInstruction(shiftTmpName));
       } else {
         this.pushOperand(binInst.left);
         this.pushOperand(binInst.right);

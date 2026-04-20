@@ -311,4 +311,55 @@ describe("inline remaining bugs", () => {
       expect(result.tac).toContain("__inst_Child_0_name");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Bug B: SoA field reads in inlined method bodies must use DataList, not scratch
+  // When multiple SoA instances are created (construction inside a loop triggers
+  // SoA), the scratch variable is reused on each construction. A field read on
+  // an instance via an inlined method must go through the per-field DataList
+  // indexed by the instance handle, not the scratch which holds only the
+  // most-recently-constructed instance's data.
+  // ---------------------------------------------------------------------------
+  describe("SoA DataDictionary field read in inlined method body", () => {
+    it("this.field inside inlined method uses DataList, not scratch variable", () => {
+      // Registry is constructed inside a loop → SoA. The `data` field DataList
+      // is __soa_Registry_data. After multiple iterations, reading this.data
+      // inside getResult() must go through DataList[handle], not the scratch.
+      const source = `
+        class Registry {
+          public data: DataDictionary;
+          constructor() {
+            this.data = new DataDictionary();
+          }
+          static build(): Registry {
+            return new Registry();
+          }
+          getResult(key: DataToken): DataToken {
+            return this.data.get_Item(key);
+          }
+        }
+        class Main {
+          Start(): void {
+            for (let i: number = 0; i < 3; i++) {
+              const reg = Registry.build();
+              Debug.Log(reg.getResult(new DataToken("key")));
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Registry must be treated as SoA (constructed inside the loop)
+      expect(result.uasm).toContain("__soa_Registry_data:");
+      // The inlined getResult() body must emit a DataList read for this.data,
+      // not a bare PUSH of __inst_Registry_N_data (the scratch variable).
+      expect(result.tac).toContain("__soa_Registry_data");
+      // The TAC must contain the bounded DataList.get_Item pattern emitted by
+      // emitBoundedDataListGetItem for the field read.
+      const lines = result.tac.split("\n");
+      const soaFieldRead = lines.filter(
+        (l) => l.includes("__soa_Registry_data") && l.includes("get_Item"),
+      );
+      expect(soaFieldRead.length).toBeGreaterThan(0);
+    });
+  });
 });

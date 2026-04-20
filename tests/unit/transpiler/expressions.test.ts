@@ -3,6 +3,7 @@ import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/ex
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 describe("expression lowering", () => {
   beforeAll(() => {
@@ -42,6 +43,26 @@ describe("expression lowering", () => {
         inst.toString().includes("=="),
     );
     expect(equalityOp).toBeDefined();
+  });
+
+  it("generates Int32 extern signature for shift operators on number type", () => {
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const source = `
+      @UdonBehaviour()
+      class ShiftTest extends UdonSharpBehaviour {
+        Start(): void {
+          let x: number = 8;
+          let y: number = x >> 1;
+          let z: number = x << 2;
+        }
+      }
+    `;
+    const { uasm } = transpiler.transpile(source);
+    // Shift on number (SystemSingle) must use Int32 domain, never SystemSingle
+    expect(uasm).not.toContain("SystemSingle.__op_RightShift__");
+    expect(uasm).not.toContain("SystemSingle.__op_LeftShift__");
+    expect(uasm).toContain("op_RightShift__SystemInt32_SystemInt32__SystemInt32");
+    expect(uasm).toContain("op_LeftShift__SystemInt32_SystemInt32__SystemInt32");
   });
 
   it("handles template expressions", () => {

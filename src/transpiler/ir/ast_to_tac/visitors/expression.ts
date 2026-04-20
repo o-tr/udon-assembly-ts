@@ -110,6 +110,7 @@ function tryMapInlinePropertyWithConcreteFallback(
   instanceInfo: { prefix: string; className: string },
   property: string,
 ): TACOperand | undefined {
+  // Try getter first (getters have no DataList entry; they must inline their body).
   const primaryGetter = tryInlineGetter(
     converter,
     instanceInfo.className,
@@ -117,6 +118,33 @@ function tryMapInlinePropertyWithConcreteFallback(
     property,
   );
   if (primaryGetter !== undefined) return primaryGetter;
+
+  // SoA path: after construction, field reads must go through the per-field
+  // DataList indexed by the instance handle, not the scratch variable.
+  // During construction the prefix is in soaConstructionPrefixes; at that
+  // point the DataList slot is not yet populated, so we fall through to scratch.
+  const soaClassName = resolveConcreteClassName(converter, instanceInfo);
+  if (
+    !converter.soaConstructionPrefixes.has(instanceInfo.prefix) &&
+    converter.soaClasses.has(soaClassName) &&
+    converter.soaFieldLists.has(soaClassName)
+  ) {
+    const fieldLists = converter.soaFieldLists.get(soaClassName)!;
+    const fieldList = fieldLists.get(property);
+    if (fieldList) {
+      const hdlVar = createVariable(
+        `${instanceInfo.prefix}__handle`,
+        PrimitiveTypes.int32,
+      );
+      const token = converter.newTemp(ExternTypes.dataToken);
+      emitBoundedDataListGetItem(converter, fieldList, hdlVar, token);
+      const resolved = resolveClassProperty(converter, soaClassName, property);
+      const fieldType = resolved?.prop.type ?? ObjectType;
+      return converter.unwrapDataToken(token, fieldType);
+    }
+    // Property has no DataList (e.g. computed/not collected) — fall through.
+  }
+
   const mapped = converter.mapInlineProperty(
     instanceInfo.className,
     instanceInfo.prefix,
@@ -124,17 +152,16 @@ function tryMapInlinePropertyWithConcreteFallback(
   );
   if (mapped) return mapped;
 
-  const concreteClass = resolveConcreteClassName(converter, instanceInfo);
-  if (concreteClass !== instanceInfo.className) {
+  if (soaClassName !== instanceInfo.className) {
     const concreteGetter = tryInlineGetter(
       converter,
-      concreteClass,
+      soaClassName,
       instanceInfo.prefix,
       property,
     );
     if (concreteGetter !== undefined) return concreteGetter;
     return converter.mapInlineProperty(
-      concreteClass,
+      soaClassName,
       instanceInfo.prefix,
       property,
     );
@@ -1903,16 +1930,39 @@ export function visitPropertyAccessExpression(
       this.currentInlineContext &&
       !this.currentThisOverride
     ) {
+      const { className, instancePrefix } = this.currentInlineContext;
       const getterResult = tryInlineGetter(
         this,
-        this.currentInlineContext.className,
-        this.currentInlineContext.instancePrefix,
+        className,
+        instancePrefix,
         node.property,
       );
       if (getterResult !== undefined) return getterResult;
+      // SoA path: inside an inlined METHOD body (not constructor), reads must
+      // go through the per-field DataList. Inside the constructor body the
+      // prefix is in soaConstructionPrefixes, so we fall through to scratch.
+      if (
+        !this.soaConstructionPrefixes.has(instancePrefix) &&
+        this.soaClasses.has(className) &&
+        this.soaFieldLists.has(className)
+      ) {
+        const fieldLists = this.soaFieldLists.get(className)!;
+        const fieldList = fieldLists.get(node.property);
+        if (fieldList) {
+          const hdlVar = createVariable(
+            `${instancePrefix}__handle`,
+            PrimitiveTypes.int32,
+          );
+          const token = this.newTemp(ExternTypes.dataToken);
+          emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
+          const resolved = resolveClassProperty(this, className, node.property);
+          const fieldType = resolved?.prop.type ?? ObjectType;
+          return this.unwrapDataToken(token, fieldType);
+        }
+      }
       const mapped = this.mapInlineProperty(
-        this.currentInlineContext.className,
-        this.currentInlineContext.instancePrefix,
+        className,
+        instancePrefix,
         node.property,
       );
       if (mapped) return mapped;
