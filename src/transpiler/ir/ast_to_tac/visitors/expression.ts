@@ -97,6 +97,38 @@ import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
+ * Emit a DataList-indexed read for an SoA field, or return undefined if the
+ * field is not in the per-field DataList (e.g. during construction, or for
+ * computed fields that were not collected into a DataList).
+ */
+function tryReadSoAField(
+  converter: ASTToTACConverter,
+  instancePrefix: string,
+  className: string,
+  property: string,
+): TACOperand | undefined {
+  if (
+    converter.soaConstructionPrefixes.has(instancePrefix) ||
+    !converter.soaClasses.has(className) ||
+    !converter.soaFieldLists.has(className)
+  )
+    return undefined;
+  const fieldLists = converter.soaFieldLists.get(className);
+  if (!fieldLists) return undefined;
+  const fieldList = fieldLists.get(property);
+  if (!fieldList) return undefined;
+  const hdlVar = createVariable(
+    `${instancePrefix}__handle`,
+    PrimitiveTypes.int32,
+  );
+  const token = converter.newTemp(ExternTypes.dataToken);
+  emitBoundedDataListGetItem(converter, fieldList, hdlVar, token);
+  const resolved = resolveClassProperty(converter, className, property);
+  const fieldType = resolved?.prop.type ?? ObjectType;
+  return converter.unwrapDataToken(token, fieldType);
+}
+
+/**
  * Try to map an inline property, falling back to concrete class resolution
  * when the className is an interface/type alias.
  *
@@ -119,31 +151,14 @@ function tryMapInlinePropertyWithConcreteFallback(
   );
   if (primaryGetter !== undefined) return primaryGetter;
 
-  // SoA path: after construction, field reads must go through the per-field
-  // DataList indexed by the instance handle, not the scratch variable.
-  // During construction the prefix is in soaConstructionPrefixes; at that
-  // point the DataList slot is not yet populated, so we fall through to scratch.
   const soaClassName = resolveConcreteClassName(converter, instanceInfo);
-  if (
-    !converter.soaConstructionPrefixes.has(instanceInfo.prefix) &&
-    converter.soaClasses.has(soaClassName) &&
-    converter.soaFieldLists.has(soaClassName)
-  ) {
-    const fieldLists = converter.soaFieldLists.get(soaClassName)!;
-    const fieldList = fieldLists.get(property);
-    if (fieldList) {
-      const hdlVar = createVariable(
-        `${instanceInfo.prefix}__handle`,
-        PrimitiveTypes.int32,
-      );
-      const token = converter.newTemp(ExternTypes.dataToken);
-      emitBoundedDataListGetItem(converter, fieldList, hdlVar, token);
-      const resolved = resolveClassProperty(converter, soaClassName, property);
-      const fieldType = resolved?.prop.type ?? ObjectType;
-      return converter.unwrapDataToken(token, fieldType);
-    }
-    // Property has no DataList (e.g. computed/not collected) — fall through.
-  }
+  const soaResult = tryReadSoAField(
+    converter,
+    instanceInfo.prefix,
+    soaClassName,
+    property,
+  );
+  if (soaResult !== undefined) return soaResult;
 
   const mapped = converter.mapInlineProperty(
     instanceInfo.className,
@@ -1939,27 +1954,16 @@ export function visitPropertyAccessExpression(
       );
       if (getterResult !== undefined) return getterResult;
       // SoA path: inside an inlined METHOD body (not constructor), reads must
-      // go through the per-field DataList. Inside the constructor body the
-      // prefix is in soaConstructionPrefixes, so we fall through to scratch.
-      if (
-        !this.soaConstructionPrefixes.has(instancePrefix) &&
-        this.soaClasses.has(className) &&
-        this.soaFieldLists.has(className)
-      ) {
-        const fieldLists = this.soaFieldLists.get(className)!;
-        const fieldList = fieldLists.get(node.property);
-        if (fieldList) {
-          const hdlVar = createVariable(
-            `${instancePrefix}__handle`,
-            PrimitiveTypes.int32,
-          );
-          const token = this.newTemp(ExternTypes.dataToken);
-          emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
-          const resolved = resolveClassProperty(this, className, node.property);
-          const fieldType = resolved?.prop.type ?? ObjectType;
-          return this.unwrapDataToken(token, fieldType);
-        }
-      }
+      // go through the per-field DataList. During construction the prefix is
+      // in soaConstructionPrefixes, so tryReadSoAField returns undefined and
+      // we fall through to the scratch variable.
+      const soaFieldResult = tryReadSoAField(
+        this,
+        instancePrefix,
+        className,
+        node.property,
+      );
+      if (soaFieldResult !== undefined) return soaFieldResult;
       const mapped = this.mapInlineProperty(
         className,
         instancePrefix,

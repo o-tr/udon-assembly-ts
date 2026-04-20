@@ -116,7 +116,9 @@ export function convertInstruction(
         promotedType !== UdonType.Object &&
         (promotedType !== leftType || promotedType !== rightType)
       ) {
-        // Helper: coerce a single operand, returning the push-able name
+        // Helper: coerce a single operand, returning the push-able name.
+        // For float→Int32 (shift operands), truncate toward zero first to
+        // match JavaScript's ToInt32 semantics (Convert.ToInt32 rounds).
         const coerceOperand = (
           operand: typeof binInst.left,
           srcType: string,
@@ -125,13 +127,68 @@ export function convertInstruction(
           const tmpName = `__tcoerce_${this.nextAddress}`;
           this.variableAddresses.set(tmpName, this.nextAddress++);
           this.variableTypes.set(tmpName, promotedType);
-          this.pushOperand(operand);
-          this.instructions.push(new PushInstruction(tmpName));
-          const sig = this.getConvertExternSignature(srcType, promotedType);
-          this.externSignatures.add(sig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(sig), true),
-          );
+          if (promotedType === UdonType.Int32 && this.isFloatType(srcType)) {
+            // Float→Int32: truncate to Double first, then convert.
+            let doubleSrc: string;
+            if (srcType === "Single") {
+              const dblTmp = `__tcoerce_dbl_${this.nextAddress}`;
+              this.variableAddresses.set(dblTmp, this.nextAddress++);
+              this.variableTypes.set(dblTmp, "Double");
+              this.pushOperand(operand);
+              this.instructions.push(new PushInstruction(dblTmp));
+              const toDblSig = this.getConvertExternSignature(
+                "Single",
+                "Double",
+              );
+              this.externSignatures.add(toDblSig);
+              this.instructions.push(
+                new ExternInstruction(this.getExternSymbol(toDblSig), true),
+              );
+              doubleSrc = dblTmp;
+            } else {
+              doubleSrc = `__tcoerce_dbl_${this.nextAddress}`;
+              this.variableAddresses.set(doubleSrc, this.nextAddress++);
+              this.variableTypes.set(doubleSrc, "Double");
+              this.pushOperand(operand);
+              this.instructions.push(new PushInstruction(doubleSrc));
+              const toDblSig = this.getConvertExternSignature(
+                srcType,
+                "Double",
+              );
+              this.externSignatures.add(toDblSig);
+              this.instructions.push(
+                new ExternInstruction(this.getExternSymbol(toDblSig), true),
+              );
+            }
+            const truncTmp = `__tcoerce_trunc_${this.nextAddress}`;
+            this.variableAddresses.set(truncTmp, this.nextAddress++);
+            this.variableTypes.set(truncTmp, "Double");
+            this.instructions.push(new PushInstruction(doubleSrc));
+            this.instructions.push(new PushInstruction(truncTmp));
+            const truncSig = this.getTruncateExternSignature();
+            this.externSignatures.add(truncSig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(truncSig), true),
+            );
+            this.instructions.push(new PushInstruction(truncTmp));
+            this.instructions.push(new PushInstruction(tmpName));
+            const toIntSig = this.getConvertExternSignature(
+              "Double",
+              promotedType,
+            );
+            this.externSignatures.add(toIntSig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(toIntSig), true),
+            );
+          } else {
+            this.pushOperand(operand);
+            this.instructions.push(new PushInstruction(tmpName));
+            const sig = this.getConvertExternSignature(srcType, promotedType);
+            this.externSignatures.add(sig);
+            this.instructions.push(
+              new ExternInstruction(this.getExternSymbol(sig), true),
+            );
+          }
           return tmpName;
         };
 

@@ -138,4 +138,57 @@ describe("registry double-init guard", () => {
     const getLines = lines.filter((l) => l.includes("GetValue"));
     expect(getLines.length).toBeGreaterThan(0);
   });
+
+  it("derived class initializers run independently from base class initializers", () => {
+    // Regression for per-class __inited guard: base and derived share the same
+    // instancePrefix. Without a per-class flag, the base-class __inited=1 would
+    // suppress the derived-class field initializers on subsequent calls.
+    const source = `
+      class Base {
+        baseData: Map<string, number> = new Map<string, number>();
+        constructor() {
+          this.baseData.set("base", 10);
+        }
+      }
+      class Derived extends Base {
+        derivedData: Map<string, number> = new Map<string, number>();
+        constructor() {
+          super();
+          this.derivedData.set("derived", 20);
+        }
+      }
+      class Main {
+        Start(): void {
+          const d = new Derived();
+          const d2 = new Derived();
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+    const lines = result.tac.split("\n");
+
+    // Both Base and Derived have DataDictionary fields; each ctor must be guarded.
+    const dictCtorIdxs = lines
+      .map((l, i) => ({ line: l, idx: i }))
+      .filter(({ line }) => line.includes("DataDictionary.__ctor__"))
+      .map(({ idx }) => idx);
+    expect(dictCtorIdxs.length).toBeGreaterThan(0);
+
+    for (const ctorIdx of dictCtorIdxs) {
+      const guardLines = lines.slice(Math.max(0, ctorIdx - 5), ctorIdx);
+      const hasGuard = guardLines.some(
+        (l) => l.includes("ifFalse") && l.includes("prop_init_skip"),
+      );
+      expect(hasGuard).toBe(true);
+    }
+
+    // Both Base and Derived guard vars must appear and be distinct.
+    const initedVars = lines.filter((l) => l.includes("__inited"));
+    const baseVars = initedVars.filter((l) => l.includes("__Base__inited"));
+    const derivedVars = initedVars.filter((l) =>
+      l.includes("__Derived__inited"),
+    );
+    expect(baseVars.length).toBeGreaterThan(0);
+    expect(derivedVars.length).toBeGreaterThan(0);
+  });
 });

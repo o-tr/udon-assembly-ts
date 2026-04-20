@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
-import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction";
-import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
+import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction.js";
 
 describe("expression lowering", () => {
   beforeAll(() => {
@@ -47,11 +47,13 @@ describe("expression lowering", () => {
 
   it("generates Int32 extern signature for shift operators on number type", () => {
     const transpiler = new TypeScriptToUdonTranspiler();
+    // Use a fractional literal so the float→Int32 truncation path is exercised
+    // (Convert.ToInt32 rounds halves; Math.Truncate gives JS ToInt32 semantics).
     const source = `
       @UdonBehaviour()
       class ShiftTest extends UdonSharpBehaviour {
         Start(): void {
-          let x: number = 8;
+          let x: number = 1.9;
           let y: number = x >> 1;
           let z: number = x << 2;
         }
@@ -61,8 +63,12 @@ describe("expression lowering", () => {
     // Shift on number (SystemSingle) must use Int32 domain, never SystemSingle
     expect(uasm).not.toContain("SystemSingle.__op_RightShift__");
     expect(uasm).not.toContain("SystemSingle.__op_LeftShift__");
-    expect(uasm).toContain("op_RightShift__SystemInt32_SystemInt32__SystemInt32");
-    expect(uasm).toContain("op_LeftShift__SystemInt32_SystemInt32__SystemInt32");
+    const rightShiftSig = "op_RightShift__SystemInt32_SystemInt32__SystemInt32";
+    const leftShiftSig = "op_LeftShift__SystemInt32_SystemInt32__SystemInt32";
+    expect(uasm).toContain(rightShiftSig);
+    expect(uasm).toContain(leftShiftSig);
+    // Float→Int32 coercion must truncate, not round (Math.Truncate extern present)
+    expect(uasm).toContain("__Truncate__");
   });
 
   it("handles template expressions", () => {
