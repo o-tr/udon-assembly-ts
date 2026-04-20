@@ -1,6 +1,7 @@
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -709,6 +710,12 @@ export function unwrapDataToken(
   let property = "Reference";
   if (isInlineHandleType(this, targetType)) {
     property = "Int";
+    // InterfaceTypeSymbol maps to %SystemObject in newTemp, but
+    // DataToken.__get_Int__ requires a %SystemInt32 output slot.
+    // Upgrade so the result temp has the correct slot type.
+    if (targetType instanceof InterfaceTypeSymbol) {
+      targetType = new ClassTypeSymbol(targetType.name, UdonType.Int32);
+    }
   } else {
     switch (targetType.udonType) {
       case UdonType.String:
