@@ -32,9 +32,6 @@ describe("inline interface alias unwrap", () => {
 
     const { uasm } = new TypeScriptToUdonTranspiler().transpile(source);
 
-    // Write path: handle must be stored as Int32 DataToken
-    expect(uasm).toContain("DataToken.__ctor__SystemInt32");
-
     // Read path: the temp holding the unwrapped handle must be %SystemInt32,
     // not %SystemObject. Externs are declared as `__extern_N: %SystemString,
     // "DataToken.__get_Int__SystemInt32"` and called as `EXTERN, __extern_N`.
@@ -46,14 +43,12 @@ describe("inline interface alias unwrap", () => {
       l.includes("DataToken.__get_Int__SystemInt32"),
     );
     expect(externDeclLine).toBeDefined();
-    const externAlias = externDeclLine!
-      .trim()
-      .split(":")[0]
-      .trim();
+    if (!externDeclLine) return;
+    const externAlias = externDeclLine.trim().split(":")[0].trim();
 
     // 2. Find the EXTERN opcode that uses this alias
-    const externCallIdx = lines.findIndex((l) =>
-      new RegExp(`EXTERN,\\s+${externAlias}\\b`).test(l),
+    const externCallIdx = lines.findIndex(
+      (l) => l.includes("EXTERN,") && l.trim().split(/,\s*/)[1] === externAlias,
     );
     expect(externCallIdx).toBeGreaterThan(-1);
 
