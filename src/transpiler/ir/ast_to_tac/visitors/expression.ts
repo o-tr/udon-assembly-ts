@@ -2282,28 +2282,31 @@ export function visitPropertyAccessExpression(
             const astType = resolveTypeFromNode(this, node.object);
             const astName = astType?.name;
             let narrowedClass: string | undefined;
+            // Implementors of the declared interface that appear in
+            // candidateClasses.  Populated only when astName is an interface;
+            // hoisted here so the else-if branch below can reference it.
+            let matchedImpls: string[] = [];
             if (astName) {
               if (candidateClasses.has(astName)) {
                 narrowedClass = astName;
               } else {
-                // AST type may be an interface — check implementors.
-                // Collect ALL implementors that appear in candidateClasses:
-                // if exactly one matches, narrowing succeeds; if two or more
-                // match, leave narrowedClass undefined so the else branch below
-                // includes all candidates (same fix as the !narrowedClass path).
+                // AST type may be an interface — collect ALL implementors
+                // that appear in candidateClasses so we can prefer the
+                // semantically correct subset over the full property-match set.
                 const implNames = this.classRegistry
                   ? this.classRegistry
                       .getImplementorsOfInterface(astName)
                       .map((i) => i.name)
                   : [];
-                const matchedImpls = implNames.filter((impl) =>
+                matchedImpls = implNames.filter((impl) =>
                   candidateClasses.has(impl),
                 );
                 if (matchedImpls.length === 1) {
                   narrowedClass = matchedImpls[0];
                 }
-                // matchedImpls.length > 1: narrowedClass stays undefined,
-                // falling through to the else branch (all-candidates dispatch).
+                // matchedImpls.length > 1 → narrowedClass stays undefined;
+                // the else-if branch dispatches exactly the matched set.
+                // matchedImpls.length === 0 → falls to the final else branch.
               }
             }
             if (narrowedClass) {
@@ -2313,13 +2316,23 @@ export function visitPropertyAccessExpression(
                 }
               }
               if (dispInstances.length > 0) usedErasedFallback = true;
+            } else if (matchedImpls.length > 1) {
+              // The declared interface has multiple implementors in
+              // candidateClasses.  Restrict dispatch to exactly those
+              // implementors rather than the full candidateClasses set
+              // (which may include unrelated classes that share only the
+              // property name, not the interface).
+              const matchedImplSet = new Set(matchedImpls);
+              for (const [instId, info] of this.allInlineInstances) {
+                if (matchedImplSet.has(info.className)) {
+                  dispInstances.push([instId, info]);
+                }
+              }
+              if (dispInstances.length > 0) usedErasedFallback = true;
             } else {
-              // Narrowing failed — include instances from ALL candidate
-              // classes so that the dispatch table handles any concrete
-              // class at runtime.  Instances whose class is not in
-              // candidateClasses will still miss the table and fall through
-              // to the zero-init miss path, but that is correct (they do
-              // not expose the property at all). Log at transpile time so
+              // Narrowing failed entirely — include instances from ALL
+              // candidate classes so the dispatch table handles any
+              // concrete class at runtime.  Log at transpile time so
               // developers can track mixed-class collections.
               this.warnAt(
                 node,
@@ -2334,6 +2347,13 @@ export function visitPropertyAccessExpression(
               if (dispInstances.length > 0) usedErasedFallback = true;
             }
           }
+        }
+        if (usedErasedFallback && dispInstances.length > 100) {
+          this.warnAt(
+            node,
+            "D3DispatchFallback",
+            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: 100) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
+          );
         }
         if (dispInstances.length > 0 && dispInstances.length <= 100) {
           let untrackedPropType: TypeSymbol | undefined;
@@ -2490,8 +2510,14 @@ export function visitPropertyAccessExpression(
                 // can occur in the multi-class fallback (D3DispatchFallback)
                 // where dispInstances may contain instances from several
                 // candidate classes; an arm from one class may not find its
-                // property mapping in another class's prefix layout. The arm
-                // is silently skipped (dispResult retains its zero-init default).
+                // property mapping in another class's prefix layout.
+                else {
+                  this.warnAt(
+                    node,
+                    "D3DispatchFallback",
+                    `D3 dispatch arm for instance ${instId} (class "${info.className}") could not map property "${node.property}" — arm emits no copy; dispResult retains zero-init default.`,
+                  );
+                }
               }
               this.emit(new UnconditionalJumpInstruction(dispEnd));
               this.emit(new LabelInstruction(dispNext));
