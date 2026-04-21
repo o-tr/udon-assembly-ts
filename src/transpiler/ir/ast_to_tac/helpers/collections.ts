@@ -180,13 +180,13 @@ export function emitDataListGetRangeLoop(
   converter.emit(
     new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
   );
+  // Snapshot count before loop to guard against mutation during iteration
+  const countVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new AssignmentInstruction(countVar, count));
   const loopStart = converter.newLabel("getrange_start");
   const loopEnd = converter.newLabel("getrange_end");
 
   converter.emit(new LabelInstruction(loopStart));
-  // Snapshot count to guard against mutation during loop
-  const countVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.emit(new AssignmentInstruction(countVar, count));
   const cond = converter.newTemp(PrimitiveTypes.boolean);
   converter.emit(new BinaryOpInstruction(cond, idx, "<", countVar));
   converter.emit(new ConditionalJumpInstruction(cond, loopEnd));
