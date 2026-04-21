@@ -952,9 +952,17 @@ export function visitBinaryExpression(
   if (node.operator === ">>>") {
     const left = this.visitExpression(node.left);
     const right = this.visitExpression(node.right);
-    const resultType = this.getOperandType(left);
+    // Narrow float left operand to Int32 — Udon VM has no shift EXTERNs on Single.
+    let narrowedLeft = left;
+    const leftType = this.getOperandType(left);
+    if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
+      const cast = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(cast, left));
+      narrowedLeft = cast;
+    }
+    const resultType = this.getOperandType(narrowedLeft);
     const result = this.newTemp(resultType);
-    this.emit(new BinaryOpInstruction(result, left, ">>", right));
+    this.emit(new BinaryOpInstruction(result, narrowedLeft, ">>", right));
     return result;
   }
   if (node.operator === "&&") {
@@ -1078,14 +1086,25 @@ export function visitBinaryExpression(
 
   const isBitwise =
     node.operator === "|" || node.operator === "&" || node.operator === "^";
-  const isShift = node.operator === "<<" || node.operator === ">>";
+  const isShift =
+    node.operator === "<<" || node.operator === ">>" || node.operator === ">>>";
 
   if (isBitwise) {
     // Narrow to Int32 for bitwise ops — Udon VM has no float bitwise EXTERNs.
     const n = narrowToInt32ForBitwise(this, left, right);
     left = n.left;
     right = n.right;
-  } else if (!isShift) {
+  } else if (isShift) {
+    // Narrow to Int32 for shift ops — Udon VM requires integer operands for
+    // shift EXTERNs (e.g. SystemInt32.__op_RightShift__). Float left operands
+    // produce invalid signatures like SystemSingle.__op_RightShift__.
+    const leftType = this.getOperandType(left);
+    if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
+      const cast = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(cast, left));
+      left = cast;
+    }
+  } else {
     // Widen narrower operand when both are numeric and types differ (skip shifts).
     const w = widenNumericOperands(this, left, right);
     left = w.left;

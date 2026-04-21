@@ -50,6 +50,7 @@ import {
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { resolveTypeFromNode } from "../visitors/expression.js";
+import { emitDataListGetRangeLoop } from "./collections.js";
 import {
   createSoaSentinelValue,
   isInlineHandleType,
@@ -368,7 +369,7 @@ export function assignToTarget(
         }
       }
     }
-    // Array length setter: array.length = n → array = array.GetRange(0, n)
+    // Array length setter: array.length = n → loop-based copy of first n elements
     const objectType = this.getOperandType(object);
     if (
       propAccess.property === "length" &&
@@ -376,7 +377,6 @@ export function assignToTarget(
         objectType instanceof DataListTypeSymbol) &&
       object.kind === TACOperandKind.Variable
     ) {
-      const sliced = this.newTemp(objectType);
       let coercedValue = value;
       const valueType = this.getOperandType(value);
       if (needsInt32IndexCoercion(valueType.udonType)) {
@@ -384,11 +384,18 @@ export function assignToTarget(
         this.emit(new CastInstruction(intValue, value));
         coercedValue = intValue;
       }
-      this.emit(
-        new MethodCallInstruction(sliced, object, "GetRange", [
-          createConstant(0, PrimitiveTypes.int32),
-          coercedValue,
-        ]),
+      const elemType =
+        objectType instanceof ArrayTypeSymbol
+          ? objectType.elementType
+          : objectType instanceof DataListTypeSymbol
+            ? objectType.elementType
+            : ObjectType;
+      const sliced = emitDataListGetRangeLoop(
+        this,
+        object,
+        createConstant(0, PrimitiveTypes.int32),
+        coercedValue,
+        elemType,
       );
       this.emit(new CopyInstruction(object as VariableOperand, sliced));
       return value;
