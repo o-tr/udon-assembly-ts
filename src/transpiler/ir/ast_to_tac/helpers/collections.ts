@@ -175,7 +175,7 @@ export function emitDataListGetRangeLoop(
   );
   converter.emit(new CallInstruction(result, listCtorSig, []));
 
-  // Loop: for i in 0..count, copy source.get_Item(start + i) → result.Add(token)
+  // Loop: for i in 0..countVar, copy source.get_Item(start + i) → result.Add(token)
   const idx = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(
     new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
@@ -184,8 +184,11 @@ export function emitDataListGetRangeLoop(
   const loopEnd = converter.newLabel("getrange_end");
 
   converter.emit(new LabelInstruction(loopStart));
+  // Snapshot count to guard against mutation during loop
+  const countVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new AssignmentInstruction(countVar, count));
   const cond = converter.newTemp(PrimitiveTypes.boolean);
-  converter.emit(new BinaryOpInstruction(cond, idx, "<", count));
+  converter.emit(new BinaryOpInstruction(cond, idx, "<", countVar));
   converter.emit(new ConditionalJumpInstruction(cond, loopEnd));
 
   // srcIdx = start + idx
