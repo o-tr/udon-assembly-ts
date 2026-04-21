@@ -152,4 +152,28 @@ describe("branded primitive type SoA DataToken fix", () => {
     expect(result.uasm).toContain("__inst_BigNumber_0_value: %SystemInt64");
     expect(result.uasm).toContain("v: %SystemInt64");
   });
+
+  it("inline intersection type resolves UdonInt via LiteralTypeNode", () => {
+    const source = `
+      class Counter {
+        count: number & { readonly __brand: "UdonInt" };
+        constructor(count: number & { readonly __brand: "UdonInt" }) {
+          this.count = count;
+        }
+      }
+
+      @UdonBehaviour
+      class TestClass {
+        start(): void {
+          let c = new Counter(0);
+          let k = c.count;
+        }
+      }
+    `;
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const result = transpiler.transpile(source, { optimize: false });
+
+    expect(result.uasm).toContain("__inst_Counter_0_count: %SystemInt32");
+    expect(result.uasm).toContain("k: %SystemInt32");
+  });
 });

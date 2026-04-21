@@ -950,9 +950,13 @@ export function visitBinaryExpression(
     return createConstant(false, PrimitiveTypes.boolean);
   }
   if (node.operator === ">>>") {
+    this.warnAt(
+      node,
+      "UnsupportedOperator",
+      "Unsigned right shift (>>>) is not supported in Udon. Use >> instead, or mask with 0xFFFFFFFF before shifting.",
+    );
     const left = this.visitExpression(node.left);
     const right = this.visitExpression(node.right);
-    // Narrow float left operand to Int32 — Udon VM has no shift EXTERNs on Single.
     let narrowedLeft = left;
     const leftType = this.getOperandType(left);
     if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {

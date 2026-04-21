@@ -41,7 +41,6 @@ const UDON_BRANDED_TYPE_MAP: ReadonlyMap<string, PrimitiveTypeSymbol> = new Map(
 
 function tryResolveBrandedPrimitive(
   node: ts.IntersectionTypeNode,
-  typeMapper: { mapTypeScriptType: (name: string) => TypeSymbol },
 ): PrimitiveTypeSymbol | null {
   for (const constituent of node.types) {
     if (ts.isTypeLiteralNode(constituent)) {
@@ -50,9 +49,10 @@ function tryResolveBrandedPrimitive(
           ts.isPropertySignature(member) &&
           member.name.getText() === "__brand" &&
           member.type &&
-          ts.isStringLiteral(member.type)
+          ts.isLiteralTypeNode(member.type) &&
+          ts.isStringLiteral(member.type.literal)
         ) {
-          const brandName = member.type.text;
+          const brandName = member.type.literal.text;
           const mapped = UDON_BRANDED_TYPE_MAP.get(brandName);
           if (mapped) return mapped;
         }
@@ -64,16 +64,6 @@ function tryResolveBrandedPrimitive(
       const refName = constituent.typeName.getText();
       const mapped = UDON_BRANDED_TYPE_MAP.get(refName);
       if (mapped) return mapped;
-    }
-  }
-  for (const constituent of node.types) {
-    const constituentText = constituent.getText().trim();
-    if (constituentText === "number") {
-      const aliasResult = typeMapper.mapTypeScriptType("UdonFloat");
-      if (aliasResult !== null && aliasResult !== undefined) {
-        const mapped = UDON_BRANDED_TYPE_MAP.get("UdonFloat");
-        if (mapped) return mapped;
-      }
     }
   }
   return null;
@@ -266,7 +256,7 @@ export function mapTypeWithGenerics(
   }
 
   if (node && ts.isIntersectionTypeNode(node)) {
-    const branded = tryResolveBrandedPrimitive(node, this.typeMapper);
+    const branded = tryResolveBrandedPrimitive(node);
     if (branded) return branded;
     return ObjectType;
   }

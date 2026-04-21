@@ -75,6 +75,7 @@ export function convertInstruction(
       const rightType = rightOp.type?.udonType ?? UdonType.Single;
 
       // Shift operators require Int32 right operand; skip promotion for those.
+      // Note: ">>>" is lowered to ">>" in expression.ts before reaching codegen.
       const isShift = binInst.operator === "<<" || binInst.operator === ">>";
       // String comparison operators (<, >, <=, >=) are not supported by the
       // Udon VM — they must be lowered to String.Compare(a, b) <op> 0.
