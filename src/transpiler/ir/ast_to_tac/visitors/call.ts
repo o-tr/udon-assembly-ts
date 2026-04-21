@@ -68,6 +68,7 @@ import {
   emitParamPropertyAssignments,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
+  isInlineHandleType,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
@@ -84,7 +85,7 @@ const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // D3 method dispatch inlines full method bodies per instance, so use a
 // stricter limit than property dispatch to avoid excessive code bloat.
-const MAX_D3_METHOD_DISPATCH_CANDIDATES = 50;
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 20;
 
 /**
  * Build a fallback IPC method layout from interface metadata when the
@@ -192,6 +193,21 @@ const resolveMapGetResultType = (
   const expected = converter.currentExpectedType;
   if (!expected || isPlainObjectType(expected)) return mapValueType;
   return expected;
+};
+
+const isDebugCounterEnabled = (): boolean => {
+  const g = globalThis as {
+    process?: { env?: Record<string, string | undefined> };
+  };
+  return g.process?.env?.UDON_DEBUG_COUNTERS === "1";
+};
+
+const bumpDebugCounter = (counterKey: string): void => {
+  if (!isDebugCounterEnabled()) return;
+  const g = globalThis as Record<string, unknown>;
+  const raw = (g.__agentDebugCounters as Record<string, number> | undefined) ?? {};
+  raw[counterKey] = (raw[counterKey] ?? 0) + 1;
+  g.__agentDebugCounters = raw;
 };
 
 const isLiteralRadix10 = (operand: TACOperand): boolean => {
@@ -4101,6 +4117,16 @@ function visitMapMethodCall(
       }
       const keyValue = converter.visitExpression(rawArgs[0]);
       const valueValue = converter.visitExpression(rawArgs[1]);
+      const valueArgType = converter.getOperandType(valueValue);
+      if (
+        mapType?.name === ExternTypes.dataDictionary.name ||
+        valueType.name === "IYaku" ||
+        valueArgType.name === "IYaku" ||
+        valueArgType.name === "object"
+      ) {
+        const key = `H9.map.set.value:${mapType?.name ?? "null"}:${valueType.name}:${valueArgType.name}`;
+        bumpDebugCounter(key);
+      }
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.wrapDataToken(valueValue);
       converter.emit(
@@ -4119,11 +4145,46 @@ function visitMapMethodCall(
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.newTemp(ExternTypes.dataToken);
       const getResultType = resolveMapGetResultType(converter, valueType);
+      if (
+        getResultType.udonType === UdonType.Int32 ||
+        getResultType.udonType === UdonType.Object
+      ) {
+        const key = `H8.map.get.unwrap:${mapType?.name ?? "null"}:${valueType.name}:${converter.currentExpectedType?.name ?? "null"}:${getResultType.name}`;
+        bumpDebugCounter(key);
+      }
       converter.emit(
         new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
           keyToken,
         ]),
       );
+      if (isInlineHandleType(converter, getResultType)) {
+        const key = `H10.map.get.deferInlineUnwrap:${getResultType.name}`;
+        bumpDebugCounter(key);
+        // Preserve nullable map.get semantics for inline handles:
+        // if token is null, keep null; otherwise unwrap to the handle type.
+        const isNull = converter.newTemp(PrimitiveTypes.boolean);
+        const result = converter.newTemp(ObjectType);
+        const nullLabel = converter.newLabel("map_get_inline_null");
+        const endLabel = converter.newLabel("map_get_inline_end");
+        converter.emit(
+          new BinaryOpInstruction(
+            isNull,
+            valueToken,
+            "==",
+            createConstant(null, ObjectType),
+          ),
+        );
+        converter.emit(new ConditionalJumpInstruction(isNull, nullLabel));
+        const unwrapped = converter.unwrapDataToken(valueToken, getResultType);
+        converter.emit(new CopyInstruction(result, unwrapped));
+        converter.emit(new UnconditionalJumpInstruction(endLabel));
+        converter.emit(new LabelInstruction(nullLabel));
+        converter.emit(
+          new CopyInstruction(result, createConstant(null, ObjectType)),
+        );
+        converter.emit(new LabelInstruction(endLabel));
+        return result;
+      }
       return converter.unwrapDataToken(valueToken, getResultType);
     }
     case "has": {

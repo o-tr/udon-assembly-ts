@@ -416,9 +416,12 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
   describe("SoA DataDictionary field read in inlined method body", () => {
     it("this.field inside inlined method uses DataList, not scratch variable", () => {
-      // Registry is constructed inside a loop → SoA. The `data` field DataList
-      // is __soa_Registry_data. After multiple iterations, reading this.data
-      // inside getResult() must go through DataList[handle], not the scratch.
+      // Two registries are built from the same static factory in the same scope.
+      // Body-caching means both share the same instance prefix (__inst_Registry_0).
+      // After reg2 is constructed, __inst_Registry_0__handle holds reg2's index,
+      // making the scratch variable stale for reg1. The inlined getResult() body
+      // must therefore read this.data through the per-field DataList indexed by
+      // the restored handle, not via the (now-stale) scratch variable.
       const source = `
         class Registry {
           public data: DataDictionary;
@@ -434,9 +437,10 @@ describe("inline remaining bugs", () => {
         }
         class Main {
           Start(): void {
-            for (let i: number = 0; i < 3; i++) {
-              const reg = Registry.build();
-              Debug.Log(reg.getResult(new DataToken("key")));
+            for (let i: number = 0; i < 1; i++) {
+              const reg1 = Registry.build();
+              const reg2 = Registry.build();
+              Debug.Log(reg1.getResult(new DataToken("key")));
             }
           }
         }

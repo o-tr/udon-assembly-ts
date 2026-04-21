@@ -107,12 +107,32 @@ function tryReadSoAField(
   className: string,
   property: string,
 ): TACOperand | undefined {
+  if (instancePrefix.includes("__soa_mdisp_")) {
+    return undefined;
+  }
   if (
     converter.soaConstructionPrefixes.has(instancePrefix) ||
     !converter.soaClasses.has(className) ||
     !converter.soaFieldLists.has(className)
   )
     return undefined;
+  // Only emit a DataList read when ≥2 tracked variables share this prefix.
+  // Body-caching causes multiple construction call sites to share a prefix
+  // (e.g. r1 = Reg.make() and r2 = Reg.make() both map to __inst_Reg_0).
+  // After the second construction the shared __handle holds the new value,
+  // making the scratch variable stale for the first instance.
+  // When only one (or zero) variables use the prefix the scratch is always
+  // the most recently constructed value and is safe to read directly.
+  let sharedCount = 0;
+  for (const info of converter.inlineInstanceMap.values()) {
+    if (info.prefix === instancePrefix) {
+      sharedCount++;
+      if (sharedCount > 1) break;
+    }
+  }
+  if (sharedCount <= 1) {
+    return undefined;
+  }
   const fieldLists = converter.soaFieldLists.get(className);
   if (!fieldLists) return undefined;
   const fieldList = fieldLists.get(property);
@@ -1953,10 +1973,10 @@ export function visitPropertyAccessExpression(
         node.property,
       );
       if (getterResult !== undefined) return getterResult;
-      // SoA path: inside an inlined METHOD body (not constructor), reads must
-      // go through the per-field DataList. During construction the prefix is
-      // in soaConstructionPrefixes, so tryReadSoAField returns undefined and
-      // we fall through to the scratch variable.
+      // SoA path: for regular inlining the scratch is stale after multiple
+      // loop iterations; reads must go through the per-field DataList indexed
+      // by handle. tryReadSoAField returns undefined for __soa_mdisp_* and
+      // soaConstructionPrefixes prefixes, so we fall through to scratch.
       const soaFieldResult = tryReadSoAField(
         this,
         instancePrefix,
