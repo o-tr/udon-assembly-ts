@@ -3,6 +3,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
 import { UdonType } from "../../../frontend/types.js";
@@ -145,3 +146,75 @@ export const emitMapEntriesList = (
 
   return entriesResult;
 };
+
+/**
+ * Emits a loop-based replacement for DataList.GetRange, which is NOT
+ * implemented in the Udon VM. Copies `count` elements from `source` starting
+ * at index `start` into a new DataList, using get_Item/Add in a loop.
+ *
+ * Negative or zero count yields an empty list (loop condition idx < count is false).
+ * Equivalent to: result = source.GetRange(start, count)
+ */
+export function emitDataListGetRangeLoop(
+  converter: ASTToTACConverter,
+  source: TACOperand,
+  start: TACOperand,
+  count: TACOperand,
+  elementType: TypeSymbol = ObjectType,
+): TACOperand {
+  const resultType = new DataListTypeSymbol(elementType);
+  const result = converter.newTemp(resultType);
+
+  // result = new DataList()
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.emit(new CallInstruction(result, listCtorSig, []));
+
+  // Loop: for i in 0..countVar, copy source.get_Item(start + i) → result.Add(token)
+  const idx = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(
+    new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
+  );
+  // Snapshot count before loop to guard against mutation during iteration
+  const countVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new AssignmentInstruction(countVar, count));
+  const loopStart = converter.newLabel("getrange_start");
+  const loopEnd = converter.newLabel("getrange_end");
+
+  converter.emit(new LabelInstruction(loopStart));
+  const cond = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new BinaryOpInstruction(cond, idx, "<", countVar));
+  converter.emit(new ConditionalJumpInstruction(cond, loopEnd));
+
+  // srcIdx = start + idx
+  const srcIdx = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new BinaryOpInstruction(srcIdx, start, "+", idx));
+
+  // token = source.get_Item(srcIdx)
+  const token = converter.newTemp(ExternTypes.dataToken);
+  converter.emit(
+    new MethodCallInstruction(token, source, "get_Item", [srcIdx]),
+  );
+
+  // result.Add(token)
+  converter.emit(new MethodCallInstruction(undefined, result, "Add", [token]));
+
+  // idx++
+  converter.emit(
+    new BinaryOpInstruction(
+      idx,
+      idx,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.emit(new UnconditionalJumpInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopEnd));
+
+  return result;
+}

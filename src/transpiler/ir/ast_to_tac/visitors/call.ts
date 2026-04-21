@@ -57,6 +57,7 @@ import type { UdonBehaviourMethodLayout } from "../../udon_behaviour_layout.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { emitArrayConcat } from "../helpers/assignment.js";
 import {
+  emitDataListGetRangeLoop,
   emitMapEntriesList,
   emitMapKeysList,
   isMapCollectionType,
@@ -2473,8 +2474,14 @@ export function visitCallExpression(
           return result;
         }
         case "slice": {
-          // JS slice(start, end) → DataList.GetRange(start, end - start)
+          // JS slice(start, end) → loop-based copy (DataList.GetRange not available in VM)
           const result = this.newTemp(arrayReturn);
+          const elemType =
+            objectType instanceof ArrayTypeSymbol
+              ? objectType.elementType
+              : objectType instanceof DataListTypeSymbol
+                ? objectType.elementType
+                : ObjectType;
           const coerceToInt32 = (operand: TACOperand): TACOperand => {
             const operandType = this.getOperandType(operand);
             if (!needsInt32IndexCoercion(operandType.udonType)) {
@@ -2485,39 +2492,51 @@ export function visitCallExpression(
             return casted;
           };
           if (evaluatedArgs.length === 0) {
-            // slice() = copy entire list → GetRange(0, Count)
+            // slice() = copy entire list → loop-based copy from 0 to Count
             const len = this.newTemp(PrimitiveTypes.int32);
             this.emit(new PropertyGetInstruction(len, object, "Count"));
+            const rangeResult = emitDataListGetRangeLoop(
+              this,
+              object,
+              createConstant(0, PrimitiveTypes.int32),
+              len,
+              elemType,
+            );
             this.emit(
-              new MethodCallInstruction(result, object, "GetRange", [
-                createConstant(0, PrimitiveTypes.int32),
-                len,
-              ]),
+              new CopyInstruction(result as VariableOperand, rangeResult),
             );
           } else if (evaluatedArgs.length === 1) {
-            // slice(start) → GetRange(start, Count - start)
+            // slice(start) → loop-based copy from start to Count
             const start = coerceToInt32(evaluatedArgs[0]);
             const len = this.newTemp(PrimitiveTypes.int32);
             this.emit(new PropertyGetInstruction(len, object, "Count"));
             const count = this.newTemp(PrimitiveTypes.int32);
             this.emit(new BinaryOpInstruction(count, len, "-", start));
+            const rangeResult = emitDataListGetRangeLoop(
+              this,
+              object,
+              start,
+              count,
+              elemType,
+            );
             this.emit(
-              new MethodCallInstruction(result, object, "GetRange", [
-                start,
-                count,
-              ]),
+              new CopyInstruction(result as VariableOperand, rangeResult),
             );
           } else {
-            // slice(start, end) → GetRange(start, end - start)
+            // slice(start, end) → loop-based copy from start to (end - start)
             const start = coerceToInt32(evaluatedArgs[0]);
             const end = coerceToInt32(evaluatedArgs[1]);
             const count = this.newTemp(PrimitiveTypes.int32);
             this.emit(new BinaryOpInstruction(count, end, "-", start));
+            const rangeResult = emitDataListGetRangeLoop(
+              this,
+              object,
+              start,
+              count,
+              elemType,
+            );
             this.emit(
-              new MethodCallInstruction(result, object, "GetRange", [
-                start,
-                count,
-              ]),
+              new CopyInstruction(result as VariableOperand, rangeResult),
             );
           }
           return result;
@@ -2695,43 +2714,50 @@ export function visitCallExpression(
           const deleteCount = spliceArgs[1];
           const insertItems = spliceArgs.slice(2);
 
+          const elemType =
+            objectType instanceof ArrayTypeSymbol
+              ? objectType.elementType
+              : objectType instanceof DataListTypeSymbol
+                ? objectType.elementType
+                : ObjectType;
+
           // endIdx = start + deleteCount
           const endIdx = this.newTemp(PrimitiveTypes.int32);
           this.emit(new BinaryOpInstruction(endIdx, start, "+", deleteCount));
 
           const zero = createConstant(0, PrimitiveTypes.int32);
 
-          // left = array.GetRange(0, start)
-          const leftPart = this.newTemp(arrayReturn);
-          this.emit(
-            new MethodCallInstruction(leftPart, object, "GetRange", [
-              zero,
-              start,
-            ]),
+          // left = loop-based copy from 0 to start
+          const leftPart = emitDataListGetRangeLoop(
+            this,
+            object,
+            zero,
+            start,
+            elemType,
           );
 
-          // removed = array.GetRange(start, deleteCount)
-          const removed = this.newTemp(arrayReturn);
-          this.emit(
-            new MethodCallInstruction(removed, object, "GetRange", [
-              start,
-              deleteCount,
-            ]),
+          // removed = loop-based copy from start to deleteCount
+          const removed = emitDataListGetRangeLoop(
+            this,
+            object,
+            start,
+            deleteCount,
+            elemType,
           );
 
-          // right = array.GetRange(endIdx, length - endIdx)
+          // right = loop-based copy from endIdx to (length - endIdx)
           const spliceLen = this.newTemp(PrimitiveTypes.int32);
           this.emit(new PropertyGetInstruction(spliceLen, object, "Count"));
           const rightCount = this.newTemp(PrimitiveTypes.int32);
           this.emit(
             new BinaryOpInstruction(rightCount, spliceLen, "-", endIdx),
           );
-          const rightPart = this.newTemp(arrayReturn);
-          this.emit(
-            new MethodCallInstruction(rightPart, object, "GetRange", [
-              endIdx,
-              rightCount,
-            ]),
+          const rightPart = emitDataListGetRangeLoop(
+            this,
+            object,
+            endIdx,
+            rightCount,
+            elemType,
           );
 
           let combined = leftPart;

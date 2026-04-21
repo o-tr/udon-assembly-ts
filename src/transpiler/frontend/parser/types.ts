@@ -7,7 +7,9 @@ import {
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   ObjectType,
+  type PrimitiveTypeSymbol,
   PrimitiveTypes,
+  UDON_BRANDED_TYPE_MAP,
 } from "../type_symbols.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
 
@@ -25,6 +27,36 @@ function getTypeLiteralPropertyName(
 
 function isInlineSafePropertyName(propName: string): boolean {
   return /^[$A-Z_a-z][$\w]*$/.test(propName);
+}
+
+function tryResolveBrandedPrimitive(
+  node: ts.IntersectionTypeNode,
+): PrimitiveTypeSymbol | null {
+  for (const constituent of node.types) {
+    if (ts.isTypeLiteralNode(constituent)) {
+      for (const member of constituent.members) {
+        if (
+          ts.isPropertySignature(member) &&
+          member.name.getText() === "__brand" &&
+          member.type &&
+          ts.isLiteralTypeNode(member.type) &&
+          ts.isStringLiteral(member.type.literal)
+        ) {
+          const brandName = member.type.literal.text;
+          const mapped = UDON_BRANDED_TYPE_MAP.get(brandName);
+          if (mapped) return mapped;
+        }
+      }
+    }
+  }
+  for (const constituent of node.types) {
+    if (ts.isTypeReferenceNode(constituent)) {
+      const refName = constituent.typeName.getText();
+      const mapped = UDON_BRANDED_TYPE_MAP.get(refName);
+      if (mapped) return mapped;
+    }
+  }
+  return null;
 }
 
 const typeLiteralSourceFileCache = new Map<string, ts.SourceFile>();
@@ -213,13 +245,18 @@ export function mapTypeWithGenerics(
     return PrimitiveTypes.boolean;
   }
 
+  if (node && ts.isIntersectionTypeNode(node)) {
+    const branded = tryResolveBrandedPrimitive(node);
+    if (branded) return branded;
+    return ObjectType;
+  }
+
   if (
     node &&
     (ts.isTypeQueryNode(node) ||
       ts.isIndexedAccessTypeNode(node) ||
       ts.isConditionalTypeNode(node) ||
-      ts.isMappedTypeNode(node) ||
-      ts.isIntersectionTypeNode(node))
+      ts.isMappedTypeNode(node))
   ) {
     return ObjectType;
   }

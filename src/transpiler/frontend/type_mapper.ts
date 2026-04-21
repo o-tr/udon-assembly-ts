@@ -9,6 +9,7 @@ import {
   ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
+  UDON_BRANDED_TYPE_MAP,
 } from "./type_symbols.js";
 import { UdonType } from "./types.js";
 
@@ -45,6 +46,10 @@ export class TypeMapper {
 
   mapTypeScriptType(tsType: string): TypeSymbol {
     const trimmed = tsType.trim();
+    if (UDON_BRANDED_TYPE_MAP.has(trimmed)) {
+      const branded = UDON_BRANDED_TYPE_MAP.get(trimmed);
+      if (branded) return branded;
+    }
     // Enum check runs before cache: enumRegistry may gain entries after a
     // previous call cached a fallback result for the same type name.
     if (this.enumRegistry?.isEnum(trimmed)) {
@@ -255,18 +260,6 @@ export class TypeMapper {
           ObjectType,
           ObjectType,
         );
-      case "UdonByte":
-        return PrimitiveTypes.byte;
-      case "UdonInt":
-        return PrimitiveTypes.int32;
-      case "UdonFloat":
-        return PrimitiveTypes.single;
-      case "UdonDouble":
-        return PrimitiveTypes.double;
-      case "UdonLong":
-        return PrimitiveTypes.int64;
-      case "UdonULong":
-        return PrimitiveTypes.uint64;
       case "Vector2":
       case "UnityEngine.Vector2":
         return ExternTypes.vector2;

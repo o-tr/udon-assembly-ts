@@ -382,6 +382,20 @@ export const ExternTypes = {
   dataToken: new ExternTypeSymbol("DataToken", UdonType.DataToken),
 };
 
+export const UDON_BRANDED_TYPE_MAP: ReadonlyMap<string, PrimitiveTypeSymbol> =
+  new Map([
+    ["UdonByte", PrimitiveTypes.byte],
+    ["UdonSByte", PrimitiveTypes.sbyte],
+    ["UdonInt16", PrimitiveTypes.int16],
+    ["UdonUInt16", PrimitiveTypes.uint16],
+    ["UdonInt", PrimitiveTypes.int32],
+    ["UdonUInt32", PrimitiveTypes.uint32],
+    ["UdonFloat", PrimitiveTypes.single],
+    ["UdonDouble", PrimitiveTypes.double],
+    ["UdonLong", PrimitiveTypes.int64],
+    ["UdonULong", PrimitiveTypes.uint64],
+  ]);
+
 export const ObjectType = new ObjectTypeSymbol();
 
 export function isPlainObjectType(

@@ -950,11 +950,32 @@ export function visitBinaryExpression(
     return createConstant(false, PrimitiveTypes.boolean);
   }
   if (node.operator === ">>>") {
+    this.warnAt(
+      node,
+      "UnsupportedOperator",
+      "Unsigned right shift (>>>) is not supported in Udon. Use >> instead, or mask with 0xFFFFFFFF before shifting.",
+    );
     const left = this.visitExpression(node.left);
     const right = this.visitExpression(node.right);
-    const resultType = this.getOperandType(left);
+    let narrowedLeft = left;
+    const leftType = this.getOperandType(left);
+    if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
+      const cast = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(cast, left));
+      narrowedLeft = cast;
+    }
+    let narrowedRight = right;
+    const rightType = this.getOperandType(right);
+    if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+      const castR = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(castR, right));
+      narrowedRight = castR;
+    }
+    const resultType = this.getOperandType(narrowedLeft);
     const result = this.newTemp(resultType);
-    this.emit(new BinaryOpInstruction(result, left, ">>", right));
+    this.emit(
+      new BinaryOpInstruction(result, narrowedLeft, ">>", narrowedRight),
+    );
     return result;
   }
   if (node.operator === "&&") {
@@ -1085,7 +1106,24 @@ export function visitBinaryExpression(
     const n = narrowToInt32ForBitwise(this, left, right);
     left = n.left;
     right = n.right;
-  } else if (!isShift) {
+  } else if (isShift) {
+    // Narrow to Int32 for shift ops — Udon VM requires integer operands for
+    // shift EXTERNs (e.g. SystemInt32.__op_RightShift__). Float left operands
+    // produce invalid signatures like SystemSingle.__op_RightShift__.
+    // Also narrow the right operand for consistency (shift count should be Int32).
+    const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
+    if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
+      const cast = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(cast, left));
+      left = cast;
+    }
+    if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+      const cast = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(cast, right));
+      right = cast;
+    }
+  } else {
     // Widen narrower operand when both are numeric and types differ (skip shifts).
     const w = widenNumericOperands(this, left, right);
     left = w.left;

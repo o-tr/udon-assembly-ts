@@ -75,7 +75,17 @@ export function convertInstruction(
       const rightType = rightOp.type?.udonType ?? UdonType.Single;
 
       // Shift operators require Int32 right operand; skip promotion for those.
+      // Note: ">>>" is lowered to ">>" in expression.ts before reaching codegen.
       const isShift = binInst.operator === "<<" || binInst.operator === ">>";
+      // String comparison operators (<, >, <=, >=) are not supported by the
+      // Udon VM — they must be lowered to String.Compare(a, b) <op> 0.
+      const isStringComparison =
+        (binInst.operator === "<" ||
+          binInst.operator === ">" ||
+          binInst.operator === "<=" ||
+          binInst.operator === ">=") &&
+        leftType === UdonType.String &&
+        rightType === UdonType.String;
       // Detect null-literal equality/inequality: null comparisons must use
       // SystemObject.__op_Equality/Inequality regardless of the declared type
       // (the type mapper assigns DataDictionary to null literals via the
@@ -88,6 +98,50 @@ export function convertInstruction(
           (leftOp as ConstantOperand).value === null) ||
           (rightOp.kind === TACOperandKind.Constant &&
             (rightOp as ConstantOperand).value === null));
+      if (isStringComparison) {
+        // Udon VM does not have String.__op_GreaterThan/LessThan/etc.
+        // Lower: a <op> b  →  String.Compare(a, b) <op> 0
+        // String.Compare returns: negative (a < b), zero (a == b), positive (a > b)
+        const compareResultName = `__tstrcmp_${this.nextAddress}`;
+        this.variableAddresses.set(compareResultName, this.nextAddress++);
+        this.variableTypes.set(compareResultName, "Int32");
+
+        // Call String.Compare(left, right)
+        this.pushOperand(binInst.left);
+        this.pushOperand(binInst.right);
+        this.instructions.push(new PushInstruction(compareResultName));
+        const compareSig =
+          "SystemString.__Compare__SystemString_SystemString__SystemInt32";
+        this.externSignatures.add(compareSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(compareSig), true),
+        );
+
+        // Compare result with 0: e.g. a > b ≡ Compare(a,b) > 0
+        // Map the original operator to the comparison against 0:
+        //   < → < 0,  > → > 0,  <= → <= 0,  >= → >= 0
+        const destAddr = this.getOperandAddress(binInst.dest);
+        this.instructions.push(new PushInstruction(compareResultName));
+        this.pushConstant(0, "Int32");
+        this.instructions.push(new PushInstruction(destAddr));
+        const cmpSig = this.getExternForBinaryOp(binInst.operator, "Int32");
+        this.externSignatures.add(cmpSig);
+        this.instructions.push(
+          new ExternInstruction(this.getExternSymbol(cmpSig), true),
+        );
+
+        // Override dest type to Boolean since comparison results are Boolean
+        if (binInst.dest.kind === TACOperandKind.Temporary) {
+          this.tempTypes.set((binInst.dest as TemporaryOperand).id, "Boolean");
+        } else if (binInst.dest.kind === TACOperandKind.Variable) {
+          const varName = this.normalizeVariableName(
+            (binInst.dest as VariableOperand).name,
+          );
+          this.variableTypes.set(varName, "Boolean");
+        }
+        break;
+      }
+
       let promotedType = leftType;
       if (isNullComparison) {
         promotedType = UdonType.Object;
@@ -352,31 +406,59 @@ export function convertInstruction(
           new ExternInstruction(this.getExternSymbol(eqSig), true),
         );
       } else if (unInst.operator === "!" && operandType !== "Boolean") {
-        // Need to coerce to Boolean first, then negate
-        // Step 1: Convert to Boolean (needs intermediate temp)
-        this.pushOperand(unInst.operand);
-        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-        this.variableTypes.set(coerceTmpName, "Boolean");
-        this.instructions.push(new PushInstruction(coerceTmpName));
-        const coerceSig = this.getConvertExternSignature(
-          operandType,
-          "Boolean",
-        );
-        this.externSignatures.add(coerceSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(coerceSig), true),
-        );
+        if (operandType === UdonType.Object) {
+          // Object → Boolean coercion: Udon VM uses simple COPY from Object
+          // slot to Boolean slot (non-null = true, null = false), then negate.
+          // Convert.ToBoolean(Object) does not exist in the VM.
+          this.pushOperand(unInst.operand);
+          const coerceTmpName = `__tcoerce_${this.nextAddress}`;
+          this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+          this.variableTypes.set(coerceTmpName, "Boolean");
+          this.instructions.push(new PushInstruction(coerceTmpName));
+          this.instructions.push(new CopyInstruction());
 
-        // Step 2: Negate the Boolean
-        this.instructions.push(new PushInstruction(coerceTmpName));
-        const destAddr = this.getOperandAddress(unInst.dest);
-        this.instructions.push(new PushInstruction(destAddr));
-        const externSig = this.getExternForUnaryOp(unInst.operator, "Boolean");
-        this.externSignatures.add(externSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(externSig), true),
-        );
+          // Negate the Boolean
+          this.instructions.push(new PushInstruction(coerceTmpName));
+          const destAddr = this.getOperandAddress(unInst.dest);
+          this.instructions.push(new PushInstruction(destAddr));
+          const externSig = this.getExternForUnaryOp(
+            unInst.operator,
+            "Boolean",
+          );
+          this.externSignatures.add(externSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(externSig), true),
+          );
+        } else {
+          // Need to coerce to Boolean first, then negate
+          // Step 1: Convert to Boolean (needs intermediate temp)
+          this.pushOperand(unInst.operand);
+          const coerceTmpName = `__tcoerce_${this.nextAddress}`;
+          this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+          this.variableTypes.set(coerceTmpName, "Boolean");
+          this.instructions.push(new PushInstruction(coerceTmpName));
+          const coerceSig = this.getConvertExternSignature(
+            operandType,
+            "Boolean",
+          );
+          this.externSignatures.add(coerceSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(coerceSig), true),
+          );
+
+          // Step 2: Negate the Boolean
+          this.instructions.push(new PushInstruction(coerceTmpName));
+          const destAddr = this.getOperandAddress(unInst.dest);
+          this.instructions.push(new PushInstruction(destAddr));
+          const externSig = this.getExternForUnaryOp(
+            unInst.operator,
+            "Boolean",
+          );
+          this.externSignatures.add(externSig);
+          this.instructions.push(
+            new ExternInstruction(this.getExternSymbol(externSig), true),
+          );
+        }
       } else {
         // Simple unary op: push operand, push dest, EXTERN
         this.pushOperand(unInst.operand);

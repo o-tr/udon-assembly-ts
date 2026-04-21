@@ -20,7 +20,8 @@ export type TranspileWarningCode =
   | "WriteToGetter"
   | "EntryPointGetterUnsupported"
   | "SetterBodyUnsupported"
-  | "UntrackedStructuralUnionReturn";
+  | "UntrackedStructuralUnionReturn"
+  | "UnsupportedOperator";
 
 export interface TranspileErrorLocation {
   filePath: string;
