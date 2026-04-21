@@ -351,16 +351,37 @@ describe("inline remaining bugs", () => {
       // SoA must be triggered (Reg constructed in loop).
       expect(result.uasm).toContain("__soa_Reg_value:");
 
-      // After fix: before the get_Item call, __inst_Reg_0__handle must be
-      // restored from r1 (not left as 2 from r2's construction).
-      // Pattern: "__inst_Reg_0__handle = r1" or similar non-counter assignment.
-      const handleRestoreLine = lines.some(
-        (l) =>
-          /__inst_\w+__handle = /.test(l) &&
-          !l.includes("__counter") &&
-          !l.includes("__soa_mdisp"),
+      const handleAssignIndexes = lines
+        .map((line, idx) => (/__inst_\w+__handle = /.test(line) ? idx : -1))
+        .filter((idx) => idx >= 0);
+      const counterAssignIndexes = lines
+        .map((line, idx) =>
+          line.includes("__soa_Reg__counter") && line.includes("=") ? idx : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const getItemIndex = lines.findIndex(
+        (line) => line.includes("__soa_Reg_value") && line.includes("get_Item"),
       );
-      expect(handleRestoreLine).toBe(true);
+
+      const restoreIndexes = lines
+        .map((line, idx) =>
+          /__inst_\w+__handle = /.test(line) &&
+          !line.includes("__counter") &&
+          !line.includes("__soa_mdisp")
+            ? idx
+            : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const secondConstructionIndex =
+        counterAssignIndexes.length >= 2 ? counterAssignIndexes[1] : -1;
+      const hasRestoreBetweenConstructionAndRead = restoreIndexes.some((idx) =>
+        secondConstructionIndex >= 0 && getItemIndex >= 0
+          ? idx > secondConstructionIndex && idx < getItemIndex
+          : false,
+      );
+
+      expect(handleAssignIndexes.length).toBeGreaterThanOrEqual(3);
+      expect(hasRestoreBetweenConstructionAndRead).toBe(true);
     });
 
     it("direct property access on tracked SoA instance restores handle", () => {
@@ -393,16 +414,31 @@ describe("inline remaining bugs", () => {
       );
       expect(soaRead).toBe(true);
 
-      // Handle restore COPY must appear: __inst_Reg_0__handle assigned from
-      // something other than the SoA counter (which would be a construction,
-      // not a restore).
-      const handleRestoreLine = lines.some(
-        (l) =>
-          /__inst_\w+__handle = /.test(l) &&
-          !l.includes("__counter") &&
-          !l.includes("__soa_mdisp"),
+      const getItemIndex = lines.findIndex(
+        (line) => line.includes("__soa_Reg_value") && line.includes("get_Item"),
       );
-      expect(handleRestoreLine).toBe(true);
+      const counterAssignIndexes = lines
+        .map((line, idx) =>
+          line.includes("__soa_Reg__counter") && line.includes("=") ? idx : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const secondConstructionIndex =
+        counterAssignIndexes.length >= 2 ? counterAssignIndexes[1] : -1;
+      const restoreIndexes = lines
+        .map((line, idx) =>
+          /__inst_\w+__handle = /.test(line) &&
+          !line.includes("__counter") &&
+          !line.includes("__soa_mdisp")
+            ? idx
+            : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const hasRestoreBeforeRead = restoreIndexes.some((idx) =>
+        secondConstructionIndex >= 0
+          ? idx > secondConstructionIndex && idx < getItemIndex
+          : idx < getItemIndex,
+      );
+      expect(hasRestoreBeforeRead).toBe(true);
     });
   });
 

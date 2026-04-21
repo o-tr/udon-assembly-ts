@@ -94,6 +94,7 @@ import {
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
+import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
@@ -116,23 +117,6 @@ function tryReadSoAField(
     !converter.soaFieldLists.has(className)
   )
     return undefined;
-  // Only emit a DataList read when ≥2 tracked variables share this prefix.
-  // Body-caching causes multiple construction call sites to share a prefix
-  // (e.g. r1 = Reg.make() and r2 = Reg.make() both map to __inst_Reg_0).
-  // After the second construction the shared __handle holds the new value,
-  // making the scratch variable stale for the first instance.
-  // When only one (or zero) variables use the prefix the scratch is always
-  // the most recently constructed value and is safe to read directly.
-  let sharedCount = 0;
-  for (const info of converter.inlineInstanceMap.values()) {
-    if (info.prefix === instancePrefix) {
-      sharedCount++;
-      if (sharedCount > 1) break;
-    }
-  }
-  if (sharedCount <= 1) {
-    return undefined;
-  }
   const fieldLists = converter.soaFieldLists.get(className);
   if (!fieldLists) return undefined;
   const fieldList = fieldLists.get(property);
@@ -2042,30 +2026,15 @@ export function visitPropertyAccessExpression(
         (node.object as IdentifierNode).name,
       );
       if (instanceInfo) {
-        // SoA handle restore: same fix as the post-evaluation path below.
-        // The identifier holds the handle value captured at construction time;
-        // restore it into __handle so that tryReadSoAField reads the right slot.
         const soaClass = resolveConcreteClassName(this, instanceInfo);
-        if (this.soaClasses.has(soaClass)) {
-          const identVar = this.visitExpression(node.object);
-          const hdlVar = normalizeOperandToInt32(this, identVar);
-          this.emit(
-            new CopyInstruction(
-              createVariable(
-                `${instanceInfo.prefix}__handle`,
-                PrimitiveTypes.int32,
-              ),
-              hdlVar,
-            ),
+        if (!this.soaClasses.has(soaClass)) {
+          const mapped = tryMapInlinePropertyWithConcreteFallback(
+            this,
+            instanceInfo,
+            node.property,
           );
+          if (mapped) return mapped;
         }
-
-        const mapped = tryMapInlinePropertyWithConcreteFallback(
-          this,
-          instanceInfo,
-          node.property,
-        );
-        if (mapped) return mapped;
       }
     }
 
@@ -2124,23 +2093,7 @@ export function visitPropertyAccessExpression(
       : undefined;
 
     if (instanceInfo) {
-      // SoA handle restore: parallel to the tracked dispatch fix in call.ts.
-      // Multiple body-cached constructions share a prefix; restore the handle
-      // from the receiver so that tryReadSoAField inside
-      // tryMapInlinePropertyWithConcreteFallback reads the correct DataList slot.
-      const soaClass = resolveConcreteClassName(this, instanceInfo);
-      if (this.soaClasses.has(soaClass)) {
-        const hdlVar = normalizeOperandToInt32(this, object);
-        this.emit(
-          new CopyInstruction(
-            createVariable(
-              `${instanceInfo.prefix}__handle`,
-              PrimitiveTypes.int32,
-            ),
-            hdlVar,
-          ),
-        );
-      }
+      emitSoaHandleRestore(this, instanceInfo, object);
 
       const mapped = tryMapInlinePropertyWithConcreteFallback(
         this,

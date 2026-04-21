@@ -64,6 +64,7 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
+  createSoaSentinelValue,
   emitDeferredInlineInitializers,
   emitParamPropertyAssignments,
   getCurrentDeferredInitializerClassName,
@@ -75,9 +76,11 @@ import {
   resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
+  resolveInlineClassType,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
+import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
@@ -205,7 +208,8 @@ const isDebugCounterEnabled = (): boolean => {
 const bumpDebugCounter = (counterKey: string): void => {
   if (!isDebugCounterEnabled()) return;
   const g = globalThis as Record<string, unknown>;
-  const raw = (g.__agentDebugCounters as Record<string, number> | undefined) ?? {};
+  const raw =
+    (g.__agentDebugCounters as Record<string, number> | undefined) ?? {};
   raw[counterKey] = (raw[counterKey] ?? 0) + 1;
   g.__agentDebugCounters = raw;
 };
@@ -2840,23 +2844,11 @@ export function visitCallExpression(
     if (methodInstanceKey) {
       const instanceInfo = this.resolveInlineInstance(methodInstanceKey);
       if (instanceInfo) {
-        // SoA handle restore: body-caching causes multiple constructions of
-        // the same class to share a prefix, so __handle holds the last
-        // construction's value. Restore it from the receiver operand before
-        // inlining so DataList reads inside the body use the correct slot.
+        // Use the resolved concreteClass (not instanceInfo.className) so
+        // interface/type-alias receivers that resolve to SoA concrete classes
+        // still restore their handle before method inlining/retry dispatch.
         const concreteClass = resolveConcreteClassName(this, instanceInfo);
-        if (this.soaClasses.has(concreteClass)) {
-          const hdlVar = normalizeOperandToInt32(this, object);
-          this.emit(
-            new CopyInstruction(
-              createVariable(
-                `${instanceInfo.prefix}__handle`,
-                PrimitiveTypes.int32,
-              ),
-              hdlVar,
-            ),
-          );
-        }
+        emitSoaHandleRestore(this, instanceInfo, object);
 
         const inlineResult = this.withInlineCallSite(node, () =>
           this.visitInlineInstanceMethodCallWithContext(
@@ -4119,10 +4111,9 @@ function visitMapMethodCall(
       const valueValue = converter.visitExpression(rawArgs[1]);
       const valueArgType = converter.getOperandType(valueValue);
       if (
-        mapType?.name === ExternTypes.dataDictionary.name ||
-        valueType.name === "IYaku" ||
-        valueArgType.name === "IYaku" ||
-        valueArgType.name === "object"
+        isDebugCounterEnabled() &&
+        (mapType?.name === ExternTypes.dataDictionary.name ||
+          valueArgType.name === "object")
       ) {
         const key = `H9.map.set.value:${mapType?.name ?? "null"}:${valueType.name}:${valueArgType.name}`;
         bumpDebugCounter(key);
@@ -4146,8 +4137,9 @@ function visitMapMethodCall(
       const valueToken = converter.newTemp(ExternTypes.dataToken);
       const getResultType = resolveMapGetResultType(converter, valueType);
       if (
-        getResultType.udonType === UdonType.Int32 ||
-        getResultType.udonType === UdonType.Object
+        isDebugCounterEnabled() &&
+        (getResultType.udonType === UdonType.Int32 ||
+          getResultType.udonType === UdonType.Object)
       ) {
         const key = `H8.map.get.unwrap:${mapType?.name ?? "null"}:${valueType.name}:${converter.currentExpectedType?.name ?? "null"}:${getResultType.name}`;
         bumpDebugCounter(key);
@@ -4158,13 +4150,19 @@ function visitMapMethodCall(
         ]),
       );
       if (isInlineHandleType(converter, getResultType)) {
-        const key = `H10.map.get.deferInlineUnwrap:${getResultType.name}`;
-        bumpDebugCounter(key);
-        // Preserve nullable map.get semantics for inline handles:
-        // if token is null, keep null; otherwise unwrap to the handle type.
+        if (isDebugCounterEnabled()) {
+          const key = `H10.map.get.deferInlineUnwrap:${getResultType.name}`;
+          bumpDebugCounter(key);
+        }
+        // Preserve explicitly stored nulls for inline handles. Missing-key
+        // lookups still follow unwrapDataToken's default-value semantics.
+        const inlineResultType = resolveInlineClassType(
+          converter,
+          getResultType,
+        );
         const isNull = converter.newTemp(PrimitiveTypes.boolean);
-        const result = converter.newTemp(ObjectType);
-        const nullLabel = converter.newLabel("map_get_inline_null");
+        const result = converter.newTemp(inlineResultType);
+        const nonNullLabel = converter.newLabel("map_get_inline_non_null");
         const endLabel = converter.newLabel("map_get_inline_end");
         converter.emit(
           new BinaryOpInstruction(
@@ -4174,14 +4172,17 @@ function visitMapMethodCall(
             createConstant(null, ObjectType),
           ),
         );
-        converter.emit(new ConditionalJumpInstruction(isNull, nullLabel));
+        converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
+        converter.emit(
+          new CopyInstruction(
+            result,
+            createSoaSentinelValue(converter, getResultType),
+          ),
+        );
+        converter.emit(new UnconditionalJumpInstruction(endLabel));
+        converter.emit(new LabelInstruction(nonNullLabel));
         const unwrapped = converter.unwrapDataToken(valueToken, getResultType);
         converter.emit(new CopyInstruction(result, unwrapped));
-        converter.emit(new UnconditionalJumpInstruction(endLabel));
-        converter.emit(new LabelInstruction(nullLabel));
-        converter.emit(
-          new CopyInstruction(result, createConstant(null, ObjectType)),
-        );
         converter.emit(new LabelInstruction(endLabel));
         return result;
       }
