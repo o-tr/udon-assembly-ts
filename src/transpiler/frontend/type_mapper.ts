@@ -260,18 +260,6 @@ export class TypeMapper {
           ObjectType,
           ObjectType,
         );
-      case "UdonByte":
-        return PrimitiveTypes.byte;
-      case "UdonInt":
-        return PrimitiveTypes.int32;
-      case "UdonFloat":
-        return PrimitiveTypes.single;
-      case "UdonDouble":
-        return PrimitiveTypes.double;
-      case "UdonLong":
-        return PrimitiveTypes.int64;
-      case "UdonULong":
-        return PrimitiveTypes.uint64;
       case "Vector2":
       case "UnityEngine.Vector2":
         return ExternTypes.vector2;

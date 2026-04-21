@@ -12,7 +12,6 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   ConditionalJumpInstruction,
-  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -202,16 +201,14 @@ export function emitDataListGetRangeLoop(
   converter.emit(new MethodCallInstruction(undefined, result, "Add", [token]));
 
   // idx++
-  const next = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(
     new BinaryOpInstruction(
-      next,
+      idx,
       idx,
       "+",
       createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  converter.emit(new CopyInstruction(idx, next));
   converter.emit(new UnconditionalJumpInstruction(loopStart));
   converter.emit(new LabelInstruction(loopEnd));
 
