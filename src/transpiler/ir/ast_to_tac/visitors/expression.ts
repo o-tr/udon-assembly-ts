@@ -94,6 +94,7 @@ import {
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
+import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
 /**
@@ -107,6 +108,9 @@ function tryReadSoAField(
   className: string,
   property: string,
 ): TACOperand | undefined {
+  if (instancePrefix.includes("__soa_mdisp_")) {
+    return undefined;
+  }
   if (
     converter.soaConstructionPrefixes.has(instancePrefix) ||
     !converter.soaClasses.has(className) ||
@@ -1953,10 +1957,10 @@ export function visitPropertyAccessExpression(
         node.property,
       );
       if (getterResult !== undefined) return getterResult;
-      // SoA path: inside an inlined METHOD body (not constructor), reads must
-      // go through the per-field DataList. During construction the prefix is
-      // in soaConstructionPrefixes, so tryReadSoAField returns undefined and
-      // we fall through to the scratch variable.
+      // SoA path: for regular inlining the scratch is stale after multiple
+      // loop iterations; reads must go through the per-field DataList indexed
+      // by handle. tryReadSoAField returns undefined for __soa_mdisp_* and
+      // soaConstructionPrefixes prefixes, so we fall through to scratch.
       const soaFieldResult = tryReadSoAField(
         this,
         instancePrefix,
@@ -2022,12 +2026,15 @@ export function visitPropertyAccessExpression(
         (node.object as IdentifierNode).name,
       );
       if (instanceInfo) {
-        const mapped = tryMapInlinePropertyWithConcreteFallback(
-          this,
-          instanceInfo,
-          node.property,
-        );
-        if (mapped) return mapped;
+        const soaClass = resolveConcreteClassName(this, instanceInfo);
+        if (!this.soaClasses.has(soaClass)) {
+          const mapped = tryMapInlinePropertyWithConcreteFallback(
+            this,
+            instanceInfo,
+            node.property,
+          );
+          if (mapped) return mapped;
+        }
       }
     }
 
@@ -2086,6 +2093,8 @@ export function visitPropertyAccessExpression(
       : undefined;
 
     if (instanceInfo) {
+      emitSoaHandleRestore(this, instanceInfo, object);
+
       const mapped = tryMapInlinePropertyWithConcreteFallback(
         this,
         instanceInfo,

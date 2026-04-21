@@ -64,19 +64,23 @@ import {
 } from "../helpers/collections.js";
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
+  createSoaSentinelValue,
   emitDeferredInlineInitializers,
   emitParamPropertyAssignments,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
+  isInlineHandleType,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
+  resolveInlineClassType,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
+import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
@@ -84,7 +88,7 @@ const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // D3 method dispatch inlines full method bodies per instance, so use a
 // stricter limit than property dispatch to avoid excessive code bloat.
-const MAX_D3_METHOD_DISPATCH_CANDIDATES = 50;
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 20;
 
 /**
  * Build a fallback IPC method layout from interface metadata when the
@@ -192,6 +196,22 @@ const resolveMapGetResultType = (
   const expected = converter.currentExpectedType;
   if (!expected || isPlainObjectType(expected)) return mapValueType;
   return expected;
+};
+
+const isDebugCounterEnabled = (): boolean => {
+  const g = globalThis as {
+    process?: { env?: Record<string, string | undefined> };
+  };
+  return g.process?.env?.UDON_DEBUG_COUNTERS === "1";
+};
+
+const bumpDebugCounter = (counterKey: string): void => {
+  if (!isDebugCounterEnabled()) return;
+  const g = globalThis as Record<string, unknown>;
+  const raw =
+    (g.__agentDebugCounters as Record<string, number> | undefined) ?? {};
+  raw[counterKey] = (raw[counterKey] ?? 0) + 1;
+  g.__agentDebugCounters = raw;
 };
 
 const isLiteralRadix10 = (operand: TACOperand): boolean => {
@@ -2824,6 +2844,12 @@ export function visitCallExpression(
     if (methodInstanceKey) {
       const instanceInfo = this.resolveInlineInstance(methodInstanceKey);
       if (instanceInfo) {
+        // Use the resolved concreteClass (not instanceInfo.className) so
+        // interface/type-alias receivers that resolve to SoA concrete classes
+        // still restore their handle before method inlining/retry dispatch.
+        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        emitSoaHandleRestore(this, instanceInfo, object);
+
         const inlineResult = this.withInlineCallSite(node, () =>
           this.visitInlineInstanceMethodCallWithContext(
             instanceInfo.className,
@@ -2838,7 +2864,7 @@ export function visitCallExpression(
         // class via allInlineInstances and retry. This handles cases where
         // copy tracking or saveAndBindInlineParams stored the interface name
         // instead of the concrete class name.
-        const concreteClass = resolveConcreteClassName(this, instanceInfo);
+        // concreteClass was already resolved above for the SoA guard.
         if (concreteClass !== instanceInfo.className) {
           const concreteResult = this.withInlineCallSite(node, () =>
             this.visitInlineInstanceMethodCallWithContext(
@@ -4083,6 +4109,15 @@ function visitMapMethodCall(
       }
       const keyValue = converter.visitExpression(rawArgs[0]);
       const valueValue = converter.visitExpression(rawArgs[1]);
+      const valueArgType = converter.getOperandType(valueValue);
+      if (
+        isDebugCounterEnabled() &&
+        (mapType?.name === ExternTypes.dataDictionary.name ||
+          valueArgType.name === "object")
+      ) {
+        const key = `H9.map.set.value:${mapType?.name ?? "null"}:${valueType.name}:${valueArgType.name}`;
+        bumpDebugCounter(key);
+      }
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.wrapDataToken(valueValue);
       converter.emit(
@@ -4101,11 +4136,56 @@ function visitMapMethodCall(
       const keyToken = converter.wrapDataToken(keyValue);
       const valueToken = converter.newTemp(ExternTypes.dataToken);
       const getResultType = resolveMapGetResultType(converter, valueType);
+      if (
+        isDebugCounterEnabled() &&
+        (getResultType.udonType === UdonType.Int32 ||
+          getResultType.udonType === UdonType.Object)
+      ) {
+        const key = `H8.map.get.unwrap:${mapType?.name ?? "null"}:${valueType.name}:${converter.currentExpectedType?.name ?? "null"}:${getResultType.name}`;
+        bumpDebugCounter(key);
+      }
       converter.emit(
         new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
           keyToken,
         ]),
       );
+      if (isInlineHandleType(converter, getResultType)) {
+        if (isDebugCounterEnabled()) {
+          const key = `H10.map.get.deferInlineUnwrap:${getResultType.name}`;
+          bumpDebugCounter(key);
+        }
+        // Preserve explicitly stored nulls for inline handles. Missing-key
+        // lookups still follow unwrapDataToken's default-value semantics.
+        const inlineResultType = resolveInlineClassType(
+          converter,
+          getResultType,
+        );
+        const isNull = converter.newTemp(PrimitiveTypes.boolean);
+        const result = converter.newTemp(inlineResultType);
+        const nonNullLabel = converter.newLabel("map_get_inline_non_null");
+        const endLabel = converter.newLabel("map_get_inline_end");
+        converter.emit(
+          new BinaryOpInstruction(
+            isNull,
+            valueToken,
+            "==",
+            createConstant(null, ObjectType),
+          ),
+        );
+        converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
+        converter.emit(
+          new CopyInstruction(
+            result,
+            createSoaSentinelValue(converter, getResultType),
+          ),
+        );
+        converter.emit(new UnconditionalJumpInstruction(endLabel));
+        converter.emit(new LabelInstruction(nonNullLabel));
+        const unwrapped = converter.unwrapDataToken(valueToken, getResultType);
+        converter.emit(new CopyInstruction(result, unwrapped));
+        converter.emit(new LabelInstruction(endLabel));
+        return result;
+      }
       return converter.unwrapDataToken(valueToken, getResultType);
     }
     case "has": {

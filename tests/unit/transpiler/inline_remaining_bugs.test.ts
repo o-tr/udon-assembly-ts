@@ -313,6 +313,136 @@ describe("inline remaining bugs", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Bug C: SoA tracked dispatch — handle not restored from receiver
+  // When a tracked SoA instance (in inlineInstanceMap) is dispatched via the
+  // tracked path, the code uses instanceInfo.prefix directly without copying
+  // the receiver's handle value into ${prefix}__handle first.  Body-caching
+  // causes multiple constructions to share a prefix, so the last construction
+  // leaves a stale value in __handle.  A method call or property access through
+  // a stored reference (e.g. Holder.r) then reads the wrong DataList slot.
+  // ---------------------------------------------------------------------------
+  describe("SoA tracked dispatch handle restore", () => {
+    it("method call on tracked SoA instance restores handle before DataList read", () => {
+      // r1 and r2 share the same body-cached prefix (__inst_Reg_0) because both
+      // come from the same Reg.make() call site. After r2 construction,
+      // __inst_Reg_0__handle = 2. Without the fix, r1.get() uses handle 2 and
+      // reads the wrong DataList slot. With the fix, a COPY restores handle 1
+      // from r1 before entering the inlined get() body.
+      const source = `
+        class Reg {
+          value: number;
+          constructor(v: number) { this.value = v; }
+          static make(v: number): Reg { return new Reg(v); }
+          get(): number { return this.value; }
+        }
+        class Main {
+          Start(): void {
+            for (let i: number = 0; i < 1; i++) {
+              const r1 = Reg.make(10);
+              const r2 = Reg.make(20);
+              Debug.Log(r1.get());
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const lines = result.tac.split("\n");
+
+      // SoA must be triggered (Reg constructed in loop).
+      expect(result.uasm).toContain("__soa_Reg_value:");
+
+      const handleAssignIndexes = lines
+        .map((line, idx) => (/__inst_\w+__handle = /.test(line) ? idx : -1))
+        .filter((idx) => idx >= 0);
+      const counterAssignIndexes = lines
+        .map((line, idx) =>
+          line.includes("__soa_Reg__counter") && line.includes("=") ? idx : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const getItemIndex = lines.findIndex(
+        (line) => line.includes("__soa_Reg_value") && line.includes("get_Item"),
+      );
+
+      const restoreIndexes = lines
+        .map((line, idx) =>
+          /__inst_\w+__handle = /.test(line) &&
+          !line.includes("__counter") &&
+          !line.includes("__soa_mdisp")
+            ? idx
+            : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const secondConstructionIndex =
+        counterAssignIndexes.length >= 2 ? counterAssignIndexes[1] : -1;
+      const hasRestoreBetweenConstructionAndRead = restoreIndexes.some((idx) =>
+        secondConstructionIndex >= 0 && getItemIndex >= 0
+          ? idx > secondConstructionIndex && idx < getItemIndex
+          : false,
+      );
+
+      expect(handleAssignIndexes.length).toBeGreaterThanOrEqual(3);
+      expect(hasRestoreBetweenConstructionAndRead).toBe(true);
+    });
+
+    it("direct property access on tracked SoA instance restores handle", () => {
+      // Same body-caching scenario as above, but accessed via property access
+      // (expression.ts tracked path) rather than method call (call.ts tracked path).
+      const source = `
+        class Reg {
+          value: number;
+          constructor(v: number) { this.value = v; }
+          static make(v: number): Reg { return new Reg(v); }
+        }
+        class Main {
+          Start(): void {
+            for (let i: number = 0; i < 1; i++) {
+              const r1 = Reg.make(10);
+              const r2 = Reg.make(20);
+              Debug.Log(r1.value);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const lines = result.tac.split("\n");
+
+      expect(result.uasm).toContain("__soa_Reg_value:");
+
+      // DataList read must be present (SoA field access path taken).
+      const soaRead = lines.some(
+        (l) => l.includes("__soa_Reg_value") && l.includes("get_Item"),
+      );
+      expect(soaRead).toBe(true);
+
+      const getItemIndex = lines.findIndex(
+        (line) => line.includes("__soa_Reg_value") && line.includes("get_Item"),
+      );
+      const counterAssignIndexes = lines
+        .map((line, idx) =>
+          line.includes("__soa_Reg__counter") && line.includes("=") ? idx : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const secondConstructionIndex =
+        counterAssignIndexes.length >= 2 ? counterAssignIndexes[1] : -1;
+      const restoreIndexes = lines
+        .map((line, idx) =>
+          /__inst_\w+__handle = /.test(line) &&
+          !line.includes("__counter") &&
+          !line.includes("__soa_mdisp")
+            ? idx
+            : -1,
+        )
+        .filter((idx) => idx >= 0);
+      const hasRestoreBeforeRead = restoreIndexes.some((idx) =>
+        secondConstructionIndex >= 0
+          ? idx > secondConstructionIndex && idx < getItemIndex
+          : idx < getItemIndex,
+      );
+      expect(hasRestoreBeforeRead).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Bug B: SoA field reads in inlined method bodies must use DataList, not scratch
   // When multiple SoA instances are created (construction inside a loop triggers
   // SoA), the scratch variable is reused on each construction. A field read on
@@ -322,9 +452,12 @@ describe("inline remaining bugs", () => {
   // ---------------------------------------------------------------------------
   describe("SoA DataDictionary field read in inlined method body", () => {
     it("this.field inside inlined method uses DataList, not scratch variable", () => {
-      // Registry is constructed inside a loop → SoA. The `data` field DataList
-      // is __soa_Registry_data. After multiple iterations, reading this.data
-      // inside getResult() must go through DataList[handle], not the scratch.
+      // Two registries are built from the same static factory in the same scope.
+      // Body-caching means both share the same instance prefix (__inst_Registry_0).
+      // After reg2 is constructed, __inst_Registry_0__handle holds reg2's index,
+      // making the scratch variable stale for reg1. The inlined getResult() body
+      // must therefore read this.data through the per-field DataList indexed by
+      // the restored handle, not via the (now-stale) scratch variable.
       const source = `
         class Registry {
           public data: DataDictionary;
@@ -340,9 +473,10 @@ describe("inline remaining bugs", () => {
         }
         class Main {
           Start(): void {
-            for (let i: number = 0; i < 3; i++) {
-              const reg = Registry.build();
-              Debug.Log(reg.getResult(new DataToken("key")));
+            for (let i: number = 0; i < 1; i++) {
+              const reg1 = Registry.build();
+              const reg2 = Registry.build();
+              Debug.Log(reg1.getResult(new DataToken("key")));
             }
           }
         }
