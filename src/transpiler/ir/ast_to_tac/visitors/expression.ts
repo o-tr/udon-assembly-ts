@@ -964,9 +964,18 @@ export function visitBinaryExpression(
       this.emit(new CastInstruction(cast, left));
       narrowedLeft = cast;
     }
+    let narrowedRight = right;
+    const rightType = this.getOperandType(right);
+    if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+      const castR = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(castR, right));
+      narrowedRight = castR;
+    }
     const resultType = this.getOperandType(narrowedLeft);
     const result = this.newTemp(resultType);
-    this.emit(new BinaryOpInstruction(result, narrowedLeft, ">>", right));
+    this.emit(
+      new BinaryOpInstruction(result, narrowedLeft, ">>", narrowedRight),
+    );
     return result;
   }
   if (node.operator === "&&") {
