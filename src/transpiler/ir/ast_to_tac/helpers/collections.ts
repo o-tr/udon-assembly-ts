@@ -152,6 +152,7 @@ export const emitMapEntriesList = (
  * implemented in the Udon VM. Copies `count` elements from `source` starting
  * at index `start` into a new DataList, using get_Item/Add in a loop.
  *
+ * Negative or zero count yields an empty list (loop condition idx < count is false).
  * Equivalent to: result = source.GetRange(start, count)
  */
 export function emitDataListGetRangeLoop(

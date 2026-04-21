@@ -1101,11 +1101,18 @@ export function visitBinaryExpression(
     // Narrow to Int32 for shift ops — Udon VM requires integer operands for
     // shift EXTERNs (e.g. SystemInt32.__op_RightShift__). Float left operands
     // produce invalid signatures like SystemSingle.__op_RightShift__.
+    // Also narrow the right operand for consistency (shift count should be Int32).
     const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
     if (BITWISE_FLOAT_TYPES.has(leftType.udonType)) {
       const cast = this.newTemp(PrimitiveTypes.int32);
       this.emit(new CastInstruction(cast, left));
       left = cast;
+    }
+    if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+      const cast = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(cast, right));
+      right = cast;
     }
   } else {
     // Widen narrower operand when both are numeric and types differ (skip shifts).
