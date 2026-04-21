@@ -1090,8 +1090,7 @@ export function visitBinaryExpression(
 
   const isBitwise =
     node.operator === "|" || node.operator === "&" || node.operator === "^";
-  const isShift =
-    node.operator === "<<" || node.operator === ">>" || node.operator === ">>>";
+  const isShift = node.operator === "<<" || node.operator === ">>";
 
   if (isBitwise) {
     // Narrow to Int32 for bitwise ops — Udon VM has no float bitwise EXTERNs.

@@ -9,6 +9,7 @@ import {
   ObjectType,
   type PrimitiveTypeSymbol,
   PrimitiveTypes,
+  UDON_BRANDED_TYPE_MAP,
 } from "../type_symbols.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
 
@@ -27,17 +28,6 @@ function getTypeLiteralPropertyName(
 function isInlineSafePropertyName(propName: string): boolean {
   return /^[$A-Z_a-z][$\w]*$/.test(propName);
 }
-
-const UDON_BRANDED_TYPE_MAP: ReadonlyMap<string, PrimitiveTypeSymbol> = new Map(
-  [
-    ["UdonByte", PrimitiveTypes.byte],
-    ["UdonInt", PrimitiveTypes.int32],
-    ["UdonFloat", PrimitiveTypes.single],
-    ["UdonDouble", PrimitiveTypes.double],
-    ["UdonLong", PrimitiveTypes.int64],
-    ["UdonULong", PrimitiveTypes.uint64],
-  ],
-);
 
 function tryResolveBrandedPrimitive(
   node: ts.IntersectionTypeNode,

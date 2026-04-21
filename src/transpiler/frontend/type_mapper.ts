@@ -7,20 +7,11 @@ import {
   GenericTypeParameterSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
-  type PrimitiveTypeSymbol,
   PrimitiveTypes,
   type TypeSymbol,
+  UDON_BRANDED_TYPE_MAP,
 } from "./type_symbols.js";
 import { UdonType } from "./types.js";
-
-const UDON_BRANDED_TYPES: ReadonlyMap<string, PrimitiveTypeSymbol> = new Map([
-  ["UdonByte", PrimitiveTypes.byte],
-  ["UdonInt", PrimitiveTypes.int32],
-  ["UdonFloat", PrimitiveTypes.single],
-  ["UdonDouble", PrimitiveTypes.double],
-  ["UdonLong", PrimitiveTypes.int64],
-  ["UdonULong", PrimitiveTypes.uint64],
-]);
 
 const warnedTypes = new Set<string>();
 
@@ -55,8 +46,8 @@ export class TypeMapper {
 
   mapTypeScriptType(tsType: string): TypeSymbol {
     const trimmed = tsType.trim();
-    if (UDON_BRANDED_TYPES.has(trimmed)) {
-      const branded = UDON_BRANDED_TYPES.get(trimmed);
+    if (UDON_BRANDED_TYPE_MAP.has(trimmed)) {
+      const branded = UDON_BRANDED_TYPE_MAP.get(trimmed);
       if (branded) return branded;
     }
     // Enum check runs before cache: enumRegistry may gain entries after a
