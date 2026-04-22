@@ -237,6 +237,18 @@ export function mapTypeWithGenerics(
   typeText: string,
   node?: ts.Node,
 ): TypeSymbol {
+  // TypeChecker-first resolution when we have the original ts.Node
+  if (node && this.checkerTypeResolver) {
+    try {
+      const resolved = this.checkerTypeResolver.resolveFromTsNode(node);
+      if (resolved && resolved !== ObjectType) {
+        return resolved;
+      }
+    } catch {
+      // Fall through to legacy text-based path
+    }
+  }
+
   const trimmed = typeText.trim();
   const genericParam = this.resolveGenericParam(trimmed);
   if (genericParam) return genericParam;
@@ -474,6 +486,18 @@ export function inferType(
   this: TypeScriptParser,
   node: ts.Expression,
 ): TypeSymbol {
+  // TypeChecker-first resolution when available
+  if (this.checkerTypeResolver) {
+    try {
+      const resolved = this.checkerTypeResolver.resolveFromTsNode(node);
+      if (resolved && resolved !== ObjectType) {
+        return resolved;
+      }
+    } catch {
+      // Fall through to legacy inference path
+    }
+  }
+
   switch (node.kind) {
     case ts.SyntaxKind.NumericLiteral:
       return this.typeMapper.mapTypeScriptType("number");

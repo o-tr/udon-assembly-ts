@@ -774,7 +774,7 @@ export function visitForOfStatement(
         .filter((p) => !p.node.isGetter)
         .map((p) => ({
           name: p.name,
-          type: this.typeMapper.mapTypeScriptType(p.type),
+          type: p.type,
         }));
     }
     const classNode = this.classMap.get(className);

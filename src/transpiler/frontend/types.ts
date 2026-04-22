@@ -127,6 +127,22 @@ export enum ASTNodeKind {
 export interface ASTNode {
   kind: ASTNodeKind;
   loc?: TranspileErrorLocation;
+  /**
+   * Stable identity of the originating TypeScript AST node.
+   * Preserved across shallow-clone transforms (spread) so we can
+   * recover ts.Node even when object identity changes.
+   */
+  tsNodeId?: string;
+  /**
+   * Source span metadata used as a fallback bridge when tsNodeId
+   * cannot be resolved directly.
+   */
+  sourceSpan?: {
+    filePath: string;
+    start: number;
+    end: number;
+    syntaxKind: number;
+  };
 }
 
 /**

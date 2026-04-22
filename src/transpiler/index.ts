@@ -15,7 +15,7 @@ import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "./frontend/parser/index.js";
-import { TypeMapper } from "./frontend/type_mapper.js";
+import { TypeCheckerContext } from "./frontend/type_checker_context.js";
 import { ASTNodeKind, type ClassDeclarationNode } from "./frontend/types.js";
 import {
   buildSimpleHeapBreakdown,
@@ -67,7 +67,11 @@ export class TypeScriptToUdonTranspiler {
     const sourceFilePath =
       options.sourceFilePath ?? TypeScriptToUdonTranspiler.INLINE_SOURCE_ID;
     // Phase 1: Parse TypeScript to AST
-    const parser = new TypeScriptParser();
+    const checkerContext = TypeCheckerContext.create({
+      rootNames: [sourceFilePath],
+      inMemorySources: { [sourceFilePath]: source },
+    });
+    const parser = new TypeScriptParser(undefined, checkerContext);
     const ast = parser.parse(source, sourceFilePath);
     const registry = new ClassRegistry();
     registry.registerFromProgram(ast, sourceFilePath);
@@ -91,7 +95,6 @@ export class TypeScriptToUdonTranspiler {
         )
         .map((cls) => cls.name),
     );
-    const typeMapper = new TypeMapper(parser.getEnumRegistry());
     const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
     const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
       (iface) => ({
@@ -100,9 +103,9 @@ export class TypeScriptToUdonTranspiler {
           name: m.name,
           parameters: m.parameters.map((p) => ({
             name: p.name,
-            type: typeMapper.mapTypeScriptType(p.type),
+            type: p.type,
           })),
-          returnType: typeMapper.mapTypeScriptType(m.returnType),
+          returnType: m.returnType,
         })),
       }),
     );
@@ -144,6 +147,7 @@ export class TypeScriptToUdonTranspiler {
         typeMapper: parser.typeMapper,
         sourceFilePath,
         errorCollector: parser.getErrorCollector(),
+        checkerContext: parser.checkerContext,
       },
     );
     let tacInstructions = tacConverter.convert(program);

@@ -130,10 +130,8 @@ function buildFallbackMethodLayout(
   const parameterExportNames = method.parameters.map(
     (_, i) => `${baseName}__param_${i}`,
   );
-  const parameterTypes = method.parameters.map((p) =>
-    converter.typeMapper.mapTypeScriptType(p.type),
-  );
-  const returnType = converter.typeMapper.mapTypeScriptType(method.returnType);
+  const parameterTypes = method.parameters.map((p) => p.type);
+  const returnType = method.returnType;
   const returnExportName =
     returnType !== PrimitiveTypes.void ? `${baseName}__ret` : null;
 
@@ -765,9 +763,7 @@ function tryUntrackedInlineDispatch(
         if (method) {
           return {
             className,
-            returnType: converter.typeMapper.mapTypeScriptType(
-              method.returnType,
-            ),
+            returnType: method.returnType,
           };
         }
       }
@@ -2920,12 +2916,8 @@ export function visitCallExpression(
           const methodMeta = ifaceMeta?.methods.find(
             (m) => m.name === propAccess.property,
           );
-          const returnType = methodMeta
-            ? this.typeMapper.mapTypeScriptType(methodMeta.returnType)
-            : ObjectType;
-          const isVoid =
-            returnType.name === "SystemVoid" ||
-            methodMeta?.returnType === "void";
+          const returnType = methodMeta ? methodMeta.returnType : ObjectType;
+          const isVoid = returnType.udonType === UdonType.Void;
           // Save state BEFORE allocating any variables so rollback
           // doesn't leave orphaned temps/labels in the TAC variable table.
           const savedInstructionCount = this.instructions.length;
@@ -3051,13 +3043,7 @@ export function visitCallExpression(
                     if (mergedProps.length > 0) {
                       fieldsToCopy = mergedProps
                         .filter((p) => !p.node.isGetter)
-                        .map(
-                          (p) =>
-                            [
-                              p.name,
-                              this.typeMapper.mapTypeScriptType(p.type),
-                            ] as [string, TypeSymbol],
-                        );
+                        .map((p) => [p.name, p.type] as [string, TypeSymbol]);
                     }
                   } else {
                     const classNode = this.classMap.get(
@@ -3414,9 +3400,7 @@ export function visitCallExpression(
           (candidate) => candidate.name === propAccess.property,
         );
         if (method) {
-          resolvedReturnType = this.typeMapper.mapTypeScriptType(
-            method.returnType,
-          );
+          resolvedReturnType = method.returnType;
         }
       }
     }

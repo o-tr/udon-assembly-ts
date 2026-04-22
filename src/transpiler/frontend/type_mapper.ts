@@ -1,3 +1,4 @@
+import { TranspileError } from "../errors/transpile_errors.js";
 import type { EnumRegistry } from "./enum_registry.js";
 import {
   ArrayTypeSymbol,
@@ -12,8 +13,6 @@ import {
   UDON_BRANDED_TYPE_MAP,
 } from "./type_symbols.js";
 import { UdonType } from "./types.js";
-
-const warnedTypes = new Set<string>();
 
 // Matches two or more quoted string literals joined by "|",
 // e.g. "'a' | \"b\"" or "\"foo\" | 'bar'". Does not match bare identifiers.
@@ -315,17 +314,14 @@ export class TypeMapper {
         if (this.isLikelyUserDefinedType(trimmed)) {
           return new ClassTypeSymbol(trimmed, UdonType.Object);
         }
-        if (
-          !warnedTypes.has(trimmed) &&
-          !this.isComplexTypeExpression(trimmed)
-        ) {
-          warnedTypes.add(trimmed);
-          // eslint-disable-next-line no-console
-          console.warn(
-            `transpiler: Unknown TypeScript type "${trimmed}" — falling back to object`,
-          );
+        if (this.isComplexTypeExpression(trimmed)) {
+          return ObjectType;
         }
-        return ObjectType;
+        throw new TranspileError(
+          "TypeError",
+          `Unknown TypeScript type "${trimmed}"`,
+          { filePath: "<unknown>", line: 0, column: 0 },
+        );
     }
   }
 

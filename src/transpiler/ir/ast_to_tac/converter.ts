@@ -13,6 +13,7 @@ import type { ClassRegistry } from "../../frontend/class_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
 import { TypeMapper } from "../../frontend/type_mapper.js";
+import type { TypeCheckerContext } from "../../frontend/type_checker_context.js";
 import type { TypeSymbol } from "../../frontend/type_symbols.js";
 import {
   InterfaceTypeSymbol,
@@ -375,6 +376,8 @@ export class ASTToTACConverter {
   sourceFilePath = "<unknown>";
   /** Optional error collector used by warnAt() to record warnings with source locations. */
   errorCollector?: ErrorCollector;
+  /** TypeChecker context for resolving TypeScript types at AST nodes. */
+  checkerContext?: TypeCheckerContext;
   /** Stack of AST nodes representing active inline call sites (innermost last).
    *  Used by warnAt() so warnings emitted inside an inline body report the
    *  caller's source location instead of the inline definition. */
@@ -394,6 +397,7 @@ export class ASTToTACConverter {
       typeMapper?: TypeMapper;
       sourceFilePath?: string;
       errorCollector?: ErrorCollector;
+      checkerContext?: TypeCheckerContext;
     },
   ) {
     this.symbolTable = symbolTable;
@@ -407,6 +411,7 @@ export class ASTToTACConverter {
       options?.stringBuilderThreshold ?? this.stringBuilderThreshold;
     if (options?.sourceFilePath) this.sourceFilePath = options.sourceFilePath;
     this.errorCollector = options?.errorCollector;
+    this.checkerContext = options?.checkerContext;
   }
 
   /**

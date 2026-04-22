@@ -28,6 +28,7 @@ import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "../frontend/parser/index.js";
+import { TypeCheckerContext } from "../frontend/type_checker_context.js";
 import { SymbolTable } from "../frontend/symbol_table.js";
 import {
   type ASTNode,
@@ -182,9 +183,6 @@ export interface BatchResult {
 export class BatchTranspiler {
   transpile(options: BatchTranspilerOptions): BatchResult {
     const errorCollector = new ErrorCollector();
-    const parser = new TypeScriptParser(errorCollector);
-    const registry = new ClassRegistry();
-    const typeMapper = parser.typeMapper;
     const cachePath = path.join(options.sourceDir, ".transpiler-cache.json");
     const cache = this.loadCache(cachePath);
 
@@ -195,32 +193,42 @@ export class BatchTranspiler {
     const files = rawFiles.map((f) => fs.realpathSync(f));
     const fileSet = new Set(files);
 
+    const transpilableSourceFiles = files.filter(isTranspilableSource);
+
+    // Build a shared TypeCheckerContext for all source files so that
+    // cross-file type resolution works during parsing.
+    const inMemorySources: Record<string, string> = {};
+    for (const filePath of transpilableSourceFiles) {
+      try {
+        inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
+      } catch {
+        // ignore unreadable files
+      }
+    }
+    const checkerContext =
+      transpilableSourceFiles.length > 0
+        ? TypeCheckerContext.create({
+            rootNames: transpilableSourceFiles,
+            inMemorySources,
+          })
+        : undefined;
+    const parser = new TypeScriptParser(errorCollector, checkerContext);
+    const registry = new ClassRegistry();
+    const typeMapper = parser.typeMapper;
+
     // Register all source files upfront so that registry.getEntryPoints()
     // can identify entry files without a separate ts.createSourceFile() pass.
-    const parseAndRegisterFile = (
-      filePath: string,
-      label?: string,
-    ): boolean => {
-      try {
-        const source = fs.readFileSync(filePath, "utf8");
-        const program = parser.parse(source, filePath);
-        registry.registerFromProgram(program, filePath, source);
-        return true;
-      } catch (e) {
-        if (options?.verbose) {
-          const prefix = label ? `${label} ` : "";
-          console.warn(
-            `Failed to read/parse ${prefix}${filePath}: ${e instanceof Error ? e.message : e}`,
-          );
-        }
-        return false;
-      }
+    const parseAndRegisterFile = (filePath: string, _label?: string): void => {
+      const source =
+        inMemorySources[filePath] ?? fs.readFileSync(filePath, "utf8");
+      const program = parser.parse(source, filePath);
+      registry.registerFromProgram(program, filePath, source);
     };
 
-    const transpilableSourceFiles = files.filter(isTranspilableSource);
     let sourceFileCount = 0;
     for (const filePath of transpilableSourceFiles) {
-      if (parseAndRegisterFile(filePath)) sourceFileCount++;
+      parseAndRegisterFile(filePath);
+      sourceFileCount++;
     }
 
     // Derive entry files from registry instead of discoverEntryFilesUsingTS
@@ -233,7 +241,6 @@ export class BatchTranspiler {
     });
     resolver.setImportCache(parser.getImportCache());
     const reachable = new Set<string>();
-    const fallbackDeps = new Set<string>();
     const includeExternal = options.includeExternalDependencies !== false;
     if (options?.verbose) {
       console.log(
@@ -242,38 +249,13 @@ export class BatchTranspiler {
     }
     if (entryFiles.length > 0) {
       for (const entry of entryFiles) {
-        try {
-          const graph = resolver.buildGraph(entry);
-          reachable.add(entry);
-          for (const [k, deps] of graph.entries()) {
-            reachable.add(k);
-            for (const d of deps) reachable.add(d);
-          }
-        } catch (e) {
-          if (options?.verbose) {
-            console.warn(
-              `Failed to build dependency graph for ${entry}: ${e instanceof Error ? e.message : e}`,
-            );
-          }
-          if (includeExternal) {
-            try {
-              for (const dep of resolver.resolveImmediateDependencies(entry)) {
-                fallbackDeps.add(dep);
-              }
-            } catch (fallbackError) {
-              if (options?.verbose) {
-                console.warn(
-                  `Failed to resolve immediate dependencies for ${entry}: ${fallbackError instanceof Error ? fallbackError.message : fallbackError}`,
-                );
-              }
-            }
-          }
+        const graph = resolver.buildGraph(entry);
+        reachable.add(entry);
+        for (const [k, deps] of graph.entries()) {
+          reachable.add(k);
+          for (const d of deps) reachable.add(d);
         }
       }
-    }
-
-    if (includeExternal && fallbackDeps.size > 0) {
-      for (const dep of fallbackDeps) reachable.add(dep);
     }
 
     // Register any external files discovered via dependency resolution
@@ -321,40 +303,34 @@ export class BatchTranspiler {
     if (cache) {
       entryFilesToCompile.clear();
       for (const entryFile of entryFiles) {
-        try {
-          // Tier 3: Use recorded usedFiles when available (faster, avoids full
-          // compilationOrder traversal for unchanged entry points).
-          // Bootstrap invariant: to add a new dependency to an entry point,
-          // some file already tracked in usedFiles must be modified to
-          // reference it. That modification is detected as a change, triggering
-          // a recompile and updating usedFiles to include the new file.
-          // The stale usedFiles set is therefore safe: any source edit that
-          // introduces a new transitive dependency also touches an already-
-          // tracked file. The gap exists only on the single transitional run.
-          // Collect usedFiles from ALL entry points in this file (a file
-          // may contain multiple @UdonBehaviour classes with different deps).
-          const entryClasses = registry
-            .getEntryPoints()
-            .filter((ep) => ep.filePath === entryFile);
-          const usedFilesUnion = new Set<string>();
-          let hasAnyCachedUsedFiles = false;
-          for (const ec of entryClasses) {
-            const uf = cache.entryPoints[ec.name]?.usedFiles;
-            if (uf) {
-              hasAnyCachedUsedFiles = true;
-              for (const f of uf) usedFilesUnion.add(f);
-            }
+        // Tier 3: Use recorded usedFiles when available (faster, avoids full
+        // compilationOrder traversal for unchanged entry points).
+        // Bootstrap invariant: to add a new dependency to an entry point,
+        // some file already tracked in usedFiles must be modified to
+        // reference it. That modification is detected as a change, triggering
+        // a recompile and updating usedFiles to include the new file.
+        // The stale usedFiles set is therefore safe: any source edit that
+        // introduces a new transitive dependency also touches an already-
+        // tracked file. The gap exists only on the single transitional run.
+        // Collect usedFiles from ALL entry points in this file (a file
+        // may contain multiple @UdonBehaviour classes with different deps).
+        const entryClasses = registry
+          .getEntryPoints()
+          .filter((ep) => ep.filePath === entryFile);
+        const usedFilesUnion = new Set<string>();
+        let hasAnyCachedUsedFiles = false;
+        for (const ec of entryClasses) {
+          const uf = cache.entryPoints[ec.name]?.usedFiles;
+          if (uf) {
+            hasAnyCachedUsedFiles = true;
+            for (const f of uf) usedFilesUnion.add(f);
           }
-          const filesToCheck = hasAnyCachedUsedFiles
-            ? Array.from(usedFilesUnion)
-            : resolver.getCompilationOrder(entryFile);
-          const hasChanges = filesToCheck.some((file) =>
-            changedFiles.has(file),
-          );
-          if (hasChanges) {
-            entryFilesToCompile.add(entryFile);
-          }
-        } catch (_) {
+        }
+        const filesToCheck = hasAnyCachedUsedFiles
+          ? Array.from(usedFilesUnion)
+          : resolver.getCompilationOrder(entryFile);
+        const hasChanges = filesToCheck.some((file) => changedFiles.has(file));
+        if (hasChanges) {
           entryFilesToCompile.add(entryFile);
         }
       }
@@ -494,9 +470,9 @@ export class BatchTranspiler {
           name: m.name,
           parameters: m.parameters.map((p) => ({
             name: p.name,
-            type: typeMapper.mapTypeScriptType(p.type),
+            type: p.type,
           })),
-          returnType: typeMapper.mapTypeScriptType(m.returnType),
+          returnType: m.returnType,
         })),
       }),
     );
@@ -509,9 +485,9 @@ export class BatchTranspiler {
           name: method.name,
           parameters: method.parameters.map((param) => ({
             name: param.name,
-            type: typeMapper.mapTypeScriptType(param.type),
+            type: param.type,
           })),
-          returnType: typeMapper.mapTypeScriptType(method.returnType),
+          returnType: method.returnType,
           isPublic: method.isPublic,
         })),
       })),
@@ -572,12 +548,7 @@ export class BatchTranspiler {
 
       const symbolTable = new SymbolTable();
       for (const prop of mergedProperties) {
-        symbolTable.addSymbol(
-          prop.name,
-          typeMapper.mapTypeScriptType(prop.type),
-          false,
-          false,
-        );
+        symbolTable.addSymbol(prop.name, prop.type, false, false);
       }
       if (options?.verbose) {
         console.log(
@@ -600,7 +571,7 @@ export class BatchTranspiler {
         if (!symbolTable.hasInCurrentScope(tlc.name)) {
           symbolTable.addSymbol(
             tlc.name,
-            typeMapper.mapTypeScriptType(tlc.type),
+            tlc.type,
             false,
             true,
             tlc.node.initializer,
@@ -1296,6 +1267,7 @@ export class BatchTranspiler {
         entryPointMethods,
         entryProperties,
         entryMeta?.constructor,
+        entryMeta?.node,
       ),
     );
 
@@ -1313,6 +1285,7 @@ export class BatchTranspiler {
           ),
           registry.getMergedProperties(inlineName),
           inlineMeta.constructor,
+          inlineMeta.node,
         ),
       );
     }
@@ -1329,8 +1302,20 @@ export class BatchTranspiler {
       parameters: Array<{ name: string; type: string }>;
       body: ASTNode;
     },
+    originalNode?: ClassDeclarationNode,
   ): ClassDeclarationNode {
     const decorators: DecoratorNode[] = [];
+    if (originalNode) {
+      return {
+        ...originalNode,
+        name,
+        baseClass,
+        decorators,
+        properties: properties.map((prop) => prop.node),
+        methods: methods.map((method) => method.node),
+        constructor: constructorInfo,
+      };
+    }
     return {
       kind: ASTNodeKind.ClassDeclaration,
       name,
