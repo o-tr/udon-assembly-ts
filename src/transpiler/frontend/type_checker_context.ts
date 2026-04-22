@@ -219,12 +219,9 @@ export class TypeCheckerContext {
     span: { start: number; end: number; syntaxKind: number; filePath: string },
   ): ts.Node | undefined {
     let found: ts.Node | undefined;
-    const expectedFilePath = normalizeFilePath(span.filePath);
     const visit = (node: ts.Node): void => {
       if (found) return;
-      const nodeSource = node.getSourceFile();
-      if (normalizeFilePath(nodeSource.fileName) !== expectedFilePath) return;
-      const start = node.getStart(nodeSource, false);
+      const start = node.getStart(sourceFile, false);
       const end = node.getEnd();
       if (
         start === span.start &&

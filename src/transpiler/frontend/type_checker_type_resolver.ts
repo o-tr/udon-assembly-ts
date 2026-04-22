@@ -245,12 +245,10 @@ export class TypeCheckerTypeResolver {
             { params: TypeSymbol[]; returnType: TypeSymbol }
           >();
           for (const prop of props) {
-            const propType = this.checker.getTypeOfSymbolAtLocation(
-              prop,
-              prop.valueDeclaration ??
-                prop.declarations?.[0] ??
-                ts.factory.createIdentifier(""),
-            );
+            const propDecl = prop.valueDeclaration ?? prop.declarations?.[0];
+            const propType = propDecl
+              ? this.checker.getTypeOfSymbolAtLocation(prop, propDecl)
+              : this.checker.getDeclaredTypeOfSymbol(prop);
 
             if (prop.flags & ts.SymbolFlags.Method) {
               const sigs = this.checker.getSignaturesOfType(
@@ -260,12 +258,10 @@ export class TypeCheckerTypeResolver {
               if (sigs.length > 0) {
                 const sig = sigs[0];
                 const params = sig.parameters.map((p) => {
-                  const pType = this.checker.getTypeOfSymbolAtLocation(
-                    p,
-                    p.valueDeclaration ??
-                      p.declarations?.[0] ??
-                      ts.factory.createIdentifier(""),
-                  );
+                  const pDecl = p.valueDeclaration ?? p.declarations?.[0];
+                  const pType = pDecl
+                    ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
+                    : this.checker.getDeclaredTypeOfSymbol(p);
                   return this.resolveFromTsType(pType);
                 });
                 const retType = this.resolveFromTsType(sig.getReturnType());
@@ -335,12 +331,10 @@ export class TypeCheckerTypeResolver {
     >();
 
     for (const prop of props) {
-      const propType = this.checker.getTypeOfSymbolAtLocation(
-        prop,
-        prop.valueDeclaration ??
-          prop.declarations?.[0] ??
-          ts.factory.createIdentifier(""),
-      );
+      const propDecl = prop.valueDeclaration ?? prop.declarations?.[0];
+      const propType = propDecl
+        ? this.checker.getTypeOfSymbolAtLocation(prop, propDecl)
+        : this.checker.getDeclaredTypeOfSymbol(prop);
 
       if (prop.flags & ts.SymbolFlags.Method) {
         const sigs = this.checker.getSignaturesOfType(
@@ -350,12 +344,10 @@ export class TypeCheckerTypeResolver {
         if (sigs.length > 0) {
           const sig = sigs[0];
           const params = sig.parameters.map((p) => {
-            const pType = this.checker.getTypeOfSymbolAtLocation(
-              p,
-              p.valueDeclaration ??
-                p.declarations?.[0] ??
-                ts.factory.createIdentifier(""),
-            );
+            const pDecl = p.valueDeclaration ?? p.declarations?.[0];
+            const pType = pDecl
+              ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
+              : this.checker.getDeclaredTypeOfSymbol(p);
             return this.resolveFromTsType(pType);
           });
           const retType = this.resolveFromTsType(sig.getReturnType());
