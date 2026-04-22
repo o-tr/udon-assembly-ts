@@ -505,7 +505,7 @@ export interface ClassDeclarationNode extends ASTNode {
   constructor?: {
     parameters: Array<{
       name: string;
-      type: string;
+      type: TypeSymbol;
       isSerializeField?: boolean;
       isParameterProperty?: boolean;
       initializer?: ASTNode;

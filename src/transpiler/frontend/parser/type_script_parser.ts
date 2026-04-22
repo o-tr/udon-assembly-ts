@@ -7,11 +7,11 @@ import { ErrorCollector } from "../../errors/error_collector.js";
 import type { TranspileErrorLocation } from "../../errors/transpile_errors.js";
 import { EnumRegistry } from "../enum_registry.js";
 import { SymbolTable } from "../symbol_table.js";
+import type { TypeCheckerContext } from "../type_checker_context.js";
 import {
   createTypeCheckerTypeResolver,
   type TypeCheckerTypeResolver,
 } from "../type_checker_type_resolver.js";
-import { TypeCheckerContext } from "../type_checker_context.js";
 import { TypeMapper } from "../type_mapper.js";
 import {
   ArrayTypeSymbol,

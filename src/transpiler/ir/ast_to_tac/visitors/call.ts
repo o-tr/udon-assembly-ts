@@ -3390,9 +3390,7 @@ export function visitCallExpression(
           propAccess.property,
         );
         if (method) {
-          resolvedReturnType = this.typeMapper.mapTypeScriptType(
-            method.returnType,
-          );
+          resolvedReturnType = method.returnType;
         }
       } else {
         const interfaceMeta = this.classRegistry.getInterface(objectType.name);

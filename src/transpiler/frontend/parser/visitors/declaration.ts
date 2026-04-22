@@ -135,7 +135,9 @@ export function visitClassDeclaration(
           : undefined;
         return {
           name: paramName,
-          type: param.type ? param.type.getText() : "number",
+          type: param.type
+            ? this.mapTypeWithGenerics(param.type.getText(), param.type)
+            : this.mapTypeWithGenerics("number"),
           ...(serializeFieldParams.has(paramName)
             ? { isSerializeField: true }
             : {}),

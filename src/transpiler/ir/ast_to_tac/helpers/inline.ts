@@ -1319,7 +1319,7 @@ export function inlineSuperConstructorFromArgs(
       converter.symbolTable.enterScope();
       const typedParams = baseClassNode.constructor.parameters.map((param) => ({
         name: param.name,
-        type: converter.typeMapper.mapTypeScriptType(param.type),
+        type: param.type,
         ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries = saveAndBindInlineParams(
@@ -1492,7 +1492,7 @@ export function visitInlineConstructor(
       this.symbolTable.enterScope();
       const typedParams = classNode.constructor.parameters.map((param) => ({
         name: param.name,
-        type: this.typeMapper.mapTypeScriptType(param.type),
+        type: param.type,
         ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries = saveAndBindInlineParams(
@@ -2527,8 +2527,7 @@ export function emitEntryPointPropertyInit(
         // Register @SerializeField params so the constructor body can reference them
         for (const param of classNode.constructor.parameters) {
           if (!param.isSerializeField) continue;
-          const paramType = this.typeMapper.mapTypeScriptType(param.type);
-          this.symbolTable.addSymbol(param.name, paramType, true, false);
+          this.symbolTable.addSymbol(param.name, param.type, true, false);
         }
         this.visitStatement(classNode.constructor.body);
         if (classNode.baseClass) {

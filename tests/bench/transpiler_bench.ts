@@ -31,7 +31,6 @@ import { computeExposedLabels } from "../../src/transpiler/exposed_labels.js";
 import { CallAnalyzer } from "../../src/transpiler/frontend/call_analyzer.js";
 import { ClassRegistry } from "../../src/transpiler/frontend/class_registry.js";
 import { TypeScriptParser } from "../../src/transpiler/frontend/parser/index.js";
-import { TypeMapper } from "../../src/transpiler/frontend/type_mapper.js";
 import {
   ASTNodeKind,
   type ClassDeclarationNode,
@@ -260,7 +259,6 @@ function runPhaseBreakdown(source: string, optimize: boolean): PhaseTimings {
       .filter((cls) => cls.decorators.some((d) => d.name === "UdonBehaviour"))
       .map((cls) => cls.name),
   );
-  const typeMapper = new TypeMapper(parser.getEnumRegistry());
   const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
   const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
     (iface) => ({
@@ -269,9 +267,9 @@ function runPhaseBreakdown(source: string, optimize: boolean): PhaseTimings {
         name: m.name,
         parameters: m.parameters.map((p) => ({
           name: p.name,
-          type: typeMapper.mapTypeScriptType(p.type),
+          type: p.type,
         })),
-        returnType: typeMapper.mapTypeScriptType(m.returnType),
+        returnType: m.returnType,
       })),
     }),
   );

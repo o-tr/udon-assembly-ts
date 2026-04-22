@@ -2,7 +2,7 @@
  * Class registry for transpiler
  */
 
-import { type TypeSymbol } from "./type_symbols.js";
+import type { TypeSymbol } from "./type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,

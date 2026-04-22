@@ -35,7 +35,7 @@ describe("TypeMapper", () => {
       );
     });
 
-    it("throws TranspileError for unsupported complex type expressions", () => {
+    it("falls back to ObjectType for unsupported complex type expressions", () => {
       const mapper = new TypeMapper();
       // Complex expressions such as mapped types still fall back to ObjectType
       // without throwing, because they are explicitly recognised as complex.

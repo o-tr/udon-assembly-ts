@@ -491,11 +491,14 @@ export function resolveTypeFromNode(
     try {
       const tsNode = converter.checkerContext.resolveTsNode(node);
       if (tsNode) {
-        const resolver = createTypeCheckerTypeResolver(
-          converter.checkerContext,
-          converter.typeMapper,
-        );
-        const resolved = resolver.resolveFromTsNode(tsNode);
+        if (!converter.checkerTypeResolver) {
+          converter.checkerTypeResolver = createTypeCheckerTypeResolver(
+            converter.checkerContext,
+            converter.typeMapper,
+          );
+        }
+        const resolved =
+          converter.checkerTypeResolver.resolveFromTsNode(tsNode);
         if (resolved && resolved !== ObjectType) {
           return resolved;
         }

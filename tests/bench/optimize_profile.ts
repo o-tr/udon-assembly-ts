@@ -18,7 +18,6 @@ import { computeExposedLabels } from "../../src/transpiler/exposed_labels.js";
 import { ClassRegistry } from "../../src/transpiler/frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "../../src/transpiler/frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "../../src/transpiler/frontend/parser/index.js";
-import { TypeMapper } from "../../src/transpiler/frontend/type_mapper.js";
 import {
   ASTNodeKind,
   type ClassDeclarationNode,
@@ -148,7 +147,6 @@ function buildTAC(source: string): {
       .filter((cls) => cls.decorators.some((d) => d.name === "UdonBehaviour"))
       .map((cls) => cls.name),
   );
-  const typeMapper = new TypeMapper(parser.getEnumRegistry());
   const udonBehaviourInterfaces = registry.getUdonBehaviourInterfaces();
   const interfaceLikes = Array.from(udonBehaviourInterfaces.values()).map(
     (iface) => ({
@@ -157,9 +155,9 @@ function buildTAC(source: string): {
         name: m.name,
         parameters: m.parameters.map((p) => ({
           name: p.name,
-          type: typeMapper.mapTypeScriptType(p.type),
+          type: p.type,
         })),
-        returnType: typeMapper.mapTypeScriptType(m.returnType),
+        returnType: m.returnType,
       })),
     }),
   );

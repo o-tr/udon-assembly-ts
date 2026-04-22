@@ -28,8 +28,9 @@ import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "../frontend/parser/index.js";
-import { TypeCheckerContext } from "../frontend/type_checker_context.js";
 import { SymbolTable } from "../frontend/symbol_table.js";
+import { TypeCheckerContext } from "../frontend/type_checker_context.js";
+import type { TypeSymbol } from "../frontend/type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -267,9 +268,8 @@ export class BatchTranspiler {
           !fileSet.has(reachableFile) &&
           isTranspilableSource(reachableFile)
         ) {
-          if (parseAndRegisterFile(reachableFile, "external dependency")) {
-            externalFileCount++;
-          }
+          parseAndRegisterFile(reachableFile, "external dependency");
+          externalFileCount++;
         }
       }
     }
@@ -1299,7 +1299,7 @@ export class BatchTranspiler {
     methods: readonly MethodInfo[],
     properties: readonly PropertyInfo[],
     constructorInfo?: {
-      parameters: Array<{ name: string; type: string }>;
+      parameters: Array<{ name: string; type: TypeSymbol }>;
       body: ASTNode;
     },
     originalNode?: ClassDeclarationNode,

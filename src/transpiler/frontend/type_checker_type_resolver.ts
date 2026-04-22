@@ -9,8 +9,8 @@ import {
   InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
-  UDON_BRANDED_TYPE_MAP,
   type TypeSymbol,
+  UDON_BRANDED_TYPE_MAP,
 } from "./type_symbols.js";
 import type { ASTNode } from "./types.js";
 
@@ -32,6 +32,7 @@ function stripModuleQualifier(name: string): string {
  */
 export class TypeCheckerTypeResolver {
   private readonly typeCache = new Map<ts.Type, TypeSymbol>();
+  private anonCounter = 0;
 
   constructor(
     private readonly checker: ts.TypeChecker,
@@ -58,7 +59,9 @@ export class TypeCheckerTypeResolver {
   resolveFromTsType(type: ts.Type): TypeSymbol {
     const cached = this.typeCache.get(type);
     if (cached) return cached;
-
+    // Insert a sentinel so any re-entrant call (e.g. recursive type alias)
+    // returns ObjectType instead of recursing infinitely.
+    this.typeCache.set(type, ObjectType);
     const result = this.resolveFromTsTypeUncached(type);
     this.typeCache.set(type, result);
     return result;
@@ -71,9 +74,12 @@ export class TypeCheckerTypeResolver {
       return this.resolveFromTsType(nonNullish);
     }
 
-    // 2. Literal types (true, false, literal string, literal number)
+    // 2. Literal types (string literal, number literal, bigint literal)
+    // Note: type.isLiteral() is true for StringLiteral, NumberLiteral,
+    // BigIntLiteral. Boolean literal types have TypeFlags.BooleanLike
+    // and are handled in step 4.
     if (type.isLiteral()) {
-      if (typeof type.value === "boolean") return PrimitiveTypes.boolean;
+      if (type.flags & ts.TypeFlags.BigIntLiteral) return PrimitiveTypes.int64;
       if (typeof type.value === "string") return PrimitiveTypes.string;
       if (typeof type.value === "number") return PrimitiveTypes.single;
       return PrimitiveTypes.single;
@@ -196,8 +202,9 @@ export class TypeCheckerTypeResolver {
             );
             propertyMap.set(prop.name, this.resolveFromTsType(propType));
           }
+          const anonId = (type as unknown as { id?: number }).id;
           return new InterfaceTypeSymbol(
-            `__anon_${(type as unknown as { id: number }).id ?? Math.random().toString(36).slice(2)}`,
+            `__anon_${anonId == null ? ++this.anonCounter : anonId}`,
             new Map(),
             propertyMap,
           );
