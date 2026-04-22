@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { TranspileError } from "../../errors/transpile_errors.js";
 import type { TypeSymbol } from "../type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -424,7 +425,15 @@ export function mapTypeWithGenerics(
     }
   }
 
-  return this.typeMapper.mapTypeScriptType(trimmed);
+  try {
+    return this.typeMapper.mapTypeScriptType(trimmed);
+  } catch (err) {
+    if (err instanceof TranspileError && node) {
+      const loc = this.createLoc(node);
+      throw new TranspileError(err.code, err.message, loc, err.suggestion);
+    }
+    throw err;
+  }
 }
 
 export function isStringTypeNode(

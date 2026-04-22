@@ -4,7 +4,6 @@ import type { TypeMapper } from "./type_mapper.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
-  ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   ObjectType,
@@ -13,6 +12,7 @@ import {
   UDON_BRANDED_TYPE_MAP,
 } from "./type_symbols.js";
 import type { ASTNode } from "./types.js";
+import { UdonType } from "./types.js";
 
 const TYPE_TO_STRING_FLAGS =
   ts.TypeFormatFlags.NoTruncation |
@@ -79,11 +79,7 @@ export class TypeCheckerTypeResolver {
       const typeName = stripModuleQualifier(
         this.checker.getFullyQualifiedName(enumSymbol),
       );
-      try {
-        return this.typeMapper.mapTypeScriptType(typeName);
-      } catch {
-        // Unknown enum — fall through to literal/primitive checks
-      }
+      return this.typeMapper.mapTypeScriptType(typeName);
     }
     if (type.flags & ts.TypeFlags.EnumLiteral) {
       const declaration = enumSymbol?.declarations?.[0];
@@ -94,11 +90,7 @@ export class TypeCheckerTypeResolver {
           const parentName = stripModuleQualifier(
             this.checker.getFullyQualifiedName(parentSymbol),
           );
-          try {
-            return this.typeMapper.mapTypeScriptType(parentName);
-          } catch {
-            // Unknown parent enum — fall through
-          }
+          return this.typeMapper.mapTypeScriptType(parentName);
         }
       }
     }
@@ -180,11 +172,7 @@ export class TypeCheckerTypeResolver {
         const typeName = stripModuleQualifier(
           this.checker.getFullyQualifiedName(symbol),
         );
-        try {
-          return this.typeMapper.mapTypeScriptType(typeName);
-        } catch {
-          // Unknown enum — fall through to step 10
-        }
+        return this.typeMapper.mapTypeScriptType(typeName);
       }
 
       // 7c. Interface → build InterfaceTypeSymbol from declared members
@@ -193,21 +181,15 @@ export class TypeCheckerTypeResolver {
         if (iface) return iface;
       }
 
-      // 7d. Class → try typeMapper lookup first, then fallback to ClassTypeSymbol
+      // 7d. Class → typeMapper lookup; let TranspileError propagate for
+      // unknown declared types rather than silently falling back.
       if (symFlags & ts.SymbolFlags.Class) {
         const className = stripModuleQualifier(
           this.checker.getFullyQualifiedName(symbol),
         );
-        try {
-          const mapped = this.typeMapper.mapTypeScriptType(className);
-          if (mapped !== ObjectType) return mapped;
-        } catch {
-          /* unknown type — fall through to generic ClassTypeSymbol */
-        }
-        return new ClassTypeSymbol(
-          className,
-          ExternTypes.udonBehaviour.udonType,
-        );
+        const mapped = this.typeMapper.mapTypeScriptType(className);
+        if (mapped !== ObjectType) return mapped;
+        return new ClassTypeSymbol(className, UdonType.Object);
       }
 
       // 7e. Type alias → resolve the alias type
@@ -244,34 +226,7 @@ export class TypeCheckerTypeResolver {
             string,
             { params: TypeSymbol[]; returnType: TypeSymbol }
           >();
-          for (const prop of props) {
-            const propDecl = prop.valueDeclaration ?? prop.declarations?.[0];
-            const propType = propDecl
-              ? this.checker.getTypeOfSymbolAtLocation(prop, propDecl)
-              : this.checker.getDeclaredTypeOfSymbol(prop);
-
-            if (prop.flags & ts.SymbolFlags.Method) {
-              const sigs = this.checker.getSignaturesOfType(
-                propType,
-                ts.SignatureKind.Call,
-              );
-              if (sigs.length > 0) {
-                const sig = sigs[0];
-                const params = sig.parameters.map((p) => {
-                  const pDecl = p.valueDeclaration ?? p.declarations?.[0];
-                  const pType = pDecl
-                    ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
-                    : this.checker.getDeclaredTypeOfSymbol(p);
-                  return this.resolveFromTsType(pType);
-                });
-                const retType = this.resolveFromTsType(sig.getReturnType());
-                methodMap.set(prop.name, { params, returnType: retType });
-                continue;
-              }
-            }
-
-            propertyMap.set(prop.name, this.resolveFromTsType(propType));
-          }
+          this.populateMemberMaps(props, propertyMap, methodMap);
           const methodEntries = [...methodMap.entries()].map(([name, sig]) => {
             const paramTypes = sig.params.map((p) => p.name).join(",");
             return `${name}(${paramTypes}):${sig.returnType.name}`;
@@ -279,7 +234,7 @@ export class TypeCheckerTypeResolver {
           const propEntries = [...propertyMap.entries()].map(
             ([name, type]) => `${name}:${type.name}`,
           );
-          const anonKey = [...propEntries, ...methodEntries].sort().join("_");
+          const anonKey = [...propEntries, ...methodEntries].sort().join("|");
           return new InterfaceTypeSymbol(
             `__anon_${anonKey}`,
             methodMap,
@@ -330,34 +285,7 @@ export class TypeCheckerTypeResolver {
       { params: TypeSymbol[]; returnType: TypeSymbol }
     >();
 
-    for (const prop of props) {
-      const propDecl = prop.valueDeclaration ?? prop.declarations?.[0];
-      const propType = propDecl
-        ? this.checker.getTypeOfSymbolAtLocation(prop, propDecl)
-        : this.checker.getDeclaredTypeOfSymbol(prop);
-
-      if (prop.flags & ts.SymbolFlags.Method) {
-        const sigs = this.checker.getSignaturesOfType(
-          propType,
-          ts.SignatureKind.Call,
-        );
-        if (sigs.length > 0) {
-          const sig = sigs[0];
-          const params = sig.parameters.map((p) => {
-            const pDecl = p.valueDeclaration ?? p.declarations?.[0];
-            const pType = pDecl
-              ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
-              : this.checker.getDeclaredTypeOfSymbol(p);
-            return this.resolveFromTsType(pType);
-          });
-          const retType = this.resolveFromTsType(sig.getReturnType());
-          methodMap.set(prop.name, { params, returnType: retType });
-          continue;
-        }
-      }
-
-      propertyMap.set(prop.name, this.resolveFromTsType(propType));
-    }
+    this.populateMemberMaps(props, propertyMap, methodMap);
 
     const name = stripModuleQualifier(
       this.checker.getFullyQualifiedName(symbol),
@@ -403,6 +331,43 @@ export class TypeCheckerTypeResolver {
       if (mapped) return mapped;
     }
     return null;
+  }
+
+  /** Resolve symbols into propertyMap / methodMap. Used by both anonymous-object
+   *  and interface paths to avoid drift. */
+  private populateMemberMaps(
+    props: ts.Symbol[],
+    propertyMap: Map<string, TypeSymbol>,
+    methodMap: Map<string, { params: TypeSymbol[]; returnType: TypeSymbol }>,
+  ): void {
+    for (const prop of props) {
+      const propDecl = prop.valueDeclaration ?? prop.declarations?.[0];
+      const propType = propDecl
+        ? this.checker.getTypeOfSymbolAtLocation(prop, propDecl)
+        : this.checker.getDeclaredTypeOfSymbol(prop);
+
+      if (prop.flags & ts.SymbolFlags.Method) {
+        const sigs = this.checker.getSignaturesOfType(
+          propType,
+          ts.SignatureKind.Call,
+        );
+        if (sigs.length > 0) {
+          const sig = sigs[0];
+          const params = sig.parameters.map((p) => {
+            const pDecl = p.valueDeclaration ?? p.declarations?.[0];
+            const pType = pDecl
+              ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
+              : this.checker.getDeclaredTypeOfSymbol(p);
+            return this.resolveFromTsType(pType);
+          });
+          const retType = this.resolveFromTsType(sig.getReturnType());
+          methodMap.set(prop.name, { params, returnType: retType });
+          continue;
+        }
+      }
+
+      propertyMap.set(prop.name, this.resolveFromTsType(propType));
+    }
   }
 }
 

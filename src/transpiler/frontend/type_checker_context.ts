@@ -65,14 +65,9 @@ export class TypeCheckerContext {
   private readonly checker: ts.TypeChecker;
   private readonly astToTsNode = new WeakMap<ASTNode, ts.Node>();
   private readonly tsNodeById = new Map<string, ts.Node>();
-  private readonly sourceMap: Map<string, string>;
 
-  constructor(
-    private readonly program: ts.Program,
-    sourceMap?: Map<string, string>,
-  ) {
+  constructor(private readonly program: ts.Program) {
     this.checker = program.getTypeChecker();
-    this.sourceMap = sourceMap ?? new Map();
   }
 
   static create(options: TypeCheckerContextOptions): TypeCheckerContext {
@@ -141,7 +136,7 @@ export class TypeCheckerContext {
       options: compilerOptions,
       host,
     });
-    return new TypeCheckerContext(program, sourceMap);
+    return new TypeCheckerContext(program);
   }
 
   getProgram(): ts.Program {
@@ -152,25 +147,15 @@ export class TypeCheckerContext {
     return this.checker;
   }
 
+  /**
+   * Return a SourceFile that is registered with the TypeChecker.
+   * If the file is not part of the original program, returns `undefined`;
+   * callers must handle that case explicitly rather than creating an
+   * uncheckered fallback.
+   */
   getSourceFile(filePath: string): ts.SourceFile | undefined {
     const normalized = normalizeFilePath(filePath);
-    const sourceFile = this.program.getSourceFile(normalized);
-    if (sourceFile) return sourceFile;
-    const sourceText = this.sourceMap.get(normalized);
-    if (sourceText === undefined) return undefined;
-    return ts.createSourceFile(
-      normalized,
-      sourceText,
-      ts.ScriptTarget.ESNext,
-      true,
-      normalized.endsWith(".tsx")
-        ? ts.ScriptKind.TSX
-        : normalized.endsWith(".jsx")
-          ? ts.ScriptKind.JSX
-          : normalized.endsWith(".js")
-            ? ts.ScriptKind.JS
-            : ts.ScriptKind.TS,
-    );
+    return this.program.getSourceFile(normalized);
   }
 
   bindAstNode(astNode: ASTNode, tsNode: ts.Node): void {
