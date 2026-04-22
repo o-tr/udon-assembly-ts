@@ -268,9 +268,7 @@ export class TypeCheckerTypeResolver {
                   );
                   return this.resolveFromTsType(pType);
                 });
-                const retType = sig.getReturnType()
-                  ? this.resolveFromTsType(sig.getReturnType())
-                  : PrimitiveTypes.void;
+                const retType = this.resolveFromTsType(sig.getReturnType());
                 methodMap.set(prop.name, { params, returnType: retType });
                 continue;
               }
@@ -360,9 +358,7 @@ export class TypeCheckerTypeResolver {
             );
             return this.resolveFromTsType(pType);
           });
-          const retType = sig.getReturnType()
-            ? this.resolveFromTsType(sig.getReturnType())
-            : PrimitiveTypes.void;
+          const retType = this.resolveFromTsType(sig.getReturnType());
           methodMap.set(prop.name, { params, returnType: retType });
           continue;
         }
