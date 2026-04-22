@@ -1,4 +1,5 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
+import { TranspileError } from "../../../errors/transpile_errors.js";
 import { createTypeCheckerTypeResolver } from "../../../frontend/type_checker_type_resolver.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -503,8 +504,9 @@ export function resolveTypeFromNode(
           return resolved;
         }
       }
-    } catch {
-      // Fall through to legacy resolution path
+    } catch (e) {
+      if (e instanceof TranspileError) throw e;
+      // Non-fatal: fall through to legacy resolution path
     }
   }
 

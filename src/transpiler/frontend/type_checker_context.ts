@@ -1,8 +1,13 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import type { ASTNode } from "./types.js";
 
 type InMemorySources = Record<string, string> | Map<string, string>;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const packageRoot = path.resolve(__dirname, "../../..");
 
 const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
@@ -14,7 +19,7 @@ const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   resolveJsonModule: true,
   skipLibCheck: true,
   experimentalDecorators: true,
-  baseUrl: process.cwd(),
+  baseUrl: packageRoot,
   paths: {
     "@ootr/udon-assembly-ts": ["src/index.ts"],
     "@ootr/udon-assembly-ts/*": ["src/*"],
