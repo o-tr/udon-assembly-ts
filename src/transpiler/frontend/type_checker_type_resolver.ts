@@ -73,6 +73,25 @@ export class TypeCheckerTypeResolver {
       return this.resolveFromTsType(nonNullish);
     }
 
+    // 1b. Enum literals and enum types — resolve before literal collapse
+    const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
+    if (enumSymbol && enumSymbol.flags & ts.SymbolFlags.Enum) {
+      const typeName = stripModuleQualifier(
+        this.checker.getFullyQualifiedName(enumSymbol),
+      );
+      return this.typeMapper.mapTypeScriptType(typeName);
+    }
+    if (type.flags & ts.TypeFlags.EnumLiteral) {
+      const parentEnum = enumSymbol
+        ? this.checker.getFullyQualifiedName(enumSymbol)
+        : undefined;
+      if (parentEnum) {
+        return this.typeMapper.mapTypeScriptType(
+          stripModuleQualifier(parentEnum),
+        );
+      }
+    }
+
     // 2. Literal types (string literal, number literal, bigint literal)
     // Note: type.isLiteral() is true for StringLiteral, NumberLiteral,
     // BigIntLiteral. Boolean literal types have TypeFlags.BooleanLike
@@ -155,11 +174,17 @@ export class TypeCheckerTypeResolver {
         if (iface) return iface;
       }
 
-      // 7d. Class → ClassTypeSymbol
+      // 7d. Class → try typeMapper lookup first, then fallback to ClassTypeSymbol
       if (symFlags & ts.SymbolFlags.Class) {
         const className = stripModuleQualifier(
           this.checker.getFullyQualifiedName(symbol),
         );
+        try {
+          const mapped = this.typeMapper.mapTypeScriptType(className);
+          if (mapped !== ObjectType) return mapped;
+        } catch {
+          /* unknown type — fall through to generic ClassTypeSymbol */
+        }
         return new ClassTypeSymbol(
           className,
           ExternTypes.udonBehaviour.udonType,
@@ -192,6 +217,10 @@ export class TypeCheckerTypeResolver {
         const props = this.checker.getPropertiesOfType(type);
         if (props.length > 0) {
           const propertyMap = new Map<string, TypeSymbol>();
+          const methodMap = new Map<
+            string,
+            { params: TypeSymbol[]; returnType: TypeSymbol }
+          >();
           for (const prop of props) {
             const propType = this.checker.getTypeOfSymbolAtLocation(
               prop,
@@ -199,15 +228,48 @@ export class TypeCheckerTypeResolver {
                 prop.declarations?.[0] ??
                 ts.factory.createIdentifier(""),
             );
+
+            if (prop.flags & ts.SymbolFlags.Method) {
+              const sigs = this.checker.getSignaturesOfType(
+                propType,
+                ts.SignatureKind.Call,
+              );
+              if (sigs.length > 0) {
+                const sig = sigs[0];
+                const params = sig.parameters.map((p) => {
+                  const pType = this.checker.getTypeOfSymbolAtLocation(
+                    p,
+                    p.valueDeclaration ??
+                      p.declarations?.[0] ??
+                      ts.factory.createIdentifier(""),
+                  );
+                  return this.resolveFromTsType(pType);
+                });
+                const retType = sig.getReturnType()
+                  ? this.resolveFromTsType(sig.getReturnType())
+                  : PrimitiveTypes.void;
+                methodMap.set(prop.name, { params, returnType: retType });
+                continue;
+              }
+            }
+
             propertyMap.set(prop.name, this.resolveFromTsType(propType));
           }
-          const anonKey = [...propertyMap.entries()]
+          const entries = [
+            ...[...propertyMap.entries()].map(
+              ([name, type]) => [name, type] as [string, TypeSymbol],
+            ),
+            ...[...methodMap.entries()].map(
+              ([name, sig]) => [name, sig.returnType] as [string, TypeSymbol],
+            ),
+          ];
+          const anonKey = entries
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([name, type]) => `${name}:${type.name}`)
             .join("_");
           return new InterfaceTypeSymbol(
             `__anon_${anonKey}`,
-            new Map(),
+            methodMap,
             propertyMap,
           );
         }
@@ -258,7 +320,6 @@ export class TypeCheckerTypeResolver {
           prop.declarations?.[0] ??
           ts.factory.createIdentifier(""),
       );
-      const resolved = this.resolveFromTsType(propType);
 
       if (prop.flags & ts.SymbolFlags.Method) {
         const sigs = this.checker.getSignaturesOfType(
@@ -284,7 +345,7 @@ export class TypeCheckerTypeResolver {
         }
       }
 
-      propertyMap.set(prop.name, resolved);
+      propertyMap.set(prop.name, this.resolveFromTsType(propType));
     }
 
     const name = stripModuleQualifier(

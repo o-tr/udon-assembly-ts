@@ -137,7 +137,7 @@ export function visitClassDeclaration(
           name: paramName,
           type: param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : this.mapTypeWithGenerics("number"),
+            : this.mapTypeWithGenerics("number", param),
           ...(serializeFieldParams.has(paramName)
             ? { isSerializeField: true }
             : {}),
@@ -158,7 +158,7 @@ export function visitClassDeclaration(
           const paramName = param.name.getText();
           const paramType = param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : this.mapTypeWithGenerics("number");
+            : this.mapTypeWithGenerics("number", param);
           this.symbolTable.addSymbol(paramName, paramType, true, false);
         }
         body = this.visitBlock(member.body);
@@ -179,7 +179,7 @@ export function visitClassDeclaration(
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
           ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-          : this.mapTypeWithGenerics("number");
+          : this.mapTypeWithGenerics("number", param);
         const isPublic =
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
@@ -485,7 +485,7 @@ export function visitPropertyDeclaration(
   if (!node.name) return undefined;
   const name = node.name.getText();
 
-  let type: TypeSymbol = this.mapTypeWithGenerics("number");
+  let type: TypeSymbol = this.mapTypeWithGenerics("number", node);
   let originalTypeName: string | undefined;
   if (node.type) {
     const typeText = node.type.getText();
@@ -578,7 +578,7 @@ export function visitMethodDeclaration(
     const paramName = param.name.getText();
     const paramType = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-      : this.mapTypeWithGenerics("number");
+      : this.mapTypeWithGenerics("number", param);
     const initializer = param.initializer
       ? this.parseParameterInitializer(param.initializer, param.type)
       : undefined;

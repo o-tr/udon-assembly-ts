@@ -527,16 +527,9 @@ export class BatchTranspiler {
       }
 
       // Resolve import-graph dependencies for Tier-3 usedFiles tracking.
-      // May fail for entry points whose dependency graph couldn't be built;
-      // in that case, fall back to class-level tracking only.
-      let entryCompilationOrder: string[] | undefined;
-      try {
-        entryCompilationOrder = resolver.getCompilationOrder(
-          entryPoint.filePath,
-        );
-      } catch {
-        // non-fatal: class-level tracking still works
-      }
+      const entryCompilationOrder = resolver.getCompilationOrder(
+        entryPoint.filePath,
+      );
 
       const entryPointMethods = this.orderEntryMethods(
         this.filterMethodsByUsage(mergedMethods, entryPoint.name, methodUsage),

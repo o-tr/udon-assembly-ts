@@ -133,7 +133,7 @@ function buildFallbackMethodLayout(
   const parameterTypes = method.parameters.map((p) => p.type);
   const returnType = method.returnType;
   const returnExportName =
-    returnType !== PrimitiveTypes.void ? `${baseName}__ret` : null;
+    returnType.udonType !== UdonType.Void ? `${baseName}__ret` : null;
 
   const layout: UdonBehaviourMethodLayout = {
     exportMethodName: baseName,
@@ -1369,7 +1369,7 @@ export function visitCallExpression(
         );
         if (externSig) {
           const returnType = resolveExternReturnType(externSig) ?? ObjectType;
-          if (returnType === PrimitiveTypes.void) {
+          if (returnType.udonType === UdonType.Void) {
             this.emit(new CallInstruction(undefined, externSig, evaluatedArgs));
             return VOID_RETURN;
           }
@@ -2057,7 +2057,7 @@ export function visitCallExpression(
       );
       if (externSig) {
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
-        if (returnType === PrimitiveTypes.void) {
+        if (returnType.udonType === UdonType.Void) {
           this.emit(new CallInstruction(undefined, externSig, evaluatedArgs));
           return VOID_RETURN;
         }
@@ -3481,7 +3481,7 @@ export function visitCallExpression(
       if (d3MethodResult != null) return d3MethodResult;
     }
 
-    if (resolvedReturnType === PrimitiveTypes.void) {
+    if (resolvedReturnType?.udonType === UdonType.Void) {
       this.emit(
         new MethodCallInstruction(
           undefined,
