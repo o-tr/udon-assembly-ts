@@ -84,7 +84,12 @@ export class TypeCheckerTypeResolver {
       const typeName = stripModuleQualifier(
         this.checker.getFullyQualifiedName(enumSymbol),
       );
-      const mapped = this.typeMapper.mapTypeScriptType(typeName);
+      let mapped: TypeSymbol;
+      try {
+        mapped = this.typeMapper.mapTypeScriptType(typeName);
+      } catch {
+        mapped = new ClassTypeSymbol(typeName, UdonType.Object);
+      }
       if (!(mapped instanceof ClassTypeSymbol)) return mapped;
       // Unregistered enum mis-classified as class — fall through.
     }
@@ -97,7 +102,12 @@ export class TypeCheckerTypeResolver {
           const parentName = stripModuleQualifier(
             this.checker.getFullyQualifiedName(parentSymbol),
           );
-          const mapped = this.typeMapper.mapTypeScriptType(parentName);
+          let mapped: TypeSymbol;
+          try {
+            mapped = this.typeMapper.mapTypeScriptType(parentName);
+          } catch {
+            mapped = new ClassTypeSymbol(parentName, UdonType.Object);
+          }
           if (!(mapped instanceof ClassTypeSymbol)) return mapped;
           // Unregistered parent enum mis-classified as class — fall through.
         }
@@ -181,7 +191,12 @@ export class TypeCheckerTypeResolver {
         const typeName = stripModuleQualifier(
           this.checker.getFullyQualifiedName(symbol),
         );
-        const mapped = this.typeMapper.mapTypeScriptType(typeName);
+        let mapped: TypeSymbol;
+        try {
+          mapped = this.typeMapper.mapTypeScriptType(typeName);
+        } catch {
+          mapped = new ClassTypeSymbol(typeName, UdonType.Object);
+        }
         // Guard: an unregistered PascalCase enum name is mis-classified as a
         // ClassTypeSymbol by mapTypeScriptType. Only accept the mapping when
         // it is not a generic ClassTypeSymbol.
