@@ -84,7 +84,9 @@ export class TypeCheckerTypeResolver {
       const typeName = stripModuleQualifier(
         this.checker.getFullyQualifiedName(enumSymbol),
       );
-      return this.typeMapper.mapTypeScriptType(typeName);
+      const mapped = this.typeMapper.mapTypeScriptType(typeName);
+      if (!(mapped instanceof ClassTypeSymbol)) return mapped;
+      // Unregistered enum mis-classified as class — fall through.
     }
     if (type.flags & ts.TypeFlags.EnumLiteral) {
       const declaration = enumSymbol?.declarations?.[0];
@@ -95,7 +97,9 @@ export class TypeCheckerTypeResolver {
           const parentName = stripModuleQualifier(
             this.checker.getFullyQualifiedName(parentSymbol),
           );
-          return this.typeMapper.mapTypeScriptType(parentName);
+          const mapped = this.typeMapper.mapTypeScriptType(parentName);
+          if (!(mapped instanceof ClassTypeSymbol)) return mapped;
+          // Unregistered parent enum mis-classified as class — fall through.
         }
       }
     }
@@ -177,7 +181,13 @@ export class TypeCheckerTypeResolver {
         const typeName = stripModuleQualifier(
           this.checker.getFullyQualifiedName(symbol),
         );
-        return this.typeMapper.mapTypeScriptType(typeName);
+        const mapped = this.typeMapper.mapTypeScriptType(typeName);
+        // Guard: an unregistered PascalCase enum name is mis-classified as a
+        // ClassTypeSymbol by mapTypeScriptType. Only accept the mapping when
+        // it is not a generic ClassTypeSymbol.
+        if (!(mapped instanceof ClassTypeSymbol)) return mapped;
+        // Unknown enum — return ObjectType rather than a bogus class type.
+        return ObjectType;
       }
 
       // 7c. Interface → build InterfaceTypeSymbol from declared members
