@@ -61,9 +61,14 @@ export class TypeCheckerTypeResolver {
     // Insert a sentinel so any re-entrant call (e.g. recursive type alias)
     // returns ObjectType instead of recursing infinitely.
     this.typeCache.set(type, ObjectType);
-    const result = this.resolveFromTsTypeUncached(type);
-    this.typeCache.set(type, result);
-    return result;
+    try {
+      const result = this.resolveFromTsTypeUncached(type);
+      this.typeCache.set(type, result);
+      return result;
+    } catch (e) {
+      this.typeCache.delete(type);
+      throw e;
+    }
   }
 
   private resolveFromTsTypeUncached(type: ts.Type): TypeSymbol {
@@ -205,11 +210,23 @@ export class TypeCheckerTypeResolver {
         this.checker.getFullyQualifiedName(symbol),
       );
       if (fullyQualified.length > 0) {
-        try {
+        // Simple identifiers (e.g. "Foo", "Foo.Bar") should propagate errors
+        // so unknown declared types fail fast. Complex/anonymous type texts
+        // are allowed to fall back to ObjectType.
+        const isSimpleIdentifier =
+          /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
+            fullyQualified,
+          );
+        if (isSimpleIdentifier) {
           const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
           if (mapped !== ObjectType) return mapped;
-        } catch {
-          // Unknown to typeMapper — fall through to step 10
+        } else {
+          try {
+            const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
+            if (mapped !== ObjectType) return mapped;
+          } catch {
+            // Unknown complex type — fall through to step 10
+          }
         }
       }
     }

@@ -84,6 +84,7 @@ export class TypeCheckerContext {
     const originalGetSourceFile = host.getSourceFile.bind(host);
     const originalReadFile = host.readFile.bind(host);
     const originalFileExists = host.fileExists.bind(host);
+    const sourceFileCache = new Map<string, ts.SourceFile>();
 
     host.getCurrentDirectory = () =>
       compilerOptions.baseUrl
@@ -107,9 +108,13 @@ export class TypeCheckerContext {
       shouldCreateNew,
     ) => {
       const normalized = normalizeFilePath(fileName);
+      if (!shouldCreateNew) {
+        const cached = sourceFileCache.get(normalized);
+        if (cached) return cached;
+      }
       const inMemory = sourceMap.get(normalized);
       if (inMemory !== undefined) {
-        return ts.createSourceFile(
+        const sf = ts.createSourceFile(
           normalized,
           inMemory,
           languageVersion,
@@ -122,6 +127,8 @@ export class TypeCheckerContext {
                 ? ts.ScriptKind.JS
                 : ts.ScriptKind.TS,
         );
+        sourceFileCache.set(normalized, sf);
+        return sf;
       }
       return originalGetSourceFile(
         fileName,
