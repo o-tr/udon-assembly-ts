@@ -796,9 +796,7 @@ function tryUntrackedInlineDispatch(
     ? (converter.typeMapper.getAlias(untrackedReturnType.name) ??
       untrackedReturnType)
     : untrackedReturnType;
-  const isVoid =
-    resolvedUntrackedReturnType?.name === "SystemVoid" ||
-    resolvedUntrackedReturnType?.name === "void";
+  const isVoid = resolvedUntrackedReturnType?.udonType === UdonType.Void;
   if (!resolvedUntrackedReturnType) return null;
 
   // SoA fast path: avoid per-instance handle comparison for SoA classes
@@ -1053,8 +1051,7 @@ function tryD3MethodDispatch(
   const resolvedRetType = methodReturnType?.name
     ? (converter.typeMapper.getAlias(methodReturnType.name) ?? methodReturnType)
     : methodReturnType;
-  const isVoid =
-    resolvedRetType?.name === "SystemVoid" || resolvedRetType?.name === "void";
+  const isVoid = resolvedRetType?.udonType === UdonType.Void;
 
   // SoA fast path: avoid per-instance handle comparison for SoA classes
   const soaResult = trySoAMethodDispatch(

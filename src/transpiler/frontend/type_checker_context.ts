@@ -119,7 +119,13 @@ export class TypeCheckerContext {
           inMemory,
           languageVersion,
           true,
-          ts.ScriptKind.TS,
+          normalized.endsWith(".tsx")
+            ? ts.ScriptKind.TSX
+            : normalized.endsWith(".jsx")
+              ? ts.ScriptKind.JSX
+              : normalized.endsWith(".js")
+                ? ts.ScriptKind.JS
+                : ts.ScriptKind.TS,
         );
       }
       return originalGetSourceFile(
@@ -157,7 +163,13 @@ export class TypeCheckerContext {
       sourceText,
       ts.ScriptTarget.ESNext,
       true,
-      ts.ScriptKind.TS,
+      normalized.endsWith(".tsx")
+        ? ts.ScriptKind.TSX
+        : normalized.endsWith(".jsx")
+          ? ts.ScriptKind.JSX
+          : normalized.endsWith(".js")
+            ? ts.ScriptKind.JS
+            : ts.ScriptKind.TS,
     );
   }
 

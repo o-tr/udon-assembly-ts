@@ -79,16 +79,27 @@ export class TypeCheckerTypeResolver {
       const typeName = stripModuleQualifier(
         this.checker.getFullyQualifiedName(enumSymbol),
       );
-      return this.typeMapper.mapTypeScriptType(typeName);
+      try {
+        return this.typeMapper.mapTypeScriptType(typeName);
+      } catch {
+        // Unknown enum — fall through to literal/primitive checks
+      }
     }
     if (type.flags & ts.TypeFlags.EnumLiteral) {
-      const parentEnum = enumSymbol
-        ? this.checker.getFullyQualifiedName(enumSymbol)
-        : undefined;
-      if (parentEnum) {
-        return this.typeMapper.mapTypeScriptType(
-          stripModuleQualifier(parentEnum),
-        );
+      const declaration = enumSymbol?.declarations?.[0];
+      if (declaration) {
+        const parentDecl = declaration.parent as ts.Node;
+        const parentSymbol = this.checker.getSymbolAtLocation(parentDecl);
+        if (parentSymbol) {
+          const parentName = stripModuleQualifier(
+            this.checker.getFullyQualifiedName(parentSymbol),
+          );
+          try {
+            return this.typeMapper.mapTypeScriptType(parentName);
+          } catch {
+            // Unknown parent enum — fall through
+          }
+        }
       }
     }
 
@@ -107,9 +118,13 @@ export class TypeCheckerTypeResolver {
     if (this.checker.isArrayType(type) || this.checker.isTupleType(type)) {
       const ref = type as ts.TypeReference;
       const args = this.checker.getTypeArguments(ref);
-      const elementType = args[0]
-        ? this.resolveFromTsType(args[0])
-        : ObjectType;
+      if (args.length === 0) {
+        return new ArrayTypeSymbol(ObjectType, 1);
+      }
+      const resolvedArgs = args.map((a) => this.resolveFromTsType(a));
+      const first = resolvedArgs[0];
+      const allSame = resolvedArgs.every((r) => r === first);
+      const elementType = allSame ? first : ObjectType;
       return new ArrayTypeSymbol(elementType, 1);
     }
 
@@ -165,7 +180,11 @@ export class TypeCheckerTypeResolver {
         const typeName = stripModuleQualifier(
           this.checker.getFullyQualifiedName(symbol),
         );
-        return this.typeMapper.mapTypeScriptType(typeName);
+        try {
+          return this.typeMapper.mapTypeScriptType(typeName);
+        } catch {
+          // Unknown enum — fall through to step 10
+        }
       }
 
       // 7c. Interface → build InterfaceTypeSymbol from declared members
@@ -204,8 +223,12 @@ export class TypeCheckerTypeResolver {
         this.checker.getFullyQualifiedName(symbol),
       );
       if (fullyQualified.length > 0) {
-        const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
-        if (mapped !== ObjectType) return mapped;
+        try {
+          const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
+          if (mapped !== ObjectType) return mapped;
+        } catch {
+          // Unknown to typeMapper — fall through to step 10
+        }
       }
     }
 
@@ -255,18 +278,14 @@ export class TypeCheckerTypeResolver {
 
             propertyMap.set(prop.name, this.resolveFromTsType(propType));
           }
-          const entries = [
-            ...[...propertyMap.entries()].map(
-              ([name, type]) => [name, type] as [string, TypeSymbol],
-            ),
-            ...[...methodMap.entries()].map(
-              ([name, sig]) => [name, sig.returnType] as [string, TypeSymbol],
-            ),
-          ];
-          const anonKey = entries
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([name, type]) => `${name}:${type.name}`)
-            .join("_");
+          const methodEntries = [...methodMap.entries()].map(([name, sig]) => {
+            const paramTypes = sig.params.map((p) => p.name).join(",");
+            return `${name}(${paramTypes}):${sig.returnType.name}`;
+          });
+          const propEntries = [...propertyMap.entries()].map(
+            ([name, type]) => `${name}:${type.name}`,
+          );
+          const anonKey = [...propEntries, ...methodEntries].sort().join("_");
           return new InterfaceTypeSymbol(
             `__anon_${anonKey}`,
             methodMap,
@@ -296,7 +315,11 @@ export class TypeCheckerTypeResolver {
       undefined,
       TYPE_TO_STRING_FLAGS,
     );
-    return this.typeMapper.mapTypeScriptType(typeText);
+    try {
+      return this.typeMapper.mapTypeScriptType(typeText);
+    } catch {
+      return ObjectType;
+    }
   }
 
   /** Build an InterfaceTypeSymbol from an interface type. */
