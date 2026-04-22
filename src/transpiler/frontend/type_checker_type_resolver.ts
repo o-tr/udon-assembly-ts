@@ -32,7 +32,6 @@ function stripModuleQualifier(name: string): string {
  */
 export class TypeCheckerTypeResolver {
   private readonly typeCache = new Map<ts.Type, TypeSymbol>();
-  private anonCounter = 0;
 
   constructor(
     private readonly checker: ts.TypeChecker,
@@ -202,9 +201,12 @@ export class TypeCheckerTypeResolver {
             );
             propertyMap.set(prop.name, this.resolveFromTsType(propType));
           }
-          const anonId = (type as unknown as { id?: number }).id;
+          const anonKey = [...propertyMap.entries()]
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([name, type]) => `${name}:${type.name}`)
+            .join("_");
           return new InterfaceTypeSymbol(
-            `__anon_${anonId == null ? ++this.anonCounter : anonId}`,
+            `__anon_${anonKey}`,
             new Map(),
             propertyMap,
           );

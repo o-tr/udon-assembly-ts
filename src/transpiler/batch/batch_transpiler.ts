@@ -200,11 +200,7 @@ export class BatchTranspiler {
     // cross-file type resolution works during parsing.
     const inMemorySources: Record<string, string> = {};
     for (const filePath of transpilableSourceFiles) {
-      try {
-        inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
-      } catch {
-        // ignore unreadable files
-      }
+      inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
     }
     const checkerContext =
       transpilableSourceFiles.length > 0
