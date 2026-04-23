@@ -485,7 +485,7 @@ export function visitPropertyDeclaration(
   if (!node.name) return undefined;
   const name = node.name.getText();
 
-  let type: TypeSymbol = this.mapTypeWithGenerics("number", node);
+  let type: TypeSymbol;
   let originalTypeName: string | undefined;
   if (node.type) {
     const typeText = node.type.getText();
@@ -493,6 +493,8 @@ export function visitPropertyDeclaration(
     originalTypeName = typeText;
   } else if (node.initializer) {
     type = this.inferType(node.initializer);
+  } else {
+    type = this.mapTypeWithGenerics("number", node);
   }
 
   const initializer = node.initializer

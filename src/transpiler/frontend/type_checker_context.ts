@@ -19,6 +19,8 @@ const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   resolveJsonModule: true,
   skipLibCheck: true,
   experimentalDecorators: true,
+  jsx: ts.JsxEmit.Preserve,
+  allowJs: true,
   baseUrl: packageRoot,
   paths: {
     "@ootr/udon-assembly-ts": ["src/index.ts"],
@@ -84,10 +86,10 @@ export class TypeCheckerContext {
     const originalGetSourceFile = host.getSourceFile.bind(host);
     const originalReadFile = host.readFile.bind(host);
     const originalFileExists = host.fileExists.bind(host);
-    host.getCurrentDirectory = () =>
-      compilerOptions.baseUrl
-        ? path.resolve(compilerOptions.baseUrl)
-        : process.cwd();
+    const originalDirectoryExists = host.directoryExists?.bind(host);
+    const sourceFileCache = new Map<string, ts.SourceFile>();
+
+    host.getCurrentDirectory = () => process.cwd();
     host.fileExists = (fileName) => {
       const normalized = normalizeFilePath(fileName);
       if (sourceMap.has(normalized)) return true;
@@ -99,6 +101,15 @@ export class TypeCheckerContext {
       if (inMemory !== undefined) return inMemory;
       return originalReadFile(normalized);
     };
+    if (originalDirectoryExists) {
+      host.directoryExists = (dirName) => {
+        const normalized = normalizeFilePath(dirName);
+        for (const key of sourceMap.keys()) {
+          if (key.startsWith(normalized + path.sep)) return true;
+        }
+        return originalDirectoryExists(normalized);
+      };
+    }
     host.getSourceFile = (
       fileName,
       languageVersion,
@@ -108,19 +119,25 @@ export class TypeCheckerContext {
       const normalized = normalizeFilePath(fileName);
       const inMemory = sourceMap.get(normalized);
       if (inMemory !== undefined) {
-        return ts.createSourceFile(
-          normalized,
-          inMemory,
-          languageVersion,
-          true,
-          normalized.endsWith(".tsx")
-            ? ts.ScriptKind.TSX
-            : normalized.endsWith(".jsx")
-              ? ts.ScriptKind.JSX
-              : normalized.endsWith(".js")
-                ? ts.ScriptKind.JS
-                : ts.ScriptKind.TS,
-        );
+        if (shouldCreateNew || !sourceFileCache.has(normalized)) {
+          sourceFileCache.set(
+            normalized,
+            ts.createSourceFile(
+              normalized,
+              inMemory,
+              languageVersion,
+              true,
+              normalized.endsWith(".tsx")
+                ? ts.ScriptKind.TSX
+                : normalized.endsWith(".jsx")
+                  ? ts.ScriptKind.JSX
+                  : normalized.endsWith(".js")
+                    ? ts.ScriptKind.JS
+                    : ts.ScriptKind.TS,
+            ),
+          );
+        }
+        return sourceFileCache.get(normalized) as ts.SourceFile;
       }
       return originalGetSourceFile(
         fileName,
