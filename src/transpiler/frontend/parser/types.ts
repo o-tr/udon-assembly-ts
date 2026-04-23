@@ -246,7 +246,7 @@ export function mapTypeWithGenerics(
         return resolved;
       }
     } catch (e) {
-      if (e instanceof TranspileError && !e.message.includes('"__')) {
+      if (e instanceof TranspileError && !typeText.trim().startsWith("__")) {
         throw e;
       }
       // Fall through to legacy text-based path
@@ -506,7 +506,10 @@ export function inferType(
         return resolved;
       }
     } catch (e) {
-      if (e instanceof TranspileError && !e.message.includes('"__')) {
+      if (
+        e instanceof TranspileError &&
+        !node.getText().trim().startsWith("__")
+      ) {
         throw e;
       }
       // Fall through to legacy inference path
