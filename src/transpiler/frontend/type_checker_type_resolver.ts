@@ -60,16 +60,12 @@ export class TypeCheckerTypeResolver {
     if (cached) return cached;
     // Insert a sentinel so any re-entrant call (e.g. recursive type alias)
     // returns ObjectType instead of recursing infinitely.
+    // The sentinel remains in the cache on error so future re-entries are
+    // still protected.
     this.typeCache.set(type, ObjectType);
-    try {
-      const result = this.resolveFromTsTypeUncached(type);
-      this.typeCache.set(type, result);
-      return result;
-    } catch (e) {
-      // Leave the ObjectType sentinel in place so any future re-entry
-      // for this type finds a cached value rather than recursing again.
-      throw e;
-    }
+    const result = this.resolveFromTsTypeUncached(type);
+    this.typeCache.set(type, result);
+    return result;
   }
 
   private resolveFromTsTypeUncached(type: ts.Type): TypeSymbol {
@@ -95,23 +91,28 @@ export class TypeCheckerTypeResolver {
       return this.resolveEnumFallback(enumSymbol);
     }
     if (type.flags & ts.TypeFlags.EnumLiteral) {
-      const declaration = enumSymbol?.declarations?.[0];
-      if (declaration) {
-        const parentDecl = declaration.parent as ts.Node;
-        const parentSymbol = this.checker.getSymbolAtLocation(parentDecl);
-        if (parentSymbol) {
-          const parentName = stripModuleQualifier(
-            this.checker.getFullyQualifiedName(parentSymbol),
-          );
-          let mapped: TypeSymbol;
-          try {
-            mapped = this.typeMapper.mapTypeScriptType(parentName);
-          } catch {
-            mapped = new ClassTypeSymbol(parentName, UdonType.Object);
-          }
-          if (!(mapped instanceof ClassTypeSymbol)) return mapped;
-          return this.resolveEnumFallback(parentSymbol);
+      const parentSymbol =
+        (enumSymbol as unknown as { parent?: ts.Symbol }).parent ??
+        (() => {
+          const decl = enumSymbol?.declarations?.[0] as
+            | ts.EnumMember
+            | undefined;
+          return decl && ts.isEnumMember(decl)
+            ? this.checker.getSymbolAtLocation(decl.parent.name)
+            : undefined;
+        })();
+      if (parentSymbol) {
+        const parentName = stripModuleQualifier(
+          this.checker.getFullyQualifiedName(parentSymbol),
+        );
+        let mapped: TypeSymbol;
+        try {
+          mapped = this.typeMapper.mapTypeScriptType(parentName);
+        } catch {
+          mapped = new ClassTypeSymbol(parentName, UdonType.Object);
         }
+        if (!(mapped instanceof ClassTypeSymbol)) return mapped;
+        return this.resolveEnumFallback(parentSymbol);
       }
     }
 
@@ -187,27 +188,7 @@ export class TypeCheckerTypeResolver {
         return new GenericTypeParameterSymbol(name);
       }
 
-      // 7b. Enum → resolve via enum kind
-      if (symFlags & ts.SymbolFlags.Enum) {
-        const typeName = stripModuleQualifier(
-          this.checker.getFullyQualifiedName(symbol),
-        );
-        let mapped: TypeSymbol;
-        try {
-          mapped = this.typeMapper.mapTypeScriptType(typeName);
-        } catch {
-          mapped = new ClassTypeSymbol(typeName, UdonType.Object);
-        }
-        // Guard: an unregistered PascalCase enum name is mis-classified as a
-        // ClassTypeSymbol by mapTypeScriptType. Only accept the mapping when
-        // it is not a generic ClassTypeSymbol.
-        if (!(mapped instanceof ClassTypeSymbol)) return mapped;
-        // Unknown enum — infer from member initializers instead of returning
-        // a bogus class type.
-        return this.resolveEnumFallback(symbol);
-      }
-
-      // 7c. Interface → build InterfaceTypeSymbol from declared members
+      // 7b-c. Interface → build InterfaceTypeSymbol from declared members
       if (symFlags & ts.SymbolFlags.Interface) {
         return this.buildInterfaceTypeSymbol(type, symbol);
       }

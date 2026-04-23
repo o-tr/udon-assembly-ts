@@ -245,7 +245,10 @@ export function mapTypeWithGenerics(
       if (resolved && resolved !== ObjectType) {
         return resolved;
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof TranspileError && !e.message.includes('"__')) {
+        throw e;
+      }
       // Fall through to legacy text-based path
     }
   }
@@ -502,7 +505,10 @@ export function inferType(
       if (resolved && resolved !== ObjectType) {
         return resolved;
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof TranspileError && !e.message.includes('"__')) {
+        throw e;
+      }
       // Fall through to legacy inference path
     }
   }

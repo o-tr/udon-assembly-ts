@@ -91,13 +91,13 @@ export class TypeCheckerContext {
     host.fileExists = (fileName) => {
       const normalized = normalizeFilePath(fileName);
       if (sourceMap.has(normalized)) return true;
-      return originalFileExists(fileName);
+      return originalFileExists(normalized);
     };
     host.readFile = (fileName) => {
       const normalized = normalizeFilePath(fileName);
       const inMemory = sourceMap.get(normalized);
       if (inMemory !== undefined) return inMemory;
-      return originalReadFile(fileName);
+      return originalReadFile(normalized);
     };
     host.getSourceFile = (
       fileName,
