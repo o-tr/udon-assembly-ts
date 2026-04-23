@@ -69,7 +69,10 @@ export class TypeCheckerContext {
   private readonly tsNodeById = new Map<string, ts.Node>();
   private readonly spanIndex = new Map<string, Map<string, ts.Node>>();
 
-  constructor(private readonly program: ts.Program) {
+  constructor(
+    private readonly program: ts.Program,
+    private parent?: TypeCheckerContext,
+  ) {
     this.checker = program.getTypeChecker();
   }
 
@@ -173,6 +176,10 @@ export class TypeCheckerContext {
     return this.checker;
   }
 
+  setParent(parent: TypeCheckerContext): void {
+    this.parent = parent;
+  }
+
   /**
    * Return a SourceFile that is registered with the TypeChecker.
    * If the file is not part of the original program, returns `undefined`;
@@ -210,6 +217,15 @@ export class TypeCheckerContext {
       if (fromId) {
         this.astToTsNode.set(astNode, fromId);
         return fromId;
+      }
+    }
+    // Fallback to parent context (e.g. after setCheckerContext rebuild)
+    if (this.parent) {
+      const fromParent = this.parent.resolveTsNode(astNode);
+      if (fromParent) {
+        this.astToTsNode.set(astNode, fromParent);
+        if (nodeId) this.tsNodeById.set(nodeId, fromParent);
+        return fromParent;
       }
     }
     const span = astNode.sourceSpan;

@@ -247,6 +247,7 @@ export class BatchTranspiler {
     // Discover external dependencies iteratively (fixpoint) so imports
     // inside newly-discovered external files are also resolved.
     let externalFileCount = 0;
+    const allExternalRootNames: string[] = [];
     let previousReachableSize = -1;
     while (reachable.size !== previousReachableSize) {
       previousReachableSize = reachable.size;
@@ -276,7 +277,11 @@ export class BatchTranspiler {
 
       if (externalFiles.length === 0) break;
 
-      const allRootNames = [...transpilableSourceFiles, ...externalFiles];
+      allExternalRootNames.push(...externalFiles);
+      const allRootNames = [
+        ...transpilableSourceFiles,
+        ...allExternalRootNames,
+      ];
       for (const filePath of externalFiles) {
         if (!inMemorySources[filePath]) {
           inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
@@ -286,6 +291,9 @@ export class BatchTranspiler {
         rootNames: allRootNames,
         inMemorySources,
       });
+      if (parser.checkerContext) {
+        newCheckerContext.setParent(parser.checkerContext);
+      }
       parser.setCheckerContext(newCheckerContext);
       for (const reachableFile of externalFiles) {
         parseAndRegisterFile(reachableFile);
