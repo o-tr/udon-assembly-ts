@@ -215,7 +215,7 @@ export class BatchTranspiler {
 
     // Register all source files upfront so that registry.getEntryPoints()
     // can identify entry files without a separate ts.createSourceFile() pass.
-    const parseAndRegisterFile = (filePath: string, _label?: string): void => {
+    const parseAndRegisterFile = (filePath: string): void => {
       const source =
         inMemorySources[filePath] ?? fs.readFileSync(filePath, "utf8");
       const program = parser.parse(source, filePath);
@@ -288,7 +288,7 @@ export class BatchTranspiler {
       });
       parser.setCheckerContext(newCheckerContext);
       for (const reachableFile of externalFiles) {
-        parseAndRegisterFile(reachableFile, "external dependency");
+        parseAndRegisterFile(reachableFile);
         externalFileCount++;
         fileSet.add(reachableFile);
       }

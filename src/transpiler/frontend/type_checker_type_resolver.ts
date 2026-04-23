@@ -130,7 +130,6 @@ export class TypeCheckerTypeResolver {
       if (type.flags & ts.TypeFlags.BigIntLiteral) return PrimitiveTypes.int64;
       if (typeof type.value === "string") return PrimitiveTypes.string;
       if (typeof type.value === "number") return PrimitiveTypes.single;
-      return PrimitiveTypes.single;
     }
 
     // 3. Array / Tuple
@@ -332,8 +331,15 @@ export class TypeCheckerTypeResolver {
     const filtered = union.types.filter(
       (member) => !this.isNullishType(member),
     );
-    if (filtered.length !== 1) return null;
-    return filtered[0];
+    if (filtered.length === 0) return null;
+    if (filtered.length === 1) return filtered[0];
+    // Multiple survivors — if they all resolve to the same TypeSymbol,
+    // return a representative ts.Type so the caller can resolve it.
+    const resolved = filtered.map((t) => this.resolveFromTsType(t));
+    if (resolved.every((r) => r === resolved[0])) {
+      return filtered[0];
+    }
+    return null;
   }
 
   private isNullishType(type: ts.Type): boolean {
@@ -415,24 +421,23 @@ export class TypeCheckerTypeResolver {
         ? this.checker.getTypeOfSymbolAtLocation(prop, propDecl)
         : this.checker.getDeclaredTypeOfSymbol(prop);
 
-      if (prop.flags & ts.SymbolFlags.Method) {
-        const sigs = this.checker.getSignaturesOfType(
-          propType,
-          ts.SignatureKind.Call,
-        );
-        if (sigs.length > 0) {
-          const sig = sigs[0];
-          const params = sig.parameters.map((p) => {
-            const pDecl = p.valueDeclaration ?? p.declarations?.[0];
-            const pType = pDecl
-              ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
-              : this.checker.getDeclaredTypeOfSymbol(p);
-            return this.resolveFromTsType(pType);
-          });
-          const retType = this.resolveFromTsType(sig.getReturnType());
-          methodMap.set(prop.name, { params, returnType: retType });
-          continue;
-        }
+      // Detect callable properties (method symbols or function-typed fields)
+      const sigs = this.checker.getSignaturesOfType(
+        propType,
+        ts.SignatureKind.Call,
+      );
+      if (sigs.length > 0) {
+        const sig = sigs[0];
+        const params = sig.parameters.map((p) => {
+          const pDecl = p.valueDeclaration ?? p.declarations?.[0];
+          const pType = pDecl
+            ? this.checker.getTypeOfSymbolAtLocation(p, pDecl)
+            : this.checker.getDeclaredTypeOfSymbol(p);
+          return this.resolveFromTsType(pType);
+        });
+        const retType = this.resolveFromTsType(sig.getReturnType());
+        methodMap.set(prop.name, { params, returnType: retType });
+        continue;
       }
 
       propertyMap.set(prop.name, this.resolveFromTsType(propType));
