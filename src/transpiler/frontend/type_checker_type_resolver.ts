@@ -232,27 +232,11 @@ export class TypeCheckerTypeResolver {
         this.checker.getFullyQualifiedName(symbol),
       );
       if (fullyQualified.length > 0) {
-        // Simple identifiers (e.g. "Foo", "Foo.Bar") should propagate errors
-        // so unknown declared types fail fast. Complex/anonymous type texts
-        // are allowed to fall back to ObjectType.
-        const isSimpleIdentifier =
-          /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
-            fullyQualified,
-          ) && !fullyQualified.startsWith("__");
-        if (isSimpleIdentifier) {
-          try {
-            const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
-            if (mapped !== ObjectType) return mapped;
-          } catch {
-            // Unknown simple type — fall through to step 10
-          }
-        } else {
-          try {
-            const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
-            if (mapped !== ObjectType) return mapped;
-          } catch {
-            // Unknown complex type — fall through to step 10
-          }
+        try {
+          const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
+          if (mapped !== ObjectType) return mapped;
+        } catch {
+          // Unknown type — fall through to step 10
         }
       }
     }
