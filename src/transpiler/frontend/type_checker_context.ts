@@ -219,7 +219,24 @@ export class TypeCheckerContext {
         return fromId;
       }
     }
-    // Fallback to parent context (e.g. after setCheckerContext rebuild)
+    // Span lookup in the current program first to avoid cross-program node
+    // pollution from the parent chain.
+    const span = astNode.sourceSpan;
+    if (span) {
+      const sourceFile = this.program.getSourceFile(
+        normalizeFilePath(span.filePath),
+      );
+      if (sourceFile) {
+        const located = this.findNodeBySpan(sourceFile, span);
+        if (located) {
+          this.astToTsNode.set(astNode, located);
+          if (nodeId) this.tsNodeById.set(nodeId, located);
+          return located;
+        }
+      }
+    }
+    // Fallback to parent context when span lookup fails (e.g. nodes from
+    // external files not present in the current program).
     if (this.parent) {
       const fromParent = this.parent.resolveTsNode(astNode);
       if (fromParent) {
@@ -228,17 +245,7 @@ export class TypeCheckerContext {
         return fromParent;
       }
     }
-    const span = astNode.sourceSpan;
-    if (!span) return undefined;
-    const sourceFile = this.program.getSourceFile(
-      normalizeFilePath(span.filePath),
-    );
-    if (!sourceFile) return undefined;
-    const located = this.findNodeBySpan(sourceFile, span);
-    if (!located) return undefined;
-    this.astToTsNode.set(astNode, located);
-    if (nodeId) this.tsNodeById.set(nodeId, located);
-    return located;
+    return undefined;
   }
 
   private findNodeBySpan(
