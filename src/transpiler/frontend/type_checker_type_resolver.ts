@@ -234,8 +234,12 @@ export class TypeCheckerTypeResolver {
             fullyQualified,
           ) && !fullyQualified.startsWith("__");
         if (isSimpleIdentifier) {
-          const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
-          if (mapped !== ObjectType) return mapped;
+          try {
+            const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
+            if (mapped !== ObjectType) return mapped;
+          } catch {
+            // Unknown simple type — fall through to step 10
+          }
         } else {
           try {
             const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);

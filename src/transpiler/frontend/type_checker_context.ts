@@ -23,8 +23,8 @@ const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   allowJs: true,
   baseUrl: packageRoot,
   paths: {
-    "@ootr/udon-assembly-ts": ["src/index.ts"],
-    "@ootr/udon-assembly-ts/*": ["src/*"],
+    "@ootr/udon-assembly-ts": ["dist/index.js"],
+    "@ootr/udon-assembly-ts/*": ["dist/*"],
   },
 };
 
@@ -67,6 +67,7 @@ export class TypeCheckerContext {
   private readonly checker: ts.TypeChecker;
   private readonly astToTsNode = new WeakMap<ASTNode, ts.Node>();
   private readonly tsNodeById = new Map<string, ts.Node>();
+  private readonly spanIndex = new Map<string, Map<string, ts.Node>>();
 
   constructor(private readonly program: ts.Program) {
     this.checker = program.getTypeChecker();
@@ -219,22 +220,26 @@ export class TypeCheckerContext {
     sourceFile: ts.SourceFile,
     span: { start: number; end: number; syntaxKind: number; filePath: string },
   ): ts.Node | undefined {
-    let found: ts.Node | undefined;
+    const filePath = normalizeFilePath(sourceFile.fileName);
+    let index = this.spanIndex.get(filePath);
+    if (!index) {
+      index = this.buildSpanIndex(sourceFile);
+      this.spanIndex.set(filePath, index);
+    }
+    const key = `${span.start}:${span.end}:${span.syntaxKind}`;
+    return index.get(key);
+  }
+
+  private buildSpanIndex(sourceFile: ts.SourceFile): Map<string, ts.Node> {
+    const index = new Map<string, ts.Node>();
     const visit = (node: ts.Node): void => {
-      if (found) return;
       const start = node.getStart(sourceFile, false);
       const end = node.getEnd();
-      if (
-        start === span.start &&
-        end === span.end &&
-        node.kind === span.syntaxKind
-      ) {
-        found = node;
-        return;
-      }
+      const key = `${start}:${end}:${node.kind}`;
+      index.set(key, node);
       ts.forEachChild(node, visit);
     };
     visit(sourceFile);
-    return found;
+    return index;
   }
 }
