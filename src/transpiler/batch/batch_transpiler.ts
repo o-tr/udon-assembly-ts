@@ -244,35 +244,38 @@ export class BatchTranspiler {
         `Discovered ${files.length} TypeScript files, ${entryFiles.length} entry points.`,
       );
     }
-    if (entryFiles.length > 0) {
-      for (const entry of entryFiles) {
-        const graph = resolver.buildGraph(entry);
-        reachable.add(entry);
-        for (const [k, deps] of graph.entries()) {
-          reachable.add(k);
-          for (const d of deps) reachable.add(d);
-        }
-      }
-    }
-
-    // Register any external files discovered via dependency resolution
-    // that were not in the original sourceDir file set.
+    // Discover external dependencies iteratively (fixpoint) so imports
+    // inside newly-discovered external files are also resolved.
     let externalFileCount = 0;
-    const externalFiles: string[] = [];
-    if (includeExternal && reachable.size > 0) {
-      for (const reachableFile of reachable) {
-        if (
-          !fileSet.has(reachableFile) &&
-          isTranspilableSource(reachableFile)
-        ) {
-          externalFiles.push(reachableFile);
+    let previousReachableSize = -1;
+    while (reachable.size !== previousReachableSize) {
+      previousReachableSize = reachable.size;
+
+      if (entryFiles.length > 0) {
+        for (const entry of entryFiles) {
+          const graph = resolver.buildGraph(entry);
+          reachable.add(entry);
+          for (const [k, deps] of graph.entries()) {
+            reachable.add(k);
+            for (const d of deps) reachable.add(d);
+          }
         }
       }
-    }
 
-    // Rebuild TypeCheckerContext to include external files so that
-    // cross-file type resolution works for dependencies outside sourceDir.
-    if (externalFiles.length > 0) {
+      const externalFiles: string[] = [];
+      if (includeExternal && reachable.size > 0) {
+        for (const reachableFile of reachable) {
+          if (
+            !fileSet.has(reachableFile) &&
+            isTranspilableSource(reachableFile)
+          ) {
+            externalFiles.push(reachableFile);
+          }
+        }
+      }
+
+      if (externalFiles.length === 0) break;
+
       const allRootNames = [...transpilableSourceFiles, ...externalFiles];
       for (const filePath of externalFiles) {
         if (!inMemorySources[filePath]) {
@@ -287,7 +290,9 @@ export class BatchTranspiler {
       for (const reachableFile of externalFiles) {
         parseAndRegisterFile(reachableFile, "external dependency");
         externalFileCount++;
+        fileSet.add(reachableFile);
       }
+      resolver.setImportCache(parser.getImportCache());
     }
 
     const cacheFiles =

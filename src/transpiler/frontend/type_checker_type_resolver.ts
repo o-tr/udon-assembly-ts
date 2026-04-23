@@ -144,6 +144,12 @@ export class TypeCheckerTypeResolver {
       const first = resolvedArgs[0];
       const allSame = resolvedArgs.every((r) => r === first);
       const elementType = allSame ? first : ObjectType;
+      if (elementType instanceof ArrayTypeSymbol) {
+        return new ArrayTypeSymbol(
+          elementType.elementType,
+          elementType.dimensions + 1,
+        );
+      }
       return new ArrayTypeSymbol(elementType, 1);
     }
 

@@ -90,6 +90,17 @@ export class TypeCheckerContext {
     const originalDirectoryExists = host.directoryExists?.bind(host);
     const sourceFileCache = new Map<string, ts.SourceFile>();
 
+    // Pre-compute in-memory directories for fast directoryExists lookups.
+    const inMemoryDirs = new Set<string>();
+    for (const key of sourceMap.keys()) {
+      let dir = path.dirname(key);
+      while (dir !== path.dirname(dir)) {
+        inMemoryDirs.add(dir);
+        dir = path.dirname(dir);
+      }
+      inMemoryDirs.add(dir);
+    }
+
     host.getCurrentDirectory = () => process.cwd();
     host.fileExists = (fileName) => {
       const normalized = normalizeFilePath(fileName);
@@ -105,9 +116,7 @@ export class TypeCheckerContext {
     if (originalDirectoryExists) {
       host.directoryExists = (dirName) => {
         const normalized = normalizeFilePath(dirName);
-        for (const key of sourceMap.keys()) {
-          if (key.startsWith(normalized + path.sep)) return true;
-        }
+        if (inMemoryDirs.has(normalized)) return true;
         return originalDirectoryExists(normalized);
       };
     }
