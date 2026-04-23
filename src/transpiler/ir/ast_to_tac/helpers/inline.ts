@@ -2563,6 +2563,23 @@ export function operandTrackingKey(op: TACOperand): string | undefined {
   return undefined;
 }
 
+function sanitizeIdentifierToken(raw: string): string {
+  const replaced = raw.replace(/[^A-Za-z0-9_]/g, "_");
+  const normalized =
+    replaced.length === 0
+      ? "_anon"
+      : /^[A-Za-z_]/.test(replaced)
+        ? replaced
+        : `_${replaced}`;
+  if (normalized === raw) return normalized;
+  let hash = 2166136261 >>> 0;
+  for (let i = 0; i < raw.length; i++) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `${normalized}__h${hash.toString(16)}`;
+}
+
 /**
  * Allocate (or reuse) an instance prefix and instanceId for a new inline instance,
  * deduplicating across repeated inlinings of the same method body via
@@ -2572,6 +2589,8 @@ export function allocateBodyCachedInstance(
   this: ASTToTACConverter,
   className: string,
 ): { instancePrefix: string; instanceId: number } {
+  const hasInvalidIdentifierChar = /[^A-Za-z0-9_]/.test(className);
+  const safeClassName = sanitizeIdentifierToken(className);
   const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
   if (currentBody !== undefined) {
     let cache = this.methodBodyInstanceCache.get(currentBody);
@@ -2581,7 +2600,7 @@ export function allocateBodyCachedInstance(
       this.methodBodyConstructorIndex.set(currentBody, idx + 1);
       return { instancePrefix: cached.prefix, instanceId: cached.instanceId };
     }
-    const instancePrefix = `__inst_${className}_${this.instanceCounter++}`;
+    const instancePrefix = `__inst_${safeClassName}_${this.instanceCounter++}`;
     const instanceId = this.nextInstanceId++;
     if (cache === undefined) {
       cache = [];
@@ -2591,8 +2610,9 @@ export function allocateBodyCachedInstance(
     this.methodBodyConstructorIndex.set(currentBody, idx + 1);
     return { instancePrefix, instanceId };
   }
+  const instancePrefix = `__inst_${safeClassName}_${this.instanceCounter++}`;
   return {
-    instancePrefix: `__inst_${className}_${this.instanceCounter++}`,
+    instancePrefix,
     instanceId: this.nextInstanceId++,
   };
 }
