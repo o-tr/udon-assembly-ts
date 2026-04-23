@@ -508,7 +508,7 @@ export function inferType(
     } catch (e) {
       if (
         e instanceof TranspileError &&
-        !node.getText().trim().startsWith("__")
+        !(ts.isIdentifier(node) && node.text.startsWith("__"))
       ) {
         throw e;
       }

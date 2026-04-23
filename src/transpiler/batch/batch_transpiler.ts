@@ -258,15 +258,35 @@ export class BatchTranspiler {
     // Register any external files discovered via dependency resolution
     // that were not in the original sourceDir file set.
     let externalFileCount = 0;
+    const externalFiles: string[] = [];
     if (includeExternal && reachable.size > 0) {
       for (const reachableFile of reachable) {
         if (
           !fileSet.has(reachableFile) &&
           isTranspilableSource(reachableFile)
         ) {
-          parseAndRegisterFile(reachableFile, "external dependency");
-          externalFileCount++;
+          externalFiles.push(reachableFile);
         }
+      }
+    }
+
+    // Rebuild TypeCheckerContext to include external files so that
+    // cross-file type resolution works for dependencies outside sourceDir.
+    if (externalFiles.length > 0) {
+      const allRootNames = [...transpilableSourceFiles, ...externalFiles];
+      for (const filePath of externalFiles) {
+        if (!inMemorySources[filePath]) {
+          inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
+        }
+      }
+      const newCheckerContext = TypeCheckerContext.create({
+        rootNames: allRootNames,
+        inMemorySources,
+      });
+      parser.setCheckerContext(newCheckerContext);
+      for (const reachableFile of externalFiles) {
+        parseAndRegisterFile(reachableFile, "external dependency");
+        externalFileCount++;
       }
     }
 

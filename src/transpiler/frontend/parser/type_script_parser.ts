@@ -111,12 +111,18 @@ export class TypeScriptParser {
     this.errorCollector = errorCollector ?? new ErrorCollector();
     this.enumRegistry = new EnumRegistry();
     this.typeMapper = new TypeMapper(this.enumRegistry);
+    this.setCheckerContext(checkerContext);
+  }
+
+  setCheckerContext(checkerContext?: TypeCheckerContext): void {
     this.checkerContext = checkerContext;
     if (checkerContext) {
       this.checkerTypeResolver = createTypeCheckerTypeResolver(
         checkerContext,
         this.typeMapper,
       );
+    } else {
+      this.checkerTypeResolver = undefined;
     }
   }
 
