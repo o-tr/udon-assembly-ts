@@ -66,7 +66,8 @@ export class TypeCheckerTypeResolver {
       this.typeCache.set(type, result);
       return result;
     } catch (e) {
-      this.typeCache.delete(type);
+      // Leave the ObjectType sentinel in place so any future re-entry
+      // for this type finds a cached value rather than recursing again.
       throw e;
     }
   }
@@ -91,7 +92,7 @@ export class TypeCheckerTypeResolver {
         mapped = new ClassTypeSymbol(typeName, UdonType.Object);
       }
       if (!(mapped instanceof ClassTypeSymbol)) return mapped;
-      // Unregistered enum mis-classified as class — fall through.
+      return this.resolveEnumFallback(enumSymbol);
     }
     if (type.flags & ts.TypeFlags.EnumLiteral) {
       const declaration = enumSymbol?.declarations?.[0];
@@ -109,7 +110,7 @@ export class TypeCheckerTypeResolver {
             mapped = new ClassTypeSymbol(parentName, UdonType.Object);
           }
           if (!(mapped instanceof ClassTypeSymbol)) return mapped;
-          // Unregistered parent enum mis-classified as class — fall through.
+          return this.resolveEnumFallback(parentSymbol);
         }
       }
     }
@@ -201,14 +202,14 @@ export class TypeCheckerTypeResolver {
         // ClassTypeSymbol by mapTypeScriptType. Only accept the mapping when
         // it is not a generic ClassTypeSymbol.
         if (!(mapped instanceof ClassTypeSymbol)) return mapped;
-        // Unknown enum — return ObjectType rather than a bogus class type.
-        return ObjectType;
+        // Unknown enum — infer from member initializers instead of returning
+        // a bogus class type.
+        return this.resolveEnumFallback(symbol);
       }
 
       // 7c. Interface → build InterfaceTypeSymbol from declared members
       if (symFlags & ts.SymbolFlags.Interface) {
-        const iface = this.buildInterfaceTypeSymbol(type, symbol);
-        if (iface) return iface;
+        return this.buildInterfaceTypeSymbol(type, symbol);
       }
 
       // 7d. Class → typeMapper lookup; let TranspileError propagate for
@@ -308,7 +309,13 @@ export class TypeCheckerTypeResolver {
     );
     try {
       return this.typeMapper.mapTypeScriptType(typeText);
-    } catch {
+    } catch (e) {
+      const trimmed = typeText.trim();
+      const isSimpleName =
+        /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
+          trimmed,
+        ) && !trimmed.startsWith("__");
+      if (isSimpleName) throw e;
       return ObjectType;
     }
   }
@@ -317,17 +324,17 @@ export class TypeCheckerTypeResolver {
   private buildInterfaceTypeSymbol(
     type: ts.Type,
     symbol: ts.Symbol,
-  ): InterfaceTypeSymbol | null {
-    const props = this.checker.getPropertiesOfType(type);
-    if (props.length === 0) return null;
-
+  ): InterfaceTypeSymbol {
     const propertyMap = new Map<string, TypeSymbol>();
     const methodMap = new Map<
       string,
       { params: TypeSymbol[]; returnType: TypeSymbol }
     >();
 
-    this.populateMemberMaps(props, propertyMap, methodMap);
+    const props = this.checker.getPropertiesOfType(type);
+    if (props.length > 0) {
+      this.populateMemberMaps(props, propertyMap, methodMap);
+    }
 
     const name = stripModuleQualifier(
       this.checker.getFullyQualifiedName(symbol),
@@ -373,6 +380,41 @@ export class TypeCheckerTypeResolver {
       if (mapped) return mapped;
     }
     return null;
+  }
+
+  /**
+   * Fallback for unregistered enums: inspect the enum declaration's members
+   * and infer string, int32, or ObjectType based on initializer types.
+   */
+  private resolveEnumFallback(enumSymbol: ts.Symbol): TypeSymbol {
+    const decl = enumSymbol.declarations?.[0] as ts.EnumDeclaration | undefined;
+    if (!decl) return ObjectType;
+    let allString = true;
+    let allNumber = true;
+    for (const member of decl.members) {
+      if (member.initializer) {
+        if (ts.isStringLiteral(member.initializer)) {
+          allNumber = false;
+        } else if (
+          ts.isNumericLiteral(member.initializer) ||
+          (ts.isPrefixUnaryExpression(member.initializer) &&
+            (member.initializer.operator === ts.SyntaxKind.MinusToken ||
+              member.initializer.operator === ts.SyntaxKind.PlusToken) &&
+            ts.isNumericLiteral(member.initializer.operand))
+        ) {
+          allString = false;
+        } else {
+          allString = false;
+          allNumber = false;
+        }
+      } else {
+        // No initializer implies auto-increment numeric
+        allString = false;
+      }
+    }
+    if (allString) return PrimitiveTypes.string;
+    if (allNumber) return PrimitiveTypes.int32;
+    return ObjectType;
   }
 
   /** Resolve symbols into propertyMap / methodMap. Used by both anonymous-object
