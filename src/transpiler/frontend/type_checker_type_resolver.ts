@@ -148,6 +148,9 @@ export class TypeCheckerTypeResolver {
     if (type.flags & ts.TypeFlags.BigIntLike) return PrimitiveTypes.int64;
     if (type.flags & ts.TypeFlags.Void) return PrimitiveTypes.void;
 
+    // 4b. Null / Undefined — Udon doesn't have nullable types natively
+    if (this.isNullishType(type)) return ObjectType;
+
     // 5. Union (remaining after nullish strip — e.g. string | number)
     if (type.flags & ts.TypeFlags.Union) {
       const union = type as ts.UnionType;
