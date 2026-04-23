@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { TranspileError } from "../../errors/transpile_errors.js";
 import type { TypeSymbol } from "../type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -237,6 +238,21 @@ export function mapTypeWithGenerics(
   typeText: string,
   node?: ts.Node,
 ): TypeSymbol {
+  // TypeChecker-first resolution when we have the original ts.Node
+  if (node && this.checkerTypeResolver) {
+    try {
+      const resolved = this.checkerTypeResolver.resolveFromTsNode(node);
+      if (resolved && resolved !== ObjectType) {
+        return resolved;
+      }
+    } catch (e) {
+      if (e instanceof TranspileError && !typeText.trim().startsWith("__")) {
+        throw e;
+      }
+      // Fall through to legacy text-based path
+    }
+  }
+
   const trimmed = typeText.trim();
   const genericParam = this.resolveGenericParam(trimmed);
   if (genericParam) return genericParam;
@@ -412,7 +428,15 @@ export function mapTypeWithGenerics(
     }
   }
 
-  return this.typeMapper.mapTypeScriptType(trimmed);
+  try {
+    return this.typeMapper.mapTypeScriptType(trimmed);
+  } catch (err) {
+    if (err instanceof TranspileError && node) {
+      const loc = this.createLoc(node);
+      throw new TranspileError(err.code, err.message, loc, err.suggestion);
+    }
+    throw err;
+  }
 }
 
 export function isStringTypeNode(
@@ -474,6 +498,24 @@ export function inferType(
   this: TypeScriptParser,
   node: ts.Expression,
 ): TypeSymbol {
+  // TypeChecker-first resolution when available
+  if (this.checkerTypeResolver) {
+    try {
+      const resolved = this.checkerTypeResolver.resolveFromTsNode(node);
+      if (resolved && resolved !== ObjectType) {
+        return resolved;
+      }
+    } catch (e) {
+      if (
+        e instanceof TranspileError &&
+        !(ts.isIdentifier(node) && node.text.startsWith("__"))
+      ) {
+        throw e;
+      }
+      // Fall through to legacy inference path
+    }
+  }
+
   switch (node.kind) {
     case ts.SyntaxKind.NumericLiteral:
       return this.typeMapper.mapTypeScriptType("number");

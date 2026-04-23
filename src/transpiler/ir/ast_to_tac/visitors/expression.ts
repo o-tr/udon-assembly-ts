@@ -1,4 +1,6 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
+import { TranspileError } from "../../../errors/transpile_errors.js";
+import { createTypeCheckerTypeResolver } from "../../../frontend/type_checker_type_resolver.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -448,7 +450,7 @@ function resolvePropertyTypeFromType(
         property,
       );
       if (prop) {
-        return converter.typeMapper.mapTypeScriptType(prop.type);
+        return prop.type;
       }
     } else {
       const interfaceMeta = converter.classRegistry.getInterface(baseType.name);
@@ -456,7 +458,7 @@ function resolvePropertyTypeFromType(
         (candidate) => candidate.name === property,
       );
       if (prop) {
-        return converter.typeMapper.mapTypeScriptType(prop.type);
+        return prop.type;
       }
     }
   }
@@ -485,6 +487,29 @@ export function resolveTypeFromNode(
   converter: ASTToTACConverter,
   node: ASTNode,
 ): TypeSymbol | null {
+  // TypeChecker-first resolution when we have a bridged ts.Node
+  if (converter.checkerContext) {
+    try {
+      const tsNode = converter.checkerContext.resolveTsNode(node);
+      if (tsNode) {
+        if (!converter.checkerTypeResolver) {
+          converter.checkerTypeResolver = createTypeCheckerTypeResolver(
+            converter.checkerContext,
+            converter.typeMapper,
+          );
+        }
+        const resolved =
+          converter.checkerTypeResolver.resolveFromTsNode(tsNode);
+        if (resolved && resolved !== ObjectType) {
+          return resolved;
+        }
+      }
+    } catch (e) {
+      if (e instanceof TranspileError) throw e;
+      // Non-fatal: fall through to legacy resolution path
+    }
+  }
+
   switch (node.kind) {
     case ASTNodeKind.ThisExpression:
       return converter.currentClassName
@@ -585,15 +610,6 @@ function resolveMethodReturnType(
   const typeName = baseType.name;
   if (!typeName) return null;
 
-  const resolveReturnTypeStr = (retType: string): TypeSymbol => {
-    const mapped = converter.typeMapper.mapTypeScriptType(retType);
-    // Upgrade Object-typed ClassTypeSymbols for known inline classes to Int32.
-    // resolveInlineClassType guards on ClassTypeSymbol + UdonType.Object + known
-    // inline class (via classRegistry) + not UdonBehaviour, so primitives,
-    // interfaces, and stubs pass through unchanged.
-    return resolveInlineClassType(converter, mapped);
-  };
-
   // Check class registry for inline classes.
   // getMergedMethods does not filter by static, so both instance and static
   // methods are found regardless of the isStatic hint.
@@ -605,20 +621,20 @@ function resolveMethodReturnType(
         methodName,
       );
       if (method) {
-        return resolveReturnTypeStr(method.returnType);
+        return resolveInlineClassType(converter, method.returnType);
       }
     }
     const ifaceMeta = converter.classRegistry.getInterface(typeName);
     if (ifaceMeta) {
       const method = ifaceMeta.methods.find((m) => m.name === methodName);
       if (method) {
-        return resolveReturnTypeStr(method.returnType);
+        return resolveInlineClassType(converter, method.returnType);
       }
     }
   }
   // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
-  // to handle methods defined on base classes. Pipe through resolveReturnTypeStr
-  // when the return type name is available so inline class return types get
+  // to handle methods defined on base classes. Pipe through resolveInlineClassType
+  // when the return type is available so inline class return types get
   // upgraded from ObjectType to ClassTypeSymbol (consistent with classRegistry
   // paths). Try the specified isStatic value first; when unspecified, try
   // instance then static so both Tile.fromCode() and tile.toString() resolve.
@@ -630,9 +646,7 @@ function resolveMethodReturnType(
       staticFlag,
     );
     if (resolved) {
-      const rt = resolved.method.returnType;
-      if (rt.name) return resolveReturnTypeStr(rt.name);
-      return rt;
+      return resolveInlineClassType(converter, resolved.method.returnType);
     }
     return null;
   };
@@ -2753,7 +2767,7 @@ export function visitPropertyAccessExpression(
           node.property,
         );
         if (prop) {
-          resultType = this.typeMapper.mapTypeScriptType(prop.type);
+          resultType = prop.type;
         }
       } else {
         const interfaceMeta = this.classRegistry.getInterface(objectType.name);
@@ -2761,7 +2775,7 @@ export function visitPropertyAccessExpression(
           (candidate) => candidate.name === node.property,
         );
         if (prop) {
-          resultType = this.typeMapper.mapTypeScriptType(prop.type);
+          resultType = prop.type;
         }
       }
     }
@@ -2989,7 +3003,7 @@ export function visitOptionalChainingExpression(
         node.property,
       );
       if (prop) {
-        resultType = this.typeMapper.mapTypeScriptType(prop.type);
+        resultType = prop.type;
       }
     } else {
       const interfaceMeta = this.classRegistry.getInterface(objectType.name);
@@ -2997,7 +3011,7 @@ export function visitOptionalChainingExpression(
         (candidate) => candidate.name === node.property,
       );
       if (prop) {
-        resultType = this.typeMapper.mapTypeScriptType(prop.type);
+        resultType = prop.type;
       }
     }
   }

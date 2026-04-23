@@ -7,6 +7,11 @@ import { ErrorCollector } from "../../errors/error_collector.js";
 import type { TranspileErrorLocation } from "../../errors/transpile_errors.js";
 import { EnumRegistry } from "../enum_registry.js";
 import { SymbolTable } from "../symbol_table.js";
+import type { TypeCheckerContext } from "../type_checker_context.js";
+import {
+  createTypeCheckerTypeResolver,
+  type TypeCheckerTypeResolver,
+} from "../type_checker_type_resolver.js";
 import { TypeMapper } from "../type_mapper.js";
 import {
   ArrayTypeSymbol,
@@ -86,6 +91,7 @@ export class TypeScriptParser {
   symbolTable: SymbolTable;
   errorCollector: ErrorCollector;
   sourceFile: ts.SourceFile | null = null;
+  currentFilePath = "temp.ts";
   typeMapper: TypeMapper;
   enumRegistry: EnumRegistry;
   genericTypeParamStack: Array<Set<string>> = [];
@@ -94,12 +100,30 @@ export class TypeScriptParser {
   anonUnionCounter = 0;
   anonUnionCache: Map<string, InterfaceTypeSymbol> = new Map();
   private readonly importCache: Map<string, string[]> = new Map();
+  checkerContext?: TypeCheckerContext;
+  checkerTypeResolver?: TypeCheckerTypeResolver;
 
-  constructor(errorCollector?: ErrorCollector) {
+  constructor(
+    errorCollector?: ErrorCollector,
+    checkerContext?: TypeCheckerContext,
+  ) {
     this.symbolTable = new SymbolTable();
     this.errorCollector = errorCollector ?? new ErrorCollector();
     this.enumRegistry = new EnumRegistry();
     this.typeMapper = new TypeMapper(this.enumRegistry);
+    this.setCheckerContext(checkerContext);
+  }
+
+  setCheckerContext(checkerContext?: TypeCheckerContext): void {
+    this.checkerContext = checkerContext;
+    if (checkerContext) {
+      this.checkerTypeResolver = createTypeCheckerTypeResolver(
+        checkerContext,
+        this.typeMapper,
+      );
+    } else {
+      this.checkerTypeResolver = undefined;
+    }
   }
 
   /**
@@ -110,12 +134,11 @@ export class TypeScriptParser {
     this.anonTypeCounter = 0;
     this.anonUnionCounter = 0;
     this.anonUnionCache = new Map();
-    const sourceFile = ts.createSourceFile(
-      filePath,
-      sourceCode,
-      ts.ScriptTarget.ES2020,
-      true,
-    );
+    this.currentFilePath = filePath;
+
+    const sourceFile =
+      this.checkerContext?.getSourceFile(filePath) ??
+      ts.createSourceFile(filePath, sourceCode, ts.ScriptTarget.ES2020, true);
     this.sourceFile = sourceFile;
 
     const statements: ASTNode[] = [];
@@ -161,20 +184,21 @@ export class TypeScriptParser {
 
   createLoc(tsNode: ts.Node): TranspileErrorLocation {
     const sourceFile = this.sourceFile;
+    const filePath = this.currentFilePath;
     if (!sourceFile) {
-      return { filePath: "<unknown>", line: 0, column: 0 };
+      return { filePath, line: 0, column: 0 };
     }
     // Synthesized nodes (created via ts.factory.*) have pos === -1 and no real
     // source position. Fall back to a filePath-only location.
     if (tsNode.pos < 0) {
-      return { filePath: sourceFile.fileName, line: 0, column: 0 };
+      return { filePath, line: 0, column: 0 };
     }
     const { line, character } = ts.getLineAndCharacterOfPosition(
       sourceFile,
       tsNode.getStart(sourceFile),
     );
     return {
-      filePath: sourceFile.fileName,
+      filePath,
       line: line + 1,
       column: character + 1,
     };
@@ -184,6 +208,7 @@ export class TypeScriptParser {
     if (!node.loc) {
       node.loc = this.createLoc(tsNode);
     }
+    this.checkerContext?.bindAstNode(node, tsNode);
     return node;
   }
 

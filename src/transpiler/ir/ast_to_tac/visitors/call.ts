@@ -130,12 +130,10 @@ function buildFallbackMethodLayout(
   const parameterExportNames = method.parameters.map(
     (_, i) => `${baseName}__param_${i}`,
   );
-  const parameterTypes = method.parameters.map((p) =>
-    converter.typeMapper.mapTypeScriptType(p.type),
-  );
-  const returnType = converter.typeMapper.mapTypeScriptType(method.returnType);
+  const parameterTypes = method.parameters.map((p) => p.type);
+  const returnType = method.returnType;
   const returnExportName =
-    returnType !== PrimitiveTypes.void ? `${baseName}__ret` : null;
+    returnType.udonType !== UdonType.Void ? `${baseName}__ret` : null;
 
   const layout: UdonBehaviourMethodLayout = {
     exportMethodName: baseName,
@@ -765,9 +763,7 @@ function tryUntrackedInlineDispatch(
         if (method) {
           return {
             className,
-            returnType: converter.typeMapper.mapTypeScriptType(
-              method.returnType,
-            ),
+            returnType: method.returnType,
           };
         }
       }
@@ -800,9 +796,7 @@ function tryUntrackedInlineDispatch(
     ? (converter.typeMapper.getAlias(untrackedReturnType.name) ??
       untrackedReturnType)
     : untrackedReturnType;
-  const isVoid =
-    resolvedUntrackedReturnType?.name === "SystemVoid" ||
-    resolvedUntrackedReturnType?.name === "void";
+  const isVoid = resolvedUntrackedReturnType?.udonType === UdonType.Void;
   if (!resolvedUntrackedReturnType) return null;
 
   // SoA fast path: avoid per-instance handle comparison for SoA classes
@@ -1057,8 +1051,7 @@ function tryD3MethodDispatch(
   const resolvedRetType = methodReturnType?.name
     ? (converter.typeMapper.getAlias(methodReturnType.name) ?? methodReturnType)
     : methodReturnType;
-  const isVoid =
-    resolvedRetType?.name === "SystemVoid" || resolvedRetType?.name === "void";
+  const isVoid = resolvedRetType?.udonType === UdonType.Void;
 
   // SoA fast path: avoid per-instance handle comparison for SoA classes
   const soaResult = trySoAMethodDispatch(
@@ -1373,7 +1366,7 @@ export function visitCallExpression(
         );
         if (externSig) {
           const returnType = resolveExternReturnType(externSig) ?? ObjectType;
-          if (returnType === PrimitiveTypes.void) {
+          if (returnType.udonType === UdonType.Void) {
             this.emit(new CallInstruction(undefined, externSig, evaluatedArgs));
             return VOID_RETURN;
           }
@@ -2061,7 +2054,7 @@ export function visitCallExpression(
       );
       if (externSig) {
         const returnType = resolveExternReturnType(externSig) ?? ObjectType;
-        if (returnType === PrimitiveTypes.void) {
+        if (returnType.udonType === UdonType.Void) {
           this.emit(new CallInstruction(undefined, externSig, evaluatedArgs));
           return VOID_RETURN;
         }
@@ -2920,12 +2913,8 @@ export function visitCallExpression(
           const methodMeta = ifaceMeta?.methods.find(
             (m) => m.name === propAccess.property,
           );
-          const returnType = methodMeta
-            ? this.typeMapper.mapTypeScriptType(methodMeta.returnType)
-            : ObjectType;
-          const isVoid =
-            returnType.name === "SystemVoid" ||
-            methodMeta?.returnType === "void";
+          const returnType = methodMeta ? methodMeta.returnType : ObjectType;
+          const isVoid = returnType.udonType === UdonType.Void;
           // Save state BEFORE allocating any variables so rollback
           // doesn't leave orphaned temps/labels in the TAC variable table.
           const savedInstructionCount = this.instructions.length;
@@ -3051,13 +3040,7 @@ export function visitCallExpression(
                     if (mergedProps.length > 0) {
                       fieldsToCopy = mergedProps
                         .filter((p) => !p.node.isGetter)
-                        .map(
-                          (p) =>
-                            [
-                              p.name,
-                              this.typeMapper.mapTypeScriptType(p.type),
-                            ] as [string, TypeSymbol],
-                        );
+                        .map((p) => [p.name, p.type] as [string, TypeSymbol]);
                     }
                   } else {
                     const classNode = this.classMap.get(
@@ -3404,9 +3387,7 @@ export function visitCallExpression(
           propAccess.property,
         );
         if (method) {
-          resolvedReturnType = this.typeMapper.mapTypeScriptType(
-            method.returnType,
-          );
+          resolvedReturnType = method.returnType;
         }
       } else {
         const interfaceMeta = this.classRegistry.getInterface(objectType.name);
@@ -3414,9 +3395,7 @@ export function visitCallExpression(
           (candidate) => candidate.name === propAccess.property,
         );
         if (method) {
-          resolvedReturnType = this.typeMapper.mapTypeScriptType(
-            method.returnType,
-          );
+          resolvedReturnType = method.returnType;
         }
       }
     }
@@ -3499,7 +3478,7 @@ export function visitCallExpression(
       if (d3MethodResult != null) return d3MethodResult;
     }
 
-    if (resolvedReturnType === PrimitiveTypes.void) {
+    if (resolvedReturnType?.udonType === UdonType.Void) {
       this.emit(
         new MethodCallInstruction(
           undefined,

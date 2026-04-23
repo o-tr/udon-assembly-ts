@@ -2,6 +2,7 @@
  * Class registry for transpiler
  */
 
+import type { TypeSymbol } from "./type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,
@@ -21,8 +22,8 @@ export interface DecoratorInfo {
 
 export interface MethodInfo {
   name: string;
-  parameters: Array<{ name: string; type: string }>;
-  returnType: string;
+  parameters: Array<{ name: string; type: TypeSymbol }>;
+  returnType: TypeSymbol;
   isPublic: boolean;
   isStatic: boolean;
   isExported?: boolean;
@@ -31,7 +32,7 @@ export interface MethodInfo {
 
 export interface PropertyInfo {
   name: string;
-  type: string;
+  type: TypeSymbol;
   isPublic: boolean;
   isStatic: boolean;
   node: PropertyDeclarationNode;
@@ -51,7 +52,7 @@ export interface ClassMetadata {
   constructor?: {
     parameters: Array<{
       name: string;
-      type: string;
+      type: TypeSymbol;
       isParameterProperty?: boolean;
     }>;
     body: ASTNode;
@@ -62,7 +63,7 @@ export interface ClassMetadata {
 
 export interface TopLevelConstInfo {
   name: string;
-  type: string;
+  type: TypeSymbol;
   node: VariableDeclarationNode;
   filePath: string;
   line: number;
@@ -72,11 +73,11 @@ export interface TopLevelConstInfo {
 export interface InterfaceMetadata {
   name: string;
   filePath: string;
-  properties: Array<{ name: string; type: string }>;
+  properties: Array<{ name: string; type: TypeSymbol }>;
   methods: Array<{
     name: string;
-    parameters: Array<{ name: string; type: string }>;
-    returnType: string;
+    parameters: Array<{ name: string; type: TypeSymbol }>;
+    returnType: TypeSymbol;
   }>;
   node: InterfaceDeclarationNode;
 }
@@ -294,7 +295,7 @@ export class ClassRegistry {
         );
         consts.push({
           name: varNode.name,
-          type: varNode.type.name,
+          type: varNode.type,
           node: varNode,
           filePath,
           line: loc.line,
@@ -315,15 +316,15 @@ export class ClassRegistry {
           filePath,
           properties: interfaceNode.properties.map((prop) => ({
             name: prop.name,
-            type: prop.type.name,
+            type: prop.type,
           })),
           methods: interfaceNode.methods.map((method) => ({
             name: method.name,
             parameters: method.parameters.map((param) => ({
               name: param.name,
-              type: param.type.name,
+              type: param.type,
             })),
-            returnType: method.returnType.name,
+            returnType: method.returnType,
           })),
           node: interfaceNode,
         });
@@ -480,9 +481,9 @@ export class ClassRegistry {
       name: method.name,
       parameters: method.parameters.map((param) => ({
         name: param.name,
-        type: param.type.name,
+        type: param.type,
       })),
-      returnType: method.returnType.name,
+      returnType: method.returnType,
       isPublic: method.isPublic,
       isStatic: method.isStatic,
       isExported: method.isExported,
@@ -493,7 +494,7 @@ export class ClassRegistry {
   private toPropertyInfo(property: PropertyDeclarationNode): PropertyInfo {
     return {
       name: property.name,
-      type: property.type.name,
+      type: property.type,
       isPublic: property.isPublic,
       isStatic: property.isStatic,
       node: property,

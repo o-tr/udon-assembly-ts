@@ -72,6 +72,13 @@ src/
 
 - [Native Array Spec](docs/native-array-spec.md)
 
+## Breaking Changes
+
+### v0.x.x — Type-checker hardening
+
+- **Unknown types are now fatal.** `TypeMapper` no longer silently falls back to `object` for unrecognised TypeScript type names. It throws a `TranspileError` instead.
+- **Batch errors propagate immediately.** `BatchTranspiler` no longer ignores per-file parse or dependency-resolution failures. Any error stops the batch immediately.
+
 ## Testing
 
 ```bash
