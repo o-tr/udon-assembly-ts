@@ -761,8 +761,27 @@ export function unwrapDataToken(
         break;
     }
   }
-
   const result = this.newTemp(targetType);
+  if (property === "Int") {
+    const nullFallback = isInlineHandleType(this, targetType) ? -1 : 0;
+    const isNull = this.newTemp(PrimitiveTypes.boolean);
+    const nonNullLabel = this.newLabel("token_int_non_null");
+    const doneLabel = this.newLabel("token_int_done");
+    this.emit(new PropertyGetInstruction(isNull, token, "IsNull"));
+    // ConditionalJumpInstruction jumps when condition is false.
+    this.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
+    this.emit(
+      new AssignmentInstruction(
+        result,
+        createConstant(nullFallback, targetType),
+      ),
+    );
+    this.emit(new UnconditionalJumpInstruction(doneLabel));
+    this.emit(new LabelInstruction(nonNullLabel));
+    this.emit(new PropertyGetInstruction(result, token, property));
+    this.emit(new LabelInstruction(doneLabel));
+    return result;
+  }
   this.emit(new PropertyGetInstruction(result, token, property));
   return result;
 }
