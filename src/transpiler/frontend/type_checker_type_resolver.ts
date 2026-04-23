@@ -60,10 +60,16 @@ export class TypeCheckerTypeResolver {
     if (cached) return cached;
     // Insert a sentinel so any re-entrant call (e.g. recursive type alias)
     // returns ObjectType instead of recursing infinitely.
-    // The sentinel remains in the cache on error so future re-entries are
-    // still protected.
     this.typeCache.set(type, ObjectType);
-    const result = this.resolveFromTsTypeUncached(type);
+    let result: TypeSymbol;
+    try {
+      result = this.resolveFromTsTypeUncached(type);
+    } catch (e) {
+      // Clear sentinel on TranspileError so re-entry re-throws the hard
+      // error instead of silently returning ObjectType.
+      this.typeCache.delete(type);
+      throw e;
+    }
     this.typeCache.set(type, result);
     return result;
   }
