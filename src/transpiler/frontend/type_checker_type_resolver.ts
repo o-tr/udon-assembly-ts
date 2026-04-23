@@ -242,7 +242,7 @@ export class TypeCheckerTypeResolver {
         const isSimpleIdentifier =
           /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
             fullyQualified,
-          );
+          ) && !fullyQualified.startsWith("__");
         if (isSimpleIdentifier) {
           const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
           if (mapped !== ObjectType) return mapped;
@@ -412,6 +412,7 @@ export class TypeCheckerTypeResolver {
         allString = false;
       }
     }
+    if (decl.members.length === 0) return ObjectType;
     if (allString) return PrimitiveTypes.string;
     if (allNumber) return PrimitiveTypes.int32;
     return ObjectType;
