@@ -2589,7 +2589,6 @@ export function allocateBodyCachedInstance(
   this: ASTToTACConverter,
   className: string,
 ): { instancePrefix: string; instanceId: number } {
-  const hasInvalidIdentifierChar = /[^A-Za-z0-9_]/.test(className);
   const safeClassName = sanitizeIdentifierToken(className);
   const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
   if (currentBody !== undefined) {

@@ -763,6 +763,7 @@ export function unwrapDataToken(
   }
   const result = this.newTemp(targetType);
   if (property === "Int") {
+    const nullFallback = isInlineHandleType(this, targetType) ? -1 : 0;
     const isNull = this.newTemp(PrimitiveTypes.boolean);
     const nonNullLabel = this.newLabel("token_int_non_null");
     const doneLabel = this.newLabel("token_int_done");
@@ -770,7 +771,10 @@ export function unwrapDataToken(
     // ConditionalJumpInstruction jumps when condition is false.
     this.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
     this.emit(
-      new AssignmentInstruction(result, createConstant(0, PrimitiveTypes.int32)),
+      new AssignmentInstruction(
+        result,
+        createConstant(nullFallback, targetType),
+      ),
     );
     this.emit(new UnconditionalJumpInstruction(doneLabel));
     this.emit(new LabelInstruction(nonNullLabel));
