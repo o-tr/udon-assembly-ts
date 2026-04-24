@@ -20,8 +20,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
+
+const createdDirs: string[] = [];
 
 function writeFixture(decl: "type" | "interface"): {
   sourceDir: string;
@@ -30,6 +32,7 @@ function writeFixture(decl: "type" | "interface"): {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), `cross-module-iface-${decl}-`),
   );
+  createdDirs.push(tempDir);
   const sourceDir = path.join(tempDir, "src");
   const outputDir = path.join(tempDir, "out");
   fs.mkdirSync(sourceDir, { recursive: true });
@@ -124,26 +127,37 @@ class Entry extends UdonSharpBehaviour {
   return { sourceDir, outputDir };
 }
 
-function loadEntryUasm(outputDir: string): string {
-  // BatchTranspiler writes one file per entry point. Entry.ts is the only one.
+function buildFixtureUasm(decl: "type" | "interface"): string {
+  const { sourceDir, outputDir } = writeFixture(decl);
+  new BatchTranspiler().transpile({
+    sourceDir,
+    outputDir,
+    excludeDirs: [],
+    outputExtension: "uasm",
+  });
   const files = fs.readdirSync(outputDir).filter((f) => f.endsWith(".uasm"));
   expect(files).toHaveLength(1);
   return fs.readFileSync(path.join(outputDir, files[0]), "utf8");
 }
 
+afterAll(() => {
+  for (const dir of createdDirs) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
   for (const decl of ["type", "interface"] as const) {
     describe(`declared as \`${decl} IAlias\``, () => {
-      it(`WRITE site emits DataToken ctor(Int32), not ctor(Object)`, () => {
-        const { sourceDir, outputDir } = writeFixture(decl);
-        new BatchTranspiler().transpile({
-          sourceDir,
-          outputDir,
-          excludeDirs: [],
-          outputExtension: "uasm",
-        });
-        const uasm = loadEntryUasm(outputDir);
+      let uasm = "";
+      let lines: string[] = [];
 
+      beforeAll(() => {
+        uasm = buildFixtureUasm(decl);
+        lines = uasm.split("\n");
+      });
+
+      it(`WRITE site emits DataToken ctor(Int32), not ctor(Object)`, () => {
         // The DataToken(Int32) ctor is the target overload — the fix flips
         // the previously-emitted SystemObject ctor to this one for the
         // Registry.register wrap of the inline IAlias handle.
@@ -153,16 +167,6 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
       });
 
       it(`WRITE site handle is %SystemInt32, flowing into the ctor`, () => {
-        const { sourceDir, outputDir } = writeFixture(decl);
-        new BatchTranspiler().transpile({
-          sourceDir,
-          outputDir,
-          excludeDirs: [],
-          outputExtension: "uasm",
-        });
-        const uasm = loadEntryUasm(outputDir);
-        const lines = uasm.split("\n");
-
         // Find the Int32 DataToken ctor extern declaration and its alias.
         const externDecl = lines.find((l) =>
           l.includes("DataToken.__ctor__SystemInt32__VRCSDK3DataDataToken"),
@@ -178,35 +182,30 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
         );
         expect(callIdx).toBeGreaterThan(-1);
 
-        // The Int32 ctor's signature: `PUSH <int32-handle>; PUSH <token-dest>;
-        // EXTERN ctor`. Walk backwards up to the two immediately-preceding
-        // PUSH lines and assert at least one is typed %SystemInt32.
-        const prev1 = lines[callIdx - 1]?.trim();
-        const prev2 = lines[callIdx - 2]?.trim();
-        expect(prev1).toMatch(/^PUSH,/);
-        expect(prev2).toMatch(/^PUSH,/);
-        const operandNames = [prev1, prev2].map((l) =>
-          l.replace(/^PUSH,\s+/, "").trim(),
-        );
-        const anyIsInt32 = operandNames.some((name) => {
-          const decl = lines.find(
-            (l) => l.includes(`${name}:`) && l.includes("%System"),
-          );
-          return decl?.includes("%SystemInt32");
+        // The Int32 ctor's signature is `PUSH <int32-handle>; PUSH <token-
+        // dest>; EXTERN ctor`. Scan backwards for the two nearest PUSH lines
+        // — tolerant of any blank/label/comment lines a future codegen pass
+        // might interleave — and assert at least one operand is declared as
+        // %SystemInt32.
+        const pushOperands: string[] = [];
+        for (let i = callIdx - 1; i >= 0 && pushOperands.length < 2; i--) {
+          const trimmed = lines[i]?.trim() ?? "";
+          if (trimmed.startsWith("PUSH,")) {
+            pushOperands.push(trimmed.replace(/^PUSH,\s+/, "").trim());
+          }
+        }
+        expect(pushOperands.length).toBe(2);
+
+        const anyIsInt32 = pushOperands.some((name) => {
+          const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const declPattern = new RegExp(`^\\s*${escaped}:\\s*%System\\S+`);
+          const operandDecl = lines.find((l) => declPattern.test(l));
+          return operandDecl?.includes("%SystemInt32");
         });
         expect(anyIsInt32).toBe(true);
       });
 
       it(`negative control: Map<string, IOther>.set still uses ctor(Object)`, () => {
-        const { sourceDir, outputDir } = writeFixture(decl);
-        new BatchTranspiler().transpile({
-          sourceDir,
-          outputDir,
-          excludeDirs: [],
-          outputExtension: "uasm",
-        });
-        const uasm = loadEntryUasm(outputDir);
-
         // IOther has no inline implementor, so it is NOT in
         // interfaceClassIdMap; its wrap site must remain a SystemObject ctor.
         // If the alias-name preservation over-broadened the guard, this
@@ -217,15 +216,6 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
       });
 
       it(`no \`__anon_\` names leak into the generated UASM`, () => {
-        const { sourceDir, outputDir } = writeFixture(decl);
-        new BatchTranspiler().transpile({
-          sourceDir,
-          outputDir,
-          excludeDirs: [],
-          outputExtension: "uasm",
-        });
-        const uasm = loadEntryUasm(outputDir);
-
         // With the fix, any named type alias or declared interface should
         // surface in the UASM under its canonical name — never as
         // `__anon_<digest>`. Object literals without alias context remain

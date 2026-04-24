@@ -61,7 +61,7 @@ describe("unwrapDataToken inline-handle null fallback", () => {
     );
   });
 
-  it("does NOT emit a -1 sentinel for a nullable Map<string, string> read", () => {
+  it("does NOT emit a -1 sentinel for a nullable Map<string, number> read", () => {
     // Baseline: non-inline-handle reads continue to fall back to 0.
     // The sticky-flag fix only activates the -1 branch for inline handles.
     const source = `
@@ -80,20 +80,14 @@ describe("unwrapDataToken inline-handle null fallback", () => {
 
     const { uasm } = new TypeScriptToUdonTranspiler().transpile(source);
 
-    // No inline-handle -1 sentinel should appear for a plain number value.
-    // (Other -1 literals may appear elsewhere in the UASM for unrelated
-    // reasons — assert the absence of a fresh `_SystemInt32: %SystemInt32,
-    // -1` constant declaration specifically within a pattern that would
-    // indicate the null-fallback scaffold for inline handles.)
-    //
-    // The plain-number Map.get emits Int directly and does not run through
-    // the inline-handle branch, so no `token_int_non_null`-style scaffold
-    // is emitted with a -1 constant. The assertion here is lax: the
-    // emitted UASM does not contain two adjacent occurrences of the
-    // token-int-nonnull label and a -1 constant on the null arm.
-    const hasInlineHandleNullScaffold =
-      /token_int_non_null[\s\S]{0,120}-1/.test(uasm) ||
-      /-1[\s\S]{0,120}token_int_non_null/.test(uasm);
-    expect(hasInlineHandleNullScaffold).toBe(false);
+    // Mirror the positive-test pattern: the null-fallback scaffold at
+    // assignment.ts:768-782 emits a `_SystemInt32: %SystemInt32, -1`
+    // constant declaration specifically for inline-handle reads. Assert
+    // the scaffold's data-declaration shape does not appear — the
+    // plain-number Map.get stores/reads Int directly and does not enter
+    // the inline-handle branch.
+    expect(uasm).not.toMatch(
+      /__const_\d+_SystemInt32:\s*%SystemInt32,\s*-1(?:[^0-9]|$)/,
+    );
   });
 });
