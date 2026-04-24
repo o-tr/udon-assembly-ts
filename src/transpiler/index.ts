@@ -81,13 +81,13 @@ export class TypeScriptToUdonTranspiler {
       const usage = new MethodUsageAnalyzer(registry).analyze();
       program = pruneProgramByMethodUsage(program, usage);
     }
+    const classDecls = program.statements.filter(
+      (node): node is ClassDeclarationNode =>
+        node.kind === ASTNodeKind.ClassDeclaration,
+    );
     const entryClassName = this.pickEntryClassName(registry);
     const udonBehaviourClasses = new Set(
-      program.statements
-        .filter(
-          (node): node is ClassDeclarationNode =>
-            node.kind === ASTNodeKind.ClassDeclaration,
-        )
+      classDecls
         .filter((cls) =>
           cls.decorators.some(
             (decorator) => decorator.name === "UdonBehaviour",
@@ -111,26 +111,21 @@ export class TypeScriptToUdonTranspiler {
     );
     const classImplements = registry.getClassImplementsMap();
     const udonBehaviourLayouts = buildUdonBehaviourLayouts(
-      program.statements
-        .filter(
-          (node): node is ClassDeclarationNode =>
-            node.kind === ASTNodeKind.ClassDeclaration,
-        )
-        .map((cls) => ({
-          name: cls.name,
-          isUdonBehaviour: cls.decorators.some(
-            (decorator) => decorator.name === "UdonBehaviour",
-          ),
-          methods: cls.methods.map((method) => ({
-            name: method.name,
-            parameters: method.parameters.map((param) => ({
-              name: param.name,
-              type: param.type,
-            })),
-            returnType: method.returnType,
-            isPublic: method.isPublic,
+      classDecls.map((cls) => ({
+        name: cls.name,
+        isUdonBehaviour: cls.decorators.some(
+          (decorator) => decorator.name === "UdonBehaviour",
+        ),
+        methods: cls.methods.map((method) => ({
+          name: method.name,
+          parameters: method.parameters.map((param) => ({
+            name: param.name,
+            type: param.type,
           })),
+          returnType: method.returnType,
+          isPublic: method.isPublic,
         })),
+      })),
       interfaceLikes,
       classImplements,
     );

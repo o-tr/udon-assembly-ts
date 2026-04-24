@@ -50,7 +50,7 @@ export interface ClassMetadata {
   methods: MethodInfo[];
   properties: PropertyInfo[];
   constructor?: {
-    parameters: Array<{
+    parameters: ReadonlyArray<{
       name: string;
       type: TypeSymbol;
       isParameterProperty?: boolean;
@@ -166,7 +166,7 @@ export class ClassRegistry {
     return this.entryPointsCache;
   }
 
-  getAllClasses(): ClassMetadata[] {
+  getAllClasses(): readonly ClassMetadata[] {
     return Array.from(this.classes.values());
   }
 
@@ -376,7 +376,7 @@ export class ClassRegistry {
     }
   }
 
-  getAllInterfaces(): InterfaceMetadata[] {
+  getAllInterfaces(): readonly InterfaceMetadata[] {
     return Array.from(this.interfaces.values());
   }
 

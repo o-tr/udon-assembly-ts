@@ -118,7 +118,7 @@ export class SymbolTable {
   /**
    * Get all symbols across all scopes
    */
-  getAllSymbols(): SymbolInfo[] {
+  getAllSymbols(): readonly SymbolInfo[] {
     const allSymbols: SymbolInfo[] = [];
     for (const scope of this.scopes) {
       allSymbols.push(...Array.from(scope.values()));

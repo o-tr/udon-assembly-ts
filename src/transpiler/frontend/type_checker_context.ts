@@ -61,6 +61,7 @@ export interface TypeCheckerContextOptions {
   rootNames: string[];
   inMemorySources?: InMemorySources;
   compilerOptions?: ts.CompilerOptions;
+  oldProgram?: ts.Program;
 }
 
 export class TypeCheckerContext {
@@ -164,6 +165,7 @@ export class TypeCheckerContext {
       rootNames,
       options: compilerOptions,
       host,
+      oldProgram: options.oldProgram,
     });
     return new TypeCheckerContext(program);
   }
