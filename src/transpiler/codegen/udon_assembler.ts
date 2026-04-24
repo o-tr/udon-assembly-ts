@@ -370,16 +370,16 @@ export class UdonAssembler {
       }
     }
 
+    if (restrictedIndices.length === 0) {
+      return { dataSection, instructions };
+    }
+
     const mutData = dataSection.map(
       (entry) => [...entry] as [string, number, string, unknown],
     );
 
     for (const i of restrictedIndices) {
       mutData[i][3] = null;
-    }
-
-    if (restrictedIndices.length === 0) {
-      return { dataSection, instructions };
     }
 
     if (initEntries.length === 0) {

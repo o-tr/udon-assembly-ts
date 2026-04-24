@@ -355,21 +355,21 @@ export function extractInterfaceMembers(
   members: ts.NodeArray<ts.TypeElement>,
   mapType: (text: string, node?: ts.TypeNode) => TypeSymbol,
 ): {
-  properties: Array<{ name: string; type: TypeSymbol }>;
-  methods: Array<{
+  properties: readonly { name: string; type: TypeSymbol }[];
+  methods: readonly {
     name: string;
-    parameters: Array<{ name: string; type: TypeSymbol }>;
+    parameters: readonly { name: string; type: TypeSymbol }[];
     returnType: TypeSymbol;
-  }>;
+  }[];
   propertyMap: Map<string, TypeSymbol>;
   methodMap: Map<string, { params: TypeSymbol[]; returnType: TypeSymbol }>;
 } {
-  const properties: Array<{ name: string; type: TypeSymbol }> = [];
-  const methods: Array<{
+  const properties: { name: string; type: TypeSymbol }[] = [];
+  const methods: {
     name: string;
-    parameters: Array<{ name: string; type: TypeSymbol }>;
+    parameters: { name: string; type: TypeSymbol }[];
     returnType: TypeSymbol;
-  }> = [];
+  }[] = [];
   const propertyMap = new Map<string, TypeSymbol>();
   const methodMap = new Map<
     string,
