@@ -488,7 +488,6 @@ export interface InterfaceDeclarationNode extends ASTNode {
     }>;
     returnType: TypeSymbol;
   }>;
-  node?: InterfaceDeclarationNode;
 }
 
 /**

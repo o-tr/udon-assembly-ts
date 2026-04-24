@@ -203,6 +203,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
   { name: "cast_float_to_int", sourceFile: "cast_float_to_int.ts" },
   // --- Restricted type runtime init ---
   { name: "restricted_type_init", sourceFile: "restricted_type_init.ts" },
+  {
+    name: "restricted_type_default_long",
+    sourceFile: "restricted_type_default_long.ts",
+  },
   // --- Switch statement advanced patterns ---
   { name: "switch_fallthrough", sourceFile: "switch_fallthrough.ts" },
   { name: "switch_string", sourceFile: "switch_string.ts" },
@@ -641,5 +645,11 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "pr170_union_with_null_branch",
     sourceFile: "datatoken_int_unwrap/pr170_union_with_null_branch.ts",
+  },
+  // --- mahjong-t2 PC 0x1C414 reproducer: Map<K, IYaku> cross-method read ---
+  {
+    name: "map_soa_inst_split_reproducer",
+    sourceFile: "map_soa_inst_split_reproducer.ts",
+    expectedLogs: ["WARM:OK", "DIRECT:OK", "2"],
   },
 ];

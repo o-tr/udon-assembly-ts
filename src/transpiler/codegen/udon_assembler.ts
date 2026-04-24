@@ -370,18 +370,23 @@ export class UdonAssembler {
       }
     }
 
-    if (initEntries.length === 0) {
-      return { dataSection, instructions };
-    }
-
     const mutData = dataSection.map(
       (entry) => [...entry] as [string, number, string, unknown],
     );
-    const mutInstructions = [...instructions];
 
     for (const i of restrictedIndices) {
       mutData[i][3] = null;
     }
+
+    if (restrictedIndices.length === 0) {
+      return { dataSection, instructions };
+    }
+
+    if (initEntries.length === 0) {
+      return { dataSection: mutData, instructions };
+    }
+
+    const mutInstructions = [...instructions];
 
     // Data section addresses are dense sequential indices (allocated via
     // nextAddress++ in TACToUdonConverter), so maxAddr + 1 is collision-free.
