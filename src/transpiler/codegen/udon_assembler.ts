@@ -386,8 +386,6 @@ export class UdonAssembler {
       return { dataSection: mutData, instructions };
     }
 
-    const mutInstructions = [...instructions];
-
     // Data section addresses are dense sequential indices (allocated via
     // nextAddress++ in TACToUdonConverter), so maxAddr + 1 is collision-free.
     let maxAddr = 0;
@@ -571,10 +569,11 @@ export class UdonAssembler {
     }
 
     if (initInstructions.length === 0) {
-      return { dataSection: mutData, instructions: mutInstructions };
+      return { dataSection: mutData, instructions };
     }
 
     // Find _start label and insert init instructions after it
+    const mutInstructions = [...instructions];
     const startIdx = mutInstructions.findIndex(
       (inst) =>
         inst.kind === UdonInstructionKind.Label &&
