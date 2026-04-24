@@ -5,7 +5,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DuplicateTopLevelConstError,
+  formatWarnings,
   type TranspileErrorLocation,
+  type TranspileWarning,
 } from "../../../src/transpiler/errors/transpile_errors";
 
 describe("DuplicateTopLevelConstError", () => {
@@ -45,5 +47,62 @@ describe("DuplicateTopLevelConstError", () => {
     // Both should carry a suggestion
     expect(errA.suggestion).toBe("Rename one of the conflicting declarations");
     expect(errB.suggestion).toBe("Rename one of the conflicting declarations");
+  });
+});
+
+describe("formatWarnings", () => {
+  const baseWarning: TranspileWarning = {
+    code: "UntrackedStructuralUnionReturn",
+    message:
+      "untracked variable returned as structural union — relying on sibling returns to populate the unified return prefix; ensure null narrowing guards this path.",
+    location: { filePath: "src/Main.ts", line: 10, column: 5 },
+    context: { className: "Main", methodName: "Start" },
+  };
+
+  it("returns empty string for no warnings", () => {
+    expect(formatWarnings([])).toBe("");
+  });
+
+  it("formats a single warning without suffix", () => {
+    const out = formatWarnings([baseWarning]);
+    expect(out).toContain("Transpile produced 1 warning(s):");
+    expect(out).toContain("[UntrackedStructuralUnionReturn]");
+    expect(out).not.toContain("(x");
+  });
+
+  it("deduplicates identical warnings with (xN) suffix", () => {
+    const warnings: TranspileWarning[] = [
+      baseWarning,
+      { ...baseWarning },
+      { ...baseWarning },
+    ];
+    const out = formatWarnings(warnings);
+    expect(out).toContain("Transpile produced 3 warning(s) (1 unique):");
+    const lines = out.split("\n").filter((l) => l.startsWith("- "));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("(x3)");
+  });
+
+  it("keeps distinct warnings separate", () => {
+    const w2: TranspileWarning = {
+      ...baseWarning,
+      message: "different message",
+    };
+    const out = formatWarnings([baseWarning, baseWarning, w2]);
+    expect(out).toContain("Transpile produced 3 warning(s) (2 unique):");
+    const lines = out.split("\n").filter((l) => l.startsWith("- "));
+    expect(lines).toHaveLength(2);
+    expect(lines.some((l) => l.includes("(x2)"))).toBe(true);
+    expect(lines.some((l) => l.includes("different message"))).toBe(true);
+  });
+
+  it("handles pipe characters in message safely", () => {
+    const out = formatWarnings([
+      { ...baseWarning, message: "expected foo|bar" },
+      { ...baseWarning, message: "expected foo|bar" },
+    ]);
+    expect(out).toContain("Transpile produced 2 warning(s) (1 unique):");
+    expect(out).toContain("expected foo|bar");
+    expect(out).toContain("(x2)");
   });
 });

@@ -59,12 +59,59 @@ export function formatContext(context: TranspileWarning["context"]): string {
 
 export function formatWarnings(warnings: TranspileWarning[]): string {
   if (warnings.length === 0) return "";
-  const header = `Transpile produced ${warnings.length} warning(s):`;
-  const lines = warnings.map((w) => {
-    const loc = formatLocation(w.location);
-    const ctx = formatContext(w.context);
-    return `- [${w.code}] ${loc}${ctx} ${w.message}`;
-  });
+  const groups = new Map<
+    string,
+    {
+      warning: TranspileWarning;
+      count: number;
+      formattedLocation: string;
+      formattedContext: string;
+    }
+  >();
+
+  for (const w of warnings) {
+    const key = JSON.stringify([
+      w.code,
+      w.message,
+      w.location.filePath,
+      w.location.line,
+      w.location.column,
+      w.context?.className ?? null,
+      w.context?.methodName ?? null,
+    ]);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count++;
+    } else {
+      const formattedLocation = formatLocation(w.location);
+      const formattedContext = formatContext(w.context);
+      groups.set(key, {
+        warning: w,
+        count: 1,
+        formattedLocation,
+        formattedContext,
+      });
+    }
+  }
+
+  const header =
+    groups.size === warnings.length
+      ? `Transpile produced ${warnings.length} warning(s):`
+      : `Transpile produced ${warnings.length} warning(s) (${groups.size} unique):`;
+
+  const lines: string[] = [];
+  for (const {
+    warning,
+    count,
+    formattedLocation,
+    formattedContext,
+  } of groups.values()) {
+    const suffix = count > 1 ? ` (x${count})` : "";
+    lines.push(
+      `- [${warning.code}] ${formattedLocation}${formattedContext} ${warning.message}${suffix}`,
+    );
+  }
+
   return [header, ...lines].join("\n");
 }
 
