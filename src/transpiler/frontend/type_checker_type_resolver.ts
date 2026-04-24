@@ -218,11 +218,40 @@ export class TypeCheckerTypeResolver {
         return new ClassTypeSymbol(className, UdonType.Object);
       }
 
-      // 7e. Type alias → resolve the alias type
+      // 7e. Type alias → resolve the alias type, overlaying the alias name
+      // if the recursion returned an anonymous InterfaceTypeSymbol.
+      //
+      // TypeScript's `getDeclaredTypeOfSymbol(alias)` often returns a ts.Type
+      // whose `aliasSymbol` is NOT set — so when the recursion lands in step 8
+      // below, that step cannot recover the alias name from `type.aliasSymbol`.
+      // Overlaying the alias name here preserves the canonical identity across
+      // both the text-based resolution path and the TS-checker path. Without
+      // this, cross-module uses of type-aliased interfaces (e.g. mahjong's
+      // `export type IYaku = {...}` flowing into `map.set` parameter slots)
+      // emit `__anon_<digest>` names that do not match `interfaceClassIdMap`,
+      // which keys on the canonical alias name — causing the inline-handle
+      // wrap path to miss and a DataToken(Object) ctor to be selected instead
+      // of the correct DataToken(Int32) ctor.
       if (symFlags & ts.SymbolFlags.TypeAlias) {
         const aliasType = this.checker.getDeclaredTypeOfSymbol(symbol);
         if (aliasType && aliasType !== type) {
-          return this.resolveFromTsType(aliasType);
+          const resolved = this.resolveFromTsType(aliasType);
+          if (
+            resolved instanceof InterfaceTypeSymbol &&
+            resolved.name.startsWith("__anon_")
+          ) {
+            const aliasName = stripModuleQualifier(
+              this.checker.getFullyQualifiedName(symbol),
+            );
+            if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
+              return new InterfaceTypeSymbol(
+                aliasName,
+                resolved.methods,
+                resolved.properties,
+              );
+            }
+          }
+          return resolved;
         }
       }
 
@@ -253,6 +282,18 @@ export class TypeCheckerTypeResolver {
             { params: TypeSymbol[]; returnType: TypeSymbol }
           >();
           this.populateMemberMaps(props, propertyMap, methodMap);
+          // If TypeScript tracks an alias symbol for this anonymous type
+          // (e.g. a type-argument substitution that retained its alias link),
+          // use the canonical alias name instead of the structural digest.
+          // Symmetric with step 7e's overlay; covers entries that bypass 7e.
+          if (type.aliasSymbol) {
+            const aliasName = stripModuleQualifier(
+              this.checker.getFullyQualifiedName(type.aliasSymbol),
+            );
+            if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
+              return new InterfaceTypeSymbol(aliasName, methodMap, propertyMap);
+            }
+          }
           const methodEntries = [...methodMap.entries()].map(([name, sig]) => {
             const paramTypes = sig.params.map((p) => p.name).join(",");
             return `${name}(${paramTypes}):${sig.returnType.name}`;
