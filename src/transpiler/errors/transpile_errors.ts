@@ -70,8 +70,6 @@ export function formatWarnings(warnings: TranspileWarning[]): string {
   >();
 
   for (const w of warnings) {
-    const formattedLocation = formatLocation(w.location);
-    const formattedContext = formatContext(w.context);
     const key = JSON.stringify([
       w.code,
       w.message,
@@ -85,6 +83,8 @@ export function formatWarnings(warnings: TranspileWarning[]): string {
     if (existing) {
       existing.count++;
     } else {
+      const formattedLocation = formatLocation(w.location);
+      const formattedContext = formatContext(w.context);
       groups.set(key, {
         warning: w,
         count: 1,
