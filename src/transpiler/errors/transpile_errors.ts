@@ -60,11 +60,29 @@ export function formatContext(context: TranspileWarning["context"]): string {
 export function formatWarnings(warnings: TranspileWarning[]): string {
   if (warnings.length === 0) return "";
   const header = `Transpile produced ${warnings.length} warning(s):`;
-  const lines = warnings.map((w) => {
-    const loc = formatLocation(w.location);
-    const ctx = formatContext(w.context);
-    return `- [${w.code}] ${loc}${ctx} ${w.message}`;
-  });
+
+  const groups = new Map<
+    string,
+    { warning: TranspileWarning; count: number }
+  >();
+  for (const w of warnings) {
+    const key = `${w.code}|${w.message}|${formatLocation(w.location)}|${formatContext(w.context)}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count++;
+    } else {
+      groups.set(key, { warning: w, count: 1 });
+    }
+  }
+
+  const lines: string[] = [];
+  for (const { warning, count } of groups.values()) {
+    const loc = formatLocation(warning.location);
+    const ctx = formatContext(warning.context);
+    const suffix = count > 1 ? ` (x${count})` : "";
+    lines.push(`- [${warning.code}] ${loc}${ctx} ${warning.message}${suffix}`);
+  }
+
   return [header, ...lines].join("\n");
 }
 
