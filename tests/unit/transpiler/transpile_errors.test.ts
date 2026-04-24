@@ -77,7 +77,7 @@ describe("formatWarnings", () => {
       { ...baseWarning },
     ];
     const out = formatWarnings(warnings);
-    expect(out).toContain("Transpile produced 3 warning(s):");
+    expect(out).toContain("Transpile produced 3 warning(s) (1 unique):");
     const lines = out.split("\n").filter((l) => l.startsWith("- "));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("(x3)");
@@ -89,10 +89,20 @@ describe("formatWarnings", () => {
       message: "different message",
     };
     const out = formatWarnings([baseWarning, baseWarning, w2]);
-    expect(out).toContain("Transpile produced 3 warning(s):");
+    expect(out).toContain("Transpile produced 3 warning(s) (2 unique):");
     const lines = out.split("\n").filter((l) => l.startsWith("- "));
     expect(lines).toHaveLength(2);
     expect(lines.some((l) => l.includes("(x2)"))).toBe(true);
     expect(lines.some((l) => l.includes("different message"))).toBe(true);
+  });
+
+  it("handles pipe characters in message safely", () => {
+    const out = formatWarnings([
+      { ...baseWarning, message: "expected foo|bar" },
+      { ...baseWarning, message: "expected foo|bar" },
+    ]);
+    expect(out).toContain("Transpile produced 2 warning(s) (1 unique):");
+    expect(out).toContain("expected foo|bar");
+    expect(out).toContain("(x2)");
   });
 });
