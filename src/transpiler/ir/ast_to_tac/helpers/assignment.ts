@@ -715,8 +715,15 @@ export function unwrapDataToken(
   // Inline class instances are stored as Int32 handles in DataToken.
   // Must unwrap via .Int, not .Reference, to avoid Udon VM errors.
   let property = "Reference";
+  // Sticky flag captured here so downstream code (e.g. the null-fallback
+  // selection below) does not re-run `isInlineHandleType` on the rewritten
+  // ClassTypeSymbol — interface names are not in `classMap`, so the second
+  // guard would always return false and incorrectly pick a 0 fallback
+  // instead of the -1 sentinel for inline handles.
+  let isInlineHandle = false;
   if (isInlineHandleType(this, targetType)) {
     property = "Int";
+    isInlineHandle = true;
     // InterfaceTypeSymbol maps to %SystemObject in newTemp, but
     // DataToken.__get_Int__ requires a %SystemInt32 output slot.
     // Upgrade so the result temp has the correct slot type.
@@ -763,7 +770,7 @@ export function unwrapDataToken(
   }
   const result = this.newTemp(targetType);
   if (property === "Int") {
-    const nullFallback = isInlineHandleType(this, targetType) ? -1 : 0;
+    const nullFallback = isInlineHandle ? -1 : 0;
     const isNull = this.newTemp(PrimitiveTypes.boolean);
     const nonNullLabel = this.newLabel("token_int_non_null");
     const doneLabel = this.newLabel("token_int_done");
