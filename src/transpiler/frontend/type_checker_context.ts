@@ -52,10 +52,18 @@ function toSourceMap(sources: InMemorySources): Map<string, string> {
 // the process and are otherwise reparsed on every TypeCheckerContext.create()
 // call. Caching the parsed SourceFiles cuts per-call program creation from
 // ~350ms to ~175ms in measurements.
+// Key: `${normalizedPath}:${languageVersion}` — different ScriptTarget values
+// produce different ASTs, so languageVersion is included. TypeScript version
+// changes require a process restart, which clears this module-level cache.
+// shouldCreateNew is intentionally ignored for lib files: they are immutable
+// on disk, so returning a cached SourceFile is always correct.
 const libSourceFileCache = new Map<string, ts.SourceFile>();
 
 function isLibSourceFile(fileName: string): boolean {
-  return /[\\/]typescript[\\/]lib[\\/]lib\..*\.d\.ts$/.test(fileName);
+  return (
+    /[\\/]typescript[\\/]lib[\\/]lib\./.test(fileName) &&
+    fileName.endsWith(".d.ts")
+  );
 }
 
 function buildNodeId(
@@ -163,8 +171,9 @@ export class TypeCheckerContext {
         }
         return sourceFileCache.get(normalized) as ts.SourceFile;
       }
-      if (!shouldCreateNew && isLibSourceFile(normalized)) {
-        const cached = libSourceFileCache.get(normalized);
+      if (isLibSourceFile(normalized)) {
+        const cacheKey = `${normalized}:${languageVersion}`;
+        const cached = libSourceFileCache.get(cacheKey);
         if (cached) return cached;
         const fresh = originalGetSourceFile(
           fileName,
@@ -172,7 +181,7 @@ export class TypeCheckerContext {
           onError,
           shouldCreateNew,
         );
-        if (fresh) libSourceFileCache.set(normalized, fresh);
+        if (fresh) libSourceFileCache.set(cacheKey, fresh);
         return fresh;
       }
       return originalGetSourceFile(
