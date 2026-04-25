@@ -59,11 +59,10 @@ function toSourceMap(sources: InMemorySources): Map<string, string> {
 // on disk, so returning a cached SourceFile is always correct.
 const libSourceFileCache = new Map<string, ts.SourceFile>();
 
+const LIB_SOURCE_FILE_RE = /[\\/]typescript[\\/]lib[\\/]lib\./;
+
 function isLibSourceFile(fileName: string): boolean {
-  return (
-    /[\\/]typescript[\\/]lib[\\/]lib\./.test(fileName) &&
-    fileName.endsWith(".d.ts")
-  );
+  return LIB_SOURCE_FILE_RE.test(fileName) && fileName.endsWith(".d.ts");
 }
 
 function buildNodeId(
