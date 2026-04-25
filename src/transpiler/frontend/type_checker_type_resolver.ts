@@ -211,12 +211,16 @@ export class TypeCheckerTypeResolver {
         return this.buildInterfaceTypeSymbol(type, symbol);
       }
 
-      // 7d. Class → typeMapper lookup; let TranspileError propagate for
-      // unknown declared types rather than silently falling back.
+      // 7d. Class → builtin lookup, else fresh ClassTypeSymbol. The
+      // builtin lookup takes the canonical class name (no generics, no
+      // unions, no spaces), so `lookupBuiltinByName` is sufficient — the
+      // text-parsing branches in `mapTypeScriptType` are not relevant
+      // here and would in fact misclassify class names like `T` as
+      // generic parameters.
       if (symFlags & ts.SymbolFlags.Class) {
         const className = stripModuleQualifier(this.fqName(symbol));
-        const mapped = this.typeMapper.mapTypeScriptType(className);
-        if (mapped !== ObjectType) return mapped;
+        const builtin = this.typeMapper.lookupBuiltinByName(className);
+        if (builtin) return builtin;
         return new ClassTypeSymbol(className, UdonType.Object);
       }
 
@@ -255,12 +259,17 @@ export class TypeCheckerTypeResolver {
         }
       }
 
-      // 7f. Fully-qualified name fallback
+      // 7f. Fully-qualified name fallback. Like step 7d, this point
+      // already has a canonical name from the symbol — only the builtin
+      // table can apply, not the regex / generic-parser heuristics.
       const fullyQualified = stripModuleQualifier(this.fqName(symbol));
       if (fullyQualified.length > 0) {
-        const mapped = this.typeMapper.tryMapTypeScriptType(fullyQualified);
-        if (mapped !== null && mapped !== ObjectType) return mapped;
-        // null or ObjectType — fall through to step 10
+        const builtin = this.typeMapper.lookupBuiltinByName(fullyQualified);
+        if (builtin) return builtin;
+        // Try alias next (e.g. `type Foo = ...` registered via
+        // registerTypeAlias) before falling through to step 10.
+        const alias = this.typeMapper.getAlias(fullyQualified);
+        if (alias) return alias;
       }
     }
 
@@ -318,6 +327,27 @@ export class TypeCheckerTypeResolver {
           this.checker.symbolToString(paramSymbol),
         );
       }
+    }
+
+    // 9a. TypeScript-only constructs without a direct Udon equivalent.
+    // keyof T, T[K], T extends U ? X : Y, `${A}_${B}`, Uppercase<T> etc.
+    // — Udon has no native form for these, so collapse to ObjectType
+    // before reaching the typeToString-based fallback in step 10.
+    if (
+      type.flags &
+      (ts.TypeFlags.Index |
+        ts.TypeFlags.IndexedAccess |
+        ts.TypeFlags.Conditional |
+        ts.TypeFlags.Substitution |
+        ts.TypeFlags.TemplateLiteral |
+        ts.TypeFlags.StringMapping)
+    ) {
+      return ObjectType;
+    }
+
+    // 9b. The bare `object` keyword (TypeFlags.NonPrimitive).
+    if (type.flags & ts.TypeFlags.NonPrimitive) {
+      return ObjectType;
     }
 
     // 10. Fallback to type-to-string + typeMapper

@@ -394,6 +394,114 @@ export class TypeMapper {
     return STRING_LITERAL_UNION_RE.test(typeText.trim());
   }
 
+  /**
+   * Look up a TypeSymbol for a known builtin / extern name, without any
+   * text-parsing fallback. Returns `null` when the name is not a registered
+   * builtin (callers fall back to constructing `ClassTypeSymbol` themselves
+   * or whatever else is appropriate). Use this from the TypeChecker resolver
+   * where you already know the input is a single canonical name (e.g.
+   * `Vector3`, `VRC.SDK3.Data.DataList`) — bypassing the regex / generic
+   * parsing branches in `mapTypeScriptType` removes a class of false
+   * positives (e.g. a user class literally named `T` matching the
+   * generic-parameter regex).
+   */
+  lookupBuiltinByName(name: string): TypeSymbol | null {
+    if (UDON_BRANDED_TYPE_MAP.has(name)) {
+      return UDON_BRANDED_TYPE_MAP.get(name) ?? null;
+    }
+    switch (name) {
+      case "number":
+      case "float":
+        return PrimitiveTypes.single;
+      case "boolean":
+      case "bool":
+        return PrimitiveTypes.boolean;
+      case "string":
+        return PrimitiveTypes.string;
+      case "object":
+        return ExternTypes.dataDictionary;
+      case "void":
+        return PrimitiveTypes.void;
+      case "int":
+        return PrimitiveTypes.int32;
+      case "short":
+        return PrimitiveTypes.int16;
+      case "ushort":
+        return PrimitiveTypes.uint16;
+      case "uint":
+        return PrimitiveTypes.uint32;
+      case "long":
+        return PrimitiveTypes.int64;
+      case "ulong":
+        return PrimitiveTypes.uint64;
+      case "byte":
+        return PrimitiveTypes.byte;
+      case "sbyte":
+        return PrimitiveTypes.sbyte;
+      case "double":
+        return PrimitiveTypes.double;
+      case "bigint":
+        return PrimitiveTypes.int64;
+      case "unknown":
+      case "never":
+      case "any":
+        return ObjectType;
+      case "Vector2":
+      case "UnityEngine.Vector2":
+        return ExternTypes.vector2;
+      case "Vector3":
+      case "UnityEngine.Vector3":
+        return ExternTypes.vector3;
+      case "Vector4":
+      case "UnityEngine.Vector4":
+        return ExternTypes.vector4;
+      case "Quaternion":
+      case "UnityEngine.Quaternion":
+        return ExternTypes.quaternion;
+      case "Color":
+      case "UnityEngine.Color":
+        return ExternTypes.color;
+      case "Transform":
+      case "UnityEngine.Transform":
+        return ExternTypes.transform;
+      case "GameObject":
+      case "UnityEngine.GameObject":
+        return ExternTypes.gameObject;
+      case "AudioSource":
+      case "UnityEngine.AudioSource":
+        return ExternTypes.audioSource;
+      case "AudioClip":
+      case "UnityEngine.AudioClip":
+        return ExternTypes.audioClip;
+      case "Animator":
+      case "UnityEngine.Animator":
+        return ExternTypes.animator;
+      case "Component":
+      case "UnityEngine.Component":
+        return ExternTypes.component;
+      case "VRCPlayerApi":
+      case "VRC.SDKBase.VRCPlayerApi":
+        return ExternTypes.vrcPlayerApi;
+      case "UdonBehaviour":
+      case "VRC.Udon.UdonBehaviour":
+        return ExternTypes.udonBehaviour;
+      case "DataList":
+      case "VRC.SDK3.Data.DataList":
+        return ExternTypes.dataList;
+      case "DataDictionary":
+      case "VRC.SDK3.Data.DataDictionary":
+        return ExternTypes.dataDictionary;
+      case "DataToken":
+      case "VRC.SDK3.Data.DataToken":
+        return ExternTypes.dataToken;
+      case "Type":
+      case "System.Type":
+        return ExternTypes.systemType;
+      default:
+        return null;
+    }
+  }
+
   mapUdonType(udonType: UdonType): TypeSymbol {
     switch (udonType) {
       case UdonType.Int32:
