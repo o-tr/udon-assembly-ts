@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { TranspileError } from "../errors/transpile_errors.js";
 import type { TypeCheckerContext } from "./type_checker_context.js";
 import type { TypeMapper } from "./type_mapper.js";
 import {
@@ -32,11 +33,24 @@ function stripModuleQualifier(name: string): string {
  */
 export class TypeCheckerTypeResolver {
   private readonly typeCache = new Map<ts.Type, TypeSymbol>();
+  // `getFullyQualifiedName` walks symbol chains and calls
+  // `createExpressionFromSymbolChain` / `symbolToStringWorker` internally —
+  // measured ~140ms of TS-internal work on mahjong-t2. The result is
+  // deterministic per ts.Symbol within a single program, so memoize.
+  private readonly fqNameCache = new WeakMap<ts.Symbol, string>();
 
   constructor(
     private readonly checker: ts.TypeChecker,
     private readonly typeMapper: TypeMapper,
   ) {}
+
+  private fqName(symbol: ts.Symbol): string {
+    const cached = this.fqNameCache.get(symbol);
+    if (cached !== undefined) return cached;
+    const result = this.checker.getFullyQualifiedName(symbol);
+    this.fqNameCache.set(symbol, result);
+    return result;
+  }
 
   /** Resolve from a custom AST node that was previously bridged to a ts.Node. */
   resolveFromAstNode(
@@ -84,15 +98,10 @@ export class TypeCheckerTypeResolver {
     // 1b. Enum literals and enum types — resolve before literal collapse
     const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
     if (enumSymbol && enumSymbol.flags & ts.SymbolFlags.Enum) {
-      const typeName = stripModuleQualifier(
-        this.checker.getFullyQualifiedName(enumSymbol),
-      );
-      let mapped: TypeSymbol;
-      try {
-        mapped = this.typeMapper.mapTypeScriptType(typeName);
-      } catch {
-        mapped = new ClassTypeSymbol(typeName, UdonType.Object);
-      }
+      const typeName = stripModuleQualifier(this.fqName(enumSymbol));
+      const mapped =
+        this.typeMapper.tryMapTypeScriptType(typeName) ??
+        new ClassTypeSymbol(typeName, UdonType.Object);
       if (!(mapped instanceof ClassTypeSymbol)) return mapped;
       return this.resolveEnumFallback(enumSymbol);
     }
@@ -108,15 +117,10 @@ export class TypeCheckerTypeResolver {
             : undefined;
         })();
       if (parentSymbol) {
-        const parentName = stripModuleQualifier(
-          this.checker.getFullyQualifiedName(parentSymbol),
-        );
-        let mapped: TypeSymbol;
-        try {
-          mapped = this.typeMapper.mapTypeScriptType(parentName);
-        } catch {
-          mapped = new ClassTypeSymbol(parentName, UdonType.Object);
-        }
+        const parentName = stripModuleQualifier(this.fqName(parentSymbol));
+        const mapped =
+          this.typeMapper.tryMapTypeScriptType(parentName) ??
+          new ClassTypeSymbol(parentName, UdonType.Object);
         if (!(mapped instanceof ClassTypeSymbol)) return mapped;
         return this.resolveEnumFallback(parentSymbol);
       }
@@ -210,9 +214,7 @@ export class TypeCheckerTypeResolver {
       // 7d. Class → typeMapper lookup; let TranspileError propagate for
       // unknown declared types rather than silently falling back.
       if (symFlags & ts.SymbolFlags.Class) {
-        const className = stripModuleQualifier(
-          this.checker.getFullyQualifiedName(symbol),
-        );
+        const className = stripModuleQualifier(this.fqName(symbol));
         const mapped = this.typeMapper.mapTypeScriptType(className);
         if (mapped !== ObjectType) return mapped;
         return new ClassTypeSymbol(className, UdonType.Object);
@@ -240,9 +242,7 @@ export class TypeCheckerTypeResolver {
             resolved instanceof InterfaceTypeSymbol &&
             resolved.name.startsWith("__anon_")
           ) {
-            const aliasName = stripModuleQualifier(
-              this.checker.getFullyQualifiedName(symbol),
-            );
+            const aliasName = stripModuleQualifier(this.fqName(symbol));
             if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
               return new InterfaceTypeSymbol(
                 aliasName,
@@ -256,16 +256,11 @@ export class TypeCheckerTypeResolver {
       }
 
       // 7f. Fully-qualified name fallback
-      const fullyQualified = stripModuleQualifier(
-        this.checker.getFullyQualifiedName(symbol),
-      );
+      const fullyQualified = stripModuleQualifier(this.fqName(symbol));
       if (fullyQualified.length > 0) {
-        try {
-          const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
-          if (mapped !== ObjectType) return mapped;
-        } catch {
-          // Unknown type — fall through to step 10
-        }
+        const mapped = this.typeMapper.tryMapTypeScriptType(fullyQualified);
+        if (mapped !== null && mapped !== ObjectType) return mapped;
+        // null or ObjectType — fall through to step 10
       }
     }
 
@@ -288,7 +283,7 @@ export class TypeCheckerTypeResolver {
           // Symmetric with step 7e's overlay; covers entries that bypass 7e.
           if (type.aliasSymbol) {
             const aliasName = stripModuleQualifier(
-              this.checker.getFullyQualifiedName(type.aliasSymbol),
+              this.fqName(type.aliasSymbol),
             );
             if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
               return new InterfaceTypeSymbol(aliasName, methodMap, propertyMap);
@@ -331,17 +326,24 @@ export class TypeCheckerTypeResolver {
       undefined,
       TYPE_TO_STRING_FLAGS,
     );
-    try {
-      return this.typeMapper.mapTypeScriptType(typeText);
-    } catch (e) {
-      const trimmed = typeText.trim();
-      const isSimpleName =
-        /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
-          trimmed,
-        ) && !trimmed.startsWith("__");
-      if (isSimpleName) throw e;
-      return ObjectType;
+    const mapped = this.typeMapper.tryMapTypeScriptType(typeText);
+    if (mapped !== null) return mapped;
+    const trimmed = typeText.trim();
+    const isSimpleName =
+      /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
+        trimmed,
+      ) && !trimmed.startsWith("__");
+    if (isSimpleName) {
+      // Hard error: simple-name type that cannot be mapped is likely a
+      // missing extern. Throw directly rather than calling mapTypeScriptType
+      // again, which would redo the entire failed mapping just to throw.
+      throw new TranspileError(
+        "TypeError",
+        `Unknown TypeScript type "${trimmed}"`,
+        { filePath: "<unknown>", line: 0, column: 0 },
+      );
     }
+    return ObjectType;
   }
 
   /** Build an InterfaceTypeSymbol from an interface type. */
@@ -360,9 +362,7 @@ export class TypeCheckerTypeResolver {
       this.populateMemberMaps(props, propertyMap, methodMap);
     }
 
-    const name = stripModuleQualifier(
-      this.checker.getFullyQualifiedName(symbol),
-    );
+    const name = stripModuleQualifier(this.fqName(symbol));
     return new InterfaceTypeSymbol(name, methodMap, propertyMap);
   }
 
