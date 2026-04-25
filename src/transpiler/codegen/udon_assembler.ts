@@ -374,11 +374,14 @@ export class UdonAssembler {
       return { dataSection, instructions };
     }
 
-    const mutData = dataSection.map(
-      (entry) => [...entry] as [string, number, string, unknown],
-    );
+    const mutData = [...dataSection] as Array<
+      [string, number, string, unknown]
+    >;
 
     for (const i of restrictedIndices) {
+      if (mutData[i] === dataSection[i]) {
+        mutData[i] = [...mutData[i]] as [string, number, string, unknown];
+      }
       mutData[i][3] = null;
     }
 
