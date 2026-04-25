@@ -2837,10 +2837,7 @@ export function collectRecursiveLocals(
             locals.set(name, ObjectType);
           }
         } else {
-          const mappedType = forOfNode.variableType
-            ? this.typeMapper.mapTypeScriptType(forOfNode.variableType)
-            : ObjectType;
-          locals.set(forOfNode.variable, mappedType);
+          locals.set(forOfNode.variable, forOfNode.variableType ?? ObjectType);
         }
         if (forOfNode.destructureProperties) {
           for (const entry of forOfNode.destructureProperties) {

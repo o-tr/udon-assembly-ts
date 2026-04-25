@@ -475,7 +475,9 @@ export function visitCallExpression(
     kind: ASTNodeKind.CallExpression,
     callee,
     arguments: args,
-    typeArguments: node.typeArguments?.map((arg) => arg.getText()),
+    typeArguments: node.typeArguments?.map((arg) =>
+      this.mapTypeWithGenerics(arg.getText(), arg),
+    ),
   });
 }
 
@@ -564,7 +566,9 @@ export function visitNewExpression(
     kind: ASTNodeKind.CallExpression,
     callee,
     arguments: args,
-    typeArguments: node.typeArguments?.map((arg) => arg.getText()),
+    typeArguments: node.typeArguments?.map((arg) =>
+      this.mapTypeWithGenerics(arg.getText(), arg),
+    ),
     isNew: true,
   });
 }
@@ -572,7 +576,7 @@ export function visitNewExpression(
 export function visitArrayLiteralExpression(
   this: TypeScriptParser,
   node: ts.ArrayLiteralExpression,
-  typeHint?: string,
+  typeHint?: TypeSymbol,
 ): ArrayLiteralExpressionNode {
   const elements: ArrayLiteralElementNode[] = [];
 

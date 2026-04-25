@@ -637,11 +637,7 @@ export function visitForOfStatement(
     if (operandElemType && operandElemType !== ObjectType) {
       elementType = operandElemType;
     } else {
-      elementType =
-        inferredElementType ??
-        (node.variableType
-          ? this.typeMapper.mapTypeScriptType(node.variableType)
-          : ObjectType);
+      elementType = inferredElementType ?? node.variableType ?? ObjectType;
     }
   }
 

@@ -1,9 +1,10 @@
 import * as ts from "typescript";
 import {
   ArrayTypeSymbol,
+  DataListTypeSymbol,
   InterfaceTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
-  PrimitiveTypeSymbol,
   PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
@@ -268,14 +269,17 @@ export function visitVariableStatement(
 
   if (declaration.initializer) {
     if (ts.isArrayLiteralExpression(declaration.initializer)) {
-      let typeHint: string | undefined;
-      if (declaration.type) {
-        typeHint = declaration.type.getText().replace(/\[\]$/, "");
+      let typeHint: TypeSymbol | undefined;
+      if (type instanceof ArrayTypeSymbol) {
+        typeHint =
+          type.dimensions > 1
+            ? new ArrayTypeSymbol(type.elementType, type.dimensions - 1)
+            : type.elementType;
       } else if (
-        type instanceof ArrayTypeSymbol &&
-        type.elementType instanceof PrimitiveTypeSymbol
+        type instanceof DataListTypeSymbol ||
+        type instanceof NativeArrayTypeSymbol
       ) {
-        typeHint = type.elementType.name;
+        typeHint = type.elementType;
       }
       result.initializer = this.visitArrayLiteralExpression(
         declaration.initializer,
@@ -533,7 +537,7 @@ export function visitForOfStatement(
 
   let varName: string | string[] = "";
   let varDecl: ts.VariableDeclaration | null = null;
-  let variableTypeText: string | undefined;
+  let variableTypeSymbol: TypeSymbol | undefined;
   let destructureProperties:
     | Array<{ name: string; property: string }>
     | undefined;
@@ -548,7 +552,9 @@ export function visitForOfStatement(
         "Add a variable declaration.",
       );
     }
-    variableTypeText = varDecl.type ? varDecl.type.getText() : undefined;
+    variableTypeSymbol = varDecl.type
+      ? this.mapTypeWithGenerics(varDecl.type.getText(), varDecl.type)
+      : undefined;
     varName = varDecl.name.getText();
     if (ts.isArrayBindingPattern(varDecl.name)) {
       varName = varDecl.name.elements
@@ -636,7 +642,7 @@ export function visitForOfStatement(
   const result: ForOfStatementNode = this.attachLoc(node, {
     kind: ASTNodeKind.ForOfStatement,
     variable: varName,
-    variableType: variableTypeText,
+    variableType: variableTypeSymbol,
     destructureProperties,
     iterable,
     body,
