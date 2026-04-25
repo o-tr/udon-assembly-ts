@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { TranspileError } from "../errors/transpile_errors.js";
 import type { TypeCheckerContext } from "./type_checker_context.js";
 import type { TypeMapper } from "./type_mapper.js";
 import {
@@ -97,9 +98,7 @@ export class TypeCheckerTypeResolver {
     // 1b. Enum literals and enum types — resolve before literal collapse
     const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
     if (enumSymbol && enumSymbol.flags & ts.SymbolFlags.Enum) {
-      const typeName = stripModuleQualifier(
-        this.fqName(enumSymbol),
-      );
+      const typeName = stripModuleQualifier(this.fqName(enumSymbol));
       const mapped =
         this.typeMapper.tryMapTypeScriptType(typeName) ??
         new ClassTypeSymbol(typeName, UdonType.Object);
@@ -118,9 +117,7 @@ export class TypeCheckerTypeResolver {
             : undefined;
         })();
       if (parentSymbol) {
-        const parentName = stripModuleQualifier(
-          this.fqName(parentSymbol),
-        );
+        const parentName = stripModuleQualifier(this.fqName(parentSymbol));
         const mapped =
           this.typeMapper.tryMapTypeScriptType(parentName) ??
           new ClassTypeSymbol(parentName, UdonType.Object);
@@ -217,9 +214,7 @@ export class TypeCheckerTypeResolver {
       // 7d. Class → typeMapper lookup; let TranspileError propagate for
       // unknown declared types rather than silently falling back.
       if (symFlags & ts.SymbolFlags.Class) {
-        const className = stripModuleQualifier(
-          this.fqName(symbol),
-        );
+        const className = stripModuleQualifier(this.fqName(symbol));
         const mapped = this.typeMapper.mapTypeScriptType(className);
         if (mapped !== ObjectType) return mapped;
         return new ClassTypeSymbol(className, UdonType.Object);
@@ -247,9 +242,7 @@ export class TypeCheckerTypeResolver {
             resolved instanceof InterfaceTypeSymbol &&
             resolved.name.startsWith("__anon_")
           ) {
-            const aliasName = stripModuleQualifier(
-              this.fqName(symbol),
-            );
+            const aliasName = stripModuleQualifier(this.fqName(symbol));
             if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
               return new InterfaceTypeSymbol(
                 aliasName,
@@ -263,9 +256,7 @@ export class TypeCheckerTypeResolver {
       }
 
       // 7f. Fully-qualified name fallback
-      const fullyQualified = stripModuleQualifier(
-        this.fqName(symbol),
-      );
+      const fullyQualified = stripModuleQualifier(this.fqName(symbol));
       if (fullyQualified.length > 0) {
         const mapped = this.typeMapper.tryMapTypeScriptType(fullyQualified);
         if (mapped !== null && mapped !== ObjectType) return mapped;
@@ -339,13 +330,18 @@ export class TypeCheckerTypeResolver {
     if (mapped !== null) return mapped;
     const trimmed = typeText.trim();
     const isSimpleName =
-        /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
-          trimmed,
-        ) && !trimmed.startsWith("__");
+      /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
+        trimmed,
+      ) && !trimmed.startsWith("__");
     if (isSimpleName) {
       // Hard error: simple-name type that cannot be mapped is likely a
-      // missing extern. Surface to the user via mapTypeScriptType's throw.
-      return this.typeMapper.mapTypeScriptType(typeText);
+      // missing extern. Throw directly rather than calling mapTypeScriptType
+      // again, which would redo the entire failed mapping just to throw.
+      throw new TranspileError(
+        "TypeError",
+        `Unknown TypeScript type "${trimmed}"`,
+        { filePath: "<unknown>", line: 0, column: 0 },
+      );
     }
     return ObjectType;
   }
@@ -366,9 +362,7 @@ export class TypeCheckerTypeResolver {
       this.populateMemberMaps(props, propertyMap, methodMap);
     }
 
-    const name = stripModuleQualifier(
-      this.fqName(symbol),
-    );
+    const name = stripModuleQualifier(this.fqName(symbol));
     return new InterfaceTypeSymbol(name, methodMap, propertyMap);
   }
 

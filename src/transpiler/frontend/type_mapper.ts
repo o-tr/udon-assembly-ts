@@ -140,8 +140,9 @@ export class TypeMapper {
         base = base.slice(0, -2).trim();
         dimensions += 1;
       }
-      let elementType: TypeSymbol =
-        this.tryMapTypeScriptType(base) ?? ObjectType;
+      const baseType = this.tryMapTypeScriptType(base);
+      if (baseType === null) return null;
+      let elementType: TypeSymbol = baseType;
       for (let i = 0; i < dimensions; i += 1) {
         elementType = new ArrayTypeSymbol(elementType);
       }
@@ -151,45 +152,64 @@ export class TypeMapper {
     const genericMatch = this.parseGenericType(trimmed);
     if (genericMatch) {
       const { base, args } = genericMatch;
-      const arg0 = this.tryMapTypeScriptType(args[0] ?? "object") ?? ObjectType;
-      const arg1 = this.tryMapTypeScriptType(args[1] ?? "object") ?? ObjectType;
+      // Lazily resolve type args: only the cases that need them pay the
+      // lookup cost, and `null` propagates so unmappable args surface a
+      // hard error to callers that expect throwing semantics.
+      const resolveArg = (i: number): TypeSymbol | null =>
+        this.tryMapTypeScriptType(args[i] ?? "object");
       switch (base) {
         case "Array":
-        case "ReadonlyArray":
+        case "ReadonlyArray": {
+          const arg0 = resolveArg(0);
+          if (arg0 === null) return null;
           return new ArrayTypeSymbol(arg0);
+        }
         case "UdonList":
         case "List":
-          return new CollectionTypeSymbol(base, arg0);
         case "UdonQueue":
         case "Queue":
-          return new CollectionTypeSymbol(base, arg0);
         case "UdonStack":
         case "Stack":
-          return new CollectionTypeSymbol(base, arg0);
         case "UdonHashSet":
-        case "HashSet":
+        case "HashSet": {
+          const arg0 = resolveArg(0);
+          if (arg0 === null) return null;
           return new CollectionTypeSymbol(base, arg0);
+        }
         case "UdonDictionary":
-        case "Dictionary":
+        case "Dictionary": {
+          const arg0 = resolveArg(0);
+          if (arg0 === null) return null;
+          const arg1 = resolveArg(1);
+          if (arg1 === null) return null;
           return new CollectionTypeSymbol(base, undefined, arg0, arg1);
+        }
         case "Record":
           return ExternTypes.dataDictionary;
         case "Map":
-        case "ReadonlyMap":
+        case "ReadonlyMap": {
+          const arg0 = resolveArg(0);
+          if (arg0 === null) return null;
+          const arg1 = resolveArg(1);
+          if (arg1 === null) return null;
           return new CollectionTypeSymbol(
             ExternTypes.dataDictionary.name,
             undefined,
             arg0,
             arg1,
           );
+        }
         case "Set":
-        case "ReadonlySet":
+        case "ReadonlySet": {
+          const arg0 = resolveArg(0);
+          if (arg0 === null) return null;
           return new CollectionTypeSymbol(
             ExternTypes.dataDictionary.name,
             arg0,
             arg0,
             PrimitiveTypes.boolean,
           );
+        }
         case "WeakSet":
         case "Iterator":
         case "Exclude":
