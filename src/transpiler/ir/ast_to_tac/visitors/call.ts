@@ -5,6 +5,7 @@ import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -1292,7 +1293,7 @@ export function visitCallExpression(
       // call on `this` (use the real `this` operand so SendCustomEventDelayedFrames
       // is invoked on the behaviour instance)
       const classType = this.currentClassName
-        ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+        ? new ClassTypeSymbol(this.currentClassName, UdonType.Object)
         : ObjectType;
       const thisOperand = createVariable("this", classType);
       this.emit(

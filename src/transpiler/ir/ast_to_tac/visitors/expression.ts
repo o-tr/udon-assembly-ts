@@ -508,7 +508,7 @@ export function resolveTypeFromNode(
   switch (node.kind) {
     case ASTNodeKind.ThisExpression:
       return converter.currentClassName
-        ? converter.typeMapper.mapTypeScriptType(converter.currentClassName)
+        ? new ClassTypeSymbol(converter.currentClassName, UdonType.Object)
         : null;
     case ASTNodeKind.Identifier: {
       const symbol = converter.symbolTable.lookup(
@@ -2803,7 +2803,7 @@ export function visitThisExpression(
     return createVariable(`${instancePrefix}__handle`, ObjectType);
   }
   const classType = this.currentClassName
-    ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+    ? new ClassTypeSymbol(this.currentClassName, UdonType.Object)
     : ObjectType;
   return createVariable("this", classType);
 }

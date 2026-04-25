@@ -1,13 +1,18 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import type { ClassMetadata } from "../../../frontend/class_registry.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
-import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
+import {
+  ClassTypeSymbol,
+  ObjectType,
+  PrimitiveTypes,
+} from "../../../frontend/type_symbols.js";
 import {
   type ASTNode,
   ASTNodeKind,
   type ClassDeclarationNode,
   type IdentifierNode,
   type PropertyAccessExpressionNode,
+  UdonType,
 } from "../../../frontend/types.js";
 import {
   BinaryOpInstruction,
@@ -129,7 +134,7 @@ function isAllInlineInterfaceUncached(
       (cls) =>
         !converter.entryPointClasses.has(cls.name) &&
         !converter.isUdonBehaviourType(
-          converter.typeMapper.mapTypeScriptType(cls.name),
+          new ClassTypeSymbol(cls.name, UdonType.Object),
         ),
     )
   );
