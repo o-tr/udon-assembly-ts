@@ -171,7 +171,11 @@ export class TypeCheckerContext {
         return sourceFileCache.get(normalized) as ts.SourceFile;
       }
       if (isLibSourceFile(normalized)) {
-        const cacheKey = `${normalized}:${languageVersion}`;
+        const scriptTarget =
+          typeof languageVersion === "number"
+            ? languageVersion
+            : languageVersion.languageVersion;
+        const cacheKey = `${normalized}:${scriptTarget}`;
         const cached = libSourceFileCache.get(cacheKey);
         if (cached) return cached;
         const fresh = originalGetSourceFile(
