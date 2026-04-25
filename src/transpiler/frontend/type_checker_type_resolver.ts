@@ -32,11 +32,24 @@ function stripModuleQualifier(name: string): string {
  */
 export class TypeCheckerTypeResolver {
   private readonly typeCache = new Map<ts.Type, TypeSymbol>();
+  // `getFullyQualifiedName` walks symbol chains and calls
+  // `createExpressionFromSymbolChain` / `symbolToStringWorker` internally —
+  // measured ~140ms of TS-internal work on mahjong-t2. The result is
+  // deterministic per ts.Symbol within a single program, so memoize.
+  private readonly fqNameCache = new WeakMap<ts.Symbol, string>();
 
   constructor(
     private readonly checker: ts.TypeChecker,
     private readonly typeMapper: TypeMapper,
   ) {}
+
+  private fqName(symbol: ts.Symbol): string {
+    const cached = this.fqNameCache.get(symbol);
+    if (cached !== undefined) return cached;
+    const result = this.checker.getFullyQualifiedName(symbol);
+    this.fqNameCache.set(symbol, result);
+    return result;
+  }
 
   /** Resolve from a custom AST node that was previously bridged to a ts.Node. */
   resolveFromAstNode(
@@ -85,7 +98,7 @@ export class TypeCheckerTypeResolver {
     const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
     if (enumSymbol && enumSymbol.flags & ts.SymbolFlags.Enum) {
       const typeName = stripModuleQualifier(
-        this.checker.getFullyQualifiedName(enumSymbol),
+        this.fqName(enumSymbol),
       );
       const mapped =
         this.typeMapper.tryMapTypeScriptType(typeName) ??
@@ -106,7 +119,7 @@ export class TypeCheckerTypeResolver {
         })();
       if (parentSymbol) {
         const parentName = stripModuleQualifier(
-          this.checker.getFullyQualifiedName(parentSymbol),
+          this.fqName(parentSymbol),
         );
         const mapped =
           this.typeMapper.tryMapTypeScriptType(parentName) ??
@@ -205,7 +218,7 @@ export class TypeCheckerTypeResolver {
       // unknown declared types rather than silently falling back.
       if (symFlags & ts.SymbolFlags.Class) {
         const className = stripModuleQualifier(
-          this.checker.getFullyQualifiedName(symbol),
+          this.fqName(symbol),
         );
         const mapped = this.typeMapper.mapTypeScriptType(className);
         if (mapped !== ObjectType) return mapped;
@@ -235,7 +248,7 @@ export class TypeCheckerTypeResolver {
             resolved.name.startsWith("__anon_")
           ) {
             const aliasName = stripModuleQualifier(
-              this.checker.getFullyQualifiedName(symbol),
+              this.fqName(symbol),
             );
             if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
               return new InterfaceTypeSymbol(
@@ -251,7 +264,7 @@ export class TypeCheckerTypeResolver {
 
       // 7f. Fully-qualified name fallback
       const fullyQualified = stripModuleQualifier(
-        this.checker.getFullyQualifiedName(symbol),
+        this.fqName(symbol),
       );
       if (fullyQualified.length > 0) {
         const mapped = this.typeMapper.tryMapTypeScriptType(fullyQualified);
@@ -279,7 +292,7 @@ export class TypeCheckerTypeResolver {
           // Symmetric with step 7e's overlay; covers entries that bypass 7e.
           if (type.aliasSymbol) {
             const aliasName = stripModuleQualifier(
-              this.checker.getFullyQualifiedName(type.aliasSymbol),
+              this.fqName(type.aliasSymbol),
             );
             if (aliasName.length > 0 && !aliasName.startsWith("__anon_")) {
               return new InterfaceTypeSymbol(aliasName, methodMap, propertyMap);
@@ -354,7 +367,7 @@ export class TypeCheckerTypeResolver {
     }
 
     const name = stripModuleQualifier(
-      this.checker.getFullyQualifiedName(symbol),
+      this.fqName(symbol),
     );
     return new InterfaceTypeSymbol(name, methodMap, propertyMap);
   }
