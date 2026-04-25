@@ -188,3 +188,88 @@ code directly with sub-phase timings before committing to a root-cause
 hypothesis**, rather than reasoning from code structure alone. The initial
 `PassProfileSink` was right-grained for pass-level attribution, but one more
 level of granularity (sub-phases inside a single pass) was needed here.
+
+---
+
+## Post-fix (2026-04-25 mahjong-t2 vm test cold run)
+
+`pnpm test:vm` invokes `BatchTranspiler` over `tests/vm/cases/` (38 entry points,
+~700MB of generated UASM). The cold run (no `.transpiler-cache.json`, empty
+`.transpiler-optcache`, optimize=false, includeExternalDependencies=true)
+took ~28 minutes wall-clock baseline.
+
+### Cpuprofile (cold, baseline)
+
+Total CPU 1667.9s. Top self-time frames:
+
+| % | self | function |
+|---|------|----------|
+| 26.5% | 442.7s | `resolveFromTsType` (typeCache wrapper) |
+| 23.3% | 388.5s | `populateMemberMaps` |
+| 7.1% | 118.8s | `getReducedApparentType` (TS internal) |
+| 5.6% | 93.9s | `getTypeOfSymbolAtLocation` (TS) |
+| 5.1% | 85.7s | `resolveFromTsTypeUncached` |
+| 4.9% | 82.2s | `getMergedSymbol` (TS) |
+| 4.6% | 76.2s | `buildInterfaceTypeSymbol` |
+| 2.0% | 34.2s | (garbage collector) |
+| 0.4% | 6.2s  | `writeFileSync` (UASM output write) |
+
+The TypeChecker resolver cluster owns ~63% of CPU. GC and file IO are
+negligible — the prior plan-mode hypothesis "130MB UASM × 38 entries causes
+GC pressure / writeFileSync dominance" was *refuted* by the data.
+
+### Root cause
+
+`ASTToTACConverter` lazily creates its own `TypeCheckerTypeResolver`
+(`src/transpiler/ir/ast_to_tac/visitors/expression.ts:495`). With 38 entries
+in BatchTranspiler, that gives **38 separate resolvers** each with a cold
+`typeCache` and `fqNameCache`. The parser already builds a resolver against
+the same shared `TypeCheckerContext` and warms its caches during parsing —
+so per-entry resolution was redoing all the same `populateMemberMaps` and
+`resolveFromTsTypeUncached` work from scratch.
+
+### Fix
+
+Pass `parser.checkerTypeResolver` into `ASTToTACConverter` so all entries
+share one cache:
+- `src/transpiler/ir/ast_to_tac/converter.ts` — accept `checkerTypeResolver`
+  as a constructor option and store it.
+- `src/transpiler/batch/batch_transpiler.ts` — pass `parser.checkerTypeResolver`.
+- `src/transpiler/index.ts` — same for the single-file transpiler entry path.
+
+Cache keys (`ts.Type` for `typeCache`, `ts.Symbol` for `fqNameCache`) are
+identity-based and shared safely within one TS Program — no correctness
+implications. After the external-discovery fixpoint converges, all entries
+operate against the same Program, so the cache stays valid across them.
+
+### Results (cold, mahjong-t2 vm test, 38 entries)
+
+| metric | before | after | delta |
+|--------|--------|-------|-------|
+| wall-clock | 27:53 | 19:57 | **-28.4%** |
+| user CPU | 1697s | 1246s | -26.6% |
+| total cpuprof CPU | 1667.9s | 1194.1s | -28.4% |
+| `resolveFromTsType` self | 442.7s | 309.0s | -30.2% |
+| `populateMemberMaps` self | 388.5s | 216.8s | **-44.2%** |
+| `getMergedSymbol` (TS) self | 82.2s | 30.4s | **-63.0%** |
+| `getTypeOfSymbolAtLocation` (TS) self | 93.9s | 37.8s | -59.7% |
+| GC self | 34.2s | 25.1s | -26.6% |
+
+`buildInterfaceTypeSymbol` self time rose 76s → 144s after the fix — read
+this as JIT inlining shifts, not a regression. The aggregated resolver
+group (`resolveFromTsType` + `populateMemberMaps` + `buildInterfaceTypeSymbol`
++ `resolveFromTsTypeUncached`) drops 991s → 761s (**-23%**) end-to-end.
+
+All 38 UASM files byte-identical (sha256 verified). All 790 unit tests pass.
+
+### What's left
+
+The resolver cluster is still ~64% of CPU (vs ~63% before) — sharing the
+cache shrank absolute time but not the *share*, because resolver work
+remains the dominant phase in this workload. Further wins likely require:
+- Reducing the *number of calls* to `resolveFromTsType` (visitor-level dedup
+  of repeated bridges from the same AST node)
+- Tightening `populateMemberMaps` (still 18% of CPU; iterates props per
+  unique interface ts.Type, calling 3 TS methods per prop)
+
+Both are higher-effort architectural changes; deferred until next pass.
