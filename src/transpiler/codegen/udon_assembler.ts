@@ -379,10 +379,7 @@ export class UdonAssembler {
     >;
 
     for (const i of restrictedIndices) {
-      if (mutData[i] === dataSection[i]) {
-        mutData[i] = [...mutData[i]] as [string, number, string, unknown];
-      }
-      mutData[i][3] = null;
+      mutData[i] = [mutData[i][0], mutData[i][1], mutData[i][2], null];
     }
 
     if (initEntries.length === 0) {
