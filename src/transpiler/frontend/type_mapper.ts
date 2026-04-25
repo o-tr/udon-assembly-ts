@@ -21,7 +21,11 @@ const STRING_LITERAL_UNION_RE =
 
 export class TypeMapper {
   private typeAliases = new Map<string, TypeSymbol>();
-  private typeCache = new Map<string, TypeSymbol>();
+  // Stores both successful (TypeSymbol) and unmappable (null) results.
+  // Use `has()` to distinguish "not yet probed" from "probed and null" so
+  // hot speculative paths (e.g. resolver step 7f's fully-qualified-name
+  // fallback) skip the full mapTypeScriptTypeImpl re-walk on repeat misses.
+  private typeCache = new Map<string, TypeSymbol | null>();
   private unionAliases = new Map<string, string[]>();
 
   constructor(private enumRegistry?: EnumRegistry) {}
@@ -80,10 +84,12 @@ export class TypeMapper {
       this.typeCache.set(trimmed, result);
       return result;
     }
-    const cached = this.typeCache.get(trimmed);
-    if (cached) return cached;
+    if (this.typeCache.has(trimmed)) {
+      // Returns either the cached TypeSymbol or the cached null sentinel.
+      return this.typeCache.get(trimmed) ?? null;
+    }
     const result = this.mapTypeScriptTypeImpl(trimmed);
-    if (result !== null) this.typeCache.set(trimmed, result);
+    this.typeCache.set(trimmed, result);
     return result;
   }
 
