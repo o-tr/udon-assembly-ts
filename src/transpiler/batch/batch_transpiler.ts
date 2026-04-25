@@ -625,6 +625,7 @@ export class BatchTranspiler {
           sourceFilePath: entryPoint.filePath,
           errorCollector,
           checkerContext: parser.checkerContext,
+          checkerTypeResolver: parser.checkerTypeResolver,
         },
       );
       // Snapshot the shared collector so we can extract per-entry diagnostics

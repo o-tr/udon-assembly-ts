@@ -143,6 +143,7 @@ export class TypeScriptToUdonTranspiler {
         sourceFilePath,
         errorCollector: parser.getErrorCollector(),
         checkerContext: parser.checkerContext,
+        checkerTypeResolver: parser.checkerTypeResolver,
       },
     );
     let tacInstructions = tacConverter.convert(program);

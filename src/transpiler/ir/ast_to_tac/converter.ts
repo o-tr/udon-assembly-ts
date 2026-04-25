@@ -401,6 +401,7 @@ export class ASTToTACConverter {
       sourceFilePath?: string;
       errorCollector?: ErrorCollector;
       checkerContext?: TypeCheckerContext;
+      checkerTypeResolver?: TypeCheckerTypeResolver;
     },
   ) {
     this.symbolTable = symbolTable;
@@ -415,6 +416,11 @@ export class ASTToTACConverter {
     if (options?.sourceFilePath) this.sourceFilePath = options.sourceFilePath;
     this.errorCollector = options?.errorCollector;
     this.checkerContext = options?.checkerContext;
+    // Reuse the parser's resolver so its typeCache + fqNameCache survive
+    // across batch entry points; otherwise each entry pays full member
+    // resolution from scratch (cpuprofile: 23% populateMemberMaps + 5%
+    // resolveFromTsTypeUncached x N entries on cold mahjong-t2 vm tests).
+    this.checkerTypeResolver = options?.checkerTypeResolver;
   }
 
   /**
