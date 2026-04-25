@@ -290,6 +290,7 @@ export class BatchTranspiler {
       const newCheckerContext = TypeCheckerContext.create({
         rootNames: allRootNames,
         inMemorySources,
+        oldProgram: parser.checkerContext?.getProgram(),
       });
       if (parser.checkerContext) {
         newCheckerContext.setParent(parser.checkerContext);
@@ -1322,7 +1323,7 @@ export class BatchTranspiler {
     methods: readonly MethodInfo[],
     properties: readonly PropertyInfo[],
     constructorInfo?: {
-      parameters: Array<{ name: string; type: TypeSymbol }>;
+      parameters: ReadonlyArray<{ name: string; type: TypeSymbol }>;
       body: ASTNode;
     },
     originalNode?: ClassDeclarationNode,

@@ -333,19 +333,16 @@ export class UdonAssembler {
     dataSection: Array<[string, number, string, unknown]>;
     instructions: UdonInstruction[];
   } {
-    const mutData = dataSection.map(
-      (entry) => [...entry] as [string, number, string, unknown],
-    );
-    const mutInstructions = [...instructions];
-
     // Collect restricted entries with non-null, non-default values
     const initEntries: Array<{
       name: string;
       udonType: string;
       value: unknown;
     }> = [];
+    const restrictedIndices: number[] = [];
 
-    for (const entry of mutData) {
+    for (let i = 0; i < dataSection.length; i++) {
+      const entry = dataSection[i];
       const [name, , type, value] = entry;
       const { udonType, category, isNullOnly } = this.classifyType(type);
 
@@ -358,6 +355,8 @@ export class UdonAssembler {
       if (!isNullOnly && !isOverflowingFloat) continue;
       if (value === null) continue;
 
+      restrictedIndices.push(i);
+
       // For booleans, `false` is the default (null represents false in Udon VM).
       // For Int64/UInt64, `0` is the default (null represents 0 in Udon VM).
       const isDefault =
@@ -366,16 +365,25 @@ export class UdonAssembler {
         value === 0n ||
         (typeof value === "string" && /^0x0+$/i.test(value));
 
-      // Set data section value to null
-      entry[3] = null;
-
       if (!isDefault) {
         initEntries.push({ name, udonType, value });
       }
     }
 
+    if (restrictedIndices.length === 0) {
+      return { dataSection, instructions };
+    }
+
+    const mutData = [...dataSection] as Array<
+      [string, number, string, unknown]
+    >;
+
+    for (const i of restrictedIndices) {
+      mutData[i] = [mutData[i][0], mutData[i][1], mutData[i][2], null];
+    }
+
     if (initEntries.length === 0) {
-      return { dataSection: mutData, instructions: mutInstructions };
+      return { dataSection: mutData, instructions };
     }
 
     // Data section addresses are dense sequential indices (allocated via
@@ -561,10 +569,11 @@ export class UdonAssembler {
     }
 
     if (initInstructions.length === 0) {
-      return { dataSection: mutData, instructions: mutInstructions };
+      return { dataSection: mutData, instructions };
     }
 
     // Find _start label and insert init instructions after it
+    const mutInstructions = [...instructions];
     const startIdx = mutInstructions.findIndex(
       (inst) =>
         inst.kind === UdonInstructionKind.Label &&

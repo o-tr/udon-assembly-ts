@@ -150,7 +150,7 @@ export interface ASTNode {
  */
 export interface ProgramNode extends ASTNode {
   kind: ASTNodeKind.Program;
-  statements: ASTNode[];
+  statements: readonly ASTNode[];
 }
 
 /**
@@ -171,7 +171,7 @@ export interface VariableDeclarationNode extends ASTNode {
 export interface EnumDeclarationNode extends ASTNode {
   kind: ASTNodeKind.EnumDeclaration;
   name: string;
-  members: EnumMemberNode[];
+  members: readonly EnumMemberNode[];
 }
 
 /**
@@ -396,7 +396,7 @@ export interface ForOfStatementNode extends ASTNode {
  */
 export interface BlockStatementNode extends ASTNode {
   kind: ASTNodeKind.BlockStatement;
-  statements: ASTNode[];
+  statements: readonly ASTNode[];
 }
 
 /**
@@ -479,13 +479,12 @@ export interface PropertyDeclarationNode extends ASTNode {
 export interface InterfaceDeclarationNode extends ASTNode {
   kind: ASTNodeKind.InterfaceDeclaration;
   name: string;
-  properties: Array<{ name: string; type: TypeSymbol }>;
-  methods: Array<{
+  properties: ReadonlyArray<{ name: string; type: TypeSymbol }>;
+  methods: ReadonlyArray<{
     name: string;
-    parameters: Array<{
+    parameters: ReadonlyArray<{
       name: string;
       type: TypeSymbol;
-      initializer?: ASTNode;
     }>;
     returnType: TypeSymbol;
   }>;
@@ -498,12 +497,12 @@ export interface ClassDeclarationNode extends ASTNode {
   kind: ASTNodeKind.ClassDeclaration;
   name: string;
   baseClass: string | null;
-  implements?: string[];
-  decorators: DecoratorNode[];
-  properties: PropertyDeclarationNode[];
-  methods: MethodDeclarationNode[];
+  implements?: readonly string[];
+  decorators: readonly DecoratorNode[];
+  properties: readonly PropertyDeclarationNode[];
+  methods: readonly MethodDeclarationNode[];
   constructor?: {
-    parameters: Array<{
+    parameters: ReadonlyArray<{
       name: string;
       type: TypeSymbol;
       isSerializeField?: boolean;

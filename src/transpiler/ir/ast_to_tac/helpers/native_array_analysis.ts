@@ -36,7 +36,9 @@ import {
  * may still be native-array-eligible if their initializer is a constant-length
  * array literal or new Array<T>(N) with a constant N.
  */
-export function analyzeNativeArrayIneligibility(body: ASTNode[]): Set<string> {
+export function analyzeNativeArrayIneligibility(
+  body: readonly ASTNode[],
+): Set<string> {
   const ineligible = new Set<string>();
   for (const stmt of body) {
     collectIneligible(stmt, ineligible);

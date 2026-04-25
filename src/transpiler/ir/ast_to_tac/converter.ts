@@ -502,7 +502,7 @@ export class ASTToTACConverter {
   /**
    * Scan for variable declarations in a block and pre-register them
    */
-  scanDeclarations(statements: ASTNode[]): void {
+  scanDeclarations(statements: readonly ASTNode[]): void {
     for (const stmt of statements) {
       if (stmt.kind === ASTNodeKind.VariableDeclaration) {
         const node = stmt as VariableDeclarationNode;
