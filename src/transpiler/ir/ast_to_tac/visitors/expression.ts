@@ -1,6 +1,5 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { TranspileError } from "../../../errors/transpile_errors.js";
-import { createTypeCheckerTypeResolver } from "../../../frontend/type_checker_type_resolver.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -487,17 +486,13 @@ export function resolveTypeFromNode(
   converter: ASTToTACConverter,
   node: ASTNode,
 ): TypeSymbol | null {
-  // TypeChecker-first resolution when we have a bridged ts.Node
-  if (converter.checkerContext) {
+  // TypeChecker-first resolution when we have a bridged ts.Node.
+  // The constructor pairs checkerContext with checkerTypeResolver, so
+  // checking both here is just TypeScript narrowing, not a runtime branch.
+  if (converter.checkerContext && converter.checkerTypeResolver) {
     try {
       const tsNode = converter.checkerContext.resolveTsNode(node);
       if (tsNode) {
-        if (!converter.checkerTypeResolver) {
-          converter.checkerTypeResolver = createTypeCheckerTypeResolver(
-            converter.checkerContext,
-            converter.typeMapper,
-          );
-        }
         const resolved =
           converter.checkerTypeResolver.resolveFromTsNode(tsNode);
         if (resolved && resolved !== ObjectType) {

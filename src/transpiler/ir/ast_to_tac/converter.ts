@@ -13,7 +13,10 @@ import type { ClassRegistry } from "../../frontend/class_registry.js";
 import { EnumRegistry } from "../../frontend/enum_registry.js";
 import type { SymbolTable } from "../../frontend/symbol_table.js";
 import type { TypeCheckerContext } from "../../frontend/type_checker_context.js";
-import type { TypeCheckerTypeResolver } from "../../frontend/type_checker_type_resolver.js";
+import {
+  createTypeCheckerTypeResolver,
+  type TypeCheckerTypeResolver,
+} from "../../frontend/type_checker_type_resolver.js";
 import { TypeMapper } from "../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../frontend/type_symbols.js";
 import {
@@ -416,11 +419,19 @@ export class ASTToTACConverter {
     if (options?.sourceFilePath) this.sourceFilePath = options.sourceFilePath;
     this.errorCollector = options?.errorCollector;
     this.checkerContext = options?.checkerContext;
-    // Reuse the parser's resolver so its typeCache + fqNameCache survive
-    // across batch entry points; otherwise each entry pays full member
-    // resolution from scratch (cpuprofile: 23% populateMemberMaps + 5%
-    // resolveFromTsTypeUncached x N entries on cold mahjong-t2 vm tests).
-    this.checkerTypeResolver = options?.checkerTypeResolver;
+    // Prefer the caller-supplied resolver so its typeCache + fqNameCache
+    // survive across batch entry points; otherwise eager-create one tied
+    // to the supplied context. Eager construction makes the use-site
+    // lazy-create path unreachable, so the optimization can't be lost
+    // by a caller silently forgetting to wire the shared resolver.
+    if (options?.checkerTypeResolver) {
+      this.checkerTypeResolver = options.checkerTypeResolver;
+    } else if (this.checkerContext) {
+      this.checkerTypeResolver = createTypeCheckerTypeResolver(
+        this.checkerContext,
+        this.typeMapper,
+      );
+    }
   }
 
   /**
