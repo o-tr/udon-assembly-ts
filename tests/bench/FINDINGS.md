@@ -255,6 +255,11 @@ operate against the same Program, so the cache stays valid across them.
 | `getTypeOfSymbolAtLocation` (TS) self | 93.9s | 37.8s | -59.7% |
 | GC self | 34.2s | 25.1s | -26.6% |
 
+`buildInterfaceTypeSymbol` self time rose 76s → 144s after the fix — read
+this as JIT inlining shifts, not a regression. The aggregated resolver
+group (`resolveFromTsType` + `populateMemberMaps` + `buildInterfaceTypeSymbol`
++ `resolveFromTsTypeUncached`) drops 991s → 761s (**-23%**) end-to-end.
+
 All 38 UASM files byte-identical (sha256 verified). All 790 unit tests pass.
 
 ### What's left
