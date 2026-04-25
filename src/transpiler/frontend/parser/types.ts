@@ -428,15 +428,16 @@ export function mapTypeWithGenerics(
     }
   }
 
-  try {
-    return this.typeMapper.mapTypeScriptType(trimmed);
-  } catch (err) {
-    if (err instanceof TranspileError && node) {
-      const loc = this.createLoc(node);
-      throw new TranspileError(err.code, err.message, loc, err.suggestion);
-    }
-    throw err;
-  }
+  const finalMapped = this.typeMapper.tryMapTypeScriptType(trimmed);
+  if (finalMapped !== null) return finalMapped;
+  const loc = node
+    ? this.createLoc(node)
+    : { filePath: "<unknown>", line: 0, column: 0 };
+  throw new TranspileError(
+    "TypeError",
+    `Unknown TypeScript type "${trimmed}"`,
+    loc,
+  );
 }
 
 export function isStringTypeNode(

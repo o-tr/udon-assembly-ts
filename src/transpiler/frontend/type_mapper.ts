@@ -44,6 +44,22 @@ export class TypeMapper {
   }
 
   mapTypeScriptType(tsType: string): TypeSymbol {
+    const result = this.tryMapTypeScriptType(tsType);
+    if (result !== null) return result;
+    throw new TranspileError(
+      "TypeError",
+      `Unknown TypeScript type "${tsType.trim()}"`,
+      { filePath: "<unknown>", line: 0, column: 0 },
+    );
+  }
+
+  /**
+   * Non-throwing variant of {@link mapTypeScriptType}: returns `null` for
+   * unmappable types instead of throwing a `TranspileError`. Use this when
+   * the call is speculative and the caller falls back to another path.
+   * Avoids `Error.captureStackTrace` cost on every miss in hot paths.
+   */
+  tryMapTypeScriptType(tsType: string): TypeSymbol | null {
     const trimmed = tsType.trim();
     if (UDON_BRANDED_TYPE_MAP.has(trimmed)) {
       const branded = UDON_BRANDED_TYPE_MAP.get(trimmed);
@@ -67,13 +83,13 @@ export class TypeMapper {
     const cached = this.typeCache.get(trimmed);
     if (cached) return cached;
     const result = this.mapTypeScriptTypeImpl(trimmed);
-    this.typeCache.set(trimmed, result);
+    if (result !== null) this.typeCache.set(trimmed, result);
     return result;
   }
 
-  private mapTypeScriptTypeImpl(trimmed: string): TypeSymbol {
+  private mapTypeScriptTypeImpl(trimmed: string): TypeSymbol | null {
     if (trimmed.startsWith("readonly ")) {
-      return this.mapTypeScriptType(trimmed.slice(9));
+      return this.tryMapTypeScriptType(trimmed.slice(9));
     }
     if (trimmed.startsWith("asserts ")) {
       return PrimitiveTypes.void;
@@ -107,7 +123,7 @@ export class TypeMapper {
         .map((part) => part.trim())
         .filter((part) => part !== "null" && part !== "undefined");
       if (parts.length === 1) {
-        return this.mapTypeScriptType(parts[0]);
+        return this.tryMapTypeScriptType(parts[0]);
       }
       if (
         parts.length > 0 &&
@@ -124,7 +140,8 @@ export class TypeMapper {
         base = base.slice(0, -2).trim();
         dimensions += 1;
       }
-      let elementType: TypeSymbol = this.mapTypeScriptType(base);
+      let elementType: TypeSymbol =
+        this.tryMapTypeScriptType(base) ?? ObjectType;
       for (let i = 0; i < dimensions; i += 1) {
         elementType = new ArrayTypeSymbol(elementType);
       }
@@ -134,44 +151,27 @@ export class TypeMapper {
     const genericMatch = this.parseGenericType(trimmed);
     if (genericMatch) {
       const { base, args } = genericMatch;
+      const arg0 = this.tryMapTypeScriptType(args[0] ?? "object") ?? ObjectType;
+      const arg1 = this.tryMapTypeScriptType(args[1] ?? "object") ?? ObjectType;
       switch (base) {
         case "Array":
         case "ReadonlyArray":
-          return new ArrayTypeSymbol(
-            this.mapTypeScriptType(args[0] ?? "object"),
-          );
+          return new ArrayTypeSymbol(arg0);
         case "UdonList":
         case "List":
-          return new CollectionTypeSymbol(
-            base,
-            this.mapTypeScriptType(args[0] ?? "object"),
-          );
+          return new CollectionTypeSymbol(base, arg0);
         case "UdonQueue":
         case "Queue":
-          return new CollectionTypeSymbol(
-            base,
-            this.mapTypeScriptType(args[0] ?? "object"),
-          );
+          return new CollectionTypeSymbol(base, arg0);
         case "UdonStack":
         case "Stack":
-          return new CollectionTypeSymbol(
-            base,
-            this.mapTypeScriptType(args[0] ?? "object"),
-          );
+          return new CollectionTypeSymbol(base, arg0);
         case "UdonHashSet":
         case "HashSet":
-          return new CollectionTypeSymbol(
-            base,
-            this.mapTypeScriptType(args[0] ?? "object"),
-          );
+          return new CollectionTypeSymbol(base, arg0);
         case "UdonDictionary":
         case "Dictionary":
-          return new CollectionTypeSymbol(
-            base,
-            undefined,
-            this.mapTypeScriptType(args[0] ?? "object"),
-            this.mapTypeScriptType(args[1] ?? "object"),
-          );
+          return new CollectionTypeSymbol(base, undefined, arg0, arg1);
         case "Record":
           return ExternTypes.dataDictionary;
         case "Map":
@@ -179,15 +179,15 @@ export class TypeMapper {
           return new CollectionTypeSymbol(
             ExternTypes.dataDictionary.name,
             undefined,
-            this.mapTypeScriptType(args[0] ?? "object"),
-            this.mapTypeScriptType(args[1] ?? "object"),
+            arg0,
+            arg1,
           );
         case "Set":
         case "ReadonlySet":
           return new CollectionTypeSymbol(
             ExternTypes.dataDictionary.name,
-            this.mapTypeScriptType(args[0] ?? "object"),
-            this.mapTypeScriptType(args[0] ?? "object"),
+            arg0,
+            arg0,
             PrimitiveTypes.boolean,
           );
         case "WeakSet":
@@ -317,11 +317,7 @@ export class TypeMapper {
         if (this.isComplexTypeExpression(trimmed)) {
           return ObjectType;
         }
-        throw new TranspileError(
-          "TypeError",
-          `Unknown TypeScript type "${trimmed}"`,
-          { filePath: "<unknown>", line: 0, column: 0 },
-        );
+        return null;
     }
   }
 

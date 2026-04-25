@@ -87,12 +87,9 @@ export class TypeCheckerTypeResolver {
       const typeName = stripModuleQualifier(
         this.checker.getFullyQualifiedName(enumSymbol),
       );
-      let mapped: TypeSymbol;
-      try {
-        mapped = this.typeMapper.mapTypeScriptType(typeName);
-      } catch {
-        mapped = new ClassTypeSymbol(typeName, UdonType.Object);
-      }
+      const mapped =
+        this.typeMapper.tryMapTypeScriptType(typeName) ??
+        new ClassTypeSymbol(typeName, UdonType.Object);
       if (!(mapped instanceof ClassTypeSymbol)) return mapped;
       return this.resolveEnumFallback(enumSymbol);
     }
@@ -111,12 +108,9 @@ export class TypeCheckerTypeResolver {
         const parentName = stripModuleQualifier(
           this.checker.getFullyQualifiedName(parentSymbol),
         );
-        let mapped: TypeSymbol;
-        try {
-          mapped = this.typeMapper.mapTypeScriptType(parentName);
-        } catch {
-          mapped = new ClassTypeSymbol(parentName, UdonType.Object);
-        }
+        const mapped =
+          this.typeMapper.tryMapTypeScriptType(parentName) ??
+          new ClassTypeSymbol(parentName, UdonType.Object);
         if (!(mapped instanceof ClassTypeSymbol)) return mapped;
         return this.resolveEnumFallback(parentSymbol);
       }
@@ -260,12 +254,9 @@ export class TypeCheckerTypeResolver {
         this.checker.getFullyQualifiedName(symbol),
       );
       if (fullyQualified.length > 0) {
-        try {
-          const mapped = this.typeMapper.mapTypeScriptType(fullyQualified);
-          if (mapped !== ObjectType) return mapped;
-        } catch {
-          // Unknown type — fall through to step 10
-        }
+        const mapped = this.typeMapper.tryMapTypeScriptType(fullyQualified);
+        if (mapped !== null && mapped !== ObjectType) return mapped;
+        // null or ObjectType — fall through to step 10
       }
     }
 
@@ -331,17 +322,19 @@ export class TypeCheckerTypeResolver {
       undefined,
       TYPE_TO_STRING_FLAGS,
     );
-    try {
-      return this.typeMapper.mapTypeScriptType(typeText);
-    } catch (e) {
-      const trimmed = typeText.trim();
-      const isSimpleName =
+    const mapped = this.typeMapper.tryMapTypeScriptType(typeText);
+    if (mapped !== null) return mapped;
+    const trimmed = typeText.trim();
+    const isSimpleName =
         /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
           trimmed,
         ) && !trimmed.startsWith("__");
-      if (isSimpleName) throw e;
-      return ObjectType;
+    if (isSimpleName) {
+      // Hard error: simple-name type that cannot be mapped is likely a
+      // missing extern. Surface to the user via mapTypeScriptType's throw.
+      return this.typeMapper.mapTypeScriptType(typeText);
     }
+    return ObjectType;
   }
 
   /** Build an InterfaceTypeSymbol from an interface type. */
