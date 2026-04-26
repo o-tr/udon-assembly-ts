@@ -562,8 +562,13 @@ const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
 /**
  * Convert a TypeSymbol to its .NET fully-qualified type name (e.g. "System.Int32").
  *
+ * Array-like symbols (`ArrayTypeSymbol`, `NativeArrayTypeSymbol`) recurse on
+ * their element type and append `[]`, since `Type.GetType` accepts the C#
+ * array suffix syntax (e.g. "System.Single[]") but rejects the Udon system
+ * array name ("SystemSingleArray").
+ *
  * Falls back to `symbol.name` in two cases:
- *   1. The udonType has no FQN mapping (e.g. NativeArray, user-defined externs).
+ *   1. The udonType has no FQN mapping.
  *   2. The udonType is `Object` but the symbol is not the canonical `ObjectType`
  *      placeholder — i.e. a user class, interface, generic parameter, or
  *      non-Data collection (Map/Set/etc) that happens to share `UdonType.Object`.
@@ -573,6 +578,9 @@ const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
 export function typeSymbolToCSharp(symbol: TypeSymbol): string {
   if (symbol instanceof ArrayTypeSymbol) {
     return `${typeSymbolToCSharp(symbol.elementType)}${"[]".repeat(symbol.dimensions)}`;
+  }
+  if (symbol instanceof NativeArrayTypeSymbol) {
+    return `${typeSymbolToCSharp(symbol.elementType)}[]`;
   }
   if (symbol.udonType === UdonType.Object && symbol.name !== "object") {
     return symbol.name;

@@ -6,6 +6,7 @@ import {
   ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
+  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
   typeSymbolToCSharp,
@@ -63,6 +64,17 @@ describe("typeSymbolToCSharp", () => {
 
     const intArray3D = new ArrayTypeSymbol(PrimitiveTypes.int32, 3);
     expect(typeSymbolToCSharp(intArray3D)).toBe("System.Int32[][][]");
+  });
+
+  it("expands NativeArrayTypeSymbol to elementFQN[] (not the SystemFooArray name)", () => {
+    const singleArray = new NativeArrayTypeSymbol(PrimitiveTypes.single);
+    expect(typeSymbolToCSharp(singleArray)).toBe("System.Single[]");
+
+    const int32Array = new NativeArrayTypeSymbol(PrimitiveTypes.int32);
+    expect(typeSymbolToCSharp(int32Array)).toBe("System.Int32[]");
+
+    const stringArray = new NativeArrayTypeSymbol(PrimitiveTypes.string);
+    expect(typeSymbolToCSharp(stringArray)).toBe("System.String[]");
   });
 
   it("falls back to symbol.name for user ClassTypeSymbol with UdonType.Object", () => {
