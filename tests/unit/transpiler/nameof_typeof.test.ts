@@ -78,4 +78,24 @@ describe("nameof/typeof", () => {
 
     expect(stringify(tac)).toContain('"UnityEngine.Vector3"');
   });
+
+  it("looks through parenthesized typeof operands", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          let value: Vector3;
+          const t = typeof (((value)));
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    expect(stringify(tac)).toContain('"UnityEngine.Vector3"');
+  });
 });

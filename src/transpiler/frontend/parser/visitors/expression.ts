@@ -516,11 +516,14 @@ export function visitTypeofExpression(
   this: TypeScriptParser,
   node: ts.TypeOfExpression,
 ): TypeofExpressionNode {
-  const expr = node.expression;
+  let inner: ts.Expression = node.expression;
+  while (ts.isParenthesizedExpression(inner)) {
+    inner = inner.expression;
+  }
   let typeName = "object";
   let typeSymbol: TypeSymbol = ObjectType;
-  if (ts.isIdentifier(expr)) {
-    const symbol = this.symbolTable.lookup(expr.text);
+  if (ts.isIdentifier(inner)) {
+    const symbol = this.symbolTable.lookup(inner.text);
     if (symbol) {
       typeName = symbol.type.name;
       typeSymbol = symbol.type;
