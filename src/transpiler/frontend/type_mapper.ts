@@ -98,7 +98,7 @@ export class TypeMapper {
   // hot speculative paths (e.g. resolver step 7f's fully-qualified-name
   // fallback) skip the full mapTypeScriptTypeImpl re-walk on repeat misses.
   private typeCache = new Map<string, TypeSymbol | null>();
-  private unionAliases = new Map<string, string[]>();
+  private unionAliases = new Map<string, TypeSymbol[]>();
 
   constructor(private enumRegistry?: EnumRegistry) {}
 
@@ -111,11 +111,11 @@ export class TypeMapper {
     this.typeCache.clear();
   }
 
-  registerUnionAlias(name: string, parts: string[]): void {
+  registerUnionAlias(name: string, parts: TypeSymbol[]): void {
     this.unionAliases.set(name, parts);
   }
 
-  getUnionParts(name: string): string[] | undefined {
+  getUnionParts(name: string): TypeSymbol[] | undefined {
     return this.unionAliases.get(name);
   }
 

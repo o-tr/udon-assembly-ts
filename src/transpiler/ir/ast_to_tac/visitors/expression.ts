@@ -1,5 +1,6 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { TranspileError } from "../../../errors/transpile_errors.js";
+import type { TypeMapper } from "../../../frontend/type_mapper.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -743,18 +744,29 @@ function flattenStringConcatChain(
   return parts;
 }
 
+const STRINGBUILDER_FQ = "System.Text.StringBuilder";
+const stringBuilderTypeCache = new WeakMap<TypeMapper, TypeSymbol>();
+function getStringBuilderType(typeMapper: TypeMapper): TypeSymbol {
+  let cached = stringBuilderTypeCache.get(typeMapper);
+  if (!cached) {
+    cached = typeMapper.mapTypeScriptType("StringBuilder");
+    stringBuilderTypeCache.set(typeMapper, cached);
+  }
+  return cached;
+}
+
 function generateStringBuilderConcat(
   converter: ASTToTACConverter,
   parts: TACOperand[],
 ): TACOperand {
-  const builderType = converter.typeMapper.mapTypeScriptType("StringBuilder");
+  const builderType = getStringBuilderType(converter.typeMapper);
   const builder = converter.newTemp(builderType);
   const ctorSig = converter.requireExternSignature(
-    "System.Text.StringBuilder",
+    STRINGBUILDER_FQ,
     "ctor",
     "method",
     [],
-    "System.Text.StringBuilder",
+    STRINGBUILDER_FQ,
   );
   converter.emit(new CallInstruction(builder, ctorSig, []));
   for (const partOperand of parts) {
@@ -1335,14 +1347,14 @@ export function visitTemplateExpression(
   }
 
   if (this.useStringBuilder && parts.length >= this.stringBuilderThreshold) {
-    const builderType = this.typeMapper.mapTypeScriptType("StringBuilder");
+    const builderType = getStringBuilderType(this.typeMapper);
     const builder = this.newTemp(builderType);
     const ctorSig = this.requireExternSignature(
-      "System.Text.StringBuilder",
+      STRINGBUILDER_FQ,
       "ctor",
       "method",
       [],
-      "System.Text.StringBuilder",
+      STRINGBUILDER_FQ,
     );
     this.emit(new CallInstruction(builder, ctorSig, []));
     for (const partOperand of parts) {
@@ -3063,7 +3075,7 @@ export function visitAsExpression(
   if (targetTypeText === "const") {
     return this.visitExpression(node.expression);
   }
-  const targetTypeSymbol = this.typeMapper.mapTypeScriptType(targetTypeText);
+  const targetTypeSymbol = node.targetTypeSymbol;
   const prevExpectedType = this.currentExpectedType;
   this.currentExpectedType = targetTypeSymbol;
   let operand: TACOperand;

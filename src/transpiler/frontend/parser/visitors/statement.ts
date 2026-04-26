@@ -289,9 +289,12 @@ export function visitTypeAliasDeclaration(
     const mapped = this.mapTypeWithGenerics(node.type.getText(), node.type);
     this.typeMapper.registerTypeAlias(name, mapped);
     if (ts.isUnionTypeNode(node.type)) {
-      const parts = node.type.types
-        .map((t) => t.getText())
-        .filter((p) => p !== "null" && p !== "undefined");
+      const parts: TypeSymbol[] = [];
+      for (const t of node.type.types) {
+        const text = t.getText();
+        if (text === "null" || text === "undefined") continue;
+        parts.push(this.mapTypeWithGenerics(text, t));
+      }
       if (parts.length > 1) {
         this.typeMapper.registerUnionAlias(name, parts);
       }

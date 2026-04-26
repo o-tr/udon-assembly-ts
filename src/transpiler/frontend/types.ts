@@ -530,7 +530,19 @@ export interface CallExpressionNode extends ASTNode {
 export interface AsExpressionNode extends ASTNode {
   kind: ASTNodeKind.AsExpression;
   expression: ASTNode;
+  /**
+   * Original TS-source text of the cast target (e.g. `"const"`, `"number"`,
+   * `"UdonInt"`). Retained alongside the resolved `targetTypeSymbol` because
+   * brand-strip semantics distinguish `as const` and `as number` purely by
+   * source text — they cannot be reconstructed from the resolved TypeSymbol.
+   */
   targetType: string;
+  /**
+   * Resolved TypeSymbol of the cast target. Always present, but unused when
+   * `targetType === "const"` (early-return path) or for the `as number`
+   * brand-strip on integer sources (semantics-preserving early-return).
+   */
+  targetTypeSymbol: TypeSymbol;
 }
 
 /**

@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-import type { TypeSymbol } from "../../type_symbols.js";
+import { ObjectType, type TypeSymbol } from "../../type_symbols.js";
 import {
   type ArrayLiteralElementNode,
   type ArrayLiteralExpressionNode,
@@ -613,9 +613,19 @@ export function visitAsExpression(
   this: TypeScriptParser,
   node: ts.AsExpression,
 ) {
+  const targetTypeText = node.type.getText();
+  // `as const` is a brand-strip handled by source-text comparison in the IR.
+  // Skip type resolution because TS represents `const` as a TypeReference whose
+  // resolution depends on the operand's literal type — IR never reads the
+  // symbol in this branch.
+  const targetTypeSymbol =
+    targetTypeText === "const"
+      ? ObjectType
+      : this.mapTypeWithGenerics(targetTypeText, node.type);
   return this.attachLoc(node, {
     kind: ASTNodeKind.AsExpression,
     expression: this.visitExpression(node.expression),
-    targetType: node.type.getText(),
+    targetType: targetTypeText,
+    targetTypeSymbol,
   });
 }
