@@ -30,6 +30,8 @@ const TARGET_CATEGORIES = new Set([
 ]);
 
 const TOP_TYPES_HARD_CAP = 2000;
+// Defensive: keeps the first selection bounded even if HARD_CAP is ever
+// lowered below 200 in the future. Today this evaluates to 200.
 const TOP_TYPES_BY_COUNT = Math.min(200, TOP_TYPES_HARD_CAP);
 
 let typeFlagTable: [number, string][] | null = null;
@@ -171,6 +173,9 @@ class Step10MetricsCollector {
   private hooked = false;
   private periodicTimer: NodeJS.Timeout | null = null;
   private recordsSinceFlush = 0;
+  private exitHandler: (() => void) | null = null;
+  private signalHandlers = new Map<NodeJS.Signals, () => void>();
+  private uncaughtHandler: ((err: Error) => void) | null = null;
 
   record(typeText: string, type?: ts.Type, checker?: ts.TypeChecker): void {
     if (!this.isEnabled()) return;
@@ -182,7 +187,14 @@ class Step10MetricsCollector {
     } else {
       this.counts.set(key, { count: 1 });
       if (type && checker) {
-        this.samples.set(key, buildSample(type, checker));
+        // buildSample inspects internal ts.Type fields and may throw on
+        // synthetic / error-recovery types. Diagnostic capture must never
+        // break compilation — drop the sample on failure.
+        try {
+          this.samples.set(key, buildSample(type, checker));
+        } catch {
+          // intentionally swallow
+        }
       }
     }
     this.recordsSinceFlush += 1;
@@ -279,41 +291,64 @@ class Step10MetricsCollector {
       PERIODIC_FLUSH_INTERVAL_MS,
     );
     this.periodicTimer.unref?.();
-    process.on("exit", () => {
+    this.exitHandler = () => {
       const written = this.flushToFile();
       if (written) {
         console.error(`[step10-metrics] written to ${getMetricsFilePath()}`);
       }
-    });
+    };
+    process.on("exit", this.exitHandler);
     const signalExitCodes: Record<NodeJS.Signals, number> = {
       SIGINT: 130,
       SIGTERM: 143,
     } as Record<NodeJS.Signals, number>;
     for (const sig of ["SIGINT", "SIGTERM"] as const) {
-      process.once(sig, () => {
+      const handler = (): void => {
         this.flushToFile();
         process.exitCode = signalExitCodes[sig];
         process.kill(process.pid, sig);
-      });
+      };
+      this.signalHandlers.set(sig, handler);
+      process.once(sig, handler);
     }
-    process.once("uncaughtException", (err) => {
+    this.uncaughtHandler = (err) => {
       this.flushToFile();
       // Re-throw on next tick so node's default handler reports + exits.
       process.nextTick(() => {
         throw err;
       });
-    });
+    };
+    process.once("uncaughtException", this.uncaughtHandler);
   }
 
   private isEnabled(): boolean {
     return isStep10MetricsEnabled();
   }
 
-  /** Test-only: clear collector state so each test starts from scratch. */
+  /** Test-only: clear collector state AND tear down the periodic timer +
+   *  process listeners installed by ensureHooked, so each test starts
+   *  from scratch and no stray timer fires between tests. */
   __clearForTest(): void {
     this.counts.clear();
     this.samples.clear();
     this.recordsSinceFlush = 0;
+    if (this.periodicTimer !== null) {
+      clearInterval(this.periodicTimer);
+      this.periodicTimer = null;
+    }
+    if (this.exitHandler) {
+      process.off("exit", this.exitHandler);
+      this.exitHandler = null;
+    }
+    for (const [sig, handler] of this.signalHandlers) {
+      process.off(sig, handler);
+    }
+    this.signalHandlers.clear();
+    if (this.uncaughtHandler) {
+      process.off("uncaughtException", this.uncaughtHandler);
+      this.uncaughtHandler = null;
+    }
+    this.hooked = false;
   }
 }
 
