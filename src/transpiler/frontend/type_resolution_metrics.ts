@@ -227,12 +227,14 @@ function isPlainGenericApplication(text: string): boolean {
   i += 1;
   while (i < text.length && isHeadCont(text[i])) i += 1;
   if (i === 0 || i >= text.length || text[i] !== "<") return false;
-  // Outer `<` at i; walk to the matching `>` at depth 0.
+  // Outer `<` at i; walk to the matching `>` at depth 0. `=>` is not a
+  // closing angle bracket — skip its `>` to avoid prematurely closing the
+  // outer span on inputs like `Foo<(x: T) => U>`.
   let depth = 0;
   for (let j = i; j < text.length; j += 1) {
     const ch = text[j];
     if (ch === "<") depth += 1;
-    else if (ch === ">") {
+    else if (ch === ">" && (j === 0 || text[j - 1] !== "=")) {
       depth -= 1;
       if (depth === 0) {
         // Must be the last character — anything after disqualifies.
