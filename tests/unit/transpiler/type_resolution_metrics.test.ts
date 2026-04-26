@@ -147,7 +147,6 @@ describe("step10Metrics sample capture", () => {
       ).toBe(true);
     }
     expect(typeof sample.hasSymbol).toBe("boolean");
-    expect(sample.sampleCount).toBe(1);
   });
 
   it("records sample metadata for a project class (WinResult)", () => {

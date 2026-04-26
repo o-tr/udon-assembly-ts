@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import { TranspileError } from "../errors/transpile_errors.js";
+import { stripModuleQualifier } from "./symbol_naming.js";
 import type { TypeCheckerContext } from "./type_checker_context.js";
 import type { TypeMapper } from "./type_mapper.js";
 import {
@@ -23,10 +24,6 @@ const TYPE_TO_STRING_FLAGS =
   ts.TypeFormatFlags.NoTruncation |
   ts.TypeFormatFlags.UseFullyQualifiedType |
   ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
-
-function stripModuleQualifier(name: string): string {
-  return name.replace(/^".*"\./, "");
-}
 
 /**
  * Resolves TypeScript compiler types (ts.Type / ts.Node) to internal TypeSymbols.

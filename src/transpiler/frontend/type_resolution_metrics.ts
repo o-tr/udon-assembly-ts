@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as ts from "typescript";
+import { stripModuleQualifier } from "./symbol_naming.js";
 
 type Step10MetricEntry = {
   count: number;
@@ -19,7 +20,6 @@ type Step10MetricSample = {
   hasSymbol: boolean;
   targetSymbolName?: string | null;
   unionMemberFlags?: string[];
-  sampleCount: number;
 };
 
 const TARGET_CATEGORIES = new Set([
@@ -29,12 +29,8 @@ const TARGET_CATEGORIES = new Set([
   "other",
 ]);
 
-const TOP_TYPES_BY_COUNT = 200;
 const TOP_TYPES_HARD_CAP = 2000;
-
-function stripModuleQualifier(name: string): string {
-  return name.replace(/^".*"\./, "");
-}
+const TOP_TYPES_BY_COUNT = Math.min(200, TOP_TYPES_HARD_CAP);
 
 let typeFlagTable: [number, string][] | null = null;
 let objectFlagTable: [number, string][] | null = null;
@@ -57,16 +53,19 @@ function flagNames(
   flags: number | undefined,
   table: [number, string][],
 ): string {
-  if (!flags) return "0";
+  if (flags === undefined || flags === 0) return "0";
+  // Coerce to unsigned 32-bit so a future TS flag at bit 31 doesn't
+  // surface as a negative residual in the diagnostic output.
+  const unsigned = flags >>> 0;
   const names: string[] = [];
-  let residual = flags;
+  let residual = unsigned;
   for (const [bit, name] of table) {
-    if ((flags & bit) !== 0) {
+    if ((unsigned & bit) !== 0) {
       names.push(name);
       residual &= ~bit;
     }
   }
-  if (residual !== 0) names.push(`0x${residual.toString(16)}`);
+  if (residual !== 0) names.push(`0x${(residual >>> 0).toString(16)}`);
   return names.join("|");
 }
 
@@ -96,7 +95,6 @@ function buildSample(
   const sample: Step10MetricSample = {
     typeFlags: flagNames(tFlags, getTypeFlagTable()),
     hasSymbol: !!type.getSymbol(),
-    sampleCount: 1,
   };
 
   let objFlags: number | undefined;
@@ -250,7 +248,6 @@ class Step10MetricsCollector {
         droppedTargetCategoryCount += 1;
         continue;
       }
-      seen.add(e.typeText);
       selected.push(e);
     }
     selected.sort(
