@@ -2,7 +2,9 @@ import * as ts from "typescript";
 import type { EnumKind } from "../../enum_registry.js";
 import {
   ClassTypeSymbol,
+  ExternTypes,
   InterfaceTypeSymbol,
+  PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
 import {
@@ -137,7 +139,7 @@ export function visitClassDeclaration(
           name: paramName,
           type: param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : this.mapTypeWithGenerics("number", param),
+            : PrimitiveTypes.single,
           ...(serializeFieldParams.has(paramName)
             ? { isSerializeField: true }
             : {}),
@@ -158,7 +160,7 @@ export function visitClassDeclaration(
           const paramName = param.name.getText();
           const paramType = param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : this.mapTypeWithGenerics("number", param);
+            : PrimitiveTypes.single;
           this.symbolTable.addSymbol(paramName, paramType, true, false);
         }
         body = this.visitBlock(member.body);
@@ -179,7 +181,7 @@ export function visitClassDeclaration(
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
           ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-          : this.mapTypeWithGenerics("number", param);
+          : PrimitiveTypes.single;
         const isPublic =
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
@@ -212,7 +214,7 @@ export function visitClassDeclaration(
       if (existingIdx !== -1 && properties[existingIdx].isGetter) continue;
       const propType = member.type
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-        : this.mapTypeWithGenerics("object");
+        : ExternTypes.dataDictionary;
       const isStatic = !!member.modifiers?.some(
         (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
       );
@@ -290,7 +292,7 @@ export function visitClassDeclaration(
       const param = member.parameters[0];
       const propType = param?.type
         ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-        : this.mapTypeWithGenerics("object");
+        : ExternTypes.dataDictionary;
       const isStatic = !!member.modifiers?.some(
         (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
       );
@@ -502,7 +504,7 @@ export function visitPropertyDeclaration(
   } else if (node.initializer) {
     type = this.inferType(node.initializer);
   } else {
-    type = this.mapTypeWithGenerics("number", node);
+    type = PrimitiveTypes.single;
   }
 
   const initializer = node.initializer
@@ -588,7 +590,7 @@ export function visitMethodDeclaration(
     const paramName = param.name.getText();
     const paramType = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-      : this.mapTypeWithGenerics("number", param);
+      : PrimitiveTypes.single;
     const initializer = param.initializer
       ? this.parseParameterInitializer(param.initializer, param.type)
       : undefined;
@@ -603,7 +605,7 @@ export function visitMethodDeclaration(
   const returnType =
     returnTypeText !== undefined && node.type !== undefined
       ? this.mapTypeWithGenerics(returnTypeText, node.type)
-      : this.mapTypeWithGenerics("void");
+      : PrimitiveTypes.void;
 
   // Register parameters in a wrapping scope so that inferType inside the body
   // can resolve parameter types (e.g. for `let a = tiles[0]` where `tiles` is

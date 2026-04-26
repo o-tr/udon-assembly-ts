@@ -2,6 +2,7 @@ import * as ts from "typescript";
 import { isStep10MetricsEnabled } from "../../type_resolution_metrics.js";
 import {
   ArrayTypeSymbol,
+  ExternTypes,
   extractArrayLiteralHint,
   InterfaceTypeSymbol,
   ObjectType,
@@ -587,7 +588,7 @@ export function visitForOfStatement(
         if (!this.symbolTable.hasInCurrentScope(name)) {
           this.symbolTable.addSymbol(
             name,
-            this.mapTypeWithGenerics("object"),
+            ExternTypes.dataDictionary,
             false,
             false,
           );
@@ -599,7 +600,7 @@ export function visitForOfStatement(
       if (!this.symbolTable.hasInCurrentScope(tempName)) {
         this.symbolTable.addSymbol(
           tempName,
-          this.mapTypeWithGenerics("object"),
+          ExternTypes.dataDictionary,
           false,
           false,
         );
@@ -615,14 +616,14 @@ export function visitForOfStatement(
         if (!this.symbolTable.hasInCurrentScope(name)) {
           this.symbolTable.addSymbol(
             name,
-            this.mapTypeWithGenerics("object"),
+            ExternTypes.dataDictionary,
             false,
             false,
           );
         }
       }
     } else {
-      const varType = variableTypeSymbol ?? this.mapTypeWithGenerics("object");
+      const varType = variableTypeSymbol ?? ExternTypes.dataDictionary;
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, varType, false, false);
       }
@@ -641,7 +642,7 @@ export function visitForOfStatement(
     if (!this.symbolTable.hasInCurrentScope(varName)) {
       this.symbolTable.addSymbol(
         varName,
-        this.mapTypeWithGenerics("object"),
+        ExternTypes.dataDictionary,
         false,
         false,
       );
@@ -724,12 +725,7 @@ export function visitForInStatement(
   }
 
   if (!this.symbolTable.hasInCurrentScope(varName)) {
-    this.symbolTable.addSymbol(
-      varName,
-      this.mapTypeWithGenerics("string"),
-      false,
-      false,
-    );
+    this.symbolTable.addSymbol(varName, PrimitiveTypes.string, false, false);
   }
 
   const body = this.visitNode(node.statement);
@@ -745,7 +741,7 @@ export function visitForInStatement(
   const result: ForOfStatementNode = this.attachLoc(node, {
     kind: ASTNodeKind.ForOfStatement,
     variable: varName,
-    variableType: this.mapTypeWithGenerics("string"),
+    variableType: PrimitiveTypes.string,
     iterable,
     body,
   });
