@@ -170,6 +170,16 @@ export class TypeCheckerTypeResolver {
     // 4b. Null / Undefined — Udon doesn't have nullable types natively
     if (this.isNullishType(type)) return ObjectType;
 
+    // 4c. any / unknown / never — Udon has no equivalent. `never` would
+    // additionally cause step 5 to walk an empty union if it slipped past
+    // here, so collapse before the union/intersection branches.
+    if (
+      type.flags &
+      (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)
+    ) {
+      return ObjectType;
+    }
+
     // 5. Union (remaining after nullish strip — e.g. string | number)
     if (type.flags & ts.TypeFlags.Union) {
       const union = type as ts.UnionType;
@@ -294,6 +304,24 @@ export class TypeCheckerTypeResolver {
       // Anonymous type with properties
       if (objType.objectFlags & ts.ObjectFlags.Anonymous) {
         const props = this.checker.getPropertiesOfType(type);
+        // Pure function / constructor types are anonymous with one or more
+        // call/construct signatures and zero properties. Udon has neither
+        // first-class functions nor first-class constructors, so collapse to
+        // ObjectType. Keep the narrower `props.length === 0` guard so
+        // anonymous callable-with-properties (e.g. `{ (): void; foo: string }`)
+        // still builds an InterfaceTypeSymbol below.
+        if (props.length === 0) {
+          const callSigs = this.checker.getSignaturesOfType(
+            type,
+            ts.SignatureKind.Call,
+          );
+          if (callSigs.length > 0) return ObjectType;
+          const ctorSigs = this.checker.getSignaturesOfType(
+            type,
+            ts.SignatureKind.Construct,
+          );
+          if (ctorSigs.length > 0) return ObjectType;
+        }
         if (props.length > 0) {
           const propertyMap = new Map<string, TypeSymbol>();
           const methodMap = new Map<
