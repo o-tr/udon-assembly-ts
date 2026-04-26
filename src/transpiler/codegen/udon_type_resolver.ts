@@ -1,11 +1,12 @@
-import { typeMetadataRegistry } from "./type_metadata_registry.js";
 import { UDON_TYPE_TO_CSHARP_FQN } from "../frontend/type_symbols.js";
+import type { UdonType } from "../frontend/types.js";
+import { typeMetadataRegistry } from "./type_metadata_registry.js";
 
 /**
  * Convert a UdonType enum value to its full C# type name.
  */
 export function udonTypeToCSharp(udonType: string): string {
-  return UDON_TYPE_TO_CSHARP_FQN[udonType] ?? udonType;
+  return UDON_TYPE_TO_CSHARP_FQN[udonType as UdonType] ?? udonType;
 }
 
 export const TS_TO_CSHARP = new Map<string, string>([

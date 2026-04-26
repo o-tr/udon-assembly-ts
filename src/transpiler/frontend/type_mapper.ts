@@ -435,6 +435,26 @@ export class TypeMapper {
         return ExternTypes.transform;
       case UdonType.GameObject:
         return ExternTypes.gameObject;
+      case UdonType.Material:
+        return ExternTypes.material;
+      case UdonType.Renderer:
+        return ExternTypes.renderer;
+      case UdonType.MeshRenderer:
+        return ExternTypes.meshRenderer;
+      case UdonType.Collider:
+        return ExternTypes.collider;
+      case UdonType.BoxCollider:
+        return ExternTypes.boxCollider;
+      case UdonType.SphereCollider:
+        return ExternTypes.sphereCollider;
+      case UdonType.Rigidbody:
+        return ExternTypes.rigidbody;
+      case UdonType.Camera:
+        return ExternTypes.camera;
+      case UdonType.Canvas:
+        return ExternTypes.canvas;
+      case UdonType.RectTransform:
+        return ExternTypes.rectTransform;
       case UdonType.AudioSource:
         return ExternTypes.audioSource;
       case UdonType.AudioClip:
@@ -447,6 +467,8 @@ export class TypeMapper {
         return ExternTypes.vrcPlayerApi;
       case UdonType.UdonBehaviour:
         return ExternTypes.udonBehaviour;
+      case UdonType.NetworkEventTarget:
+        return ExternTypes.networkEventTarget;
       case UdonType.DataList:
         return ExternTypes.dataList;
       case UdonType.DataDictionary:
