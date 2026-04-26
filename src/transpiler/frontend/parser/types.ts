@@ -600,9 +600,34 @@ export function inferType(
               typeArgs[1] ?? ObjectType,
             );
           }
-          return new CollectionTypeSymbol(baseName, typeArgs[0] ?? ObjectType);
+          if (
+            baseName === "UdonList" ||
+            baseName === "List" ||
+            baseName === "UdonQueue" ||
+            baseName === "Queue" ||
+            baseName === "UdonStack" ||
+            baseName === "Stack" ||
+            baseName === "UdonHashSet" ||
+            baseName === "HashSet"
+          ) {
+            return new CollectionTypeSymbol(
+              baseName,
+              typeArgs[0] ?? ObjectType,
+            );
+          }
+          // Unknown class with type arguments — degrade to bare-name
+          // resolution. The TypeChecker resolver tried first (above) and
+          // failed; consult typeMapper non-throwingly so unmappable
+          // identifiers (e.g. lowercase `new someThing<T>()`) don't break
+          // best-effort inferType callers. Generic params are checked
+          // first to keep `new K()` parity with the pre-refactor path.
+          const generic = this.resolveGenericParam(baseName);
+          if (generic) return generic;
+          return this.typeMapper.tryMapTypeScriptType(baseName) ?? ObjectType;
         }
-        return this.mapTypeWithGenerics(baseName);
+        const genericNoArgs = this.resolveGenericParam(baseName);
+        if (genericNoArgs) return genericNoArgs;
+        return this.typeMapper.tryMapTypeScriptType(baseName) ?? ObjectType;
       }
       return ObjectType;
     }

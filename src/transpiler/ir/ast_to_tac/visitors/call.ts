@@ -2127,7 +2127,7 @@ export function visitCallExpression(
       propAccess.property === "GetComponent" &&
       node.typeArguments?.length === 1
     ) {
-      const targetTypeSymbol = node.typeArguments[0] ?? ObjectType;
+      const targetTypeSymbol = node.typeArguments[0];
       // typeId is always 0 — UdonSharp's runtime resolves types internally
       // and our computed hash would not match.
       const typeOperand = createConstant(0n, PrimitiveTypes.int64);

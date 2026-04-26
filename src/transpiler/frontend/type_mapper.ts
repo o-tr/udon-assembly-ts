@@ -19,6 +19,78 @@ import { UdonType } from "./types.js";
 const STRING_LITERAL_UNION_RE =
   /^("[^"]*"|'[^']*')(\s*\|\s*("[^"]*"|'[^']*'))+$/;
 
+/**
+ * Canonical lookup of TypeScript / C# builtin type names that have a single
+ * unambiguous Udon TypeSymbol counterpart. Both `lookupBuiltinByName` and the
+ * simple-name branch of `mapTypeScriptTypeImpl` consult this map so the
+ * mapping cannot drift between the resolver path and the legacy text path.
+ *
+ * Entries that need parameterised construction (Set/Map/ReadonlySet/
+ * ReadonlyMap → CollectionTypeSymbol with key/value slots) are intentionally
+ * kept out of this table; those still live as explicit cases in
+ * `mapTypeScriptTypeImpl`.
+ */
+const BUILTIN_NAME_MAP: ReadonlyMap<string, TypeSymbol> = new Map<
+  string,
+  TypeSymbol
+>([
+  ...UDON_BRANDED_TYPE_MAP,
+  ["number", PrimitiveTypes.single],
+  ["float", PrimitiveTypes.single],
+  ["boolean", PrimitiveTypes.boolean],
+  ["bool", PrimitiveTypes.boolean],
+  ["string", PrimitiveTypes.string],
+  ["object", ExternTypes.dataDictionary],
+  ["void", PrimitiveTypes.void],
+  ["int", PrimitiveTypes.int32],
+  ["short", PrimitiveTypes.int16],
+  ["ushort", PrimitiveTypes.uint16],
+  ["uint", PrimitiveTypes.uint32],
+  ["long", PrimitiveTypes.int64],
+  ["ulong", PrimitiveTypes.uint64],
+  ["byte", PrimitiveTypes.byte],
+  ["sbyte", PrimitiveTypes.sbyte],
+  ["double", PrimitiveTypes.double],
+  ["bigint", PrimitiveTypes.int64],
+  ["unknown", ObjectType],
+  ["never", ObjectType],
+  ["any", ObjectType],
+  ["Vector2", ExternTypes.vector2],
+  ["UnityEngine.Vector2", ExternTypes.vector2],
+  ["Vector3", ExternTypes.vector3],
+  ["UnityEngine.Vector3", ExternTypes.vector3],
+  ["Vector4", ExternTypes.vector4],
+  ["UnityEngine.Vector4", ExternTypes.vector4],
+  ["Quaternion", ExternTypes.quaternion],
+  ["UnityEngine.Quaternion", ExternTypes.quaternion],
+  ["Color", ExternTypes.color],
+  ["UnityEngine.Color", ExternTypes.color],
+  ["Transform", ExternTypes.transform],
+  ["UnityEngine.Transform", ExternTypes.transform],
+  ["GameObject", ExternTypes.gameObject],
+  ["UnityEngine.GameObject", ExternTypes.gameObject],
+  ["AudioSource", ExternTypes.audioSource],
+  ["UnityEngine.AudioSource", ExternTypes.audioSource],
+  ["AudioClip", ExternTypes.audioClip],
+  ["UnityEngine.AudioClip", ExternTypes.audioClip],
+  ["Animator", ExternTypes.animator],
+  ["UnityEngine.Animator", ExternTypes.animator],
+  ["Component", ExternTypes.component],
+  ["UnityEngine.Component", ExternTypes.component],
+  ["VRCPlayerApi", ExternTypes.vrcPlayerApi],
+  ["VRC.SDKBase.VRCPlayerApi", ExternTypes.vrcPlayerApi],
+  ["UdonBehaviour", ExternTypes.udonBehaviour],
+  ["VRC.Udon.UdonBehaviour", ExternTypes.udonBehaviour],
+  ["DataList", ExternTypes.dataList],
+  ["VRC.SDK3.Data.DataList", ExternTypes.dataList],
+  ["DataDictionary", ExternTypes.dataDictionary],
+  ["VRC.SDK3.Data.DataDictionary", ExternTypes.dataDictionary],
+  ["DataToken", ExternTypes.dataToken],
+  ["VRC.SDK3.Data.DataToken", ExternTypes.dataToken],
+  ["Type", ExternTypes.systemType],
+  ["System.Type", ExternTypes.systemType],
+]);
+
 export class TypeMapper {
   private typeAliases = new Map<string, TypeSymbol>();
   // Stores both successful (TypeSymbol) and unmappable (null) results.
@@ -65,10 +137,6 @@ export class TypeMapper {
    */
   tryMapTypeScriptType(tsType: string): TypeSymbol | null {
     const trimmed = tsType.trim();
-    if (UDON_BRANDED_TYPE_MAP.has(trimmed)) {
-      const branded = UDON_BRANDED_TYPE_MAP.get(trimmed);
-      if (branded) return branded;
-    }
     // Enum check runs before cache: enumRegistry may gain entries after a
     // previous call cached a fallback result for the same type name.
     if (this.enumRegistry?.isEnum(trimmed)) {
@@ -230,45 +298,12 @@ export class TypeMapper {
       }
     }
 
+    const builtin = BUILTIN_NAME_MAP.get(trimmed);
+    if (builtin) return builtin;
+
+    // Set/Map/ReadonlySet/ReadonlyMap require parameterised CollectionTypeSymbol
+    // construction (with key/value slots) so they are not part of BUILTIN_NAME_MAP.
     switch (trimmed) {
-      case "number":
-        return PrimitiveTypes.single;
-      case "float":
-        return PrimitiveTypes.single;
-      case "boolean":
-        return PrimitiveTypes.boolean;
-      case "bool":
-        return PrimitiveTypes.boolean;
-      case "string":
-        return PrimitiveTypes.string;
-      case "object":
-        return ExternTypes.dataDictionary;
-      case "void":
-        return PrimitiveTypes.void;
-      case "int":
-        return PrimitiveTypes.int32;
-      case "short":
-        return PrimitiveTypes.int16;
-      case "ushort":
-        return PrimitiveTypes.uint16;
-      case "uint":
-        return PrimitiveTypes.uint32;
-      case "long":
-        return PrimitiveTypes.int64;
-      case "ulong":
-        return PrimitiveTypes.uint64;
-      case "byte":
-        return PrimitiveTypes.byte;
-      case "sbyte":
-        return PrimitiveTypes.sbyte;
-      case "double":
-        return PrimitiveTypes.double;
-      case "bigint":
-        return PrimitiveTypes.int64;
-      case "unknown":
-      case "never":
-      case "any":
-        return ObjectType;
       case "Set":
       case "ReadonlySet":
         return new CollectionTypeSymbol(
@@ -285,66 +320,15 @@ export class TypeMapper {
           ObjectType,
           ObjectType,
         );
-      case "Vector2":
-      case "UnityEngine.Vector2":
-        return ExternTypes.vector2;
-      case "Vector3":
-      case "UnityEngine.Vector3":
-        return ExternTypes.vector3;
-      case "Vector4":
-      case "UnityEngine.Vector4":
-        return ExternTypes.vector4;
-      case "Quaternion":
-      case "UnityEngine.Quaternion":
-        return ExternTypes.quaternion;
-      case "Color":
-      case "UnityEngine.Color":
-        return ExternTypes.color;
-      case "Transform":
-      case "UnityEngine.Transform":
-        return ExternTypes.transform;
-      case "GameObject":
-      case "UnityEngine.GameObject":
-        return ExternTypes.gameObject;
-      case "AudioSource":
-      case "UnityEngine.AudioSource":
-        return ExternTypes.audioSource;
-      case "AudioClip":
-      case "UnityEngine.AudioClip":
-        return ExternTypes.audioClip;
-      case "Animator":
-      case "UnityEngine.Animator":
-        return ExternTypes.animator;
-      case "Component":
-      case "UnityEngine.Component":
-        return ExternTypes.component;
-      case "VRCPlayerApi":
-      case "VRC.SDKBase.VRCPlayerApi":
-        return ExternTypes.vrcPlayerApi;
-      case "UdonBehaviour":
-      case "VRC.Udon.UdonBehaviour":
-        return ExternTypes.udonBehaviour;
-      case "DataList":
-      case "VRC.SDK3.Data.DataList":
-        return ExternTypes.dataList;
-      case "DataDictionary":
-      case "VRC.SDK3.Data.DataDictionary":
-        return ExternTypes.dataDictionary;
-      case "DataToken":
-      case "VRC.SDK3.Data.DataToken":
-        return ExternTypes.dataToken;
-      case "Type":
-      case "System.Type":
-        return ExternTypes.systemType;
-      default:
-        if (this.isLikelyUserDefinedType(trimmed)) {
-          return new ClassTypeSymbol(trimmed, UdonType.Object);
-        }
-        if (this.isComplexTypeExpression(trimmed)) {
-          return ObjectType;
-        }
-        return null;
     }
+
+    if (this.isLikelyUserDefinedType(trimmed)) {
+      return new ClassTypeSymbol(trimmed, UdonType.Object);
+    }
+    if (this.isComplexTypeExpression(trimmed)) {
+      return ObjectType;
+    }
+    return null;
   }
 
   private isLikelyUserDefinedType(typeText: string): boolean {
@@ -406,100 +390,7 @@ export class TypeMapper {
    * generic-parameter regex).
    */
   lookupBuiltinByName(name: string): TypeSymbol | null {
-    if (UDON_BRANDED_TYPE_MAP.has(name)) {
-      return UDON_BRANDED_TYPE_MAP.get(name) ?? null;
-    }
-    switch (name) {
-      case "number":
-      case "float":
-        return PrimitiveTypes.single;
-      case "boolean":
-      case "bool":
-        return PrimitiveTypes.boolean;
-      case "string":
-        return PrimitiveTypes.string;
-      case "object":
-        return ExternTypes.dataDictionary;
-      case "void":
-        return PrimitiveTypes.void;
-      case "int":
-        return PrimitiveTypes.int32;
-      case "short":
-        return PrimitiveTypes.int16;
-      case "ushort":
-        return PrimitiveTypes.uint16;
-      case "uint":
-        return PrimitiveTypes.uint32;
-      case "long":
-        return PrimitiveTypes.int64;
-      case "ulong":
-        return PrimitiveTypes.uint64;
-      case "byte":
-        return PrimitiveTypes.byte;
-      case "sbyte":
-        return PrimitiveTypes.sbyte;
-      case "double":
-        return PrimitiveTypes.double;
-      case "bigint":
-        return PrimitiveTypes.int64;
-      case "unknown":
-      case "never":
-      case "any":
-        return ObjectType;
-      case "Vector2":
-      case "UnityEngine.Vector2":
-        return ExternTypes.vector2;
-      case "Vector3":
-      case "UnityEngine.Vector3":
-        return ExternTypes.vector3;
-      case "Vector4":
-      case "UnityEngine.Vector4":
-        return ExternTypes.vector4;
-      case "Quaternion":
-      case "UnityEngine.Quaternion":
-        return ExternTypes.quaternion;
-      case "Color":
-      case "UnityEngine.Color":
-        return ExternTypes.color;
-      case "Transform":
-      case "UnityEngine.Transform":
-        return ExternTypes.transform;
-      case "GameObject":
-      case "UnityEngine.GameObject":
-        return ExternTypes.gameObject;
-      case "AudioSource":
-      case "UnityEngine.AudioSource":
-        return ExternTypes.audioSource;
-      case "AudioClip":
-      case "UnityEngine.AudioClip":
-        return ExternTypes.audioClip;
-      case "Animator":
-      case "UnityEngine.Animator":
-        return ExternTypes.animator;
-      case "Component":
-      case "UnityEngine.Component":
-        return ExternTypes.component;
-      case "VRCPlayerApi":
-      case "VRC.SDKBase.VRCPlayerApi":
-        return ExternTypes.vrcPlayerApi;
-      case "UdonBehaviour":
-      case "VRC.Udon.UdonBehaviour":
-        return ExternTypes.udonBehaviour;
-      case "DataList":
-      case "VRC.SDK3.Data.DataList":
-        return ExternTypes.dataList;
-      case "DataDictionary":
-      case "VRC.SDK3.Data.DataDictionary":
-        return ExternTypes.dataDictionary;
-      case "DataToken":
-      case "VRC.SDK3.Data.DataToken":
-        return ExternTypes.dataToken;
-      case "Type":
-      case "System.Type":
-        return ExternTypes.systemType;
-      default:
-        return null;
-    }
+    return BUILTIN_NAME_MAP.get(name) ?? null;
   }
 
   mapUdonType(udonType: UdonType): TypeSymbol {

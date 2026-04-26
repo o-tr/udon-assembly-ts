@@ -14,11 +14,9 @@ import {
 } from "../type_checker_type_resolver.js";
 import { TypeMapper } from "../type_mapper.js";
 import {
-  ArrayTypeSymbol,
-  DataListTypeSymbol,
   type InterfaceTypeSymbol,
-  NativeArrayTypeSymbol,
   type TypeSymbol,
+  extractArrayLiteralHint,
 } from "../type_symbols.js";
 import { type ASTNode, ASTNodeKind, type ProgramNode } from "../types.js";
 import {
@@ -322,21 +320,8 @@ export class TypeScriptParser {
   private resolveArrayElementTypeHint(
     paramTypeNode: ts.TypeNode,
   ): TypeSymbol | undefined {
-    const resolved = this.mapTypeWithGenerics(
-      paramTypeNode.getText(),
-      paramTypeNode,
+    return extractArrayLiteralHint(
+      this.mapTypeWithGenerics(paramTypeNode.getText(), paramTypeNode),
     );
-    if (resolved instanceof ArrayTypeSymbol) {
-      return resolved.dimensions > 1
-        ? new ArrayTypeSymbol(resolved.elementType, resolved.dimensions - 1)
-        : resolved.elementType;
-    }
-    if (
-      resolved instanceof DataListTypeSymbol ||
-      resolved instanceof NativeArrayTypeSymbol
-    ) {
-      return resolved.elementType;
-    }
-    return undefined;
   }
 }

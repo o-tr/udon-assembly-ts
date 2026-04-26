@@ -44,6 +44,18 @@ export class ArrayTypeSymbol extends TypeSymbol {
     return UdonType.Array;
   }
 
+  /**
+   * Returns the type of one outer-array slot: a leaf element when this is
+   * a 1-dim array, or an `ArrayTypeSymbol` of one less dimension when this
+   * is multi-dim. Used by the parser to derive the `typeHint` element type
+   * passed to array-literal visitors.
+   */
+  peelOneDimension(): TypeSymbol {
+    return this.dimensions > 1
+      ? new ArrayTypeSymbol(this.elementType, this.dimensions - 1)
+      : this.elementType;
+  }
+
   isAssignableTo(other: TypeSymbol): boolean {
     if (!(other instanceof ArrayTypeSymbol)) {
       return false;
@@ -82,6 +94,28 @@ export function getNativeArrayTypeName(
   elementUdonType: UdonType,
 ): string | null {
   return NATIVE_ARRAY_TYPE_NAMES[elementUdonType] ?? null;
+}
+
+/**
+ * Given the resolved type of an array-typed binding, return the element type
+ * to pass as the `typeHint` of an array literal initializer. For
+ * multi-dimensional arrays this peels one dimension so each literal element
+ * can be matched against the inner-array type. Returns `undefined` for
+ * non-array types so the caller can decide whether to default to ObjectType.
+ */
+export function extractArrayLiteralHint(
+  type: TypeSymbol,
+): TypeSymbol | undefined {
+  if (type instanceof ArrayTypeSymbol) {
+    return type.peelOneDimension();
+  }
+  if (
+    type instanceof DataListTypeSymbol ||
+    type instanceof NativeArrayTypeSymbol
+  ) {
+    return type.elementType;
+  }
+  return undefined;
 }
 
 /**

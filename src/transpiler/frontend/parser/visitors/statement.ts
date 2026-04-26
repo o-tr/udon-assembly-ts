@@ -1,12 +1,11 @@
 import * as ts from "typescript";
 import {
   ArrayTypeSymbol,
-  DataListTypeSymbol,
   InterfaceTypeSymbol,
-  NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
+  extractArrayLiteralHint,
 } from "../../type_symbols.js";
 import {
   type ArrayAccessExpressionNode,
@@ -269,21 +268,9 @@ export function visitVariableStatement(
 
   if (declaration.initializer) {
     if (ts.isArrayLiteralExpression(declaration.initializer)) {
-      let typeHint: TypeSymbol | undefined;
-      if (type instanceof ArrayTypeSymbol) {
-        typeHint =
-          type.dimensions > 1
-            ? new ArrayTypeSymbol(type.elementType, type.dimensions - 1)
-            : type.elementType;
-      } else if (
-        type instanceof DataListTypeSymbol ||
-        type instanceof NativeArrayTypeSymbol
-      ) {
-        typeHint = type.elementType;
-      }
       result.initializer = this.visitArrayLiteralExpression(
         declaration.initializer,
-        typeHint,
+        extractArrayLiteralHint(type),
       );
     } else {
       result.initializer = this.visitExpression(declaration.initializer);
@@ -601,9 +588,7 @@ export function visitForOfStatement(
         }
       }
     } else {
-      const varType = varDecl.type
-        ? this.mapTypeWithGenerics(varDecl.type.getText(), varDecl.type)
-        : this.mapTypeWithGenerics("object");
+      const varType = variableTypeSymbol ?? this.mapTypeWithGenerics("object");
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, varType, false, false);
       }
