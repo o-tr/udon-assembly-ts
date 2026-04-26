@@ -575,13 +575,59 @@ export function inferType(
       return ObjectType;
     case ts.SyntaxKind.NewExpression: {
       const newExpr = node as ts.NewExpression;
+      if (this.checkerTypeResolver) {
+        try {
+          const resolved = this.checkerTypeResolver.resolveFromTsNode(newExpr);
+          if (resolved && resolved !== ObjectType) return resolved;
+        } catch {
+          // Fall through to legacy resolution
+        }
+      }
       if (ts.isIdentifier(newExpr.expression)) {
         const baseName = newExpr.expression.text;
         if (newExpr.typeArguments && newExpr.typeArguments.length > 0) {
-          const args = newExpr.typeArguments.map((a) => a.getText()).join(", ");
-          return this.mapTypeWithGenerics(`${baseName}<${args}>`);
+          const typeArgs = newExpr.typeArguments.map((a) =>
+            this.mapTypeWithGenerics(a.getText(), a),
+          );
+          if (baseName === "Array" || baseName === "ReadonlyArray") {
+            return new ArrayTypeSymbol(typeArgs[0] ?? ObjectType);
+          }
+          if (baseName === "UdonDictionary" || baseName === "Dictionary") {
+            return new CollectionTypeSymbol(
+              baseName,
+              undefined,
+              typeArgs[0] ?? ObjectType,
+              typeArgs[1] ?? ObjectType,
+            );
+          }
+          if (
+            baseName === "UdonList" ||
+            baseName === "List" ||
+            baseName === "UdonQueue" ||
+            baseName === "Queue" ||
+            baseName === "UdonStack" ||
+            baseName === "Stack" ||
+            baseName === "UdonHashSet" ||
+            baseName === "HashSet"
+          ) {
+            return new CollectionTypeSymbol(
+              baseName,
+              typeArgs[0] ?? ObjectType,
+            );
+          }
+          // Unknown class with type arguments — degrade to bare-name
+          // resolution. The TypeChecker resolver tried first (above) and
+          // failed; consult typeMapper non-throwingly so unmappable
+          // identifiers (e.g. lowercase `new someThing<T>()`) don't break
+          // best-effort inferType callers. Generic params are checked
+          // first to keep `new K()` parity with the pre-refactor path.
+          const generic = this.resolveGenericParam(baseName);
+          if (generic) return generic;
+          return this.typeMapper.tryMapTypeScriptType(baseName) ?? ObjectType;
         }
-        return this.mapTypeWithGenerics(baseName);
+        const genericNoArgs = this.resolveGenericParam(baseName);
+        if (genericNoArgs) return genericNoArgs;
+        return this.typeMapper.tryMapTypeScriptType(baseName) ?? ObjectType;
       }
       return ObjectType;
     }

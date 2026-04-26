@@ -231,7 +231,7 @@ export function assignToTarget(
           if (inlined == null) {
             const thisVar = createVariable(
               "this",
-              this.typeMapper.mapTypeScriptType(entryClassName),
+              new ClassTypeSymbol(entryClassName, UdonType.Object),
             );
             this.emit(
               new MethodCallInstruction(undefined, thisVar, callback, []),

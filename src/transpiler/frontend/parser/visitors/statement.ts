@@ -1,9 +1,9 @@
 import * as ts from "typescript";
 import {
   ArrayTypeSymbol,
+  extractArrayLiteralHint,
   InterfaceTypeSymbol,
   ObjectType,
-  PrimitiveTypeSymbol,
   PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
@@ -268,18 +268,9 @@ export function visitVariableStatement(
 
   if (declaration.initializer) {
     if (ts.isArrayLiteralExpression(declaration.initializer)) {
-      let typeHint: string | undefined;
-      if (declaration.type) {
-        typeHint = declaration.type.getText().replace(/\[\]$/, "");
-      } else if (
-        type instanceof ArrayTypeSymbol &&
-        type.elementType instanceof PrimitiveTypeSymbol
-      ) {
-        typeHint = type.elementType.name;
-      }
       result.initializer = this.visitArrayLiteralExpression(
         declaration.initializer,
-        typeHint,
+        extractArrayLiteralHint(type),
       );
     } else {
       result.initializer = this.visitExpression(declaration.initializer);
@@ -533,7 +524,7 @@ export function visitForOfStatement(
 
   let varName: string | string[] = "";
   let varDecl: ts.VariableDeclaration | null = null;
-  let variableTypeText: string | undefined;
+  let variableTypeSymbol: TypeSymbol | undefined;
   let destructureProperties:
     | Array<{ name: string; property: string }>
     | undefined;
@@ -548,7 +539,9 @@ export function visitForOfStatement(
         "Add a variable declaration.",
       );
     }
-    variableTypeText = varDecl.type ? varDecl.type.getText() : undefined;
+    variableTypeSymbol = varDecl.type
+      ? this.mapTypeWithGenerics(varDecl.type.getText(), varDecl.type)
+      : undefined;
     varName = varDecl.name.getText();
     if (ts.isArrayBindingPattern(varDecl.name)) {
       varName = varDecl.name.elements
@@ -595,9 +588,7 @@ export function visitForOfStatement(
         }
       }
     } else {
-      const varType = varDecl.type
-        ? this.mapTypeWithGenerics(varDecl.type.getText(), varDecl.type)
-        : this.mapTypeWithGenerics("object");
+      const varType = variableTypeSymbol ?? this.mapTypeWithGenerics("object");
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, varType, false, false);
       }
@@ -636,7 +627,7 @@ export function visitForOfStatement(
   const result: ForOfStatementNode = this.attachLoc(node, {
     kind: ASTNodeKind.ForOfStatement,
     variable: varName,
-    variableType: variableTypeText,
+    variableType: variableTypeSymbol,
     destructureProperties,
     iterable,
     body,

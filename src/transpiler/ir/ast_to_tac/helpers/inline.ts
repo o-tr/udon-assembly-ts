@@ -1040,7 +1040,7 @@ export function mapStaticProperty(
       !(propType instanceof InterfaceTypeSymbol) &&
       resolved.prop.originalTypeName
     ) {
-      const lateResolved = this.typeMapper.mapTypeScriptType(
+      const lateResolved = this.typeMapper.getAlias(
         resolved.prop.originalTypeName,
       );
       if (
@@ -1079,9 +1079,7 @@ export function emitStaticPropertyInitializers(
       !(resolvedPropType instanceof InterfaceTypeSymbol) &&
       prop.originalTypeName
     ) {
-      const lateResolved = converter.typeMapper.mapTypeScriptType(
-        prop.originalTypeName,
-      );
+      const lateResolved = converter.typeMapper.getAlias(prop.originalTypeName);
       if (
         lateResolved instanceof InterfaceTypeSymbol &&
         lateResolved.properties.size > 0
@@ -1191,9 +1189,7 @@ function emitInlinePropertyInitializersForClass(
       !(resolvedPropType instanceof InterfaceTypeSymbol) &&
       prop.originalTypeName
     ) {
-      const lateResolved = converter.typeMapper.mapTypeScriptType(
-        prop.originalTypeName,
-      );
+      const lateResolved = converter.typeMapper.getAlias(prop.originalTypeName);
       if (
         lateResolved instanceof InterfaceTypeSymbol &&
         lateResolved.properties.size > 0
@@ -1614,7 +1610,7 @@ export function visitInlineStaticMethodCall(
     !(returnType instanceof InterfaceTypeSymbol) &&
     method.originalReturnTypeName
   ) {
-    const lateResolved = this.typeMapper.mapTypeScriptType(
+    const lateResolved = this.typeMapper.getAlias(
       method.originalReturnTypeName,
     );
     if (
@@ -2264,7 +2260,7 @@ function inlineResolvedMethodBody(
     !(returnType instanceof InterfaceTypeSymbol) &&
     method.originalReturnTypeName
   ) {
-    const lateResolved = converter.typeMapper.mapTypeScriptType(
+    const lateResolved = converter.typeMapper.getAlias(
       method.originalReturnTypeName,
     );
     if (
@@ -2837,10 +2833,7 @@ export function collectRecursiveLocals(
             locals.set(name, ObjectType);
           }
         } else {
-          const mappedType = forOfNode.variableType
-            ? this.typeMapper.mapTypeScriptType(forOfNode.variableType)
-            : ObjectType;
-          locals.set(forOfNode.variable, mappedType);
+          locals.set(forOfNode.variable, forOfNode.variableType ?? ObjectType);
         }
         if (forOfNode.destructureProperties) {
           for (const entry of forOfNode.destructureProperties) {

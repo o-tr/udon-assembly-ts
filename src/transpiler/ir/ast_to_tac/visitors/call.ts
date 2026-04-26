@@ -5,6 +5,7 @@ import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
@@ -1292,7 +1293,7 @@ export function visitCallExpression(
       // call on `this` (use the real `this` operand so SendCustomEventDelayedFrames
       // is invoked on the behaviour instance)
       const classType = this.currentClassName
-        ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+        ? new ClassTypeSymbol(this.currentClassName, UdonType.Object)
         : ObjectType;
       const thisOperand = createVariable("this", classType);
       this.emit(
@@ -1514,10 +1515,16 @@ export function visitCallExpression(
         calleeName === "UdonStack" ||
         calleeName === "UdonHashSet")
     ) {
-      const typeArgText = node.typeArguments?.length
-        ? `${calleeName}<${node.typeArguments.join(", ")}>`
-        : calleeName;
-      const collectionType = this.typeMapper.mapTypeScriptType(typeArgText);
+      const typeArgs = node.typeArguments;
+      const collectionType =
+        calleeName === "UdonDictionary"
+          ? new CollectionTypeSymbol(
+              calleeName,
+              undefined,
+              typeArgs?.[0] ?? ObjectType,
+              typeArgs?.[1] ?? ObjectType,
+            )
+          : new CollectionTypeSymbol(calleeName, typeArgs?.[0] ?? ObjectType);
       const collectionResult = this.newTemp(collectionType);
       const evaluatedArgs = getArgs();
       const paramTypes = evaluatedArgs.map(
@@ -1576,9 +1583,7 @@ export function visitCallExpression(
               ? rawVal
               : null;
           if (count !== null) {
-            const elemType = this.typeMapper.mapTypeScriptType(
-              node.typeArguments[0],
-            );
+            const elemType = node.typeArguments[0];
             if (getNativeArrayTypeName(elemType.udonType) !== null) {
               const nativeType = new NativeArrayTypeSymbol(elemType);
               const nativeResult = this.newTemp(nativeType);
@@ -1601,9 +1606,7 @@ export function visitCallExpression(
       }
 
       const evaluatedArgs = getArgs();
-      const arrayType = node.typeArguments?.[0]
-        ? this.typeMapper.mapTypeScriptType(node.typeArguments[0])
-        : ObjectType;
+      const arrayType = node.typeArguments?.[0] ?? ObjectType;
       const listResult = this.newTemp(new DataListTypeSymbol(arrayType));
       const externSig = this.requireExternSignature(
         "DataList",
@@ -2124,8 +2127,7 @@ export function visitCallExpression(
       propAccess.property === "GetComponent" &&
       node.typeArguments?.length === 1
     ) {
-      const targetType = node.typeArguments[0] ?? "object";
-      const targetTypeSymbol = this.typeMapper.mapTypeScriptType(targetType);
+      const targetTypeSymbol = node.typeArguments[0];
       // typeId is always 0 — UdonSharp's runtime resolves types internally
       // and our computed hash would not match.
       const typeOperand = createConstant(0n, PrimitiveTypes.int64);
@@ -3550,10 +3552,13 @@ function emitSetConstructor(
   converter: ASTToTACConverter,
   node: CallExpressionNode,
 ): TACOperand {
-  const typeArgText = node.typeArguments?.length
-    ? `Set<${node.typeArguments.join(", ")}>`
-    : "Set";
-  const setType = converter.typeMapper.mapTypeScriptType(typeArgText);
+  const setElement = node.typeArguments?.[0] ?? ObjectType;
+  const setType = new CollectionTypeSymbol(
+    ExternTypes.dataDictionary.name,
+    setElement,
+    setElement,
+    PrimitiveTypes.boolean,
+  );
   const setResult = converter.newTemp(setType);
   const ctorSig = converter.requireExternSignature(
     "DataDictionary",
@@ -3688,10 +3693,12 @@ function emitMapConstructor(
   converter: ASTToTACConverter,
   node: CallExpressionNode,
 ): TACOperand {
-  const typeArgText = node.typeArguments?.length
-    ? `Map<${node.typeArguments.join(", ")}>`
-    : "Map";
-  const mapType = converter.typeMapper.mapTypeScriptType(typeArgText);
+  const mapType = new CollectionTypeSymbol(
+    ExternTypes.dataDictionary.name,
+    undefined,
+    node.typeArguments?.[0] ?? ObjectType,
+    node.typeArguments?.[1] ?? ObjectType,
+  );
   const mapResult = converter.newTemp(mapType);
   const ctorSig = converter.requireExternSignature(
     "DataDictionary",
@@ -4370,19 +4377,19 @@ export function getUdonTypeConverterTargetType(
 ): TypeSymbol | null {
   switch (methodName) {
     case "toUdonByte":
-      return this.typeMapper.mapTypeScriptType("UdonByte");
+      return PrimitiveTypes.byte;
     case "toUdonInt":
-      return this.typeMapper.mapTypeScriptType("UdonInt");
+      return PrimitiveTypes.int32;
     case "toUdonFloat":
-      return this.typeMapper.mapTypeScriptType("UdonFloat");
+      return PrimitiveTypes.single;
     case "toUdonDouble":
-      return this.typeMapper.mapTypeScriptType("UdonDouble");
+      return PrimitiveTypes.double;
     case "toUdonLong":
     case "numberToUdonLong":
-      return this.typeMapper.mapTypeScriptType("UdonLong");
+      return PrimitiveTypes.int64;
     case "toUdonULong":
     case "numberToUdonULong":
-      return this.typeMapper.mapTypeScriptType("UdonULong");
+      return PrimitiveTypes.uint64;
     default:
       return null;
   }

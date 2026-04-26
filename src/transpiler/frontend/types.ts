@@ -303,7 +303,7 @@ export type ArrayLiteralElementNode =
 export interface ArrayLiteralExpressionNode extends ASTNode {
   kind: ASTNodeKind.ArrayLiteralExpression;
   elements: ArrayLiteralElementNode[];
-  typeHint?: string;
+  typeHint?: TypeSymbol;
 }
 
 /**
@@ -385,7 +385,7 @@ export interface ForStatementNode extends ASTNode {
 export interface ForOfStatementNode extends ASTNode {
   kind: ASTNodeKind.ForOfStatement;
   variable: string | string[];
-  variableType?: string;
+  variableType?: TypeSymbol;
   destructureProperties?: Array<{ name: string; property: string }>;
   iterable: ASTNode;
   body: ASTNode;
@@ -520,7 +520,7 @@ export interface CallExpressionNode extends ASTNode {
   kind: ASTNodeKind.CallExpression;
   callee: ASTNode;
   arguments: ASTNode[];
-  typeArguments?: string[];
+  typeArguments?: TypeSymbol[];
   isNew?: boolean;
 }
 

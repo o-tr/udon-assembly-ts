@@ -508,7 +508,7 @@ export function resolveTypeFromNode(
   switch (node.kind) {
     case ASTNodeKind.ThisExpression:
       return converter.currentClassName
-        ? converter.typeMapper.mapTypeScriptType(converter.currentClassName)
+        ? new ClassTypeSymbol(converter.currentClassName, UdonType.Object)
         : null;
     case ASTNodeKind.Identifier: {
       const symbol = converter.symbolTable.lookup(
@@ -1431,11 +1431,8 @@ export function visitArrayLiteralExpression(
 
     if (allTypedArrays) {
       let baseType = resolvedTypes[0];
-      if (node.typeHint) {
-        const contextType = this.typeMapper.mapTypeScriptType(node.typeHint);
-        if (contextType instanceof ArrayTypeSymbol) {
-          baseType = contextType;
-        }
+      if (node.typeHint instanceof ArrayTypeSymbol) {
+        baseType = node.typeHint;
       }
       const allCompatible = resolvedTypes.every((t) =>
         t.isAssignableTo(baseType),
@@ -1455,9 +1452,7 @@ export function visitArrayLiteralExpression(
     }
   }
 
-  const elementType = node.typeHint
-    ? this.typeMapper.mapTypeScriptType(node.typeHint)
-    : ObjectType;
+  const elementType = node.typeHint ?? ObjectType;
 
   // Native fixed-length array path: emit when the variable is eligible and
   // all elements are non-spread, so the length is known at compile time.
@@ -2808,7 +2803,7 @@ export function visitThisExpression(
     return createVariable(`${instancePrefix}__handle`, ObjectType);
   }
   const classType = this.currentClassName
-    ? this.typeMapper.mapTypeScriptType(this.currentClassName)
+    ? new ClassTypeSymbol(this.currentClassName, UdonType.Object)
     : ObjectType;
   return createVariable("this", classType);
 }
