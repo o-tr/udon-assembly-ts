@@ -158,10 +158,7 @@ describe("TypeCheckerTypeResolver", () => {
     const { context, resolver } = createResolverFromSource(source, filePath);
     const sourceFile = context.getSourceFile(filePath);
     expect(sourceFile).toBeDefined();
-    const arrow = findNode(
-      sourceFile as ts.SourceFile,
-      ts.isArrowFunction,
-    );
+    const arrow = findNode(sourceFile as ts.SourceFile, ts.isArrowFunction);
     const callback = (arrow.parent as ts.CallExpression).arguments[0];
     const resolved = resolver.resolveFromTsNode(callback);
     expect(resolved).toBe(ObjectType);
@@ -262,15 +259,10 @@ describe("TypeCheckerTypeResolver", () => {
     const { context, resolver } = createResolverFromSource(source, filePath);
     const sourceFile = context.getSourceFile(filePath);
     expect(sourceFile).toBeDefined();
-    const fn = findNode(
-      sourceFile as ts.SourceFile,
-      ts.isFunctionDeclaration,
-    );
+    const fn = findNode(sourceFile as ts.SourceFile, ts.isFunctionDeclaration);
     const returnTypeNode = fn.type;
     expect(returnTypeNode).toBeDefined();
-    const resolved = resolver.resolveFromTsNode(
-      returnTypeNode as ts.TypeNode,
-    );
+    const resolved = resolver.resolveFromTsNode(returnTypeNode as ts.TypeNode);
     expect(resolved).toBe(ObjectType);
   });
 });
