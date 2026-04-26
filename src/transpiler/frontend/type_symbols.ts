@@ -523,3 +523,59 @@ export function mapCSharpTypeToTypeSymbol(
       return null;
   }
 }
+
+const UDON_TYPE_TO_CSHARP_FQN: Record<string, string> = {
+  Int32: "System.Int32",
+  Single: "System.Single",
+  Boolean: "System.Boolean",
+  String: "System.String",
+  Array: "System.Array",
+  Void: "System.Void",
+  Byte: "System.Byte",
+  SByte: "System.SByte",
+  Int16: "System.Int16",
+  UInt16: "System.UInt16",
+  UInt32: "System.UInt32",
+  Int64: "System.Int64",
+  UInt64: "System.UInt64",
+  Double: "System.Double",
+  Vector2: "UnityEngine.Vector2",
+  Vector3: "UnityEngine.Vector3",
+  Vector4: "UnityEngine.Vector4",
+  Quaternion: "UnityEngine.Quaternion",
+  Color: "UnityEngine.Color",
+  Transform: "UnityEngine.Transform",
+  GameObject: "UnityEngine.GameObject",
+  AudioSource: "UnityEngine.AudioSource",
+  AudioClip: "UnityEngine.AudioClip",
+  Animator: "UnityEngine.Animator",
+  Component: "UnityEngine.Component",
+  VRCPlayerApi: "VRC.SDKBase.VRCPlayerApi",
+  UdonBehaviour: "VRC.Udon.UdonBehaviour",
+  Object: "System.Object",
+  Type: "System.Type",
+  DataList: "VRC.SDK3.Data.DataList",
+  DataDictionary: "VRC.SDK3.Data.DataDictionary",
+  DataToken: "VRC.SDK3.Data.DataToken",
+};
+
+/**
+ * Convert a TypeSymbol to its .NET fully-qualified type name (e.g. "System.Int32").
+ *
+ * Falls back to `symbol.name` in two cases:
+ *   1. The udonType has no FQN mapping (e.g. NativeArray, user-defined externs).
+ *   2. The udonType is `Object` but the symbol is not the canonical `ObjectType`
+ *      placeholder — i.e. a user class, interface, generic parameter, or
+ *      non-Data collection (Map/Set/etc) that happens to share `UdonType.Object`.
+ *      Returning "System.Object" for those would lose the original type identity,
+ *      so we keep the TS-source name (matches legacy passthrough behavior).
+ */
+export function typeSymbolToCSharp(symbol: TypeSymbol): string {
+  if (symbol instanceof ArrayTypeSymbol) {
+    return `${typeSymbolToCSharp(symbol.elementType)}${"[]".repeat(symbol.dimensions)}`;
+  }
+  if (symbol.udonType === UdonType.Object && symbol.name !== "object") {
+    return symbol.name;
+  }
+  return UDON_TYPE_TO_CSHARP_FQN[symbol.udonType] ?? symbol.name;
+}
