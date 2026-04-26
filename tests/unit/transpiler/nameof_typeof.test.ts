@@ -58,4 +58,24 @@ describe("nameof/typeof", () => {
       ),
     ).toBe(true);
   });
+
+  it("resolves typeof on a Unity-extern type to the .NET FQN", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          let value: Vector3;
+          const t = typeof value;
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    expect(stringify(tac)).toContain('"UnityEngine.Vector3"');
+  });
 });

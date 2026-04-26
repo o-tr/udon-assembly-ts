@@ -17,6 +17,7 @@ import {
   ObjectType,
   PrimitiveTypeSymbol,
   PrimitiveTypes,
+  typeSymbolToCSharp,
 } from "../../../frontend/type_symbols.js";
 import type { SymbolInfo } from "../../../frontend/types.js";
 import {
@@ -3178,27 +3179,11 @@ export function visitNameofExpression(
   return createConstant(node.name, PrimitiveTypes.string);
 }
 
-const SHORT_TO_DOTNET_TYPE: Record<string, string> = {
-  float: "System.Single",
-  int: "System.Int32",
-  bool: "System.Boolean",
-  string: "System.String",
-  double: "System.Double",
-  object: "System.Object",
-  byte: "System.Byte",
-  sbyte: "System.SByte",
-  short: "System.Int16",
-  ushort: "System.UInt16",
-  uint: "System.UInt32",
-  long: "System.Int64",
-  ulong: "System.UInt64",
-};
-
 export function visitTypeofExpression(
   this: ASTToTACConverter,
   node: TypeofExpressionNode,
 ): TACOperand {
-  const qualifiedName = SHORT_TO_DOTNET_TYPE[node.typeName] ?? node.typeName;
+  const qualifiedName = typeSymbolToCSharp(node.typeSymbol);
   const typeNameConst = createConstant(qualifiedName, PrimitiveTypes.string);
   const result = this.newTemp(ExternTypes.systemType);
   const externSig = this.requireExternSignature(

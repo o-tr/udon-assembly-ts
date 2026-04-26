@@ -518,15 +518,18 @@ export function visitTypeofExpression(
 ): TypeofExpressionNode {
   const expr = node.expression;
   let typeName = "object";
+  let typeSymbol: TypeSymbol = ObjectType;
   if (ts.isIdentifier(expr)) {
     const symbol = this.symbolTable.lookup(expr.text);
     if (symbol) {
       typeName = symbol.type.name;
+      typeSymbol = symbol.type;
     }
   }
   return this.attachLoc(node, {
     kind: ASTNodeKind.TypeofExpression,
     typeName,
+    typeSymbol,
   });
 }
 

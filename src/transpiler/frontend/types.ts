@@ -585,7 +585,17 @@ export interface NameofExpressionNode extends ASTNode {
  */
 export interface TypeofExpressionNode extends ASTNode {
   kind: ASTNodeKind.TypeofExpression;
+  /**
+   * TS-source name (e.g. "string", "int", "Vector3"). Kept for diagnostics
+   * and as a stable identity for the dual-field migration; IR consumers
+   * should prefer `typeSymbol`.
+   */
   typeName: string;
+  /**
+   * Resolved at parse-time. Defaults to `ObjectType` when the operand is not
+   * a resolvable identifier.
+   */
+  typeSymbol: TypeSymbol;
 }
 
 /**
