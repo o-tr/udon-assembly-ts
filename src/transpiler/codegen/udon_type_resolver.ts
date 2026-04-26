@@ -1,5 +1,5 @@
 import { UDON_TYPE_TO_CSHARP_FQN } from "../frontend/type_symbols.js";
-import type { UdonType } from "../frontend/types.js";
+import { UdonType } from "../frontend/types.js";
 import { typeMetadataRegistry } from "./type_metadata_registry.js";
 
 /**
@@ -9,7 +9,7 @@ export function udonTypeToCSharp(udonType: string): string {
   return UDON_TYPE_TO_CSHARP_FQN[udonType as UdonType] ?? udonType;
 }
 
-export const TS_TO_CSHARP = new Map<string, string>([
+const TS_PRIMITIVE_ALIASES = new Map<string, string>([
   ["number", "System.Single"],
   ["boolean", "System.Boolean"],
   ["string", "System.String"],
@@ -62,6 +62,13 @@ export const TS_TO_CSHARP = new Map<string, string>([
   ["UdonDouble", "System.Double"],
   ["UdonLong", "System.Int64"],
   ["UdonULong", "System.UInt64"],
+]);
+
+export const TS_TO_CSHARP = new Map<string, string>([
+  ...TS_PRIMITIVE_ALIASES,
+  ...(Object.entries(UDON_TYPE_TO_CSHARP_FQN).filter(
+    ([key]) => key !== UdonType.Char && key !== UdonType.Decimal,
+  ) as Array<[string, string]>),
 ]);
 
 const EXTERN_TYPE_ALIASES = new Map<string, string>();

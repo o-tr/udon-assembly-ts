@@ -564,6 +564,8 @@ export function mapCSharpTypeToTypeSymbol(
 }
 
 export const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
+  // NativeArray intentionally omitted — handled by the NativeArrayTypeSymbol
+  // instanceof branch in typeSymbolToCSharp.
   [UdonType.Int32]: "System.Int32",
   [UdonType.Single]: "System.Single",
   [UdonType.Boolean]: "System.Boolean",
