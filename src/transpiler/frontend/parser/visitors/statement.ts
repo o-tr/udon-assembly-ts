@@ -1,11 +1,11 @@
 import * as ts from "typescript";
 import {
   ArrayTypeSymbol,
+  extractArrayLiteralHint,
   InterfaceTypeSymbol,
   ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
-  extractArrayLiteralHint,
 } from "../../type_symbols.js";
 import {
   type ArrayAccessExpressionNode,

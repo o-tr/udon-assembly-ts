@@ -14,9 +14,9 @@ import {
 } from "../type_checker_type_resolver.js";
 import { TypeMapper } from "../type_mapper.js";
 import {
+  extractArrayLiteralHint,
   type InterfaceTypeSymbol,
   type TypeSymbol,
-  extractArrayLiteralHint,
 } from "../type_symbols.js";
 import { type ASTNode, ASTNodeKind, type ProgramNode } from "../types.js";
 import {
