@@ -9,6 +9,8 @@ import {
 import { TypeMapper } from "../../../src/transpiler/frontend/type_mapper.js";
 import {
   ArrayTypeSymbol,
+  InterfaceTypeSymbol,
+  ObjectType,
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols.js";
 import {
@@ -131,5 +133,127 @@ describe("TypeCheckerTypeResolver", () => {
       context,
     );
     expect(resolved).toBe(PrimitiveTypes.boolean);
+  });
+
+  it("collapses arrow function types to ObjectType (step A)", () => {
+    const filePath = "/virtual/type_resolver_arrow_fn.ts";
+    const source = "const f: (x: number) => string = (x) => x.toString();";
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const declaration = findNode(
+      sourceFile as ts.SourceFile,
+      ts.isVariableDeclaration,
+    );
+    const resolved = resolver.resolveFromTsNode(declaration.name);
+    expect(resolved).toBe(ObjectType);
+  });
+
+  it("collapses Array.map callback parameter types to ObjectType (step A)", () => {
+    const filePath = "/virtual/type_resolver_array_map_cb.ts";
+    const source = `
+      const xs = [1, 2, 3];
+      xs.map((value, index) => value + index);
+    `;
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const arrow = findNode(
+      sourceFile as ts.SourceFile,
+      ts.isArrowFunction,
+    );
+    const callType = (arrow.parent as ts.CallExpression).arguments[0];
+    const resolved = resolver.resolveFromTsNode(callType);
+    expect(resolved).toBe(ObjectType);
+  });
+
+  it("does not collapse symbol-backed callable interfaces (step A negative)", () => {
+    const filePath = "/virtual/type_resolver_callable_iface.ts";
+    const source = `
+      interface F { (x: number): string }
+      declare const f: F;
+    `;
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const declaration = findNode(
+      sourceFile as ts.SourceFile,
+      (n): n is ts.VariableDeclaration =>
+        ts.isVariableDeclaration(n) &&
+        ts.isIdentifier(n.name) &&
+        n.name.text === "f",
+    );
+    const resolved = resolver.resolveFromTsNode(declaration.name);
+    expect(resolved).toBeInstanceOf(InterfaceTypeSymbol);
+    expect((resolved as InterfaceTypeSymbol).name).toBe("F");
+  });
+
+  it("preserves anonymous callable types that also have properties (step A negative)", () => {
+    const filePath = "/virtual/type_resolver_callable_with_props.ts";
+    const source = `
+      declare const f: { (): void; foo: string };
+    `;
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const declaration = findNode(
+      sourceFile as ts.SourceFile,
+      (n): n is ts.VariableDeclaration =>
+        ts.isVariableDeclaration(n) &&
+        ts.isIdentifier(n.name) &&
+        n.name.text === "f",
+    );
+    const resolved = resolver.resolveFromTsNode(declaration.name);
+    expect(resolved).toBeInstanceOf(InterfaceTypeSymbol);
+    expect((resolved as InterfaceTypeSymbol).properties.has("foo")).toBe(true);
+  });
+
+  it("collapses any to ObjectType (step B)", () => {
+    const filePath = "/virtual/type_resolver_any.ts";
+    const source = "let x: any;";
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const declaration = findNode(
+      sourceFile as ts.SourceFile,
+      ts.isVariableDeclaration,
+    );
+    const resolved = resolver.resolveFromTsNode(declaration.name);
+    expect(resolved).toBe(ObjectType);
+  });
+
+  it("collapses unknown to ObjectType (step B)", () => {
+    const filePath = "/virtual/type_resolver_unknown.ts";
+    const source = "let x: unknown;";
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const declaration = findNode(
+      sourceFile as ts.SourceFile,
+      ts.isVariableDeclaration,
+    );
+    const resolved = resolver.resolveFromTsNode(declaration.name);
+    expect(resolved).toBe(ObjectType);
+  });
+
+  it("collapses never return type to ObjectType (step B)", () => {
+    const filePath = "/virtual/type_resolver_never.ts";
+    const source = `
+      function f(): never { throw new Error("x"); }
+      const r = f;
+    `;
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const fn = findNode(
+      sourceFile as ts.SourceFile,
+      ts.isFunctionDeclaration,
+    );
+    const returnTypeNode = fn.type;
+    expect(returnTypeNode).toBeDefined();
+    const resolved = resolver.resolveFromTsNode(
+      returnTypeNode as ts.TypeNode,
+    );
+    expect(resolved).toBe(ObjectType);
   });
 });
