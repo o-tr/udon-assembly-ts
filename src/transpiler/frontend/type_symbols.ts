@@ -524,7 +524,7 @@ export function mapCSharpTypeToTypeSymbol(
   }
 }
 
-const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
+export const UDON_TYPE_TO_CSHARP_FQN: Record<string, string> = {
   [UdonType.Int32]: "System.Int32",
   [UdonType.Single]: "System.Single",
   [UdonType.Boolean]: "System.Boolean",
@@ -557,6 +557,19 @@ const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
   [UdonType.DataList]: "VRC.SDK3.Data.DataList",
   [UdonType.DataDictionary]: "VRC.SDK3.Data.DataDictionary",
   [UdonType.DataToken]: "VRC.SDK3.Data.DataToken",
+  Char: "System.Char",
+  Decimal: "System.Decimal",
+  Material: "UnityEngine.Material",
+  Renderer: "UnityEngine.Renderer",
+  MeshRenderer: "UnityEngine.MeshRenderer",
+  Collider: "UnityEngine.Collider",
+  BoxCollider: "UnityEngine.BoxCollider",
+  SphereCollider: "UnityEngine.SphereCollider",
+  Rigidbody: "UnityEngine.Rigidbody",
+  Camera: "UnityEngine.Camera",
+  Canvas: "UnityEngine.Canvas",
+  RectTransform: "UnityEngine.RectTransform",
+  NetworkEventTarget: "VRC.Udon.Common.Enums.NetworkEventTarget",
 };
 
 /**
