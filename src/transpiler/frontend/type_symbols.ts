@@ -523,3 +523,67 @@ export function mapCSharpTypeToTypeSymbol(
       return null;
   }
 }
+
+const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
+  [UdonType.Int32]: "System.Int32",
+  [UdonType.Single]: "System.Single",
+  [UdonType.Boolean]: "System.Boolean",
+  [UdonType.String]: "System.String",
+  [UdonType.Array]: "System.Array",
+  [UdonType.Void]: "System.Void",
+  [UdonType.Byte]: "System.Byte",
+  [UdonType.SByte]: "System.SByte",
+  [UdonType.Int16]: "System.Int16",
+  [UdonType.UInt16]: "System.UInt16",
+  [UdonType.UInt32]: "System.UInt32",
+  [UdonType.Int64]: "System.Int64",
+  [UdonType.UInt64]: "System.UInt64",
+  [UdonType.Double]: "System.Double",
+  [UdonType.Vector2]: "UnityEngine.Vector2",
+  [UdonType.Vector3]: "UnityEngine.Vector3",
+  [UdonType.Vector4]: "UnityEngine.Vector4",
+  [UdonType.Quaternion]: "UnityEngine.Quaternion",
+  [UdonType.Color]: "UnityEngine.Color",
+  [UdonType.Transform]: "UnityEngine.Transform",
+  [UdonType.GameObject]: "UnityEngine.GameObject",
+  [UdonType.AudioSource]: "UnityEngine.AudioSource",
+  [UdonType.AudioClip]: "UnityEngine.AudioClip",
+  [UdonType.Animator]: "UnityEngine.Animator",
+  [UdonType.Component]: "UnityEngine.Component",
+  [UdonType.VRCPlayerApi]: "VRC.SDKBase.VRCPlayerApi",
+  [UdonType.UdonBehaviour]: "VRC.Udon.UdonBehaviour",
+  [UdonType.Object]: "System.Object",
+  [UdonType.Type]: "System.Type",
+  [UdonType.DataList]: "VRC.SDK3.Data.DataList",
+  [UdonType.DataDictionary]: "VRC.SDK3.Data.DataDictionary",
+  [UdonType.DataToken]: "VRC.SDK3.Data.DataToken",
+};
+
+/**
+ * Convert a TypeSymbol to its .NET fully-qualified type name (e.g. "System.Int32").
+ *
+ * Array-like symbols (`ArrayTypeSymbol`, `NativeArrayTypeSymbol`) recurse on
+ * their element type and append `[]`, since `Type.GetType` accepts the C#
+ * array suffix syntax (e.g. "System.Single[]") but rejects the Udon system
+ * array name ("SystemSingleArray").
+ *
+ * Falls back to `symbol.name` in two cases:
+ *   1. The udonType has no FQN mapping.
+ *   2. The udonType is `Object` but the symbol is not the canonical `ObjectType`
+ *      placeholder — i.e. a user class, interface, generic parameter, or
+ *      non-Data collection (Map/Set/etc) that happens to share `UdonType.Object`.
+ *      Returning "System.Object" for those would lose the original type identity,
+ *      so we keep the TS-source name (matches legacy passthrough behavior).
+ */
+export function typeSymbolToCSharp(symbol: TypeSymbol): string {
+  if (symbol instanceof ArrayTypeSymbol) {
+    return `${typeSymbolToCSharp(symbol.elementType)}${"[]".repeat(symbol.dimensions)}`;
+  }
+  if (symbol instanceof NativeArrayTypeSymbol) {
+    return `${typeSymbolToCSharp(symbol.elementType)}[]`;
+  }
+  if (symbol.udonType === UdonType.Object && symbol.name !== "object") {
+    return symbol.name;
+  }
+  return UDON_TYPE_TO_CSHARP_FQN[symbol.udonType] ?? symbol.name;
+}
