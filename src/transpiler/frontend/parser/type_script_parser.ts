@@ -74,6 +74,7 @@ import {
   visitContinueStatement,
   visitDoWhileStatement,
   visitForOfStatement,
+  visitForInStatement,
   visitForStatement,
   visitIfStatement,
   visitNode,
@@ -252,6 +253,7 @@ export class TypeScriptParser {
   visitTryStatement = visitTryStatement;
   visitThrowStatement = visitThrowStatement;
   visitForStatement = visitForStatement;
+  visitForInStatement = visitForInStatement;
   visitForOfStatement = visitForOfStatement;
   visitBlock = visitBlock;
 

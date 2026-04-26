@@ -1,5 +1,9 @@
 import * as ts from "typescript";
 import { TranspileError } from "../errors/transpile_errors.js";
+import {
+  isStep10MetricsEnabled,
+  step10Metrics,
+} from "./type_resolution_metrics.js";
 import type { TypeCheckerContext } from "./type_checker_context.js";
 import type { TypeMapper } from "./type_mapper.js";
 import {
@@ -200,6 +204,13 @@ export class TypeCheckerTypeResolver {
     if (symbol) {
       const symFlags = symbol.flags;
 
+      if (symFlags & ts.SymbolFlags.ValueModule) {
+        const name = this.checker.symbolToString(symbol);
+        if (name === "symbol") {
+          return this.typeMapper.lookupBuiltinByName("Type") ?? ObjectType;
+        }
+      }
+
       // 7a. Type parameter → GenericTypeParameterSymbol
       if (symFlags & ts.SymbolFlags.TypeParameter) {
         const name = this.checker.symbolToString(symbol);
@@ -356,6 +367,7 @@ export class TypeCheckerTypeResolver {
       undefined,
       TYPE_TO_STRING_FLAGS,
     );
+    step10Metrics.record(typeText);
     const mapped = this.typeMapper.tryMapTypeScriptType(typeText);
     if (mapped !== null) return mapped;
     const trimmed = typeText.trim();
@@ -364,6 +376,9 @@ export class TypeCheckerTypeResolver {
         trimmed,
       ) && !trimmed.startsWith("__");
     if (isSimpleName) {
+      if (isStep10MetricsEnabled()) {
+        return ObjectType;
+      }
       // Hard error: simple-name type that cannot be mapped is likely a
       // missing extern. Throw directly rather than calling mapTypeScriptType
       // again, which would redo the entire failed mapping just to throw.

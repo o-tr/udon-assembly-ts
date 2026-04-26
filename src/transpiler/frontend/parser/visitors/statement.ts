@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { isStep10MetricsEnabled } from "../../type_resolution_metrics.js";
 import {
   ArrayTypeSymbol,
   extractArrayLiteralHint,
@@ -55,6 +56,8 @@ export function visitNode(
       return this.visitWhileStatement(node as ts.WhileStatement);
     case ts.SyntaxKind.ForStatement:
       return this.visitForStatement(node as ts.ForStatement);
+    case ts.SyntaxKind.ForInStatement:
+      return this.visitForInStatement(node as ts.ForInStatement);
     case ts.SyntaxKind.ForOfStatement:
       return this.visitForOfStatement(node as ts.ForOfStatement);
     case ts.SyntaxKind.SwitchStatement:
@@ -87,6 +90,15 @@ export function visitNode(
     case ts.SyntaxKind.InterfaceDeclaration:
       return this.visitInterfaceDeclaration(node as ts.InterfaceDeclaration);
     default:
+      if (isStep10MetricsEnabled()) {
+        if (
+          node.kind === ts.SyntaxKind.EmptyStatement ||
+          node.kind === ts.SyntaxKind.ExportAssignment ||
+          node.kind === ts.SyntaxKind.ModuleDeclaration
+        ) {
+          return undefined;
+        }
+      }
       this.reportUnsupportedNode(
         node,
         `Unsupported statement: ${ts.SyntaxKind[node.kind]}`,
@@ -102,12 +114,31 @@ export function visitVariableStatement(
 ): ASTNode | undefined {
   const declarations = node.declarationList.declarations;
   if (declarations.length > 1) {
-    this.reportUnsupportedNode(
-      node,
-      "Multiple variable declarations in a single statement are not supported",
-      "Split declarations into separate statements.",
-    );
-    return undefined;
+    if (!isStep10MetricsEnabled()) {
+      this.reportUnsupportedNode(
+        node,
+        "Multiple variable declarations in a single statement are not supported",
+        "Split declarations into separate statements.",
+      );
+      return undefined;
+    }
+    // Metrics mode: visit each declaration individually so type resolution
+    // runs on every initializer. visitNode returns a single ASTNode, so we
+    // visit-and-discard intermediates and return the first to keep symbol-
+    // table side effects without altering downstream AST shape.
+    const flags = node.declarationList.flags;
+    let firstResult: ASTNode | undefined;
+    for (let i = 0; i < declarations.length; i += 1) {
+      const decl = declarations[i];
+      if (!decl) continue;
+      const synth = ts.factory.createVariableStatement(
+        undefined,
+        ts.factory.createVariableDeclarationList([decl], flags),
+      );
+      const result = this.visitVariableStatement(synth);
+      if (i === 0) firstResult = result;
+    }
+    return firstResult;
   }
   const declaration = declarations[0];
   if (!declaration) return undefined;
@@ -632,6 +663,72 @@ export function visitForOfStatement(
     variable: varName,
     variableType: variableTypeSymbol,
     destructureProperties,
+    iterable,
+    body,
+  });
+
+  this.symbolTable.exitScope();
+  return result;
+}
+
+export function visitForInStatement(
+  this: TypeScriptParser,
+  node: ts.ForInStatement,
+): ForOfStatementNode {
+  const iterable = this.attachLoc(node.expression, {
+    kind: ASTNodeKind.CallExpression,
+    callee: {
+      kind: ASTNodeKind.PropertyAccessExpression,
+      object: {
+        kind: ASTNodeKind.Identifier,
+        name: "Object",
+      } as IdentifierNode,
+      property: "keys",
+    } as PropertyAccessExpressionNode,
+    arguments: [this.visitExpression(node.expression)],
+  });
+
+  this.symbolTable.enterScope();
+
+  let varName = "";
+  if (ts.isVariableDeclarationList(node.initializer)) {
+    const decl = node.initializer.declarations[0];
+    if (!decl) {
+      this.symbolTable.exitScope();
+      return this.reportUnsupportedNode(
+        node,
+        "For-in statement must declare a variable",
+        "Add a variable declaration.",
+      );
+    }
+    varName = decl.name.getText();
+  } else {
+    varName = node.initializer.getText();
+  }
+
+  if (!this.symbolTable.hasInCurrentScope(varName)) {
+    this.symbolTable.addSymbol(
+      varName,
+      this.mapTypeWithGenerics("string"),
+      false,
+      false,
+    );
+  }
+
+  const body = this.visitNode(node.statement);
+  if (!body) {
+    this.symbolTable.exitScope();
+    return this.reportUnsupportedNode(
+      node,
+      "For-in statement must have a body",
+      "Ensure the for-in statement has a body.",
+    );
+  }
+
+  const result: ForOfStatementNode = this.attachLoc(node, {
+    kind: ASTNodeKind.ForOfStatement,
+    variable: varName,
+    variableType: this.mapTypeWithGenerics("string"),
     iterable,
     body,
   });

@@ -118,7 +118,7 @@ async function main() {
       optimize: opts.optimize,
       reflect: opts.reflect,
       verbose: opts.verbose,
-      excludeDirs: [],
+      excludeDirs: ["node_modules"],
     };
 
     try {
