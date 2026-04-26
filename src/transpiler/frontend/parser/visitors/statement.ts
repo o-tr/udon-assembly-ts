@@ -290,8 +290,11 @@ export function visitTypeAliasDeclaration(
     this.typeMapper.registerTypeAlias(name, mapped);
     if (ts.isUnionTypeNode(node.type)) {
       const parts = node.type.types
-        .map((t) => t.getText())
-        .filter((p) => p !== "null" && p !== "undefined");
+        .filter((t) => {
+          const text = t.getText();
+          return text !== "null" && text !== "undefined";
+        })
+        .map((t) => this.mapTypeWithGenerics(t.getText(), t));
       if (parts.length > 1) {
         this.typeMapper.registerUnionAlias(name, parts);
       }

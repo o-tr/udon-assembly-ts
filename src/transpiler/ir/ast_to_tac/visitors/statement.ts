@@ -271,8 +271,7 @@ export function visitVariableDeclaration(
           );
           let bestMatch: InterfaceTypeSymbol | undefined;
           let bestMatchSize = 0;
-          for (const part of unionParts) {
-            const partType = this.typeMapper.mapTypeScriptType(part);
+          for (const partType of unionParts) {
             if (
               partType instanceof InterfaceTypeSymbol &&
               partType.properties.size > 0
@@ -1302,8 +1301,7 @@ export function visitReturnStatement(
         );
         let bestMatch: InterfaceTypeSymbol | undefined;
         let bestMatchSize = 0;
-        for (const part of unionParts) {
-          const partType = this.typeMapper.mapTypeScriptType(part);
+        for (const partType of unionParts) {
           if (
             partType instanceof InterfaceTypeSymbol &&
             partType.properties.size > 0
