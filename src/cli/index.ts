@@ -118,7 +118,6 @@ async function main() {
       optimize: opts.optimize,
       reflect: opts.reflect,
       verbose: opts.verbose,
-      excludeDirs: [],
     };
 
     try {

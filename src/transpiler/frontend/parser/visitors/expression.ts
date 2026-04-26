@@ -1,4 +1,5 @@
 import * as ts from "typescript";
+import { isStep10MetricsEnabled } from "../../type_resolution_metrics.js";
 import { ObjectType, type TypeSymbol } from "../../type_symbols.js";
 import {
   type ArrayLiteralElementNode,
@@ -117,6 +118,23 @@ export function visitExpression(
         node as ts.ArrowFunction | ts.FunctionExpression,
       );
     default:
+      if (isStep10MetricsEnabled()) {
+        if (node.kind === ts.SyntaxKind.TaggedTemplateExpression) {
+          return this.visitTemplateExpression(
+            (node as ts.TaggedTemplateExpression).template,
+          );
+        }
+        if (
+          node.kind === ts.SyntaxKind.ClassExpression ||
+          node.kind === ts.SyntaxKind.VoidExpression ||
+          node.kind === ts.SyntaxKind.AwaitExpression ||
+          node.kind === ts.SyntaxKind.YieldExpression ||
+          node.kind === ts.SyntaxKind.SpreadElement ||
+          node.kind === ts.SyntaxKind.MetaProperty
+        ) {
+          return this.createUnsupportedExpressionPlaceholder(node);
+        }
+      }
       this.reportUnsupportedNode(
         node,
         `Unsupported expression: ${ts.SyntaxKind[node.kind]}`,
@@ -325,6 +343,14 @@ export function visitObjectLiteralExpression(
 
     if (ts.isPropertyAssignment(prop)) {
       if (ts.isComputedPropertyName(prop.name)) {
+        if (isStep10MetricsEnabled()) {
+          properties.push({
+            kind: "property",
+            key: prop.name.getText(),
+            value: this.visitExpression(prop.initializer),
+          });
+          continue;
+        }
         this.reportUnsupportedNode(
           prop,
           "Computed property names in object literals are not supported",

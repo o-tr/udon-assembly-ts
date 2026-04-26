@@ -49,7 +49,8 @@ export function reportUnsupportedNode(
   suggestion?: string,
 ): never {
   const sourceFile = this.sourceFile ?? node.getSourceFile();
-  const position = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+  const start = node.pos >= 0 ? node.getStart() : 0;
+  const position = sourceFile.getLineAndCharacterOfPosition(start);
   const filePath = sourceFile.fileName || "<unknown>";
 
   throw new TranspileError(

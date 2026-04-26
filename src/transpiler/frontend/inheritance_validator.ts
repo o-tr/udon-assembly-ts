@@ -5,6 +5,7 @@
 import type { ErrorCollector } from "../errors/error_collector.js";
 import { TranspileError } from "../errors/transpile_errors.js";
 import type { ClassRegistry } from "./class_registry.js";
+import { isStep10MetricsEnabled } from "./type_resolution_metrics.js";
 
 const UDON_SHARP_BEHAVIOUR = "UdonSharpBehaviour";
 
@@ -84,6 +85,7 @@ export class InheritanceValidator {
   validateUdonBehaviourInterfaceConsistency(
     udonBehaviourInterfaces: Set<string>,
   ): void {
+    if (isStep10MetricsEnabled()) return;
     for (const cls of this.registry.getAllClasses()) {
       const isUdonBehaviour = cls.decorators.some(
         (d) => d.name === "UdonBehaviour",

@@ -10,7 +10,14 @@ export interface FileDiscoveryOptions {
   excludeDirs?: string[];
 }
 
-const DEFAULT_EXCLUDES = ["cli", "stubs", "test", "tests", "__tests__"];
+const DEFAULT_EXCLUDES = [
+  "cli",
+  "stubs",
+  "test",
+  "tests",
+  "__tests__",
+  "node_modules",
+];
 
 export function discoverTypeScriptFiles(
   options: FileDiscoveryOptions,
