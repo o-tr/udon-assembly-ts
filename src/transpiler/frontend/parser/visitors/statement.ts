@@ -675,22 +675,24 @@ export function visitForInStatement(
   this: TypeScriptParser,
   node: ts.ForInStatement,
 ): ForOfStatementNode {
+  const objectIdent: IdentifierNode = this.attachLoc(node.expression, {
+    kind: ASTNodeKind.Identifier,
+    name: "Object",
+  });
+  const callee: PropertyAccessExpressionNode = this.attachLoc(node.expression, {
+    kind: ASTNodeKind.PropertyAccessExpression,
+    object: objectIdent,
+    property: "keys",
+  });
   const iterable = this.attachLoc(node.expression, {
     kind: ASTNodeKind.CallExpression,
-    callee: {
-      kind: ASTNodeKind.PropertyAccessExpression,
-      object: {
-        kind: ASTNodeKind.Identifier,
-        name: "Object",
-      } as IdentifierNode,
-      property: "keys",
-    } as PropertyAccessExpressionNode,
+    callee,
     arguments: [this.visitExpression(node.expression)],
   });
 
   this.symbolTable.enterScope();
 
-  let varName = "";
+  let varName: string | undefined;
   if (ts.isVariableDeclarationList(node.initializer)) {
     const decl = node.initializer.declarations[0];
     if (!decl) {
@@ -701,9 +703,24 @@ export function visitForInStatement(
         "Add a variable declaration.",
       );
     }
-    varName = decl.name.getText();
+    if (!ts.isIdentifier(decl.name)) {
+      this.symbolTable.exitScope();
+      return this.reportUnsupportedNode(
+        decl.name,
+        "Destructuring patterns in for-in are not supported",
+        "Use a single identifier loop variable.",
+      );
+    }
+    varName = decl.name.text;
+  } else if (ts.isIdentifier(node.initializer)) {
+    varName = node.initializer.text;
   } else {
-    varName = node.initializer.getText();
+    this.symbolTable.exitScope();
+    return this.reportUnsupportedNode(
+      node.initializer,
+      "For-in initializer must be a plain identifier",
+      "Use a single identifier loop variable.",
+    );
   }
 
   if (!this.symbolTable.hasInCurrentScope(varName)) {

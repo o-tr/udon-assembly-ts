@@ -16,9 +16,14 @@ let cachedEnabled: boolean | null = null;
 export function isStep10MetricsEnabled(): boolean {
   if (cachedEnabled !== null) return cachedEnabled;
   const value = process.env[STEP10_METRICS_ENV];
-  cachedEnabled =
-    value !== undefined && value !== "0" && value !== "false";
+  cachedEnabled = value !== undefined && value !== "0" && value !== "false";
   return cachedEnabled;
+}
+
+/** Test-only: clear the cached env-var snapshot so a test can flip
+ *  UDON_TS_STEP10_METRICS and observe the new value. */
+export function __resetStep10MetricsCacheForTest(): void {
+  cachedEnabled = null;
 }
 
 function getMetricsFilePath(): string {
@@ -48,13 +53,18 @@ class Step10MetricsCollector {
     }
   }
 
-  flushToFile(): void {
+  /** Returns true on a successful write, false if there was nothing to write
+   *  or if the write itself failed. The exit handler uses this to avoid
+   *  printing a "written to" line when the file isn't actually on disk. */
+  flushToFile(): boolean {
     const summary = this.flush();
-    if (summary === null) return;
+    if (summary === null) return false;
     try {
       fs.writeFileSync(getMetricsFilePath(), summary);
+      return true;
     } catch (e) {
       console.error("[step10-metrics] write failed:", e);
+      return false;
     }
   }
 
@@ -91,32 +101,41 @@ class Step10MetricsCollector {
     );
   }
 
+  // The handlers below are installed only when metrics mode is on and only
+  // once per process. They flush data and then defer to the host's default
+  // behavior (re-emitting the signal / re-throwing the error) so we don't
+  // hijack control from CLI consumers that have their own cleanup.
   private ensureHooked(): void {
     if (this.hooked) return;
     this.hooked = true;
-    // Periodic flush to a file path so OOM / hard crashes don't lose data.
     this.periodicTimer = setInterval(
       () => this.flushToFile(),
       PERIODIC_FLUSH_INTERVAL_MS,
     );
     this.periodicTimer.unref?.();
     process.on("exit", () => {
-      this.flushToFile();
-      const summary = this.flush();
-      if (summary) {
+      const written = this.flushToFile();
+      if (written) {
         console.error(`[step10-metrics] written to ${getMetricsFilePath()}`);
       }
     });
+    const signalExitCodes: Record<NodeJS.Signals, number> = {
+      SIGINT: 130,
+      SIGTERM: 143,
+    } as Record<NodeJS.Signals, number>;
     for (const sig of ["SIGINT", "SIGTERM"] as const) {
-      process.on(sig, () => {
+      process.once(sig, () => {
         this.flushToFile();
-        process.exit(1);
+        process.exitCode = signalExitCodes[sig];
+        process.kill(process.pid, sig);
       });
     }
-    process.on("uncaughtException", (err) => {
+    process.once("uncaughtException", (err) => {
       this.flushToFile();
-      console.error(err);
-      process.exit(1);
+      // Re-throw on next tick so node's default handler reports + exits.
+      process.nextTick(() => {
+        throw err;
+      });
     });
   }
 
@@ -127,14 +146,15 @@ class Step10MetricsCollector {
 
 function categorizeStep10Type(typeText: string): string {
   const trimmed = typeText.trim();
-  if (/^readonly\s+/.test(trimmed)) {
-    return categorizeStep10Type(trimmed.slice(9));
+  // Strip a leading `readonly ` modifier of any whitespace flavor before
+  // recursing so "readonly\tFoo[]" categorizes as "array".
+  const readonlyMatch = trimmed.match(/^readonly\s+/);
+  if (readonlyMatch) {
+    return categorizeStep10Type(trimmed.slice(readonlyMatch[0].length));
   }
-  // function: anything containing `=>` at top level (heuristic: presence is enough,
-  // since function types are a closed shape with no nested `=>` semantic).
-  if (/=>/.test(trimmed)) {
-    return "function";
-  }
+  // Structural shapes first — `Promise<() => void>` should categorize as
+  // "promise", not "function", and `Map<K, A | B>` should not be confused
+  // with a heterogeneous union.
   if (
     /^Array<.+>$/.test(trimmed) ||
     /^ReadonlyArray<.+>$/.test(trimmed) ||
@@ -148,24 +168,37 @@ function categorizeStep10Type(typeText: string): string {
   if (/^(Set|UdonSet)<.+>$/.test(trimmed)) {
     return "set";
   }
-  if (/^Promise<.+>$/.test(trimmed) || /PromiseLike<.+>$/.test(trimmed)) {
+  if (/^Promise<.+>$/.test(trimmed) || /^PromiseLike<.+>$/.test(trimmed)) {
     return "promise";
   }
-  // tuple: bracketed list like [A, B] — distinct from array which is `T[]`.
-  if (/^\[.+\]$/.test(trimmed) && !/\]$/.test(trimmed.slice(0, -2))) {
+  // Generic catch-all (Foo<...>, Foo.Bar<...>): only when the outer `<...>`
+  // spans the entire suffix at nesting depth zero. A naive regex would
+  // bucket `Foo<T> & Bar<U>` as "generic" because the string ends in `>`.
+  if (isPlainGenericApplication(trimmed)) {
+    return "generic";
+  }
+  // Function: a top-level `=>` (i.e. one that is not nested inside `<...>`,
+  // `(...)`, `[...]`, `{...}` or quotes). A simpler `=>` test would put
+  // `Map<string, () => void>` into "function" instead of "map", and the
+  // structural buckets above already absorb the well-formed cases.
+  if (hasTopLevelArrow(trimmed)) {
+    return "function";
+  }
+  // Tuple before union/anon-object — `[A, B] | C` is still a union, but a
+  // bare `[A, B]` is a tuple.
+  if (/^\[.+\]$/.test(trimmed) && hasMatchingOuterBrackets(trimmed, "[", "]")) {
     return "tuple";
   }
-  if (/^\{.*\}$/.test(trimmed)) {
-    return "anon-object";
-  }
-  if (/\|/.test(trimmed)) {
+  // Top-level `|` and `&` checks come before the brace-wrapped object check
+  // because `{ a: T } | { b: U }` is a union of objects, not an anon-object.
+  if (hasTopLevelToken(trimmed, "|")) {
     return "union";
   }
-  if (/&/.test(trimmed)) {
+  if (hasTopLevelToken(trimmed, "&")) {
     return "intersection";
   }
-  if (/^[^<]+<.+>$/.test(trimmed)) {
-    return "generic";
+  if (/^\{.*\}$/.test(trimmed) && hasMatchingOuterBrackets(trimmed, "{", "}")) {
+    return "anon-object";
   }
   // Plain identifier (with optional `.`-qualified namespace): a class/interface
   // whose symbol path didn't resolve in earlier steps. Most actionable bucket.
@@ -177,6 +210,118 @@ function categorizeStep10Type(typeText: string): string {
     return "simple-name";
   }
   return "other";
+}
+
+/** True if `text` is `<HeadIdent>(<.<Ident>)*<...>` and the outer `<...>` pair
+ *  is the entire suffix — i.e. no top-level `|`, `&`, `=>`, or trailing
+ *  characters after the closing `>`. Discriminates real generic applications
+ *  like `Foo.Bar<T>` from `Foo<T> & Bar<U>` whose tail just happens to end
+ *  with `>`. */
+function isPlainGenericApplication(text: string): boolean {
+  // Head must be an identifier (optionally dotted). Walk until first `<`.
+  let i = 0;
+  if (i >= text.length) return false;
+  const isHeadStart = (c: string) => /[\p{ID_Start}$_]/u.test(c);
+  const isHeadCont = (c: string) => /[\p{ID_Continue}$_.]/u.test(c);
+  if (!isHeadStart(text[i])) return false;
+  i += 1;
+  while (i < text.length && isHeadCont(text[i])) i += 1;
+  if (i === 0 || i >= text.length || text[i] !== "<") return false;
+  // Outer `<` at i; walk to the matching `>` at depth 0.
+  let depth = 0;
+  for (let j = i; j < text.length; j += 1) {
+    const ch = text[j];
+    if (ch === "<") depth += 1;
+    else if (ch === ">") {
+      depth -= 1;
+      if (depth === 0) {
+        // Must be the last character — anything after disqualifies.
+        return j === text.length - 1;
+      }
+    }
+  }
+  return false;
+}
+
+/** True if the outer `[...]` (or `{...}`) span the whole string, i.e. the
+ *  first opener and last closer pair up at nesting depth zero in between. */
+function hasMatchingOuterBrackets(
+  text: string,
+  open: string,
+  close: string,
+): boolean {
+  if (text.length < 2 || text[0] !== open || text[text.length - 1] !== close) {
+    return false;
+  }
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === open) depth += 1;
+    else if (ch === close) {
+      depth -= 1;
+      if (depth === 0 && i !== text.length - 1) return false;
+    }
+  }
+  return depth === 0;
+}
+
+function hasTopLevelArrow(text: string): boolean {
+  return findTopLevelIndex(text, "=>") !== -1;
+}
+
+function hasTopLevelToken(text: string, token: string): boolean {
+  return findTopLevelIndex(text, token) !== -1;
+}
+
+/** Index of the first occurrence of `token` at bracket-nesting depth zero,
+ *  ignoring contents inside `<>`, `()`, `[]`, `{}`, and string literals. */
+function findTopLevelIndex(text: string, token: string): number {
+  const len = text.length;
+  let i = 0;
+  let angle = 0;
+  let paren = 0;
+  let bracket = 0;
+  let brace = 0;
+  while (i < len) {
+    const ch = text[i];
+    // Skip string literals — typeToString preserves them for literal types.
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      i += 1;
+      while (i < len && text[i] !== quote) {
+        if (text[i] === "\\") i += 1;
+        i += 1;
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === "<") angle += 1;
+    else if (ch === ">") {
+      // `=>` is not a closing angle bracket — peek behind.
+      if (i > 0 && text[i - 1] === "=") {
+        // it's part of `=>`
+      } else if (angle > 0) {
+        angle -= 1;
+      }
+    } else if (ch === "(") paren += 1;
+    else if (ch === ")") paren = Math.max(0, paren - 1);
+    else if (ch === "[") bracket += 1;
+    else if (ch === "]") bracket = Math.max(0, bracket - 1);
+    else if (ch === "{") brace += 1;
+    else if (ch === "}") brace = Math.max(0, brace - 1);
+
+    if (
+      angle === 0 &&
+      paren === 0 &&
+      bracket === 0 &&
+      brace === 0 &&
+      text.startsWith(token, i)
+    ) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
 }
 
 export const step10Metrics = new Step10MetricsCollector();

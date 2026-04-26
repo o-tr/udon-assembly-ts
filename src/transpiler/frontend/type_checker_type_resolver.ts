@@ -1,11 +1,11 @@
 import * as ts from "typescript";
 import { TranspileError } from "../errors/transpile_errors.js";
+import type { TypeCheckerContext } from "./type_checker_context.js";
+import type { TypeMapper } from "./type_mapper.js";
 import {
   isStep10MetricsEnabled,
   step10Metrics,
 } from "./type_resolution_metrics.js";
-import type { TypeCheckerContext } from "./type_checker_context.js";
-import type { TypeMapper } from "./type_mapper.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
@@ -204,7 +204,11 @@ export class TypeCheckerTypeResolver {
     if (symbol) {
       const symFlags = symbol.flags;
 
-      if (symFlags & ts.SymbolFlags.ValueModule) {
+      // The global `symbol` namespace from lib.es5 is a ValueModule symbol.
+      // It surfaces when measurement-mode runs encounter `typeof Symbol.iterator`
+      // or similar references; gate behind metrics so production paths still
+      // throw via step 10 if a user genuinely writes such code.
+      if (isStep10MetricsEnabled() && symFlags & ts.SymbolFlags.ValueModule) {
         const name = this.checker.symbolToString(symbol);
         if (name === "symbol") {
           return this.typeMapper.lookupBuiltinByName("Type") ?? ObjectType;
