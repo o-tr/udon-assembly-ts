@@ -162,8 +162,28 @@ describe("TypeCheckerTypeResolver", () => {
       sourceFile as ts.SourceFile,
       ts.isArrowFunction,
     );
-    const callType = (arrow.parent as ts.CallExpression).arguments[0];
-    const resolved = resolver.resolveFromTsNode(callType);
+    const callback = (arrow.parent as ts.CallExpression).arguments[0];
+    const resolved = resolver.resolveFromTsNode(callback);
+    expect(resolved).toBe(ObjectType);
+  });
+
+  it("collapses construct-only anonymous types to ObjectType (step A)", () => {
+    const filePath = "/virtual/type_resolver_construct_only.ts";
+    const source = `
+      class Foo {}
+      declare const Ctor: new (x: number) => Foo;
+    `;
+    const { context, resolver } = createResolverFromSource(source, filePath);
+    const sourceFile = context.getSourceFile(filePath);
+    expect(sourceFile).toBeDefined();
+    const declaration = findNode(
+      sourceFile as ts.SourceFile,
+      (n): n is ts.VariableDeclaration =>
+        ts.isVariableDeclaration(n) &&
+        ts.isIdentifier(n.name) &&
+        n.name.text === "Ctor",
+    );
+    const resolved = resolver.resolveFromTsNode(declaration.name);
     expect(resolved).toBe(ObjectType);
   });
 
@@ -238,10 +258,7 @@ describe("TypeCheckerTypeResolver", () => {
 
   it("collapses never return type to ObjectType (step B)", () => {
     const filePath = "/virtual/type_resolver_never.ts";
-    const source = `
-      function f(): never { throw new Error("x"); }
-      const r = f;
-    `;
+    const source = `function f(): never { throw new Error("x"); }`;
     const { context, resolver } = createResolverFromSource(source, filePath);
     const sourceFile = context.getSourceFile(filePath);
     expect(sourceFile).toBeDefined();

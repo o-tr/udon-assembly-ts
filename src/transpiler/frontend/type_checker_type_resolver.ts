@@ -304,9 +304,10 @@ export class TypeCheckerTypeResolver {
       // Anonymous type with properties
       if (objType.objectFlags & ts.ObjectFlags.Anonymous) {
         const props = this.checker.getPropertiesOfType(type);
-        // Pure function types are anonymous with one or more call signatures
-        // and zero properties. Udon has no first-class functions, so collapse
-        // to ObjectType. Keep the narrower `props.length === 0` guard so
+        // Pure function / constructor types are anonymous with one or more
+        // call/construct signatures and zero properties. Udon has neither
+        // first-class functions nor first-class constructors, so collapse to
+        // ObjectType. Keep the narrower `props.length === 0` guard so
         // anonymous callable-with-properties (e.g. `{ (): void; foo: string }`)
         // still builds an InterfaceTypeSymbol below.
         if (props.length === 0) {
@@ -315,6 +316,11 @@ export class TypeCheckerTypeResolver {
             ts.SignatureKind.Call,
           );
           if (callSigs.length > 0) return ObjectType;
+          const ctorSigs = this.checker.getSignaturesOfType(
+            type,
+            ts.SignatureKind.Construct,
+          );
+          if (ctorSigs.length > 0) return ObjectType;
         }
         if (props.length > 0) {
           const propertyMap = new Map<string, TypeSymbol>();
