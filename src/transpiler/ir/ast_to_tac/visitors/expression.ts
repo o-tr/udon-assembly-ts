@@ -3075,7 +3075,7 @@ export function visitAsExpression(
   if (targetTypeText === "const") {
     return this.visitExpression(node.expression);
   }
-  const targetTypeSymbol = this.typeMapper.mapTypeScriptType(targetTypeText);
+  const targetTypeSymbol = node.targetTypeSymbol;
   const prevExpectedType = this.currentExpectedType;
   this.currentExpectedType = targetTypeSymbol;
   let operand: TACOperand;
