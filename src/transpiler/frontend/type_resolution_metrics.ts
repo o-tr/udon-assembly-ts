@@ -1,8 +1,145 @@
 import * as fs from "node:fs";
+import * as ts from "typescript";
 
 type Step10MetricEntry = {
   count: number;
 };
+
+/**
+ * Diagnostic metadata captured for the *first* occurrence of each
+ * step-10 typeText. Used to disambiguate Step D / Step C leak paths
+ * (see z/step10_analysis.md). All fields are optional — emitted only
+ * when the relevant TypeScript flags are set on the source type.
+ */
+type Step10MetricSample = {
+  typeFlags: string;
+  objectFlags?: string;
+  aliasName?: string | null;
+  aliasTargetFlags?: string | null;
+  hasSymbol: boolean;
+  targetSymbolName?: string | null;
+  unionMemberFlags?: string[];
+  sampleCount: number;
+};
+
+const TARGET_CATEGORIES = new Set([
+  "union",
+  "simple-name",
+  "anon-object",
+  "other",
+]);
+
+const TOP_TYPES_BY_COUNT = 200;
+const TOP_TYPES_HARD_CAP = 2000;
+
+function stripModuleQualifier(name: string): string {
+  return name.replace(/^".*"\./, "");
+}
+
+let typeFlagTable: [number, string][] | null = null;
+let objectFlagTable: [number, string][] | null = null;
+
+function buildSingleBitTable(
+  enumObject: Record<string, string | number>,
+): [number, string][] {
+  const out: [number, string][] = [];
+  for (const [name, value] of Object.entries(enumObject)) {
+    if (typeof value !== "number") continue;
+    if (value === 0) continue;
+    if ((value & (value - 1)) !== 0) continue;
+    out.push([value, name]);
+  }
+  out.sort((a, b) => a[0] - b[0]);
+  return out;
+}
+
+function flagNames(
+  flags: number | undefined,
+  table: [number, string][],
+): string {
+  if (!flags) return "0";
+  const names: string[] = [];
+  let residual = flags;
+  for (const [bit, name] of table) {
+    if ((flags & bit) !== 0) {
+      names.push(name);
+      residual &= ~bit;
+    }
+  }
+  if (residual !== 0) names.push(`0x${residual.toString(16)}`);
+  return names.join("|");
+}
+
+function getTypeFlagTable(): [number, string][] {
+  if (!typeFlagTable) {
+    typeFlagTable = buildSingleBitTable(
+      ts.TypeFlags as unknown as Record<string, string | number>,
+    );
+  }
+  return typeFlagTable;
+}
+
+function getObjectFlagTable(): [number, string][] {
+  if (!objectFlagTable) {
+    objectFlagTable = buildSingleBitTable(
+      ts.ObjectFlags as unknown as Record<string, string | number>,
+    );
+  }
+  return objectFlagTable;
+}
+
+function buildSample(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+): Step10MetricSample {
+  const tFlags = type.flags;
+  const sample: Step10MetricSample = {
+    typeFlags: flagNames(tFlags, getTypeFlagTable()),
+    hasSymbol: !!type.getSymbol(),
+    sampleCount: 1,
+  };
+
+  let objFlags: number | undefined;
+  if (tFlags & ts.TypeFlags.Object) {
+    objFlags = (type as ts.ObjectType).objectFlags;
+    sample.objectFlags = flagNames(objFlags, getObjectFlagTable());
+  }
+
+  const aliasSymbol = type.aliasSymbol;
+  if (aliasSymbol) {
+    sample.aliasName = stripModuleQualifier(
+      checker.symbolToString(aliasSymbol),
+    );
+    if (aliasSymbol.flags & ts.SymbolFlags.TypeAlias) {
+      const declared = checker.getDeclaredTypeOfSymbol(aliasSymbol);
+      sample.aliasTargetFlags = flagNames(declared.flags, getTypeFlagTable());
+    } else {
+      sample.aliasTargetFlags = null;
+    }
+  } else {
+    sample.aliasName = null;
+    sample.aliasTargetFlags = null;
+  }
+
+  if (objFlags !== undefined && objFlags & ts.ObjectFlags.Reference) {
+    const target = (type as ts.TypeReference).target;
+    const targetSym = target?.getSymbol();
+    sample.targetSymbolName = targetSym
+      ? stripModuleQualifier(checker.symbolToString(targetSym))
+      : null;
+  } else {
+    sample.targetSymbolName = null;
+  }
+
+  if (tFlags & ts.TypeFlags.Union) {
+    const union = type as ts.UnionType;
+    sample.unionMemberFlags = union.types.map((t) =>
+      flagNames(t.flags, getTypeFlagTable()),
+    );
+  }
+
+  return sample;
+}
 
 const STEP10_METRICS_ENV = "UDON_TS_STEP10_METRICS";
 const STEP10_METRICS_FILE_ENV = "UDON_TS_STEP10_METRICS_FILE";
@@ -32,11 +169,12 @@ function getMetricsFilePath(): string {
 
 class Step10MetricsCollector {
   private readonly counts = new Map<string, Step10MetricEntry>();
+  private readonly samples = new Map<string, Step10MetricSample>();
   private hooked = false;
   private periodicTimer: NodeJS.Timeout | null = null;
   private recordsSinceFlush = 0;
 
-  record(typeText: string): void {
+  record(typeText: string, type?: ts.Type, checker?: ts.TypeChecker): void {
     if (!this.isEnabled()) return;
     this.ensureHooked();
     const key = typeText.trim();
@@ -45,6 +183,9 @@ class Step10MetricsCollector {
       existing.count += 1;
     } else {
       this.counts.set(key, { count: 1 });
+      if (type && checker) {
+        this.samples.set(key, buildSample(type, checker));
+      }
     }
     this.recordsSinceFlush += 1;
     if (this.recordsSinceFlush >= RECORD_FLUSH_THRESHOLD) {
@@ -76,6 +217,7 @@ class Step10MetricsCollector {
         typeText,
         count: entry.count,
         category: categorizeStep10Type(typeText),
+        sample: this.samples.get(typeText),
       }))
       .sort(
         (a, b) => b.count - a.count || a.typeText.localeCompare(b.typeText),
@@ -89,12 +231,39 @@ class Step10MetricsCollector {
       );
     }
 
+    // Pick the top-N by count, then union with all entries in target
+    // categories so D/C signal entries aren't truncated by a long tail
+    // of generic-shape entries. Cap the union at TOP_TYPES_HARD_CAP so
+    // pathological fixtures can't blow up the output unboundedly.
+    const seen = new Set<string>();
+    const selected: typeof entries = [];
+    for (const e of entries.slice(0, TOP_TYPES_BY_COUNT)) {
+      seen.add(e.typeText);
+      selected.push(e);
+    }
+    const targetCategoryEntries = entries.filter(
+      (e) => TARGET_CATEGORIES.has(e.category) && !seen.has(e.typeText),
+    );
+    let droppedTargetCategoryCount = 0;
+    for (const e of targetCategoryEntries) {
+      if (selected.length >= TOP_TYPES_HARD_CAP) {
+        droppedTargetCategoryCount += 1;
+        continue;
+      }
+      seen.add(e.typeText);
+      selected.push(e);
+    }
+    selected.sort(
+      (a, b) => b.count - a.count || a.typeText.localeCompare(b.typeText),
+    );
+
     return JSON.stringify(
       {
         totalHits: entries.reduce((sum, entry) => sum + entry.count, 0),
         uniqueTypes: entries.length,
         categories: Object.fromEntries([...categories.entries()].sort()),
-        topTypes: entries.slice(0, 200),
+        droppedTargetCategoryCount,
+        topTypes: selected,
       },
       null,
       2,
@@ -141,6 +310,13 @@ class Step10MetricsCollector {
 
   private isEnabled(): boolean {
     return isStep10MetricsEnabled();
+  }
+
+  /** Test-only: clear collector state so each test starts from scratch. */
+  __clearForTest(): void {
+    this.counts.clear();
+    this.samples.clear();
+    this.recordsSinceFlush = 0;
   }
 }
 

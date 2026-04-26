@@ -399,7 +399,7 @@ export class TypeCheckerTypeResolver {
       undefined,
       TYPE_TO_STRING_FLAGS,
     );
-    step10Metrics.record(typeText);
+    step10Metrics.record(typeText, type, this.checker);
     const mapped = this.typeMapper.tryMapTypeScriptType(typeText);
     if (mapped !== null) return mapped;
     const trimmed = typeText.trim();
