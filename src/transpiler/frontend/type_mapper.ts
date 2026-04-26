@@ -393,6 +393,20 @@ export class TypeMapper {
     return BUILTIN_NAME_MAP.get(name) ?? null;
   }
 
+  /**
+   * Symbol-based enum lookup. Returns the primitive TypeSymbol for a
+   * registered enum (`int32` or `string` depending on its kind), or `null`
+   * when the name isn't registered. Use this from the TypeChecker resolver
+   * — it lets the resolver consult the enum registry without going through
+   * `tryMapTypeScriptType` (which otherwise pulls in the regex / generic
+   * parsing branches).
+   */
+  lookupEnumByName(name: string): TypeSymbol | null {
+    if (!this.enumRegistry?.isEnum(name)) return null;
+    const kind = this.enumRegistry.getEnumKind(name);
+    return kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
+  }
+
   mapUdonType(udonType: UdonType): TypeSymbol {
     switch (udonType) {
       case UdonType.Int32:

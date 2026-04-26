@@ -519,14 +519,14 @@ export function inferType(
 
   switch (node.kind) {
     case ts.SyntaxKind.NumericLiteral:
-      return this.typeMapper.mapTypeScriptType("number");
+      return PrimitiveTypes.single;
     case ts.SyntaxKind.StringLiteral:
-      return this.typeMapper.mapTypeScriptType("string");
+      return PrimitiveTypes.string;
     case ts.SyntaxKind.TrueKeyword:
     case ts.SyntaxKind.FalseKeyword:
-      return this.typeMapper.mapTypeScriptType("boolean");
+      return PrimitiveTypes.boolean;
     case ts.SyntaxKind.BigIntLiteral:
-      return this.typeMapper.mapTypeScriptType("bigint");
+      return PrimitiveTypes.int64;
     case ts.SyntaxKind.AsExpression:
     case ts.SyntaxKind.TypeAssertionExpression: {
       const asExpr = node as ts.AsExpression;
@@ -569,7 +569,7 @@ export function inferType(
           return propertyType.elementType;
         }
       }
-      return this.typeMapper.mapTypeScriptType("object");
+      return ExternTypes.dataDictionary;
     }
     case ts.SyntaxKind.CallExpression:
       return ObjectType;
@@ -633,7 +633,7 @@ export function inferType(
     }
     case ts.SyntaxKind.TemplateExpression:
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
-      return this.typeMapper.mapTypeScriptType("string");
+      return PrimitiveTypes.string;
     case ts.SyntaxKind.ParenthesizedExpression:
       return this.inferType((node as ts.ParenthesizedExpression).expression);
     case ts.SyntaxKind.ConditionalExpression: {
@@ -653,9 +653,9 @@ export function inferType(
     case ts.SyntaxKind.PrefixUnaryExpression: {
       const pue = node as ts.PrefixUnaryExpression;
       if (pue.operator === ts.SyntaxKind.ExclamationToken) {
-        return this.typeMapper.mapTypeScriptType("boolean");
+        return PrimitiveTypes.boolean;
       }
-      return this.typeMapper.mapTypeScriptType("number");
+      return PrimitiveTypes.single;
     }
     case ts.SyntaxKind.ArrayLiteralExpression: {
       const arr = node as ts.ArrayLiteralExpression;

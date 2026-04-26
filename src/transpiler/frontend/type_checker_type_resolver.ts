@@ -1,12 +1,8 @@
 import * as ts from "typescript";
-import { TranspileError } from "../errors/transpile_errors.js";
 import { stripModuleQualifier } from "./symbol_naming.js";
 import type { TypeCheckerContext } from "./type_checker_context.js";
 import type { TypeMapper } from "./type_mapper.js";
-import {
-  isStep10MetricsEnabled,
-  step10Metrics,
-} from "./type_resolution_metrics.js";
+import { isStep10MetricsEnabled } from "./type_resolution_metrics.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
@@ -96,14 +92,17 @@ export class TypeCheckerTypeResolver {
       return this.resolveFromTsType(nonNullish);
     }
 
-    // 1b. Enum literals and enum types — resolve before literal collapse
+    // 1b. Enum literals and enum types — resolve before literal collapse.
+    // Consult the registry (lookupEnumByName) and the builtin table directly
+    // rather than routing through `tryMapTypeScriptType`, which would also
+    // run the text-parsing branches against the FQN.
     const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
     if (enumSymbol && enumSymbol.flags & ts.SymbolFlags.Enum) {
       const typeName = stripModuleQualifier(this.fqName(enumSymbol));
       const mapped =
-        this.typeMapper.tryMapTypeScriptType(typeName) ??
-        new ClassTypeSymbol(typeName, UdonType.Object);
-      if (!(mapped instanceof ClassTypeSymbol)) return mapped;
+        this.typeMapper.lookupEnumByName(typeName) ??
+        this.typeMapper.lookupBuiltinByName(typeName);
+      if (mapped) return mapped;
       return this.resolveEnumFallback(enumSymbol);
     }
     if (type.flags & ts.TypeFlags.EnumLiteral) {
@@ -120,9 +119,9 @@ export class TypeCheckerTypeResolver {
       if (parentSymbol) {
         const parentName = stripModuleQualifier(this.fqName(parentSymbol));
         const mapped =
-          this.typeMapper.tryMapTypeScriptType(parentName) ??
-          new ClassTypeSymbol(parentName, UdonType.Object);
-        if (!(mapped instanceof ClassTypeSymbol)) return mapped;
+          this.typeMapper.lookupEnumByName(parentName) ??
+          this.typeMapper.lookupBuiltinByName(parentName);
+        if (mapped) return mapped;
         return this.resolveEnumFallback(parentSymbol);
       }
     }
@@ -210,6 +209,9 @@ export class TypeCheckerTypeResolver {
       const intersection = type as ts.IntersectionType;
       const branded = this.tryResolveBrandedPrimitive(intersection);
       if (branded) return branded;
+      // Don't return yet for non-branded intersections — fall through so
+      // step 7 can pick up an alias symbol (e.g. `type UdonInt = number & {…}`
+      // resolves via builtin lookup of the alias name in step 7f).
     }
 
     // 7. Symbol-backed types (classes, interfaces, type aliases, enums)
@@ -314,16 +316,12 @@ export class TypeCheckerTypeResolver {
         // anonymous callable-with-properties (e.g. `{ (): void; foo: string }`)
         // still builds an InterfaceTypeSymbol below.
         if (props.length === 0) {
-          const callSigs = this.checker.getSignaturesOfType(
-            type,
-            ts.SignatureKind.Call,
-          );
-          if (callSigs.length > 0) return ObjectType;
-          const ctorSigs = this.checker.getSignaturesOfType(
-            type,
-            ts.SignatureKind.Construct,
-          );
-          if (ctorSigs.length > 0) return ObjectType;
+          // No members at all (`{}`, function-only, ctor-only) — Udon has no
+          // first-class function/ctor and no struct slots to materialize, so
+          // collapse to ObjectType. The check used to special-case call/ctor
+          // signatures and fall through for plain `{}`, which then reached
+          // the deleted text-based fallback.
+          return ObjectType;
         }
         if (props.length > 0) {
           const propertyMap = new Map<string, TypeSymbol>();
@@ -396,33 +394,15 @@ export class TypeCheckerTypeResolver {
       return ObjectType;
     }
 
-    // 10. Fallback to type-to-string + typeMapper
-    const typeText = this.checker.typeToString(
-      type,
-      undefined,
-      TYPE_TO_STRING_FLAGS,
-    );
-    step10Metrics.record(typeText, type, this.checker);
-    const mapped = this.typeMapper.tryMapTypeScriptType(typeText);
-    if (mapped !== null) return mapped;
-    const trimmed = typeText.trim();
-    const isSimpleName =
-      /^(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*(?:\.(?:\p{ID_Start}|[$_])(?:\p{ID_Continue}|[$_\u200C\u200D])*)*$/u.test(
-        trimmed,
-      ) && !trimmed.startsWith("__");
-    if (isSimpleName) {
-      if (isStep10MetricsEnabled()) {
-        return ObjectType;
-      }
-      // Hard error: simple-name type that cannot be mapped is likely a
-      // missing extern. Throw directly rather than calling mapTypeScriptType
-      // again, which would redo the entire failed mapping just to throw.
-      throw new TranspileError(
-        "TypeError",
-        `Unknown TypeScript type "${trimmed}"`,
-        { filePath: "<unknown>", line: 0, column: 0 },
-      );
-    }
+    // Steps 1-9 are exhaustive for every shape observed on real fixtures.
+    // Reaching here means a TS type slipped through with a flag/symbol
+    // combination we have not classified — return ObjectType so callers
+    // (e.g. `parser/types.ts` AST-based intersection brand detection)
+    // can take a second crack via paths the resolver doesn't have access
+    // to. The previous text-based fallback (typeToString +
+    // tryMapTypeScriptType) is removed; ObjectType is the conservative
+    // widening that preserves correctness without re-introducing a
+    // string-parsing pass.
     return ObjectType;
   }
 
@@ -490,6 +470,12 @@ export class TypeCheckerTypeResolver {
       const mapped = UDON_BRANDED_TYPE_MAP.get(text);
       if (mapped) return mapped;
     }
+    // Inline `T & { __brand: "Foo" }` intersections lose their `__brand`
+    // property in the type API by the time the resolver sees them
+    // (typeToString shows `T & {}`, getProperty("__brand") returns
+    // undefined). The brand is only recoverable from the AST; that fallback
+    // lives in `parser/types.ts` and runs when the resolver returns
+    // ObjectType for an unrecognised intersection.
     return null;
   }
 
