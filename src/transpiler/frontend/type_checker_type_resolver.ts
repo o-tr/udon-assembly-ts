@@ -197,6 +197,12 @@ export class TypeCheckerTypeResolver {
       if (union.types.every((t) => t.flags & ts.TypeFlags.BooleanLike)) {
         return PrimitiveTypes.boolean;
       }
+      // Heterogeneous union (incl. alias-of-union like `WinResult = A | B`):
+      // Udon has no native union representation. Return ObjectType here as
+      // the terminal path — without this, the type would reach step 7e (which
+      // bails when getDeclaredTypeOfSymbol returns the same instance) and
+      // ultimately the typeToString fallback in step 10.
+      return ObjectType;
     }
 
     // 6. Intersection (branded primitives, e.g. UdonInt & { __brand: "UdonInt" })
