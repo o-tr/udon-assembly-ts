@@ -405,6 +405,11 @@ export class TypeMapper {
         return PrimitiveTypes.string;
       case UdonType.Void:
         return PrimitiveTypes.void;
+      case UdonType.Char:
+      case UdonType.Decimal:
+        // FQN-only types: they are emitted via UDON_TYPE_TO_CSHARP_FQN for
+        // signature generation, but the symbol layer keeps them as ObjectType.
+        return ObjectType;
       case UdonType.Byte:
         return PrimitiveTypes.byte;
       case UdonType.SByte:
@@ -435,6 +440,26 @@ export class TypeMapper {
         return ExternTypes.transform;
       case UdonType.GameObject:
         return ExternTypes.gameObject;
+      case UdonType.Material:
+        return ExternTypes.material;
+      case UdonType.Renderer:
+        return ExternTypes.renderer;
+      case UdonType.MeshRenderer:
+        return ExternTypes.meshRenderer;
+      case UdonType.Collider:
+        return ExternTypes.collider;
+      case UdonType.BoxCollider:
+        return ExternTypes.boxCollider;
+      case UdonType.SphereCollider:
+        return ExternTypes.sphereCollider;
+      case UdonType.Rigidbody:
+        return ExternTypes.rigidbody;
+      case UdonType.Camera:
+        return ExternTypes.camera;
+      case UdonType.Canvas:
+        return ExternTypes.canvas;
+      case UdonType.RectTransform:
+        return ExternTypes.rectTransform;
       case UdonType.AudioSource:
         return ExternTypes.audioSource;
       case UdonType.AudioClip:
@@ -447,6 +472,8 @@ export class TypeMapper {
         return ExternTypes.vrcPlayerApi;
       case UdonType.UdonBehaviour:
         return ExternTypes.udonBehaviour;
+      case UdonType.NetworkEventTarget:
+        return ExternTypes.networkEventTarget;
       case UdonType.DataList:
         return ExternTypes.dataList;
       case UdonType.DataDictionary:
@@ -458,6 +485,8 @@ export class TypeMapper {
       case UdonType.Array:
         return new ArrayTypeSymbol(ObjectType);
       case UdonType.NativeArray:
+        // NativeArray is intentionally omitted from UDON_TYPE_TO_CSHARP_FQN;
+        // it is handled by the NativeArrayTypeSymbol instanceof branch in typeSymbolToCSharp.
         return new NativeArrayTypeSymbol(ObjectType);
       default:
         return ObjectType;

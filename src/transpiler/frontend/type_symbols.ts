@@ -401,12 +401,29 @@ export const ExternTypes = {
   color: new ExternTypeSymbol("Color", UdonType.Color),
   transform: new ExternTypeSymbol("Transform", UdonType.Transform),
   gameObject: new ExternTypeSymbol("GameObject", UdonType.GameObject),
+  material: new ExternTypeSymbol("Material", UdonType.Material),
+  renderer: new ExternTypeSymbol("Renderer", UdonType.Renderer),
+  meshRenderer: new ExternTypeSymbol("MeshRenderer", UdonType.MeshRenderer),
+  collider: new ExternTypeSymbol("Collider", UdonType.Collider),
+  boxCollider: new ExternTypeSymbol("BoxCollider", UdonType.BoxCollider),
+  sphereCollider: new ExternTypeSymbol(
+    "SphereCollider",
+    UdonType.SphereCollider,
+  ),
+  rigidbody: new ExternTypeSymbol("Rigidbody", UdonType.Rigidbody),
+  camera: new ExternTypeSymbol("Camera", UdonType.Camera),
+  canvas: new ExternTypeSymbol("Canvas", UdonType.Canvas),
+  rectTransform: new ExternTypeSymbol("RectTransform", UdonType.RectTransform),
   audioSource: new ExternTypeSymbol("AudioSource", UdonType.AudioSource),
   audioClip: new ExternTypeSymbol("AudioClip", UdonType.AudioClip),
   animator: new ExternTypeSymbol("Animator", UdonType.Animator),
   component: new ExternTypeSymbol("Component", UdonType.Component),
   vrcPlayerApi: new ExternTypeSymbol("VRCPlayerApi", UdonType.VRCPlayerApi),
   udonBehaviour: new ExternTypeSymbol("UdonBehaviour", UdonType.UdonBehaviour),
+  networkEventTarget: new ExternTypeSymbol(
+    "NetworkEventTarget",
+    UdonType.NetworkEventTarget,
+  ),
   systemType: new ExternTypeSymbol("Type", UdonType.Type),
   dataList: new ExternTypeSymbol("DataList", UdonType.DataList),
   dataDictionary: new ExternTypeSymbol(
@@ -505,6 +522,26 @@ export function mapCSharpTypeToTypeSymbol(
       return ExternTypes.transform;
     case "UnityEngine.GameObject":
       return ExternTypes.gameObject;
+    case "UnityEngine.Material":
+      return ExternTypes.material;
+    case "UnityEngine.Renderer":
+      return ExternTypes.renderer;
+    case "UnityEngine.MeshRenderer":
+      return ExternTypes.meshRenderer;
+    case "UnityEngine.Collider":
+      return ExternTypes.collider;
+    case "UnityEngine.BoxCollider":
+      return ExternTypes.boxCollider;
+    case "UnityEngine.SphereCollider":
+      return ExternTypes.sphereCollider;
+    case "UnityEngine.Rigidbody":
+      return ExternTypes.rigidbody;
+    case "UnityEngine.Camera":
+      return ExternTypes.camera;
+    case "UnityEngine.Canvas":
+      return ExternTypes.canvas;
+    case "UnityEngine.RectTransform":
+      return ExternTypes.rectTransform;
     case "UnityEngine.AudioSource":
       return ExternTypes.audioSource;
     case "UnityEngine.AudioClip":
@@ -519,16 +556,22 @@ export function mapCSharpTypeToTypeSymbol(
       return ExternTypes.vrcPlayerApi;
     case "VRC.Udon.UdonBehaviour":
       return ExternTypes.udonBehaviour;
+    case "VRC.Udon.Common.Enums.NetworkEventTarget":
+      return ExternTypes.networkEventTarget;
     default:
       return null;
   }
 }
 
-const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
+export const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
+  // NativeArray intentionally omitted — handled by the NativeArrayTypeSymbol
+  // instanceof branch in typeSymbolToCSharp.
   [UdonType.Int32]: "System.Int32",
   [UdonType.Single]: "System.Single",
   [UdonType.Boolean]: "System.Boolean",
   [UdonType.String]: "System.String",
+  [UdonType.Char]: "System.Char",
+  [UdonType.Decimal]: "System.Decimal",
   [UdonType.Array]: "System.Array",
   [UdonType.Void]: "System.Void",
   [UdonType.Byte]: "System.Byte",
@@ -546,6 +589,16 @@ const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
   [UdonType.Color]: "UnityEngine.Color",
   [UdonType.Transform]: "UnityEngine.Transform",
   [UdonType.GameObject]: "UnityEngine.GameObject",
+  [UdonType.Material]: "UnityEngine.Material",
+  [UdonType.Renderer]: "UnityEngine.Renderer",
+  [UdonType.MeshRenderer]: "UnityEngine.MeshRenderer",
+  [UdonType.Collider]: "UnityEngine.Collider",
+  [UdonType.BoxCollider]: "UnityEngine.BoxCollider",
+  [UdonType.SphereCollider]: "UnityEngine.SphereCollider",
+  [UdonType.Rigidbody]: "UnityEngine.Rigidbody",
+  [UdonType.Camera]: "UnityEngine.Camera",
+  [UdonType.Canvas]: "UnityEngine.Canvas",
+  [UdonType.RectTransform]: "UnityEngine.RectTransform",
   [UdonType.AudioSource]: "UnityEngine.AudioSource",
   [UdonType.AudioClip]: "UnityEngine.AudioClip",
   [UdonType.Animator]: "UnityEngine.Animator",
@@ -557,6 +610,7 @@ const UDON_TYPE_TO_CSHARP_FQN: Partial<Record<UdonType, string>> = {
   [UdonType.DataList]: "VRC.SDK3.Data.DataList",
   [UdonType.DataDictionary]: "VRC.SDK3.Data.DataDictionary",
   [UdonType.DataToken]: "VRC.SDK3.Data.DataToken",
+  [UdonType.NetworkEventTarget]: "VRC.Udon.Common.Enums.NetworkEventTarget",
 };
 
 /**

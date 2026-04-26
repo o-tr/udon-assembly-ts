@@ -1,68 +1,15 @@
+import { UDON_TYPE_TO_CSHARP_FQN } from "../frontend/type_symbols.js";
+import { UdonType } from "../frontend/types.js";
 import { typeMetadataRegistry } from "./type_metadata_registry.js";
-
-/**
- * Maps UdonType enum values to their full C# type names.
- * Used to generate correct Udon extern signatures from UdonType values.
- */
-const UDON_TYPE_TO_CSHARP: Record<string, string> = {
-  // System types
-  Int32: "System.Int32",
-  Single: "System.Single",
-  Boolean: "System.Boolean",
-  String: "System.String",
-  Void: "System.Void",
-  Byte: "System.Byte",
-  SByte: "System.SByte",
-  Int16: "System.Int16",
-  UInt16: "System.UInt16",
-  UInt32: "System.UInt32",
-  Int64: "System.Int64",
-  UInt64: "System.UInt64",
-  Double: "System.Double",
-  Char: "System.Char",
-  Decimal: "System.Decimal",
-  Object: "System.Object",
-  Array: "System.Array",
-  Type: "System.Type",
-  // Unity types
-  Vector2: "UnityEngine.Vector2",
-  Vector3: "UnityEngine.Vector3",
-  Vector4: "UnityEngine.Vector4",
-  Quaternion: "UnityEngine.Quaternion",
-  Color: "UnityEngine.Color",
-  Transform: "UnityEngine.Transform",
-  GameObject: "UnityEngine.GameObject",
-  AudioSource: "UnityEngine.AudioSource",
-  AudioClip: "UnityEngine.AudioClip",
-  Animator: "UnityEngine.Animator",
-  Component: "UnityEngine.Component",
-  Material: "UnityEngine.Material",
-  Renderer: "UnityEngine.Renderer",
-  MeshRenderer: "UnityEngine.MeshRenderer",
-  Collider: "UnityEngine.Collider",
-  BoxCollider: "UnityEngine.BoxCollider",
-  SphereCollider: "UnityEngine.SphereCollider",
-  Rigidbody: "UnityEngine.Rigidbody",
-  Camera: "UnityEngine.Camera",
-  Canvas: "UnityEngine.Canvas",
-  RectTransform: "UnityEngine.RectTransform",
-  // VRC types
-  VRCPlayerApi: "VRC.SDKBase.VRCPlayerApi",
-  UdonBehaviour: "VRC.Udon.UdonBehaviour",
-  DataList: "VRC.SDK3.Data.DataList",
-  DataDictionary: "VRC.SDK3.Data.DataDictionary",
-  DataToken: "VRC.SDK3.Data.DataToken",
-  NetworkEventTarget: "VRC.Udon.Common.Enums.NetworkEventTarget",
-};
 
 /**
  * Convert a UdonType enum value to its full C# type name.
  */
 export function udonTypeToCSharp(udonType: string): string {
-  return UDON_TYPE_TO_CSHARP[udonType] ?? udonType;
+  return UDON_TYPE_TO_CSHARP_FQN[udonType as UdonType] ?? udonType;
 }
 
-export const TS_TO_CSHARP = new Map<string, string>([
+const TS_PRIMITIVE_ALIASES = new Map<string, string>([
   ["number", "System.Single"],
   ["boolean", "System.Boolean"],
   ["string", "System.String"],
@@ -115,6 +62,13 @@ export const TS_TO_CSHARP = new Map<string, string>([
   ["UdonDouble", "System.Double"],
   ["UdonLong", "System.Int64"],
   ["UdonULong", "System.UInt64"],
+]);
+
+export const TS_TO_CSHARP = new Map<string, string>([
+  ...TS_PRIMITIVE_ALIASES,
+  ...(Object.entries(UDON_TYPE_TO_CSHARP_FQN).filter(
+    ([key]) => key !== UdonType.Char && key !== UdonType.Decimal,
+  ) as Array<[string, string]>),
 ]);
 
 const EXTERN_TYPE_ALIASES = new Map<string, string>();
