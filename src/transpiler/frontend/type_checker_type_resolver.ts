@@ -198,9 +198,10 @@ export class TypeCheckerTypeResolver {
         return PrimitiveTypes.boolean;
       }
       // Heterogeneous union (incl. alias-of-union like `WinResult = A | B`):
-      // Udon has no native union representation. Collapse here so step 7e's
-      // alias-symbol path doesn't bail (getDeclaredTypeOfSymbol returns the
-      // same instance) and fall through to the typeToString fallback.
+      // Udon has no native union representation. Return ObjectType here as
+      // the terminal path — without this, the type would reach step 7e (which
+      // bails when getDeclaredTypeOfSymbol returns the same instance) and
+      // ultimately the typeToString fallback in step 10.
       return ObjectType;
     }
 
