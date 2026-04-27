@@ -109,6 +109,7 @@ import {
   isUdonBehaviourType,
   resolveFieldChangeCallback,
 } from "./helpers/udon_behaviour.js";
+import { bumpKind, printHistograms, resetProfiling } from "./profiling.js";
 import {
   getUdonTypeConverterTargetType,
   resolveStaticExtern,
@@ -397,6 +398,22 @@ export class ASTToTACConverter {
   /** AST node for the current inline constructor invocation (SoA epilogue). */
   currentInlineConstructionSite?: ASTNode;
 
+  // --- Inline-expansion profiling (UDON_PROFILE=1). All undefined when off. ---
+  inlineStackKeys?: string[];
+  inlineStackBefore?: number[];
+  inlineStackChildTotal?: number[];
+  inlineHistogram?: Map<
+    string,
+    {
+      callsTotal: number;
+      callsPass1: number;
+      selfInstr: number;
+      totalInstr: number;
+    }
+  >;
+  inlineEdgeHistogram?: Map<string, number>;
+  instructionKindHistogram?: Int32Array;
+
   constructor(
     symbolTable: SymbolTable,
     enumRegistry?: EnumRegistry,
@@ -615,6 +632,7 @@ export class ASTToTACConverter {
   emit(instruction: TACInstruction): void {
     if (this.metadataOnlyMode) return;
     this.instructions.push(instruction);
+    if (PROF) bumpKind(this, instruction.kind);
   }
 
   /**
@@ -625,6 +643,7 @@ export class ASTToTACConverter {
    */
   convert(program: ProgramNode): TACInstruction[] {
     const t0 = PROF ? performance.now() : 0;
+    if (PROF) resetProfiling(this);
     // Pass 1: collect inline instance and interface metadata; discard output
     this.resetState();
     this.metadataOnlyMode = true;
@@ -707,6 +726,7 @@ export class ASTToTACConverter {
       console.log(
         `[prof]   tac-pass2 (codegen): ${dt}ms instr=${result.length}`,
       );
+      printHistograms(this);
     }
     return result;
   }

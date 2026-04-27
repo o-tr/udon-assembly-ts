@@ -42,14 +42,16 @@ import {
 } from "../udon_type_resolver.js";
 import type { TACToUdonConverter } from "./converter.js";
 
+const UDON_EXTERN_SIG_RE = /^[A-Za-z0-9._]+\.__\w+__\w+$/;
+
+function isUdonExternSignature(signature: string): boolean {
+  return UDON_EXTERN_SIG_RE.test(signature);
+}
+
 export function convertInstruction(
   this: TACToUdonConverter,
   inst: TACInstruction,
 ): void {
-  const isUdonExternSignature = (signature: string): boolean => {
-    return /^[A-Za-z0-9._]+\.__\w+__\w+$/.test(signature);
-  };
-
   switch (inst.kind) {
     case TACInstructionKind.Assignment: // fallthrough
     case TACInstructionKind.Copy: {
