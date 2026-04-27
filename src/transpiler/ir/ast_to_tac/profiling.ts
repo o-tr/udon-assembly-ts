@@ -88,7 +88,12 @@ export function profExit(c: ASTToTACConverter): void {
     return;
   }
   const totalEmitted = c.instructions.length - before;
-  const selfEmitted = totalEmitted - childTotal;
+  // Clamp to zero: speculative-emission rollbacks (e.g. visitors/call.ts
+  // truncating instructions.length after a child's profExit already
+  // committed its totalEmitted into childTotal) can leave childTotal
+  // larger than the parent's net totalEmitted, producing a spurious
+  // negative selfEmitted that would silently corrupt selfInstr.
+  const selfEmitted = Math.max(0, totalEmitted - childTotal);
   const depth = c.inlineStackChildTotal.length;
   if (depth > 0) c.inlineStackChildTotal[depth - 1] += totalEmitted;
   const e = histGet(c, key);

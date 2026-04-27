@@ -78,7 +78,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { histKey, profEnter, profExit } from "../profiling.js";
+import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
 // Heap-variable name prefixes that identify "real" inline-instance backing
@@ -1592,6 +1592,7 @@ export function visitInlineStaticMethodCall(
       args,
       selfCallCount,
       inlineKey,
+      resolved.declaringClassName,
     );
   }
 
@@ -1605,8 +1606,10 @@ export function visitInlineStaticMethodCall(
   );
   const returnLabel = this.newLabel("inline_return");
 
-  const profKey = histKey(className, methodName);
-  profEnter(this, profKey);
+  // Key the histogram by the *declaring* class so calls reaching the same
+  // method via different receivers (e.g. `BaseHelper.foo` reached as
+  // `DerivedHelper.foo`) aggregate into a single row.
+  if (PROF) profEnter(this, histKey(resolved.declaringClassName, methodName));
   try {
     this.symbolTable.enterScope();
     const savedParamEntries = saveAndBindInlineParams(
@@ -1707,9 +1710,9 @@ function emitInlineRecursiveStaticMethod(
   args: TACOperand[],
   selfCallCount: number,
   inlineKey: string,
+  declaringClassName: string = className,
 ): TACOperand {
-  const profKey = histKey(className, methodName);
-  profEnter(converter, profKey);
+  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     const prefix = `__inlineRec_${className}_${methodName}`;
     const depthVar = `${prefix}_depth`;
@@ -2032,8 +2035,13 @@ function emitInlineRecursiveSelfCall(
   ctx: NonNullable<typeof converter.currentInlineRecursiveContext>,
   args: TACOperand[],
 ): TACOperand {
-  const profKey = histKey(ctx.className, ctx.methodName);
-  profEnter(converter, profKey);
+  // ctx.className is the receiver passed by the outer
+  // emitInlineRecursiveStaticMethod call. For the histogram this means
+  // self-calls within one outer-call lifetime aggregate cleanly, but
+  // multiple outer calls with different receivers (rare for static
+  // recursion) would split. Acceptable: the outer key already merges
+  // via declaringClassName above.
+  if (PROF) profEnter(converter, histKey(ctx.className, ctx.methodName));
   try {
     // 0. Save inlineInstanceMap state so the caller's tracking is restored
     //    after the recursive call (push/pop only covers runtime locals, not
@@ -2196,6 +2204,7 @@ function inlineInstanceMethodCallCore(
     resolved.method,
     args,
     instancePrefix,
+    resolved.declaringClassName,
   );
 }
 
@@ -2220,14 +2229,14 @@ function inlineResolvedMethodBody(
   method: MethodDeclarationNode,
   args: TACOperand[],
   instancePrefix: string | undefined,
+  declaringClassName: string = className,
 ): TACOperand | null {
   const inlineKey = `${className}::${methodName}`;
   if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
   }
 
-  const profKey = histKey(className, methodName);
-  profEnter(converter, profKey);
+  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     let returnType: TypeSymbol = method.returnType;
     // F1: upgrade Object-typed inline-class return type to Int32 (mirrors the

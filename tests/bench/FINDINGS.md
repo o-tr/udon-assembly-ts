@@ -35,7 +35,7 @@ even when reached via different inline helpers.
 
 ### Output shape
 
-```
+```text
 [prof] inline self-cost histogram (top 30 by selfInstr; calls(p2) = callsTotal - callsPass1):
   ClassName::methodName  selfInstr=X  totalInstr=Y  calls(p2)=N  pass1=M
   ...
@@ -72,14 +72,28 @@ recurses through emission-suppressed paths so they may differ).
   calls(p2)=2`, `Service::getValue selfInstr=4 calls(p2)=1`; sanity
   reconciles 14 inline + 15 others = 29 pass-2 instructions.
 
-### Known minor: kind histogram off-by-one
+### Known minor: kind-histogram reconciliation
 
-In larger fixtures the kind-histogram sum can be 1 less than `instr=` on
-the same pass. Cause: a single emission in some path that does not flow
-through `emit()` (e.g. label emit between pass 1 and pass 2 in the
-"all-inline interface" warning block at `converter.ts` ~line 686). Real
-data is unaffected (~28.6M ± 1 is noise); a future cleanup can route the
-stray emit through `emit()` if precise reconciliation is needed.
+The per-`TACInstructionKind` histogram does not exactly equal pass-2
+emission count. Two effects exist:
+
+- **Stray emissions bypassing `emit()`** (small undercount, ~1 per pass).
+  Cause: paths that push directly to `this.instructions` without going
+  through `emit()`. Negligible in real runs.
+- **Speculative-emission rollbacks via `instructions.length =
+  savedInstructionCount`** (overcount, dominates in real workloads —
+  observed ~1.67× on mahjong-t2). Sites: `visitors/call.ts:636`, `:867`,
+  `:1126`, `:3004`. Each rollback discards pushed instructions but the
+  `bumpKind` increment is not reverted.
+
+The overcount from rollbacks dominates and the stray undercount is
+negligible noise. The inline `selfInstr`/`totalInstr` counters use
+`instructions.length` deltas which DO net out across rollbacks, so they
+are unaffected (sanity check passes: sum(selfInstr) ≈ pass-2 instr).
+Routing the stray emits through `emit()` and reconciling the rollback
+overcount (e.g. by counting the result array at end of pass 2 instead
+of bumping per-emit) is deferred — kind ratios are still informative
+even with the inflation.
 
 ### Real-workload run results (mahjong-t2 src/core + src/vrc, optimize=false)
 
@@ -194,15 +208,12 @@ drops ~42% (54s → ~31s). Pass 2 from 35s → ~20s. Pass 1 also drops
 proportionally because pass 1 walks the same AST. **Total per-entry:
 120s → ~65s (46% off).**
 
-These savings are **per entry**. The OOM at 12GB during entry 2 should
-clear because peak heap retention drops with the instruction count
-(largely from variableAddresses/extern Maps in codegen, which scale with
-unique-temp count, which scales with emitted instructions).
-
-These savings are **per entry**. With 2+ entries, the OOM should also
-clear (peak heap roughly halved). The fix is bigger than any single case
-in the plan's decision tree but the data made the right structure
-obvious.
+These savings are **per entry**. With 2+ entries, peak heap drops with
+the instruction count (largely from variableAddresses/extern Maps in
+codegen, which scale with unique-temp count, which scales with emitted
+instructions), so the 12GB OOM observed on entry 2 should also clear.
+The fix is bigger than any single case in the plan's decision tree but
+the data made the right structure obvious.
 
 #### Pass-1 vs pass-2 callsite divergence
 
@@ -215,17 +226,12 @@ visitor branches that depend on materialized operand state). Worth
 investigating but not blocking the architectural fix; the fix targets
 emission count, not invocation count.
 
-#### Known minor: kind-histogram overcount
+#### Kind-histogram overcount in this run
 
-The kind histogram sum (47.8M) exceeds pass-2 instructions (28.6M) by
-~19.2M. Cause confirmed: `visitors/call.ts` does **speculative-emission
-rollbacks** at 4 sites (`:636`, `:867`, `:1126`, `:3004`) via
-`converter.instructions.length = savedInstructionCount`. Each rollback
-discards pushed instructions but the `bumpKind` increment from `emit()`
-is not reverted. The inline self/total counters use `length` deltas
-which DO net out, so they are unaffected. Fix-up: count by walking the
-result array at end of pass 2 instead of bumping per-emit. Low priority;
-ratios between kinds are still informative even with the inflation.
+Observed: kind histogram sum 47.8M vs pass-2 instructions 28.6M (1.67×).
+Cause is the rollback overcount described in the "Known minor:
+kind-histogram reconciliation" section above. Inline self/total
+counters are unaffected — the sanity line confirms 99.99% coverage.
 
 ### Architectural-fix follow-up plan
 
