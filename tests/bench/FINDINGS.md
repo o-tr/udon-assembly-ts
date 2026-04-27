@@ -1,5 +1,223 @@
 # Transpiler performance — bottleneck investigation
 
+## 2026-04-27 — Fix 1+2 applied: resolver bottleneck cleared, codegen exposed
+
+### Fixes applied
+
+**Fix 2 (AST-node cache)** — `src/transpiler/frontend/type_checker_type_resolver.ts`:
+Added `astNodeCache: WeakMap<ASTNode, TypeSymbol>` and routed
+`resolveTypeFromNode` through `resolveFromAstNode` so repeat IR visits of
+the same syntactic node skip the AST→ts.Node→ts.Type→TypeSymbol chain.
+
+**Fix 1 (interface symbol cache + builtin shortcut)** — same file:
+1. `tryResolveBuiltinGenericInterface(fqn)` short-circuits well-known
+   generic-collection interfaces from the TS standard library to their
+   Udon equivalents (`Map`/`Set`/`WeakMap`/`WeakSet`/`ReadonlyMap`/
+   `ReadonlySet` → `dataDictionary`; `Iterator`/`IteratorResult`/
+   `IterableIterator`/`Iterable`/`AsyncIterator`/`AsyncIterable`/
+   `AsyncIterableIterator`/`Generator`/`AsyncGenerator`/`Promise`/
+   `PromiseLike`/`Thenable` → `ObjectType`). Avoids the
+   `populateMemberMaps` recursion through their generic protocol members.
+2. `nonGenericInterfaceCache: WeakMap<ts.Symbol, InterfaceTypeSymbol>`
+   keyed on the interface symbol itself for non-generic interfaces. Same
+   symbol = same structural members, so the cache hit is sound. Generic
+   user interfaces (with declared type parameters) are not cached because
+   `IList<A>` and `IList<B>` share a symbol but expand to different
+   member types.
+
+### Measurements (mahjong-t2 src/core, 144 files, 2 entries, optimize=false)
+
+| Phase                         | Pre-Fix (baseline) | Fix 1 only | Fix 1+2 |
+| ----------------------------- | -----------------: | --------: | ------: |
+| pre-entry phases (parse etc.) |              ~1.7s |     ~1.5s |   ~1.5s |
+| entry GameOrchestrator pass 1 |   >40s (didn't end) |      ~21s |    ~24s |
+| entry GameOrchestrator pass 2 |    OOM @ 4 GB heap |  observed |   ~33s |
+| AST→TAC total (one entry)     |       did not end |       — |    ~57s |
+| pass 2 emitted instructions   |          unobserved |       — |   28.6M |
+| codegen for that 28.6M TAC    |                  — |       — |    ~63s |
+
+Fix 1 is the dominant contribution; Fix 2 (AST node cache) does not move the
+needle measurably above run-to-run noise on this workload (~21s vs ~24s on
+single runs). Fix 2 is kept because it is a defensive WeakMap with negligible
+overhead and may help on workloads with heavier inline-expansion repetition.
+
+Tests: 805/805 unit tests pass; UASM snapshot unchanged. Output is
+byte-compatible with the existing fixtures.
+
+### Outcome
+
+Fix 1+2 cleared the resolver bottleneck. The OOM-during-pass1 case from
+the 2026-04-27 baseline section below no longer reproduces. Total CPU
+profile of resolver work plummeted (8.8M `buildInterfaceTypeSymbol` calls
+in 50s → ~0 per entry once the per-symbol cache or builtin shortcut
+matches).
+
+### Newly exposed bottleneck (out of scope here)
+
+With the resolver cleared, AST→TAC pass 2 produces ~28.6M TAC
+instructions per entry on `GameOrchestrator`, and codegen takes ~63s to
+walk them. This work was always there but never reached on the
+pre-fix run because the resolver burned all available heap first. It is
+the next bottleneck to address — likely an inline-expansion deduplication
+or memoization pass — but it is a separate problem from the resolver
+blowup and is left for a follow-up. Synthetic small fixtures (used in
+`pnpm bench`) do not trigger it.
+
+### Fix 3 (lazy member resolution) status
+
+Not implemented. With Fix 1's per-symbol cache + builtin shortcut already
+in place, the remaining `populateMemberMaps` calls are for user-defined
+generic interfaces (IList<X>, etc.). Lazy resolution wouldn't avoid the
+work for consumers that actually access members; it would only defer it.
+The downstream IR consumers do access members (for structural matching
+in inline expansion), so Fix 3 is not expected to help further. Held
+unless a profile shows otherwise.
+
+---
+
+## 2026-04-27 — Catastrophic regression: `buildInterfaceTypeSymbol` blowup
+
+### Headline
+
+Real-workload transpile is 100×–1000× slower than the 2026-04-25 baseline.
+mahjong-t2 `src/core` (144 files, 2 entry points, `optimize=false`) no longer
+completes within 7 minutes (previously 8.37s). One entry's AST→TAC pass 1 alone
+takes >50s, and CPU time is dominated by **`TypeCheckerTypeResolver.buildInterfaceTypeSymbol` /
+`populateMemberMaps`** being invoked **8.8M times in 50s** for a single entry —
+linear-rate growth, no convergence, and 4GB+ heap pressure that OOMs the process
+on `optimize=true`.
+
+### Reproduce
+
+```bash
+UDON_PROFILE=1 NODE_OPTIONS="--max-old-space-size=12288" \
+  pnpm tsx tests/bench/profile_real_workload.ts \
+  -i /path/to/mahjong-t2/src/core --no-optimize
+```
+
+`UDON_PROFILE=1` enables phase-level `[prof]` prints in `batch_transpiler.ts`
+(`pmark`/`pend`) and per-pass `tac-pass1` / `tac-pass2` prints in
+`ir/ast_to_tac/converter.ts`. The bench harness uses `BatchTranspiler` directly
+against the live source and writes `.tasm` to a tmpdir.
+
+### Measurements (one entry, GameOrchestrator)
+
+Pre-entry phases — fast, healthy:
+
+| phase                            |    time |
+| -------------------------------- | ------: |
+| discover                         |   ~6 ms |
+| read-sources                     |  ~21 ms |
+| checker-context-create-initial   | ~610 ms |
+| parse-initial (144 files)        |    ~1 s |
+| fixpoint-iter-1 (no externals)   |  ~34 ms |
+| resolve-deferred-types           |   ~6 ms |
+| extern-registry-build            |  ~75 ms |
+| inheritance-validate             | ~0.3 ms |
+
+Per-entry compilation — **catastrophic**:
+
+| step                             | time/entry |
+| -------------------------------- | ---------- |
+| collect-inline (96 inline cls)   |   ~9 ms |
+| collect-consts (11 consts)       | ~0.2 ms |
+| build-program                    | ~0.3 ms |
+| **AST→TAC pass 1 (metadata)**    | **>40 s** (does not finish) |
+| AST→TAC pass 2 (codegen)         | OOM at 4 GB before reaching here |
+
+Resolver counters during the 50s window of pass 1 (sampled every ~5s):
+
+```text
+calls=  1,048,576  uncached= 536,368  buildIface= 516,061  populate= 516,105
+calls=  3,145,728  uncached=1,579,043 buildIface=1,555,848 populate=1,555,810
+calls=  5,242,880  uncached=2,618,896 buildIface=2,595,482 populate=2,595,353
+calls=  7,340,032  uncached=3,657,517 buildIface=3,633,912 populate=3,633,682
+calls=  9,437,184  uncached=4,697,117 buildIface=4,672,123 populate=4,671,462
+calls= 11,534,336  uncached=5,736,793 buildIface=5,711,660 populate=5,710,253
+calls= 13,631,488  uncached=6,776,388 buildIface=6,751,027 populate=6,748,965
+calls= 15,728,640  uncached=7,815,813 buildIface=7,790,230 populate=7,787,505
+calls= 17,825,792  uncached=8,854,340 buildIface=8,828,242 populate=8,824,937
+```
+
+Linear-rate growth at ~350K resolveFromTsType calls/sec, **49 % cache miss rate
+on the typeCache, and ≈100 % of misses end up calling
+`buildInterfaceTypeSymbol` (which then calls `populateMemberMaps`,
+which recursively calls `resolveFromTsType` on every member).** That recursion
+is precisely how the count compounds.
+
+### Root cause
+
+`TypeCheckerTypeResolver.typeCache` is a `Map<ts.Type, TypeSymbol>` keyed on
+`ts.Type` instance identity. TypeScript's `getTypeOfSymbolAtLocation` /
+`getDeclaredTypeOfSymbol` /  generic-instantiation paths hand back **fresh
+`ts.Type` instances** for what is structurally the same type when called
+across syntactically distinct contexts (e.g. the same `Map<string, TileViewModel>`
+reached via two different declaration sites). Every miss falls into
+`buildInterfaceTypeSymbol` → `populateMemberMaps` → resolves every member type
+recursively — which itself misses again on the same downstream member types,
+because **those member ts.Types are also fresh per call site**. The cache
+fundamentally cannot hit in this regime.
+
+The IR phase compounds it: 32 `resolveTypeFromNode` callsites in
+`visitors/expression.ts` alone, plus more in `call.ts` / `statement.ts` /
+`assignment.ts`. Each callsite runs on every visited AST node, and inline
+expansion re-visits the same call sites for every inline-expanded copy of a
+method body. With 96 inline classes inside one entry's call graph, the same
+underlying interface (e.g. `Map`, `Iterator`, an `IYaku` member's type) is
+re-resolved tens of thousands of times.
+
+### Why the 2026-04-25 baseline didn't show this
+
+Memory's `reference_perf_hotspots.md` notes the cluster was already 20 % of CPU
+on the warm baseline. Subsequent commits added more `resolveTypeFromNode`
+call sites in the IR phase (resolver-first migration in `1025274` and follow-ups
+through `9480a3a` / `1fa5124` / `ac52fe1`), and the 2026-04-25 "share resolver
+across batch entries" win (`0a92ada`) only addressed cross-entry sharing — it
+did not change the per-call recursive-population pattern. The pattern existed
+before but the call volume has multiplied as the IR migrated off
+`mapTypeScriptType(string)` and onto `resolveFromTsNode(ts.Node)`.
+
+### Fix candidates (not implemented)
+
+1. **Content-addressable interface symbol cache.** Key a second cache on
+   `(fqName, sorted-properties-digest, sorted-methods-digest)` so the
+   structurally-identical `Map<string,X>` from two call sites returns the same
+   `InterfaceTypeSymbol` even when ts.Type identity differs. Memory's
+   `reference_perf_hotspots.md` "tried-and-rejected" entry rejected a *symbol-
+   fqName-only* cache because `Map<A,B>` and `Map<C,D>` collide on fqName; a
+   structural digest disambiguates without re-introducing string parsing.
+2. **AST-node level cache for `resolveTypeFromNode`** — add a
+   `WeakMap<ASTNode, TypeSymbol>` so the IR's repeated visits of the same
+   syntactic node short-circuit before the ts.Node→ts.Type→TypeSymbol chain
+   even runs.
+3. **Lazy member resolution.** `InterfaceTypeSymbol` could carry the ts.Symbol
+   and resolve members on demand. Most consumers only read `properties` /
+   `methods` for a small subset; eager population materializes the entire
+   transitive membership graph.
+
+Fix 2 is the cheapest and likely the highest-leverage; the resolver call rate
+is dominated by IR re-visits, not parser-phase first-resolution. Fix 1 is
+needed for the long-tail (parser phase, populateMemberMaps recursion).
+
+### Instrumentation left in place
+
+- `tests/bench/profile_real_workload.ts` — runs `BatchTranspiler` against an
+  arbitrary directory, defaults to mahjong-t2 `src/core` + `src/vrc`. Clears
+  `.transpiler-cache.json` / `.transpiler-optcache` to force a cold run.
+- `tests/bench/quick_single_file.ts` — single-file timing harness.
+- Phase prints in `src/transpiler/batch/batch_transpiler.ts` and pass-level
+  prints in `src/transpiler/ir/ast_to_tac/converter.ts`, gated on
+  `UDON_PROFILE=1`. Negligible overhead when off (one branch per phase
+  boundary).
+
+The high-frequency resolver counters (millions of branches/sec) were removed
+to keep production overhead at zero; re-add them locally before re-running the
+investigation.
+
+---
+
+## 2026-04-19 — earlier optimizer-focused investigation
+
 Date: 2026-04-19
 Harness: `tests/bench/*` (transpiler_bench, optimize_profile, batch_profile)
 

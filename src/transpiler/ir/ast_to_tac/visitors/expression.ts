@@ -491,15 +491,17 @@ export function resolveTypeFromNode(
   // TypeChecker-first resolution when we have a bridged ts.Node.
   // The constructor pairs checkerContext with checkerTypeResolver, so
   // checking both here is just TypeScript narrowing, not a runtime branch.
+  // Routed through `resolveFromAstNode` so the resolver's astNodeCache
+  // short-circuits repeated visits of the same syntactic node — inline
+  // expansion in particular re-visits each call site once per inline copy.
   if (converter.checkerContext && converter.checkerTypeResolver) {
     try {
-      const tsNode = converter.checkerContext.resolveTsNode(node);
-      if (tsNode) {
-        const resolved =
-          converter.checkerTypeResolver.resolveFromTsNode(tsNode);
-        if (resolved && resolved !== ObjectType) {
-          return resolved;
-        }
+      const resolved = converter.checkerTypeResolver.resolveFromAstNode(
+        node,
+        converter.checkerContext,
+      );
+      if (resolved && resolved !== ObjectType) {
+        return resolved;
       }
     } catch (e) {
       if (e instanceof TranspileError) throw e;

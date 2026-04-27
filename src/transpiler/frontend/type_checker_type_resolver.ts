@@ -5,6 +5,7 @@ import type { TypeMapper } from "./type_mapper.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
+  ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   ObjectType,
@@ -20,6 +21,12 @@ const TYPE_TO_STRING_FLAGS =
   ts.TypeFormatFlags.UseFullyQualifiedType |
   ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
 
+// Matches lib.es*.d.ts / lib.dom.d.ts / lib.scripthost.d.ts inside the
+// installed `typescript` package. Used to gate the builtin-generic
+// shortcut so user-defined interfaces with library names (Map, Set, …)
+// are not widened.
+const LIB_DTS_RE = /[\\/]typescript[\\/]lib[\\/]lib\..*\.d\.ts$/i;
+
 /**
  * Resolves TypeScript compiler types (ts.Type / ts.Node) to internal TypeSymbols.
  *
@@ -34,6 +41,29 @@ export class TypeCheckerTypeResolver {
   // measured ~140ms of TS-internal work on mahjong-t2. The result is
   // deterministic per ts.Symbol within a single program, so memoize.
   private readonly fqNameCache = new WeakMap<ts.Symbol, string>();
+  // AST-node level cache for resolveFromAstNode. Inline expansion in the IR
+  // phase visits the same syntactic AST nodes repeatedly (once per call site
+  // × every inline copy of a method body) and each visit otherwise repeats
+  // the full AST→ts.Node→ts.Type→TypeSymbol chain. Caching the resolved
+  // result here short-circuits all of that. The "no bridged ts.Node" case
+  // (resolveTsNode returns undefined) is recorded separately in
+  // `astNodeNoTsNodeCache` so it caches as well, while keeping a real
+  // ObjectType resolution distinct from "no-result".
+  private readonly astNodeCache = new WeakMap<ASTNode, TypeSymbol>();
+  private readonly astNodeNoTsNodeCache = new WeakSet<ASTNode>();
+  // ts.Symbol-keyed cache for non-generic interfaces. The ts.Type-keyed
+  // typeCache misses across syntactically-distinct uses of the same
+  // interface (TypeScript hands back fresh ts.Type instances), so without
+  // this every use of `IFoo` re-runs `populateMemberMaps` and recursively
+  // re-resolves every member type. Interfaces with declared type parameters
+  // are deliberately skipped — `Map<A,B>` and `Map<C,D>` share a symbol but
+  // expand to different member types, so the symbol alone is not a safe key.
+  // Generic builtin collections (`Map`, `Set`, `Iterator`, …) are short-
+  // circuited separately via `tryResolveBuiltinGenericInterface`.
+  private readonly nonGenericInterfaceCache = new WeakMap<
+    ts.Symbol,
+    InterfaceTypeSymbol
+  >();
 
   constructor(
     private readonly checker: ts.TypeChecker,
@@ -48,14 +78,29 @@ export class TypeCheckerTypeResolver {
     return result;
   }
 
-  /** Resolve from a custom AST node that was previously bridged to a ts.Node. */
+  /** Resolve from a custom AST node that was previously bridged to a ts.Node.
+   *  Cached on the AST node so repeat visits (e.g. the same expression
+   *  re-encountered in every inline-expanded copy of a method body) skip the
+   *  full ts.Node lookup + getTypeAtLocation + resolveFromTsType chain.
+   *  The "no bridged ts.Node" path is recorded in `astNodeNoTsNodeCache`
+   *  so synthetic / unmapped nodes don't pay the span-index lookup on
+   *  every revisit either — kept in a separate WeakSet so a real
+   *  ObjectType resolution remains distinguishable from "no-result". */
   resolveFromAstNode(
     node: ASTNode,
     checkerContext: TypeCheckerContext,
   ): TypeSymbol | null {
+    const cached = this.astNodeCache.get(node);
+    if (cached !== undefined) return cached;
+    if (this.astNodeNoTsNodeCache.has(node)) return null;
     const tsNode = checkerContext.resolveTsNode(node);
-    if (!tsNode) return null;
-    return this.resolveFromTsNode(tsNode);
+    if (!tsNode) {
+      this.astNodeNoTsNodeCache.add(node);
+      return null;
+    }
+    const result = this.resolveFromTsNode(tsNode);
+    this.astNodeCache.set(node, result);
+    return result;
   }
 
   /** Resolve directly from a TypeScript AST node. */
@@ -230,6 +275,39 @@ export class TypeCheckerTypeResolver {
 
       // 7b-c. Interface → build InterfaceTypeSymbol from declared members
       if (symFlags & ts.SymbolFlags.Interface) {
+        // Builtin generic-collection shortcut: avoid the
+        // populateMemberMaps recursion through Iterator / IteratorResult /
+        // generic protocol members. Mirrors the parser's TypeReference
+        // handling in `parser/types.ts mapTypeWithGenerics`. Gated on the
+        // declaration originating from a TypeScript lib `.d.ts` so that
+        // user-defined interfaces happening to share a name (e.g. a local
+        // `interface Map { … }`) are NOT widened to the builtin extern.
+        if (this.isLibInterfaceSymbol(symbol)) {
+          const fqn = stripModuleQualifier(this.fqName(symbol));
+          const builtinShortcut = this.tryResolveBuiltinGenericInterface(fqn);
+          if (builtinShortcut) return builtinShortcut;
+        }
+        // Symbol-keyed cache for non-generic interfaces only.
+        // `IList<string>` and `IList<number>` share a symbol but expand to
+        // different member types, so caching by symbol would conflate them.
+        // Detect generic-ness from the *declaration*: an instantiated
+        // generic type is internally a TypeReference whose own
+        // `typeParameters` is undefined (the generic params live on its
+        // `target`), so checking the type flag alone gives a false
+        // negative and would incorrectly cache the instantiation. The
+        // declaration check is independent of how the type was reached.
+        const isGenericInterface = symbol.declarations?.some(
+          (decl) =>
+            ts.isInterfaceDeclaration(decl) &&
+            (decl.typeParameters?.length ?? 0) > 0,
+        );
+        if (!isGenericInterface) {
+          const cached = this.nonGenericInterfaceCache.get(symbol);
+          if (cached) return cached;
+          const built = this.buildInterfaceTypeSymbol(type, symbol);
+          this.nonGenericInterfaceCache.set(symbol, built);
+          return built;
+        }
         return this.buildInterfaceTypeSymbol(type, symbol);
       }
 
@@ -404,6 +482,79 @@ export class TypeCheckerTypeResolver {
     // typeToString-based string-parsing fallback that used to live here
     // was removed in favor of this terminal widening.
     return ObjectType;
+  }
+
+  /** Returns true when the interface symbol is declared in a TypeScript
+   *  lib `.d.ts` file (lib.es*.d.ts, lib.dom.d.ts, etc.). Used to gate the
+   *  builtin-generic-interface shortcut so that a user-defined
+   *  `interface Map { … }` is NOT widened to ExternTypes.dataDictionary
+   *  just because it shares a name with the standard library type.
+   *
+   *  Uses `some` (any-declaration-is-lib) deliberately, NOT `every`. A
+   *  stricter `every`-based check was tried and reverted: a user augmenting
+   *  the global lib interface (e.g. `interface Map<K,V> { myExtension:
+   *  number; }` in a non-module script file, which merges into
+   *  lib.es2015.collection's Map symbol) would then fall through to
+   *  `buildInterfaceTypeSymbol` → `populateMemberMaps`, where TypeScript's
+   *  own checker hits a `RangeError: Maximum call stack size exceeded` on
+   *  the fully-merged Map type's recursive generic protocol members. The
+   *  shortcut is what protected us from that explosion in the first place;
+   *  removing it for the merge case crashes instead of silently widening.
+   *
+   *  Trade-off: a user globally augmenting `Map`/`Set`/`Iterator` etc.
+   *  loses their added members in the resolved TypeSymbol (widened to
+   *  `dataDictionary` / `ObjectType`). Acceptable because Udon has no
+   *  runtime for those collection types beyond the widening anyway, so
+   *  augmenting them isn't a supported pattern. The intended escape hatch
+   *  for users wanting structural Map-like behaviour is to declare a
+   *  module-scoped interface with a different name. */
+  private isLibInterfaceSymbol(symbol: ts.Symbol): boolean {
+    const declarations = symbol.declarations;
+    if (!declarations) return false;
+    for (const decl of declarations) {
+      const fileName = decl.getSourceFile().fileName;
+      if (LIB_DTS_RE.test(fileName)) return true;
+    }
+    return false;
+  }
+
+  /** Short-circuit well-known generic-collection interfaces from the
+   *  TypeScript standard library. The `populateMemberMaps` walk for these
+   *  recursively resolves Iterator / IteratorResult / etc. — work that has
+   *  no Udon equivalent and dominates resolver cost. The corresponding
+   *  parser-time path in `parser/types.ts mapTypeWithGenerics` returns
+   *  similar widenings via the TypeReference switch. */
+  private tryResolveBuiltinGenericInterface(fqn: string): TypeSymbol | null {
+    switch (fqn) {
+      // Map / Set are dictionary-backed in the Udon model. The parser's
+      // mapTypeWithGenerics returns CollectionTypeSymbol(dataDictionary, …)
+      // here; the resolver path lacks the type-arg context needed to build
+      // that, so widen to dataDictionary itself — consumers reach the
+      // parser-resolved CollectionTypeSymbol via the parser-time path
+      // before falling back to this resolver result.
+      case "Map":
+      case "ReadonlyMap":
+      case "Set":
+      case "ReadonlySet":
+      case "WeakMap":
+      case "WeakSet":
+        return ExternTypes.dataDictionary;
+      // Iterator protocol / async types have no Udon analogue. Widen.
+      case "Iterator":
+      case "IteratorResult":
+      case "IterableIterator":
+      case "Iterable":
+      case "AsyncIterator":
+      case "AsyncIterable":
+      case "AsyncIterableIterator":
+      case "Generator":
+      case "AsyncGenerator":
+      case "Promise":
+      case "PromiseLike":
+      case "Thenable":
+        return ObjectType;
+    }
+    return null;
   }
 
   /** Build an InterfaceTypeSymbol from an interface type. */
