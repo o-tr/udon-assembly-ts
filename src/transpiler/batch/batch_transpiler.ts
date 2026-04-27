@@ -62,8 +62,8 @@ import {
   UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
-import { extractProfileData } from "../ir/ast_to_tac/profiling.js";
 import type { EntryProfile } from "../ir/ast_to_tac/profiling.js";
+import { extractProfileData } from "../ir/ast_to_tac/profiling.js";
 import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
 import { DependencyResolver } from "./dependency_resolver.js";
