@@ -109,7 +109,7 @@ import {
   isUdonBehaviourType,
   resolveFieldChangeCallback,
 } from "./helpers/udon_behaviour.js";
-import { bumpKind, printHistograms, resetProfiling } from "./profiling.js";
+import { countKinds, printHistograms, resetProfiling } from "./profiling.js";
 import {
   getUdonTypeConverterTargetType,
   resolveStaticExtern,
@@ -632,7 +632,6 @@ export class ASTToTACConverter {
   emit(instruction: TACInstruction): void {
     if (this.metadataOnlyMode) return;
     this.instructions.push(instruction);
-    if (PROF) bumpKind(this, instruction.kind);
   }
 
   /**
@@ -722,6 +721,7 @@ export class ASTToTACConverter {
     this.soaClasses = soaClassesFromPass1;
     const result = this.convertImpl(program);
     if (PROF) {
+      countKinds(this, result);
       const dt = (performance.now() - t1).toFixed(1);
       console.log(
         `[prof]   tac-pass2 (codegen): ${dt}ms instr=${result.length}`,
