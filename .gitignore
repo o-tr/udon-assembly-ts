@@ -14,3 +14,9 @@ tests/vm/unity-project/Assets/UdonSharpInput.meta
 tests/vm/unity-project/UdonSharpInput/
 tests/vm/unity-project/UdonSharpOutput/
 tests/uasm/reports/
+
+# Local agent / scratch areas — never check in by default. Use `git add -f`
+# if a specific note really should be promoted to the repo (and prefer
+# moving it under `docs/` first).
+.claude/
+z/
