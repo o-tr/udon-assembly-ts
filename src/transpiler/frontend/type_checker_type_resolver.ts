@@ -5,6 +5,7 @@ import type { TypeMapper } from "./type_mapper.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
+  ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
   ObjectType,
@@ -34,6 +35,28 @@ export class TypeCheckerTypeResolver {
   // measured ~140ms of TS-internal work on mahjong-t2. The result is
   // deterministic per ts.Symbol within a single program, so memoize.
   private readonly fqNameCache = new WeakMap<ts.Symbol, string>();
+  // AST-node level cache for resolveFromAstNode. Inline expansion in the IR
+  // phase visits the same syntactic AST nodes repeatedly (once per call site
+  // × every inline copy of a method body) and each visit otherwise repeats
+  // the full AST→ts.Node→ts.Type→TypeSymbol chain. Caching the resolved
+  // result here short-circuits all of that. ObjectType is stored as the
+  // "no-result" sentinel — IR callers already filter `=== ObjectType` and
+  // fall through to legacy resolution, so storing it preserves that
+  // semantic and keeps the cache value type uniform.
+  private readonly astNodeCache = new WeakMap<ASTNode, TypeSymbol>();
+  // ts.Symbol-keyed cache for non-generic interfaces. The ts.Type-keyed
+  // typeCache misses across syntactically-distinct uses of the same
+  // interface (TypeScript hands back fresh ts.Type instances), so without
+  // this every use of `IFoo` re-runs `populateMemberMaps` and recursively
+  // re-resolves every member type. Interfaces with declared type parameters
+  // are deliberately skipped — `Map<A,B>` and `Map<C,D>` share a symbol but
+  // expand to different member types, so the symbol alone is not a safe key.
+  // Generic builtin collections (`Map`, `Set`, `Iterator`, …) are short-
+  // circuited separately via `tryResolveBuiltinGenericInterface`.
+  private readonly nonGenericInterfaceCache = new WeakMap<
+    ts.Symbol,
+    InterfaceTypeSymbol
+  >();
 
   constructor(
     private readonly checker: ts.TypeChecker,
@@ -48,14 +71,21 @@ export class TypeCheckerTypeResolver {
     return result;
   }
 
-  /** Resolve from a custom AST node that was previously bridged to a ts.Node. */
+  /** Resolve from a custom AST node that was previously bridged to a ts.Node.
+   *  Cached on the AST node so repeat visits (e.g. the same expression
+   *  re-encountered in every inline-expanded copy of a method body) skip the
+   *  full ts.Node lookup + getTypeAtLocation + resolveFromTsType chain. */
   resolveFromAstNode(
     node: ASTNode,
     checkerContext: TypeCheckerContext,
   ): TypeSymbol | null {
+    const cached = this.astNodeCache.get(node);
+    if (cached !== undefined) return cached;
     const tsNode = checkerContext.resolveTsNode(node);
     if (!tsNode) return null;
-    return this.resolveFromTsNode(tsNode);
+    const result = this.resolveFromTsNode(tsNode);
+    this.astNodeCache.set(node, result);
+    return result;
   }
 
   /** Resolve directly from a TypeScript AST node. */
@@ -230,6 +260,25 @@ export class TypeCheckerTypeResolver {
 
       // 7b-c. Interface → build InterfaceTypeSymbol from declared members
       if (symFlags & ts.SymbolFlags.Interface) {
+        const fqn = stripModuleQualifier(this.fqName(symbol));
+        // Builtin generic-collection shortcut: avoid the
+        // populateMemberMaps recursion through Iterator / IteratorResult /
+        // generic protocol members. Mirrors the parser's TypeReference
+        // handling in `parser/types.ts mapTypeWithGenerics`.
+        const builtinShortcut = this.tryResolveBuiltinGenericInterface(fqn);
+        if (builtinShortcut) return builtinShortcut;
+        // Non-generic interfaces — symbol identity is a safe cache key.
+        // Generic instantiations of user interfaces (`IList<A>` vs
+        // `IList<B>`) share a symbol but expand to different member types,
+        // so they cannot share a cached result.
+        const declaredTypeParams = (type as ts.InterfaceType).typeParameters;
+        if (!declaredTypeParams || declaredTypeParams.length === 0) {
+          const cached = this.nonGenericInterfaceCache.get(symbol);
+          if (cached) return cached;
+          const built = this.buildInterfaceTypeSymbol(type, symbol);
+          this.nonGenericInterfaceCache.set(symbol, built);
+          return built;
+        }
         return this.buildInterfaceTypeSymbol(type, symbol);
       }
 
@@ -404,6 +453,45 @@ export class TypeCheckerTypeResolver {
     // typeToString-based string-parsing fallback that used to live here
     // was removed in favor of this terminal widening.
     return ObjectType;
+  }
+
+  /** Short-circuit well-known generic-collection interfaces from the
+   *  TypeScript standard library. The `populateMemberMaps` walk for these
+   *  recursively resolves Iterator / IteratorResult / etc. — work that has
+   *  no Udon equivalent and dominates resolver cost. The corresponding
+   *  parser-time path in `parser/types.ts mapTypeWithGenerics` returns
+   *  similar widenings via the TypeReference switch. */
+  private tryResolveBuiltinGenericInterface(fqn: string): TypeSymbol | null {
+    switch (fqn) {
+      // Map / Set are dictionary-backed in the Udon model. The parser's
+      // mapTypeWithGenerics returns CollectionTypeSymbol(dataDictionary, …)
+      // here; the resolver path lacks the type-arg context needed to build
+      // that, so widen to dataDictionary itself — consumers reach the
+      // parser-resolved CollectionTypeSymbol via the parser-time path
+      // before falling back to this resolver result.
+      case "Map":
+      case "ReadonlyMap":
+      case "Set":
+      case "ReadonlySet":
+      case "WeakMap":
+      case "WeakSet":
+        return ExternTypes.dataDictionary;
+      // Iterator protocol / async types have no Udon analogue. Widen.
+      case "Iterator":
+      case "IteratorResult":
+      case "IterableIterator":
+      case "Iterable":
+      case "AsyncIterator":
+      case "AsyncIterable":
+      case "AsyncIterableIterator":
+      case "Generator":
+      case "AsyncGenerator":
+      case "Promise":
+      case "PromiseLike":
+      case "Thenable":
+        return ObjectType;
+    }
+    return null;
   }
 
   /** Build an InterfaceTypeSymbol from an interface type. */
