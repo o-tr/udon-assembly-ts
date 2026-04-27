@@ -322,11 +322,19 @@ export class TypeCheckerTypeResolver {
         if (props.length === 0) {
           // No members at all (`{}`, function-only, ctor-only) — Udon has
           // no first-class function/ctor and no struct slots to
-          // materialize, so collapse to ObjectType. The AST-side
-          // `TypeLiteralNode` handler in parser/types.ts maps a syntactic
-          // `{}` (zero-member type literal) to `ExternTypes.dataDictionary`
-          // independently; that path still wins for type annotations
-          // because it runs before the resolver result is consulted.
+          // materialize, so collapse to ObjectType. There is a deliberate
+          // divergence with the AST-side `TypeLiteralNode` handler in
+          // parser/types.ts, which maps a syntactic zero-member type
+          // literal to `ExternTypes.dataDictionary`. The AST handler runs
+          // *after* this resolver call inside `mapTypeWithGenerics`, but
+          // the wrapper short-circuits on `resolved !== ObjectType` —
+          // because we return ObjectType here, the AST result wins for
+          // type annotations. Resolver-only callers (e.g. inferType from
+          // an initializer that has no type annotation) get the more
+          // conservative ObjectType. Attempting to unify these by
+          // returning DataDictionary here regresses inline-erased-return
+          // tests that depend on ObjectType for `{ x } | null` -typed
+          // returns; do not change without re-validating that fixture.
           return ObjectType;
         }
         if (props.length > 0) {
