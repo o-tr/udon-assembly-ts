@@ -2209,6 +2209,70 @@ function inlineInstanceMethodCallCore(
 }
 
 /**
+ * Walks an AST subtree and reports whether any descendant is a CallExpression
+ * (covers both regular method invocations and `new X()`, which uses
+ * CallExpression with isNew=true) or an ObjectLiteralExpression. Both kinds
+ * call `allocateBodyCachedInstance`, which keys its cache off the top of
+ * `inlinedBodyStack`. The trivial-return fast-path bypasses the body push,
+ * so admitting either kind would cause one body's allocations to be cached
+ * under the parent body's frame.
+ */
+function containsAllocOrCall(node: ASTNode | undefined): boolean {
+  if (!node) return false;
+  if (
+    node.kind === ASTNodeKind.CallExpression ||
+    node.kind === ASTNodeKind.ObjectLiteralExpression
+  ) {
+    return true;
+  }
+  for (const key in node) {
+    const v = (node as unknown as Record<string, unknown>)[key];
+    if (!v || typeof v !== "object") continue;
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (
+          item &&
+          typeof item === "object" &&
+          "kind" in (item as object) &&
+          containsAllocOrCall(item as ASTNode)
+        ) {
+          return true;
+        }
+      }
+    } else if ("kind" in (v as object)) {
+      if (containsAllocOrCall(v as ASTNode)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Trivial-return fast-path predicate: zero-parameter method whose body is a
+ * single `return EXPR;` and EXPR contains no CallExpression / ObjectLiteral.
+ * The slow path emits a return label + JUMP + COPY through __inline_ret_*
+ * plus full scope/state save-restore — for a pure accessor like
+ * `get melds() { return this.melds_; }` most of that is dead weight.
+ * Eligible bodies emit a single COPY into `__inline_ret_*` and skip the
+ * label, JUMP, and scaffolding. Type-side gates (erased / interface-with-
+ * properties returns) are checked separately at the fast-path entry, since
+ * they require resolved type info.
+ */
+function canFastPathTrivialReturn(method: MethodDeclarationNode): boolean {
+  if (method.parameters.length !== 0) return false;
+  if (method.body.statements.length !== 1) return false;
+  const stmt = method.body.statements[0];
+  if (stmt.kind !== ASTNodeKind.ReturnStatement) return false;
+  const value = (stmt as ReturnStatementNode).value;
+  if (value === undefined) return false;
+  // CallExpression (incl. `new X()`) and ObjectLiteralExpression both route
+  // through `allocateBodyCachedInstance`, which reads the top of
+  // `inlinedBodyStack` to key its cache. The fast-path doesn't push the
+  // body, so admitting these would let the caller's frame collide with the
+  // inlined body's allocations.
+  return !containsAllocOrCall(value);
+}
+
+/**
  * Body-inlining core for a pre-resolved MethodDeclarationNode. Shared by the
  * normal method-call path (which resolves via resolveClassMethod) and the
  * getter path (which synthesizes a zero-parameter method from the getter
@@ -2234,6 +2298,60 @@ function inlineResolvedMethodBody(
   const inlineKey = `${className}::${methodName}`;
   if (converter.inlineMethodStack.has(inlineKey)) {
     return null; // recursion detected → fallback
+  }
+
+  if (canFastPathTrivialReturn(method)) {
+    const fastReturnType = resolveInlineClassType(converter, method.returnType);
+    // Skip the fast-path when the caller's `as T` unwrap relies on DataToken
+    // promotion (erased return) or when the inline-instance prefix mechanism
+    // is needed to thread per-property COPYs (interface return with properties).
+    const fastEligibleType =
+      !isPlainObjectType(fastReturnType) &&
+      !(
+        fastReturnType instanceof InterfaceTypeSymbol &&
+        fastReturnType.properties.size > 0
+      );
+    if (fastEligibleType) {
+      const returnStmt = method.body.statements[0] as ReturnStatementNode;
+      // Non-null: canFastPathTrivialReturn guards `value !== undefined`.
+      const returnExpr = returnStmt.value as ASTNode;
+      const savedInlineContext = converter.currentInlineContext;
+      const savedThisOverride = converter.currentThisOverride;
+      const savedBaseClass = converter.currentInlineBaseClass;
+      const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+      converter.currentInlineContext = instancePrefix
+        ? { className, instancePrefix }
+        : undefined;
+      converter.currentThisOverride = null;
+      converter.currentInlineBaseClass = undefined;
+      converter.currentInlineConstructorClassName = undefined;
+      converter.inlineMethodStack.add(inlineKey);
+      if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
+      try {
+        const value = converter.visitExpression(returnExpr);
+        // Mint an `__inline_ret_*` Variable with isInlineReturn=true and COPY
+        // the expression result into it. Two reasons we don't return `value`
+        // directly: (1) `expression.ts:905` keys WriteToGetter detection on
+        // `target.isInlineReturn`, so a compound write through the getter
+        // result would silently mutate the backing field; (2) callers such
+        // as the unwrap-after-`as T` path read the slot's identity, not the
+        // expression's source operand.
+        const ret = createVariable(
+          `__inline_ret_${converter.tempCounter++}`,
+          fastReturnType,
+          { isLocal: true, isInlineReturn: true },
+        );
+        converter.emit(new CopyInstruction(ret, value));
+        return ret;
+      } finally {
+        if (PROF) profExit(converter);
+        converter.inlineMethodStack.delete(inlineKey);
+        converter.currentInlineConstructorClassName = savedInlineCtorClass;
+        converter.currentInlineBaseClass = savedBaseClass;
+        converter.currentThisOverride = savedThisOverride;
+        converter.currentInlineContext = savedInlineContext;
+      }
+    }
   }
 
   if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
