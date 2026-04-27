@@ -628,204 +628,315 @@ export class BatchTranspiler {
         continue;
       }
       const _profEntryStart = pmark();
-      if (PROF) console.log(`[prof] >>> begin entry ${entryPoint.name}`);
-      if (options?.verbose) {
-        console.log(`Transpiling entry point: ${entryPoint.name}`);
-      }
-      const _profMerge = pmark();
-      const mergedMethods = registry.getMergedMethods(entryPoint.name);
-      const mergedProperties = registry.getMergedProperties(entryPoint.name);
-      pend(`entry-${entryPoint.name}-merge-methods`, _profMerge);
-
-      const _profCollectInline = pmark();
-      const inlineClassNames = Array.from(
-        this.collectReachableInlineClasses(
-          entryPoint.name,
-          callAnalyzer,
-          registry,
-        ),
-      );
-      pend(
-        `entry-${entryPoint.name}-collect-inline`,
-        _profCollectInline,
-        `inline=${inlineClassNames.length}`,
-      );
-
-      const filteredInlineClassNames = inlineClassNames.filter((name) => {
-        const meta = registry.getClass(name);
-        if (!meta) return true;
-        return !meta.decorators.some(
-          (decorator) => decorator.name === "UdonBehaviour",
-        );
-      });
-      if (options?.verbose) {
-        console.log(
-          `  - Collected ${filteredInlineClassNames.length} inline classes.`,
-        );
-      }
-
-      // Resolve import-graph dependencies for Tier-3 usedFiles tracking.
-      const entryCompilationOrder = resolver.getCompilationOrder(
-        entryPoint.filePath,
-      );
-
-      const entryPointMethods = this.orderEntryMethods(
-        this.filterMethodsByUsage(mergedMethods, entryPoint.name, methodUsage),
-      );
-
-      const symbolTable = new SymbolTable();
-      for (const prop of mergedProperties) {
-        symbolTable.addSymbol(prop.name, prop.type, false, false);
-      }
-      if (options?.verbose) {
-        console.log(
-          `  - Collected ${entryPointMethods.length} methods, ${mergedProperties.length} properties, ${filteredInlineClassNames.length} inline classes.`,
-        );
-      }
-
-      const _profCollectConsts = pmark();
-      let topLevelConsts: TopLevelConstInfo[];
+      // Wrap the per-entry body in a try/catch so an implicit throw from
+      // any deep call site (tacConverter.convert / TACOptimizer.optimize /
+      // udonConverter.convert / assembler.assemble / fs.write etc.) still
+      // closes `_profEntryStart` and `_profTopStart`. Otherwise the [prof]
+      // output looks like a hung run instead of a crash. The handled-
+      // continue paths (cache=hit, DuplicateTopLevelConst→skip) do their
+      // own pend()s before `continue`, so they don't reach this catch.
       try {
-        topLevelConsts = this.collectAllTopLevelConsts(
-          entryPoint.filePath,
-          filteredInlineClassNames,
-          registry,
+        if (PROF) console.log(`[prof] >>> begin entry ${entryPoint.name}`);
+        if (options?.verbose) {
+          console.log(`Transpiling entry point: ${entryPoint.name}`);
+        }
+        const _profMerge = pmark();
+        const mergedMethods = registry.getMergedMethods(entryPoint.name);
+        const mergedProperties = registry.getMergedProperties(entryPoint.name);
+        pend(`entry-${entryPoint.name}-merge-methods`, _profMerge);
+
+        const _profCollectInline = pmark();
+        const inlineClassNames = Array.from(
+          this.collectReachableInlineClasses(
+            entryPoint.name,
+            callAnalyzer,
+            registry,
+          ),
         );
-      } catch (e) {
-        // Close the open per-entry spans on BOTH the handled-and-continue
-        // path and the rethrow path so every pmark() has a matching
-        // pend() — otherwise either error path leaves orphan timers in
-        // the [prof] output.
+        pend(
+          `entry-${entryPoint.name}-collect-inline`,
+          _profCollectInline,
+          `inline=${inlineClassNames.length}`,
+        );
+
+        const filteredInlineClassNames = inlineClassNames.filter((name) => {
+          const meta = registry.getClass(name);
+          if (!meta) return true;
+          return !meta.decorators.some(
+            (decorator) => decorator.name === "UdonBehaviour",
+          );
+        });
+        if (options?.verbose) {
+          console.log(
+            `  - Collected ${filteredInlineClassNames.length} inline classes.`,
+          );
+        }
+
+        // Resolve import-graph dependencies for Tier-3 usedFiles tracking.
+        const entryCompilationOrder = resolver.getCompilationOrder(
+          entryPoint.filePath,
+        );
+
+        const entryPointMethods = this.orderEntryMethods(
+          this.filterMethodsByUsage(
+            mergedMethods,
+            entryPoint.name,
+            methodUsage,
+          ),
+        );
+
+        const symbolTable = new SymbolTable();
+        for (const prop of mergedProperties) {
+          symbolTable.addSymbol(prop.name, prop.type, false, false);
+        }
+        if (options?.verbose) {
+          console.log(
+            `  - Collected ${entryPointMethods.length} methods, ${mergedProperties.length} properties, ${filteredInlineClassNames.length} inline classes.`,
+          );
+        }
+
+        const _profCollectConsts = pmark();
+        let topLevelConsts: TopLevelConstInfo[];
+        try {
+          topLevelConsts = this.collectAllTopLevelConsts(
+            entryPoint.filePath,
+            filteredInlineClassNames,
+            registry,
+          );
+        } catch (e) {
+          // Close the per-step span. The handled-and-continue path (skip)
+          // also closes the per-entry span and bails. The rethrow path
+          // leaves entry- and transpile-total spans for the surrounding
+          // try/catch wrapper to close uniformly with `error=unexpected`
+          // / `error=entry`, so we don't pend them twice here.
+          pend(
+            `entry-${entryPoint.name}-collect-consts`,
+            _profCollectConsts,
+            "error=collect-consts",
+          );
+          if (this.collectDuplicateConstErrors(e, errorCollector)) {
+            pend(`entry-${entryPoint.name}`, _profEntryStart, "error=skipped");
+            continue;
+          }
+          throw e;
+        }
         pend(
           `entry-${entryPoint.name}-collect-consts`,
           _profCollectConsts,
-          "error=collect-consts",
+          `consts=${topLevelConsts.length}`,
         );
-        if (this.collectDuplicateConstErrors(e, errorCollector)) {
-          pend(`entry-${entryPoint.name}`, _profEntryStart, "error=skipped");
-          continue;
+        for (const tlc of topLevelConsts) {
+          if (!symbolTable.hasInCurrentScope(tlc.name)) {
+            symbolTable.addSymbol(
+              tlc.name,
+              tlc.type,
+              false,
+              true,
+              tlc.node.initializer,
+            );
+          }
         }
-        pend(`entry-${entryPoint.name}`, _profEntryStart, "error=rethrown");
-        pend("transpile-total", _profTopStart, "error=collect-consts");
-        throw e;
-      }
-      pend(
-        `entry-${entryPoint.name}-collect-consts`,
-        _profCollectConsts,
-        `consts=${topLevelConsts.length}`,
-      );
-      for (const tlc of topLevelConsts) {
-        if (!symbolTable.hasInCurrentScope(tlc.name)) {
-          symbolTable.addSymbol(
-            tlc.name,
-            tlc.type,
-            false,
-            true,
-            tlc.node.initializer,
+
+        const _profBuildProgram = pmark();
+        const topLevelConstNodes = topLevelConsts.map((tlc) => tlc.node);
+        const methodProgram = this.classesToProgram(
+          this.buildClassNodes(
+            entryPoint.name,
+            entryPointMethods,
+            filteredInlineClassNames,
+            registry,
+            methodUsage,
+          ),
+          topLevelConstNodes,
+        );
+        pend(`entry-${entryPoint.name}-build-program`, _profBuildProgram);
+        const tacConverter = new ASTToTACConverter(
+          symbolTable,
+          parser.getEnumRegistry(),
+          udonBehaviourClasses,
+          udonBehaviourLayouts,
+          registry,
+          {
+            useStringBuilder: options.useStringBuilder,
+            typeMapper,
+            sourceFilePath: entryPoint.filePath,
+            errorCollector,
+            checkerContext: parser.checkerContext,
+            checkerTypeResolver: parser.checkerTypeResolver,
+          },
+        );
+        // Snapshot the shared collector so we can extract per-entry diagnostics
+        // for the output cache (used on fully-cached subsequent runs).
+        const diagnosticsBefore = errorCollector.getWarnings().length;
+        const _profTacStart = pmark();
+        let tacInstructions = tacConverter.convert(methodProgram);
+        pend(
+          `entry-${entryPoint.name}-ast-to-tac`,
+          _profTacStart,
+          `instr=${tacInstructions.length}`,
+        );
+        const entryDiagnostics = errorCollector
+          .getWarnings()
+          .slice(diagnosticsBefore);
+        if (options?.verbose) {
+          console.log(
+            `  - Generated ${tacInstructions.length} TAC instructions.`,
           );
         }
-      }
 
-      const _profBuildProgram = pmark();
-      const topLevelConstNodes = topLevelConsts.map((tlc) => tlc.node);
-      const methodProgram = this.classesToProgram(
-        this.buildClassNodes(
-          entryPoint.name,
-          entryPointMethods,
-          filteredInlineClassNames,
+        // Tier 2: Build output cache key from pre-optimization TAC fingerprint.
+        // computeExposedLabels == computeExportLabels, so compute once and reuse.
+        const exposedLabels = computeExposedLabels(
           registry,
-          methodUsage,
-        ),
-        topLevelConstNodes,
-      );
-      pend(`entry-${entryPoint.name}-build-program`, _profBuildProgram);
-      const tacConverter = new ASTToTACConverter(
-        symbolTable,
-        parser.getEnumRegistry(),
-        udonBehaviourClasses,
-        udonBehaviourLayouts,
-        registry,
-        {
-          useStringBuilder: options.useStringBuilder,
-          typeMapper,
-          sourceFilePath: entryPoint.filePath,
-          errorCollector,
-          checkerContext: parser.checkerContext,
-          checkerTypeResolver: parser.checkerTypeResolver,
-        },
-      );
-      // Snapshot the shared collector so we can extract per-entry diagnostics
-      // for the output cache (used on fully-cached subsequent runs).
-      const diagnosticsBefore = errorCollector.getWarnings().length;
-      const _profTacStart = pmark();
-      let tacInstructions = tacConverter.convert(methodProgram);
-      pend(
-        `entry-${entryPoint.name}-ast-to-tac`,
-        _profTacStart,
-        `instr=${tacInstructions.length}`,
-      );
-      const entryDiagnostics = errorCollector
-        .getWarnings()
-        .slice(diagnosticsBefore);
-      if (options?.verbose) {
-        console.log(
-          `  - Generated ${tacInstructions.length} TAC instructions.`,
+          udonBehaviourLayouts,
+          entryPoint.name,
         );
-      }
+        const syncModes = new Map<string, string>();
+        for (const prop of mergedProperties) {
+          if (prop.syncMode) {
+            syncModes.set(prop.name, prop.syncMode.toLowerCase());
+          }
+        }
+        const cacheFilePath = this.outputCacheFilePath(
+          optCacheDir,
+          entryPoint.name,
+          reflect,
+          optimize,
+          useStringBuilder,
+          ext,
+          heapLimit,
+        );
+        const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
+        const outputCacheKey = this.computeOutputCacheKey(
+          tacFp1,
+          tacFp2,
+          exposedLabels,
+          entryPoint.name,
+          filteredInlineClassNames,
+          syncModes,
+          entryPoint.behaviourSyncMode,
+          reflect,
+          optimize,
+          useStringBuilder,
+          ext,
+        );
+        const cachedOutput = this.loadOutputCache(
+          cacheFilePath,
+          outputCacheKey,
+        );
+        if (cachedOutput !== null) {
+          if (options?.verbose) {
+            console.log(`  - Output cache hit for ${entryPoint.name}.`);
+          }
+          const outPath = path.join(
+            options.outputDir,
+            `${entryPoint.name}.${ext}`,
+          );
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
+          for (const w of cachedOutput.warnings ?? []) console.warn(w);
+          outputs.push({
+            className: entryPoint.name,
+            outputPath: outPath,
+            warnings: cachedOutput.warnings,
+          });
+          entryPointsCache[entryPoint.name] = {
+            usedFiles: this.collectUsedFiles(
+              entryPoint.filePath,
+              entryPoint.name,
+              filteredInlineClassNames,
+              registry,
+              entryCompilationOrder,
+            ),
+          };
+          pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=hit");
+          continue;
+        }
 
-      // Tier 2: Build output cache key from pre-optimization TAC fingerprint.
-      // computeExposedLabels == computeExportLabels, so compute once and reuse.
-      const exposedLabels = computeExposedLabels(
-        registry,
-        udonBehaviourLayouts,
-        entryPoint.name,
-      );
-      const syncModes = new Map<string, string>();
-      for (const prop of mergedProperties) {
-        if (prop.syncMode) {
-          syncModes.set(prop.name, prop.syncMode.toLowerCase());
+        // Output cache miss: run the full optimization + codegen pipeline.
+        if (options.optimize === true) {
+          const _profOpt = pmark();
+          const optimizer = new TACOptimizer();
+          tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
+          pend(
+            `entry-${entryPoint.name}-optimize`,
+            _profOpt,
+            `instr=${tacInstructions.length}`,
+          );
         }
-      }
-      const cacheFilePath = this.outputCacheFilePath(
-        optCacheDir,
-        entryPoint.name,
-        reflect,
-        optimize,
-        useStringBuilder,
-        ext,
-        heapLimit,
-      );
-      const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
-      const outputCacheKey = this.computeOutputCacheKey(
-        tacFp1,
-        tacFp2,
-        exposedLabels,
-        entryPoint.name,
-        filteredInlineClassNames,
-        syncModes,
-        entryPoint.behaviourSyncMode,
-        reflect,
-        optimize,
-        useStringBuilder,
-        ext,
-      );
-      const cachedOutput = this.loadOutputCache(cacheFilePath, outputCacheKey);
-      if (cachedOutput !== null) {
-        if (options?.verbose) {
-          console.log(`  - Output cache hit for ${entryPoint.name}.`);
+
+        const _profCodegen = pmark();
+        const udonConverter = new TACToUdonConverter();
+        const inlineClassNameSet = new Set(filteredInlineClassNames);
+        const udonInstructions = udonConverter.convert(tacInstructions, {
+          entryClassName: entryPoint.name,
+          inlineClassNames: inlineClassNameSet,
+        });
+        pend(
+          `entry-${entryPoint.name}-codegen`,
+          _profCodegen,
+          `instr=${udonInstructions.length}`,
+        );
+        const externSignatures = udonConverter.getExternSignatures();
+        let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
+        if (options.reflect === true) {
+          dataSectionWithTypes = appendReflectionData(
+            dataSectionWithTypes,
+            entryPoint.name,
+          );
         }
+
+        const _profAssemble = pmark();
+        const assembler = new UdonAssembler();
+        const uasm = assembler.assemble(
+          udonInstructions,
+          externSignatures,
+          dataSectionWithTypes,
+          syncModes,
+          entryPoint.behaviourSyncMode,
+          exposedLabels, // same as computeExportLabels(...)
+        );
+        const heapWarnings: string[] = [];
+        const heapUsage = computeHeapUsage(dataSectionWithTypes);
+        if (ext === "uasm" && heapUsage > UASM_RUNTIME_LIMIT) {
+          heapWarnings.push(
+            `UASM heap usage ${heapUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPoint.name}.`,
+          );
+        }
+        if (heapUsage > heapLimit) {
+          const formatLabel = ext === "tasm" ? "TASM" : "UASM";
+          const breakdown = buildSimpleHeapBreakdown(
+            udonConverter.getHeapUsageByClass(),
+            heapUsage,
+            entryPoint.name,
+          );
+          heapWarnings.push(
+            `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown}`,
+          );
+        }
+        const assemblerWarnings = assembler.getWarnings();
+        for (const w of heapWarnings) console.warn(w);
+        for (const w of assemblerWarnings) console.warn(w);
+
         const outPath = path.join(
           options.outputDir,
           `${entryPoint.name}.${ext}`,
         );
         fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
-        for (const w of cachedOutput.warnings ?? []) console.warn(w);
-        outputs.push({
-          className: entryPoint.name,
-          outputPath: outPath,
-          warnings: cachedOutput.warnings,
+        fs.writeFileSync(outPath, uasm, "utf8");
+
+        const allWarnings = [...heapWarnings, ...assemblerWarnings];
+        const warnings = allWarnings.length > 0 ? allWarnings : undefined;
+        // Tier 2: Save assembled output to cache.
+        this.saveOutputCache(cacheFilePath, {
+          key: outputCacheKey,
+          uasm,
+          warnings,
+          diagnostics:
+            entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
+          transpilerHash: getTranspilerHash(),
         });
+        // Tier 3: Record which files contributed to this entry point.
         entryPointsCache[entryPoint.name] = {
           usedFiles: this.collectUsedFiles(
             entryPoint.filePath,
@@ -835,110 +946,22 @@ export class BatchTranspiler {
             entryCompilationOrder,
           ),
         };
-        pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=hit");
-        continue;
-      }
-
-      // Output cache miss: run the full optimization + codegen pipeline.
-      if (options.optimize === true) {
-        const _profOpt = pmark();
-        const optimizer = new TACOptimizer();
-        tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
         pend(
-          `entry-${entryPoint.name}-optimize`,
-          _profOpt,
-          `instr=${tacInstructions.length}`,
+          `entry-${entryPoint.name}-assemble`,
+          _profAssemble,
+          `bytes=${uasm.length}`,
         );
+        outputs.push({
+          className: entryPoint.name,
+          outputPath: outPath,
+          warnings,
+        });
+        pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=miss");
+      } catch (e) {
+        pend(`entry-${entryPoint.name}`, _profEntryStart, "error=unexpected");
+        pend("transpile-total", _profTopStart, "error=entry");
+        throw e;
       }
-
-      const _profCodegen = pmark();
-      const udonConverter = new TACToUdonConverter();
-      const inlineClassNameSet = new Set(filteredInlineClassNames);
-      const udonInstructions = udonConverter.convert(tacInstructions, {
-        entryClassName: entryPoint.name,
-        inlineClassNames: inlineClassNameSet,
-      });
-      pend(
-        `entry-${entryPoint.name}-codegen`,
-        _profCodegen,
-        `instr=${udonInstructions.length}`,
-      );
-      const externSignatures = udonConverter.getExternSignatures();
-      let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
-      if (options.reflect === true) {
-        dataSectionWithTypes = appendReflectionData(
-          dataSectionWithTypes,
-          entryPoint.name,
-        );
-      }
-
-      const _profAssemble = pmark();
-      const assembler = new UdonAssembler();
-      const uasm = assembler.assemble(
-        udonInstructions,
-        externSignatures,
-        dataSectionWithTypes,
-        syncModes,
-        entryPoint.behaviourSyncMode,
-        exposedLabels, // same as computeExportLabels(...)
-      );
-      const heapWarnings: string[] = [];
-      const heapUsage = computeHeapUsage(dataSectionWithTypes);
-      if (ext === "uasm" && heapUsage > UASM_RUNTIME_LIMIT) {
-        heapWarnings.push(
-          `UASM heap usage ${heapUsage} exceeds Udon runtime threshold ${UASM_RUNTIME_LIMIT} for ${entryPoint.name}.`,
-        );
-      }
-      if (heapUsage > heapLimit) {
-        const formatLabel = ext === "tasm" ? "TASM" : "UASM";
-        const breakdown = buildSimpleHeapBreakdown(
-          udonConverter.getHeapUsageByClass(),
-          heapUsage,
-          entryPoint.name,
-        );
-        heapWarnings.push(
-          `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown}`,
-        );
-      }
-      const assemblerWarnings = assembler.getWarnings();
-      for (const w of heapWarnings) console.warn(w);
-      for (const w of assemblerWarnings) console.warn(w);
-
-      const outPath = path.join(options.outputDir, `${entryPoint.name}.${ext}`);
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, uasm, "utf8");
-
-      const allWarnings = [...heapWarnings, ...assemblerWarnings];
-      const warnings = allWarnings.length > 0 ? allWarnings : undefined;
-      // Tier 2: Save assembled output to cache.
-      this.saveOutputCache(cacheFilePath, {
-        key: outputCacheKey,
-        uasm,
-        warnings,
-        diagnostics: entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
-        transpilerHash: getTranspilerHash(),
-      });
-      // Tier 3: Record which files contributed to this entry point.
-      entryPointsCache[entryPoint.name] = {
-        usedFiles: this.collectUsedFiles(
-          entryPoint.filePath,
-          entryPoint.name,
-          filteredInlineClassNames,
-          registry,
-          entryCompilationOrder,
-        ),
-      };
-      pend(
-        `entry-${entryPoint.name}-assemble`,
-        _profAssemble,
-        `bytes=${uasm.length}`,
-      );
-      outputs.push({
-        className: entryPoint.name,
-        outputPath: outPath,
-        warnings,
-      });
-      pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=miss");
     }
     pend("transpile-total", _profTopStart);
 
