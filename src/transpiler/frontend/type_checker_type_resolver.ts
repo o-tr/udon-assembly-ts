@@ -93,14 +93,17 @@ export class TypeCheckerTypeResolver {
     }
 
     // 1b. Enum literals and enum types — resolve before literal collapse.
-    // Consult the registry (lookupEnumByName) and the builtin table directly
+    // Consult enum registry → registered alias → builtin table directly
     // rather than routing through `tryMapTypeScriptType`, which would also
-    // run the text-parsing branches against the FQN.
+    // run the text-parsing branches against the FQN. The alias step is for
+    // parity with the legacy chain: it catches the (rare) case where an
+    // enum-flagged symbol was also registered as a class alias.
     const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
     if (enumSymbol && enumSymbol.flags & ts.SymbolFlags.Enum) {
       const typeName = stripModuleQualifier(this.fqName(enumSymbol));
       const mapped =
         this.typeMapper.lookupEnumByName(typeName) ??
+        this.typeMapper.getAlias(typeName) ??
         this.typeMapper.lookupBuiltinByName(typeName);
       if (mapped) return mapped;
       return this.resolveEnumFallback(enumSymbol);
@@ -120,6 +123,7 @@ export class TypeCheckerTypeResolver {
         const parentName = stripModuleQualifier(this.fqName(parentSymbol));
         const mapped =
           this.typeMapper.lookupEnumByName(parentName) ??
+          this.typeMapper.getAlias(parentName) ??
           this.typeMapper.lookupBuiltinByName(parentName);
         if (mapped) return mapped;
         return this.resolveEnumFallback(parentSymbol);
@@ -316,11 +320,13 @@ export class TypeCheckerTypeResolver {
         // anonymous callable-with-properties (e.g. `{ (): void; foo: string }`)
         // still builds an InterfaceTypeSymbol below.
         if (props.length === 0) {
-          // No members at all (`{}`, function-only, ctor-only) — Udon has no
-          // first-class function/ctor and no struct slots to materialize, so
-          // collapse to ObjectType. The check used to special-case call/ctor
-          // signatures and fall through for plain `{}`, which then reached
-          // the deleted text-based fallback.
+          // No members at all (`{}`, function-only, ctor-only) — Udon has
+          // no first-class function/ctor and no struct slots to
+          // materialize, so collapse to ObjectType. The AST-side
+          // `TypeLiteralNode` handler in parser/types.ts maps a syntactic
+          // `{}` (zero-member type literal) to `ExternTypes.dataDictionary`
+          // independently; that path still wins for type annotations
+          // because it runs before the resolver result is consulted.
           return ObjectType;
         }
         if (props.length > 0) {

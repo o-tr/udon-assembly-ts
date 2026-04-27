@@ -21,11 +21,37 @@ import type { TypeScriptParser } from "./type_script_parser.js";
 // name that wasn't yet registered (forward reference) or wasn't seen by
 // the TypeChecker. NOT a syntactic type-text parse: matches the trimmed
 // canonical name only, never composite shapes like `Foo[]` or `Foo<T>`.
+//
+// Lowercase-leading identifiers (e.g. `myType`) are intentionally excluded:
+// the legacy `tryMapTypeScriptType` also rejected them via the same regex,
+// so an unregistered lowercase name reaches the hard-error path. If a
+// future alias system needs to support lowercase aliases, register them
+// via `typeMapper.registerTypeAlias` so the alias-lookup hits before this
+// regex.
 const SIMPLE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
 // Detects type text containing TS-only constructs (`|`, `&`, `<`,
 // whitespace, `[]`, `?`). Used to decide whether an unrecognised name
 // should be silently widened to ObjectType vs. surfaced as a hard error.
 const COMPLEX_TYPE_TEXT_RE = /[\s|&<>{}[\]?:.()]/;
+
+/**
+ * Symbol-based fallback shared between `mapTypeWithGenerics` and the
+ * `inferType` `new` branch. Order: registered class alias → builtin
+ * (Vector3 etc.) → fresh `ClassTypeSymbol` for an uppercase identifier
+ * (forward-reference safety) → ObjectType. Never parses type text.
+ */
+function resolveBareIdentifierFallback(
+  typeMapper: TypeScriptParser["typeMapper"],
+  name: string,
+): TypeSymbol {
+  return (
+    typeMapper.getAlias(name) ??
+    typeMapper.lookupBuiltinByName(name) ??
+    (SIMPLE_USER_TYPE_NAME_RE.test(name)
+      ? new ClassTypeSymbol(name, UdonType.Object)
+      : ObjectType)
+  );
+}
 
 function getTypeLiteralPropertyName(
   name: ts.PropertyName,
@@ -537,19 +563,11 @@ export function inferType(
           // first to keep `new K()` parity with the pre-refactor path.
           const generic = this.resolveGenericParam(baseName);
           if (generic) return generic;
-          return (
-            this.typeMapper.getAlias(baseName) ??
-            this.typeMapper.lookupBuiltinByName(baseName) ??
-            ObjectType
-          );
+          return resolveBareIdentifierFallback(this.typeMapper, baseName);
         }
         const genericNoArgs = this.resolveGenericParam(baseName);
         if (genericNoArgs) return genericNoArgs;
-        return (
-          this.typeMapper.getAlias(baseName) ??
-          this.typeMapper.lookupBuiltinByName(baseName) ??
-          ObjectType
-        );
+        return resolveBareIdentifierFallback(this.typeMapper, baseName);
       }
       return ObjectType;
     }

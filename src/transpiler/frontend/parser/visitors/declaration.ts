@@ -149,10 +149,11 @@ export function visitClassDeclaration(
       });
       // Register parameters in a wrapping scope so that inferType inside the
       // body can resolve parameter types (e.g. `tiles[0]` where `tiles` is a
-      // Tile[] param). Mirrors visitMethodDeclaration; without this, an
-      // ElementAccessExpression falls through to mapTypeScriptType("object")
-      // = DataDictionary, which corrupts DataToken wrapping for inline-class
-      // arrays consumed by constructor bodies.
+      // Tile[] param). Mirrors visitMethodDeclaration; without this, the
+      // ElementAccessExpression branch in `inferType` (parser/types.ts) falls
+      // through to its `ExternTypes.dataDictionary` default — which corrupts
+      // DataToken wrapping for inline-class arrays consumed by constructor
+      // bodies.
       let body: BlockStatementNode | undefined;
       if (member.body) {
         this.symbolTable.enterScope();
@@ -383,7 +384,7 @@ export function extractInterfaceMembers(
       const propName = member.name.getText();
       const propType = member.type
         ? mapType(member.type.getText(), member.type)
-        : mapType("object");
+        : ExternTypes.dataDictionary;
       const existingIdx = properties.findIndex((p) => p.name === propName);
       if (existingIdx === -1) {
         properties.push({ name: propName, type: propType });
@@ -398,11 +399,11 @@ export function extractInterfaceMembers(
         name: param.name.getText(),
         type: param.type
           ? mapType(param.type.getText(), param.type)
-          : mapType("object"),
+          : ExternTypes.dataDictionary,
       }));
       const returnType = member.type
         ? mapType(member.type.getText(), member.type)
-        : mapType("void");
+        : PrimitiveTypes.void;
       methods.push({ name: methodName, parameters, returnType });
       methodMap.set(methodName, {
         params: parameters.map((param) => param.type),
@@ -413,7 +414,7 @@ export function extractInterfaceMembers(
       const param = member.parameters[0];
       const propType = param?.type
         ? mapType(param.type.getText(), param.type)
-        : mapType("object");
+        : ExternTypes.dataDictionary;
       if (!propertyMap.has(propName)) {
         properties.push({ name: propName, type: propType });
         propertyMap.set(propName, propType);
@@ -609,8 +610,9 @@ export function visitMethodDeclaration(
 
   // Register parameters in a wrapping scope so that inferType inside the body
   // can resolve parameter types (e.g. for `let a = tiles[0]` where `tiles` is
-  // a Tile[] param). Without this, ElementAccessExpression falls through to
-  // mapTypeScriptType("object") = DataDictionary, which corrupts DataToken wrapping.
+  // a Tile[] param). Without this, the ElementAccessExpression branch in
+  // `inferType` (parser/types.ts) falls through to its
+  // `ExternTypes.dataDictionary` default — which corrupts DataToken wrapping.
   this.symbolTable.enterScope();
   for (const param of parameters) {
     this.symbolTable.addSymbol(param.name, param.type, true, false);
