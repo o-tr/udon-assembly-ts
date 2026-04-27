@@ -1,6 +1,7 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { mapTypeScriptToCSharp } from "../../../codegen/udon_type_resolver.js";
+import { TranspileError } from "../../../errors/transpile_errors.js";
 import { isTsOnlyCallExpression } from "../../../frontend/ts_only.js";
 import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
@@ -1779,8 +1780,34 @@ export function visitCallExpression(
       return instResult;
     }
     if (node.isNew) {
-      const externSig = `__ctor_${calleeName}`;
       const ctorType = this.typeMapper.resolveByBareName(calleeName);
+      // `resolveByBareName` has four outcomes: (1) registered alias,
+      // (2) builtin name, (3) upper-case bare identifier → fresh
+      // `ClassTypeSymbol` (NOT ObjectType, so it bypasses this guard),
+      // and (4) ObjectType widening for any other input. Outcome (4) is
+      // the one we want to flag — e.g. lowercase `new foo()` used to
+      // throw `TranspileError("Unknown TypeScript type ...")` from the
+      // legacy `mapTypeScriptType` path, and silently emitting a
+      // `__ctor_foo` extern would fail at runtime. Aliases that resolve
+      // to ObjectType (`type Foo = unknown`) and the builtin keywords
+      // `unknown` / `any` / `never` / `object` are also outcome (4) but
+      // were silent under the legacy path, so exempt them by re-running
+      // the same lookups `resolveByBareName` consulted.
+      if (
+        ctorType === ObjectType &&
+        this.typeMapper.getAlias(calleeName) === undefined &&
+        this.typeMapper.lookupBuiltinByName(calleeName) === null
+      ) {
+        throw new TranspileError(
+          "TypeError",
+          `Cannot resolve constructor for 'new ${calleeName}()': '${calleeName}' is not a known type, alias, or class identifier.`,
+          // `node.loc` is populated by `attachLoc` for every parsed
+          // CallExpression; the fallback is purely defensive in case a
+          // future synthetic-node path forgets to attach a location.
+          node.loc ?? { filePath: "<unknown>", line: 0, column: 0 },
+        );
+      }
+      const externSig = `__ctor_${calleeName}`;
       const ctorResult = this.newTemp(ctorType);
       this.emit(new CallInstruction(ctorResult, externSig, getArgs()));
       return ctorResult;

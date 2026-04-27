@@ -1,5 +1,6 @@
 import * as ts from "typescript";
 import { TranspileError } from "../../errors/transpile_errors.js";
+import { BARE_USER_TYPE_NAME_RE } from "../type_mapper.js";
 import type { TypeSymbol } from "../type_symbols.js";
 import {
   ArrayTypeSymbol,
@@ -16,28 +17,6 @@ import {
 import { UdonType } from "../types.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
 
-// Bare TypeScript identifier — Foo, MyClass, T (uppercase first), etc.
-// Used as the last fallback in `mapTypeWithGenerics` to construct a fresh
-// `ClassTypeSymbol` for a name that wasn't yet registered (forward
-// reference) or wasn't seen by the TypeChecker. NOT a syntactic type-text
-// parse: matches the trimmed canonical name only, never composite shapes
-// like `Foo[]` or `Foo<T>`.
-//
-// Lowercase-leading identifiers (e.g. `myType`) are intentionally excluded
-// so an unregistered lowercase name reaches the hard-error path. If a
-// future alias system needs to support lowercase aliases, register them
-// via `typeMapper.registerTypeAlias` so the alias-lookup hits before this
-// regex.
-//
-// Other text-only shapes — `readonly X`, `asserts x is T`, quoted-string
-// literal types, `true`/`false`, `X | Y`, `X[]`, `X<Y>`, generic-parameter
-// shorthand (`T1`, `_T`, `TName`) — are *not* recovered here. The design
-// expects every caller to pass the original `ts.Node`; the AST branches
-// earlier in `mapTypeWithGenerics` cover all of those shapes for in-tree
-// call sites. External consumers that still call `mapTypeWithGenerics(text)`
-// without a node will see the throw / ObjectType behaviour described below;
-// the no-node overload is scheduled for removal in a follow-up.
-const SIMPLE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
 // Detects type text containing TS-only constructs (`|`, `&`, `<`,
 // whitespace, `[]`, `?`). Used to decide whether an unrecognised name
 // should be silently widened to ObjectType vs. surfaced as a hard error.
@@ -377,7 +356,7 @@ export function mapTypeWithGenerics(
   // not-yet-registered class. ObjectType-backed ClassTypeSymbol matches
   // the legacy `isLikelyUserDefinedType` behavior the TypeMapper used to
   // perform internally.
-  if (SIMPLE_USER_TYPE_NAME_RE.test(trimmed)) {
+  if (BARE_USER_TYPE_NAME_RE.test(trimmed)) {
     return new ClassTypeSymbol(trimmed, UdonType.Object);
   }
   // Composite shape we couldn't classify (`string | number`, generic

@@ -14,9 +14,13 @@ import { UdonType } from "./types.js";
 // Bare upper-case identifier (Foo, MyClass, T, etc.). Used by
 // `resolveByBareName` to decide whether an unresolved name should be
 // constructed as a fresh `ClassTypeSymbol` (forward reference) or widened
-// to ObjectType. Lowercase-leading identifiers are intentionally excluded
-// to mirror the legacy `isLikelyUserDefinedType` behavior.
-const BARE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
+// to ObjectType. NOT a syntactic type-text parse: matches the trimmed
+// canonical name only, never composite shapes like `Foo[]` or `Foo<T>`.
+// Lowercase-leading identifiers are intentionally excluded to mirror the
+// legacy `isLikelyUserDefinedType` behavior — an unregistered lowercase
+// name reaches the unresolved/error path. Exported so `parser/types.ts`
+// can share the same definition for its own bare-name fallback chain.
+export const BARE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
 
 /**
  * Canonical lookup of TypeScript / C# builtin type names that have a single
