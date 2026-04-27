@@ -244,14 +244,13 @@ export function visitVariableDeclaration(
   let src: TACOperand | null = null;
 
   if (node.initializer) {
-    const resolvedType = node.type;
     if (
       node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
-      resolvedType instanceof InterfaceTypeSymbol &&
-      resolvedType.properties.size > 0
+      node.type instanceof InterfaceTypeSymbol &&
+      node.type.properties.size > 0
     ) {
       const prev = this.currentExpectedType;
-      this.currentExpectedType = resolvedType;
+      this.currentExpectedType = node.type;
       try {
         src = this.visitExpression(node.initializer);
       } finally {

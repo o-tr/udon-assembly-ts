@@ -9,7 +9,6 @@ import {
   type DoWhileStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
-  type FunctionDeclarationNode,
   type FunctionExpressionNode,
   type IfStatementNode,
   type MethodDeclarationNode,
@@ -39,8 +38,25 @@ import {
  * type is a union alias, pick the union member whose properties best match
  * the literal's keys.
  *
- * The walk only refines: it never replaces a more specific symbol with a
- * less specific one, so it is safe to invoke repeatedly.
+ * Scope: this pass only upgrades **declaration- and statement-level** type
+ * fields (`VariableDeclarationNode.type`, `PropertyDeclarationNode.type` /
+ * `getterReturnType`, `MethodDeclarationNode.returnType` and parameter types,
+ * `ClassDeclarationNode` constructor parameters, `ForOfStatementNode.variableType`,
+ * `FunctionExpressionNode` parameters and return type).
+ * Expression-level types (e.g. `AsExpressionNode.targetTypeSymbol`,
+ * `LiteralNode.type`, `ArrayLiteralExpressionNode.typeHint`) are intentionally
+ * skipped: they are populated later by the TypeChecker resolver during IR
+ * conversion (see `resolveTypeFromNode` in
+ * `ir/ast_to_tac/visitors/expression.ts`) and don't go through the same
+ * forward-reference fallback. `InterfaceDeclarationNode.properties` are also
+ * skipped — those entries are plain `{name, type}` shapes (not full property
+ * declarations) and were not late-resolved by the IR layer this replaces.
+ * Top-level `FunctionDeclarationNode` is not handled because the parser
+ * (`parser/visitors/statement.ts`) returns `undefined` for
+ * `ts.SyntaxKind.FunctionDeclaration` — those nodes never reach the AST.
+ *
+ * The walk only refines: for a slot already holding an `InterfaceTypeSymbol`
+ * the upgrade short-circuits, so it is safe to invoke repeatedly.
  */
 export function resolveDeferredTypes(
   program: ProgramNode,
@@ -51,10 +67,16 @@ export function resolveDeferredTypes(
   }
 }
 
+/**
+ * Replace a placeholder `TypeSymbol` (typically `ClassTypeSymbol(name, Object)`
+ * for a forward-declared interface) with the registered `InterfaceTypeSymbol`
+ * if one exists. Already-`InterfaceTypeSymbol` slots are returned unchanged —
+ * this matches the IR layer's `!(t instanceof InterfaceTypeSymbol)` guard so
+ * an empty marker interface (`interface Empty {}`) stays as it was rather
+ * than being repeatedly looked up.
+ */
 function upgradeType(type: TypeSymbol, typeMapper: TypeMapper): TypeSymbol {
-  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
-    return type;
-  }
+  if (type instanceof InterfaceTypeSymbol) return type;
   const name = type.name;
   if (!name) return type;
   const alias = typeMapper.getAlias(name);
@@ -64,14 +86,32 @@ function upgradeType(type: TypeSymbol, typeMapper: TypeMapper): TypeSymbol {
   return type;
 }
 
+/**
+ * For an `ObjectLiteralExpression` initializer typed as a union alias (e.g.
+ * `WinResult = WinResultWin | WinResultNotWin`), pick the union member whose
+ * declared property set is fully covered by the literal's keys, breaking
+ * ties by property count (largest wins).
+ *
+ * Slots already holding any `InterfaceTypeSymbol` (including empty marker
+ * interfaces) short-circuit: union narrowing is only ever needed when the
+ * declared type is the union *alias* placeholder, never an already-resolved
+ * member. This matches the IR layer's `!(t instanceof InterfaceTypeSymbol)`
+ * gate that this pass replaces.
+ *
+ * Only explicit `{kind: "property"}` entries contribute to `objKeys` —
+ * spread elements (`{...x}`) and computed keys are not considered, matching
+ * the IR layer's pre-existing best-effort matching at
+ * `partProps.every(...) && partType.properties.size > bestMatchSize`.
+ * Tie-breaking is deterministic by union-member declaration order: when two
+ * members have the same `properties.size`, the first one encountered wins
+ * (the comparison is strict `>`, not `>=`).
+ */
 function narrowUnionForObjectLiteral(
   type: TypeSymbol,
   initializer: ASTNode | undefined,
   typeMapper: TypeMapper,
 ): TypeSymbol {
-  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
-    return type;
-  }
+  if (type instanceof InterfaceTypeSymbol) return type;
   if (
     !initializer ||
     initializer.kind !== ASTNodeKind.ObjectLiteralExpression
@@ -140,15 +180,6 @@ function visit(node: ASTNode | undefined, typeMapper: TypeMapper): void {
         visit(param.initializer, typeMapper);
       }
       visit(m.body, typeMapper);
-      return;
-    }
-    case ASTNodeKind.FunctionDeclaration: {
-      const f = node as FunctionDeclarationNode;
-      f.returnType = upgradeType(f.returnType, typeMapper);
-      for (const param of f.parameters) {
-        param.type = upgradeType(param.type, typeMapper);
-      }
-      visit(f.body, typeMapper);
       return;
     }
     case ASTNodeKind.FunctionExpression: {

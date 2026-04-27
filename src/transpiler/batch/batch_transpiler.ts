@@ -216,15 +216,12 @@ export class BatchTranspiler {
 
     // Register all source files upfront so that registry.getEntryPoints()
     // can identify entry files without a separate ts.createSourceFile() pass.
-    const parsedPrograms = new Map<
-      string,
-      { program: ProgramNode; sourceText: string }
-    >();
+    const parsedPrograms = new Map<string, ProgramNode>();
     const parseAndRegisterFile = (filePath: string): void => {
       const source =
         inMemorySources[filePath] ?? fs.readFileSync(filePath, "utf8");
       const program = parser.parse(source, filePath);
-      parsedPrograms.set(filePath, { program, sourceText: source });
+      parsedPrograms.set(filePath, program);
       registry.registerFromProgram(program, filePath, source);
     };
 
@@ -315,8 +312,10 @@ export class BatchTranspiler {
     // placeholder types to their registered `InterfaceTypeSymbol`, then
     // re-register so the ClassRegistry's shallow `MethodInfo`/`PropertyInfo`
     // copies see the upgraded types as well.
-    for (const [filePath, { program, sourceText }] of parsedPrograms) {
+    for (const [filePath, program] of parsedPrograms) {
       resolveDeferredTypes(program, typeMapper);
+      const sourceText =
+        inMemorySources[filePath] ?? fs.readFileSync(filePath, "utf8");
       registry.registerFromProgram(program, filePath, sourceText);
     }
 
