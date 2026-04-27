@@ -144,6 +144,45 @@ describe("trivial-return getter fast-path", () => {
     expect(result.tac).toMatch(/inline_return\d*:/);
   });
 
+  it("does not leak the caller's param-export map into the getter body", () => {
+    // An @ExportName-decorated method exports its params under the
+    // method's parameter-export-name layout. Without resetting
+    // `currentParamExportMap` on entry, the fast-path's `visitExpression`
+    // would consult the caller's map when it visits the bare identifier
+    // `configValue` in the getter body and silently rewrite the read to
+    // the caller's exported param slot (e.g. `__0_configValue__param`).
+    // The slow path resets the map; the fast-path must too. The test pins
+    // the correct (un-rewritten) read by verifying the TAC reads the
+    // module-level `configValue` and that no `__\d+_configValue__param`
+    // identifier appears in the getter's emit.
+    const source = `
+      let configValue: number = 42;
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        get config(): number {
+          return configValue;
+        }
+        @ExportName("OnEvt")
+        OnEvent(configValue: number): void {
+          Debug.Log(this.config);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    // Primary guard: the read source is the bare module-level identifier.
+    // A regression that wrongly remaps to *any* renamed slot would fail
+    // here regardless of the export-name shape.
+    expect(result.tac).toMatch(/__inline_ret_\d+ = configValue\b/);
+    // Defense-in-depth pinned to the current `__{idx}_{name}__param`
+    // export-name shape. If that shape ever changes, the positive check
+    // above is what locks correctness; this regex would go vacuous.
+    expect(result.tac).not.toMatch(
+      /__inline_ret_\d+ = __\d+_configValue__param/,
+    );
+  });
+
   it("preserves WriteToGetter detection through the fast-path", () => {
     // The fast-path mints an `__inline_ret_*` Variable with isInlineReturn
     // so that `expression.ts` can recognise the LHS of a compound write

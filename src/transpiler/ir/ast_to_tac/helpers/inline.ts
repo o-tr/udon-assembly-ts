@@ -2323,6 +2323,9 @@ function inlineResolvedMethodBody(
       const savedThisOverride = converter.currentThisOverride;
       const savedBaseClass = converter.currentInlineBaseClass;
       const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+      const savedParamExportMap = converter.currentParamExportMap;
+      const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+      const savedMethodLayout = converter.currentMethodLayout;
       const savedNativeIneligible = converter.nativeArrayIneligible;
       const savedNativeVarName = converter.currentNativeArrayVarName;
       converter.currentInlineContext = instancePrefix
@@ -2331,6 +2334,16 @@ function inlineResolvedMethodBody(
       converter.currentThisOverride = null;
       converter.currentInlineBaseClass = undefined;
       converter.currentInlineConstructorClassName = undefined;
+      // Reset param-export bookkeeping: `visitIdentifier` consults
+      // `currentParamExportMap` to remap bare identifiers to their
+      // entry-point export names. If a fast-path getter is invoked from a
+      // method whose params are exported (e.g. an UdonBehaviour event),
+      // the caller's map would silently rewrite same-named bare
+      // identifiers in the getter body. Slow path resets unconditionally
+      // for the same reason — match it here.
+      converter.currentParamExportMap = new Map();
+      converter.currentParamExportReverseMap = new Map();
+      converter.currentMethodLayout = null;
       // Mirror the slow path: native-array eligibility must be analysed
       // against the inlined body, and `currentNativeArrayVarName` must not
       // leak from the caller — otherwise an array literal in the return
@@ -2364,6 +2377,9 @@ function inlineResolvedMethodBody(
         converter.inlineMethodStack.delete(inlineKey);
         converter.currentNativeArrayVarName = savedNativeVarName;
         converter.nativeArrayIneligible = savedNativeIneligible;
+        converter.currentMethodLayout = savedMethodLayout;
+        converter.currentParamExportReverseMap = savedParamExportReverseMap;
+        converter.currentParamExportMap = savedParamExportMap;
         converter.currentInlineConstructorClassName = savedInlineCtorClass;
         converter.currentInlineBaseClass = savedBaseClass;
         converter.currentThisOverride = savedThisOverride;
