@@ -466,6 +466,10 @@ export class BatchTranspiler {
     }
 
     if (errorCollector.hasErrors()) {
+      // Close `transpile-total` before bubbling the error so the [prof]
+      // log shows the wall time spent reaching the validation failure
+      // instead of looking like a hung run.
+      pend("transpile-total", _profTopStart, "error=validation");
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
@@ -474,6 +478,7 @@ export class BatchTranspiler {
     const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
     const ext = sanitized.length > 0 ? sanitized : "tasm";
     if (ext !== "tasm" && ext !== "uasm") {
+      pend("transpile-total", _profTopStart, "error=outputExtension");
       throw new Error(
         `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
       );
@@ -687,18 +692,21 @@ export class BatchTranspiler {
           registry,
         );
       } catch (e) {
+        // Close the open per-entry spans on BOTH the handled-and-continue
+        // path and the rethrow path so every pmark() has a matching
+        // pend() — otherwise either error path leaves orphan timers in
+        // the [prof] output.
+        pend(
+          `entry-${entryPoint.name}-collect-consts`,
+          _profCollectConsts,
+          "error=collect-consts",
+        );
         if (this.collectDuplicateConstErrors(e, errorCollector)) {
-          // Close the open per-entry spans before bailing on this entry so
-          // every pmark() has a matching pend() — otherwise the duplicate-
-          // const error path leaves orphan timers in the prof output.
-          pend(
-            `entry-${entryPoint.name}-collect-consts`,
-            _profCollectConsts,
-            "error=DuplicateTopLevelConst",
-          );
           pend(`entry-${entryPoint.name}`, _profEntryStart, "error=skipped");
           continue;
         }
+        pend(`entry-${entryPoint.name}`, _profEntryStart, "error=rethrown");
+        pend("transpile-total", _profTopStart, "error=collect-consts");
         throw e;
       }
       pend(
