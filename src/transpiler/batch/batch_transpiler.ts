@@ -555,6 +555,10 @@ export class BatchTranspiler {
       if (diagnostics.length > 0 && !options.silent) {
         console.warn(formatWarnings(diagnostics));
       }
+      // Close the top-level span before returning so this fully-cached
+      // early-return path still emits a `transpile-total` line — otherwise
+      // a no-op build looks like a hung profile run in the [prof] output.
+      pend("transpile-total", _profTopStart, "all-cached");
       return diagnostics.length > 0
         ? { outputs: [], diagnostics }
         : { outputs: [] };
@@ -683,7 +687,18 @@ export class BatchTranspiler {
           registry,
         );
       } catch (e) {
-        if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
+        if (this.collectDuplicateConstErrors(e, errorCollector)) {
+          // Close the open per-entry spans before bailing on this entry so
+          // every pmark() has a matching pend() — otherwise the duplicate-
+          // const error path leaves orphan timers in the prof output.
+          pend(
+            `entry-${entryPoint.name}-collect-consts`,
+            _profCollectConsts,
+            "error=DuplicateTopLevelConst",
+          );
+          pend(`entry-${entryPoint.name}`, _profEntryStart, "error=skipped");
+          continue;
+        }
         throw e;
       }
       pend(
@@ -915,7 +930,7 @@ export class BatchTranspiler {
         outputPath: outPath,
         warnings,
       });
-      pend(`entry-${entryPoint.name}`, _profEntryStart);
+      pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=miss");
     }
     pend("transpile-total", _profTopStart);
 

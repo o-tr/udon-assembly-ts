@@ -53,6 +53,19 @@ function createResolverFromSource(
   return { context, resolver };
 }
 
+function findVariableDeclarationByName(
+  sourceFile: ts.SourceFile,
+  name: string,
+): ts.VariableDeclaration {
+  return findNode<ts.VariableDeclaration>(
+    sourceFile,
+    (node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name,
+  );
+}
+
 describe("TypeCheckerTypeResolver", () => {
   it("resolves inferred primitive types from ts.Node", () => {
     const filePath = "/virtual/type_resolver_number.ts";
@@ -298,12 +311,9 @@ describe("TypeCheckerTypeResolver", () => {
       const { context, resolver } = createResolverFromSource(source, filePath);
       const sourceFile = context.getSourceFile(filePath);
       expect(sourceFile).toBeDefined();
-      const declaration = findNode<ts.VariableDeclaration>(
+      const declaration = findVariableDeclarationByName(
         sourceFile as ts.SourceFile,
-        (node): node is ts.VariableDeclaration =>
-          ts.isVariableDeclaration(node) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === "it",
+        "it",
       );
       const resolved = resolver.resolveFromTsNode(declaration.name);
       expect(resolved).toBeInstanceOf(InterfaceTypeSymbol);
@@ -327,19 +337,13 @@ describe("TypeCheckerTypeResolver", () => {
       const { context, resolver } = createResolverFromSource(source, filePath);
       const sourceFile = context.getSourceFile(filePath);
       expect(sourceFile).toBeDefined();
-      const aDecl = findNode<ts.VariableDeclaration>(
+      const aDecl = findVariableDeclarationByName(
         sourceFile as ts.SourceFile,
-        (node): node is ts.VariableDeclaration =>
-          ts.isVariableDeclaration(node) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === "a",
+        "a",
       );
-      const bDecl = findNode<ts.VariableDeclaration>(
+      const bDecl = findVariableDeclarationByName(
         sourceFile as ts.SourceFile,
-        (node): node is ts.VariableDeclaration =>
-          ts.isVariableDeclaration(node) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === "b",
+        "b",
       );
       const a = resolver.resolveFromTsNode(aDecl.name);
       const b = resolver.resolveFromTsNode(bDecl.name);
@@ -361,19 +365,13 @@ describe("TypeCheckerTypeResolver", () => {
       const { context, resolver } = createResolverFromSource(source, filePath);
       const sourceFile = context.getSourceFile(filePath);
       expect(sourceFile).toBeDefined();
-      const xDecl = findNode<ts.VariableDeclaration>(
+      const xDecl = findVariableDeclarationByName(
         sourceFile as ts.SourceFile,
-        (node): node is ts.VariableDeclaration =>
-          ts.isVariableDeclaration(node) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === "x",
+        "x",
       );
-      const yDecl = findNode<ts.VariableDeclaration>(
+      const yDecl = findVariableDeclarationByName(
         sourceFile as ts.SourceFile,
-        (node): node is ts.VariableDeclaration =>
-          ts.isVariableDeclaration(node) &&
-          ts.isIdentifier(node.name) &&
-          node.name.text === "y",
+        "y",
       );
       const x = resolver.resolveFromTsNode(xDecl.name);
       const y = resolver.resolveFromTsNode(yDecl.name);
