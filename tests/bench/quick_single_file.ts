@@ -22,6 +22,16 @@ if (!fs.existsSync(file)) {
 const src = fs.readFileSync(file, "utf8");
 console.log(`source ${file} (${src.length} bytes)`);
 
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 for (let i = 0; i < 3; i++) {
   const t0 = performance.now();
   try {
@@ -31,7 +41,7 @@ for (let i = 0; i < 3; i++) {
   } catch (e) {
     const dt = performance.now() - t0;
     console.log(
-      `  run ${i + 1} failed at ${dt.toFixed(0)}ms: ${(e as Error).message.slice(0, 200)}`,
+      `  run ${i + 1} failed at ${dt.toFixed(0)}ms: ${describeError(e).slice(0, 200)}`,
     );
   }
 }

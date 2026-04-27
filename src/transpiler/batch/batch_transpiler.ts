@@ -9,19 +9,17 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 
 const PROF = process.env.UDON_PROFILE === "1";
-function pmark(label: string): number {
-  if (PROF) {
-    const t = performance.now();
-    return t;
-  }
-  return 0;
+function pmark(): number {
+  return PROF ? performance.now() : 0;
 }
 function pend(label: string, t0: number, extra = ""): void {
   if (PROF) {
     const dt = (performance.now() - t0).toFixed(1);
-    console.log(`[prof] ${label}: ${dt}ms${extra ? " " + extra : ""}`);
+    const suffix = extra ? ` ${extra}` : "";
+    console.log(`[prof] ${label}: ${dt}ms${suffix}`);
   }
 }
+
 import { buildExternRegistryFromFiles } from "../codegen/extern_registry.js";
 import { appendReflectionData } from "../codegen/reflection.js";
 import { TACToUdonConverter } from "../codegen/tac_to_udon/index.js";
@@ -200,12 +198,12 @@ export interface BatchResult {
 
 export class BatchTranspiler {
   transpile(options: BatchTranspilerOptions): BatchResult {
-    const _profTopStart = pmark("transpile-total");
+    const _profTopStart = pmark();
     const errorCollector = new ErrorCollector();
     const cachePath = path.join(options.sourceDir, ".transpiler-cache.json");
     const cache = this.loadCache(cachePath);
 
-    const _profDiscoverStart = pmark("discover");
+    const _profDiscoverStart = pmark();
     const rawFiles = discoverTypeScriptFiles({
       sourceDir: options.sourceDir,
       excludeDirs: options.excludeDirs,
@@ -214,9 +212,13 @@ export class BatchTranspiler {
     const fileSet = new Set(files);
 
     const transpilableSourceFiles = files.filter(isTranspilableSource);
-    pend("discover", _profDiscoverStart, `files=${files.length} transpilable=${transpilableSourceFiles.length}`);
+    pend(
+      "discover",
+      _profDiscoverStart,
+      `files=${files.length} transpilable=${transpilableSourceFiles.length}`,
+    );
 
-    const _profReadStart = pmark("read-sources");
+    const _profReadStart = pmark();
     // Build a shared TypeCheckerContext for all source files so that
     // cross-file type resolution works during parsing.
     const inMemorySources: Record<string, string> = {};
@@ -224,7 +226,7 @@ export class BatchTranspiler {
       inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
     }
     pend("read-sources", _profReadStart);
-    const _profCtxStart = pmark("checker-context-create-initial");
+    const _profCtxStart = pmark();
     const checkerContext =
       transpilableSourceFiles.length > 0
         ? TypeCheckerContext.create({
@@ -248,7 +250,7 @@ export class BatchTranspiler {
       registry.registerFromProgram(program, filePath, source);
     };
 
-    const _profParseStart = pmark("parse-initial");
+    const _profParseStart = pmark();
     let sourceFileCount = 0;
     for (const filePath of transpilableSourceFiles) {
       parseAndRegisterFile(filePath);
@@ -274,14 +276,14 @@ export class BatchTranspiler {
     }
     // Discover external dependencies iteratively (fixpoint) so imports
     // inside newly-discovered external files are also resolved.
-    const _profFixpointStart = pmark("fixpoint-total");
+    const _profFixpointStart = pmark();
     let externalFileCount = 0;
     let fixpointIter = 0;
     const allExternalRootNames: string[] = [];
     let previousReachableSize = -1;
     while (reachable.size !== previousReachableSize) {
       fixpointIter++;
-      const _profIterStart = pmark(`fixpoint-iter-${fixpointIter}`);
+      const _profIterStart = pmark();
       previousReachableSize = reachable.size;
 
       if (entryFiles.length > 0) {
@@ -308,7 +310,11 @@ export class BatchTranspiler {
       }
 
       if (externalFiles.length === 0) {
-        pend(`fixpoint-iter-${fixpointIter}`, _profIterStart, `external=0 (terminal)`);
+        pend(
+          `fixpoint-iter-${fixpointIter}`,
+          _profIterStart,
+          `external=0 (terminal)`,
+        );
         break;
       }
 
@@ -322,49 +328,69 @@ export class BatchTranspiler {
           inMemorySources[filePath] = fs.readFileSync(filePath, "utf8");
         }
       }
-      const _profCtxRebuild = pmark(`fixpoint-iter-${fixpointIter}-ctx-rebuild`);
+      const _profCtxRebuild = pmark();
       const newCheckerContext = TypeCheckerContext.create({
         rootNames: allRootNames,
         inMemorySources,
         oldProgram: parser.checkerContext?.getProgram(),
       });
-      pend(`fixpoint-iter-${fixpointIter}-ctx-rebuild`, _profCtxRebuild, `roots=${allRootNames.length}`);
+      pend(
+        `fixpoint-iter-${fixpointIter}-ctx-rebuild`,
+        _profCtxRebuild,
+        `roots=${allRootNames.length}`,
+      );
       if (parser.checkerContext) {
         newCheckerContext.setParent(parser.checkerContext);
       }
       parser.setCheckerContext(newCheckerContext);
-      const _profIterParse = pmark(`fixpoint-iter-${fixpointIter}-parse`);
+      const _profIterParse = pmark();
       for (const reachableFile of externalFiles) {
         parseAndRegisterFile(reachableFile);
         externalFileCount++;
         fileSet.add(reachableFile);
       }
-      pend(`fixpoint-iter-${fixpointIter}-parse`, _profIterParse, `external=${externalFiles.length}`);
+      pend(
+        `fixpoint-iter-${fixpointIter}-parse`,
+        _profIterParse,
+        `external=${externalFiles.length}`,
+      );
       resolver.setImportCache(parser.getImportCache());
-      pend(`fixpoint-iter-${fixpointIter}`, _profIterStart, `external=${externalFiles.length}`);
+      pend(
+        `fixpoint-iter-${fixpointIter}`,
+        _profIterStart,
+        `external=${externalFiles.length}`,
+      );
     }
-    pend("fixpoint-total", _profFixpointStart, `iters=${fixpointIter} external=${externalFileCount}`);
+    pend(
+      "fixpoint-total",
+      _profFixpointStart,
+      `iters=${fixpointIter} external=${externalFileCount}`,
+    );
 
     // All aliases (including cross-file forward references) are now
     // registered in `typeMapper`. Walk every parsed program to upgrade
     // placeholder types to their registered `InterfaceTypeSymbol`, then
     // re-register so the ClassRegistry's shallow `MethodInfo`/`PropertyInfo`
     // copies see the upgraded types as well.
-    const _profDeferredStart = pmark("resolve-deferred-types");
+    const _profDeferredStart = pmark();
     for (const [filePath, program] of parsedPrograms) {
       resolveDeferredTypes(program, typeMapper);
       const sourceText =
         inMemorySources[filePath] ?? fs.readFileSync(filePath, "utf8");
       registry.registerFromProgram(program, filePath, sourceText);
     }
-    pend("resolve-deferred-types", _profDeferredStart, `programs=${parsedPrograms.size}`);
+    pend(
+      "resolve-deferred-types",
+      _profDeferredStart,
+      `programs=${parsedPrograms.size}`,
+    );
 
     const cacheFiles =
       entryFiles.length > 0 && reachable.size > 0
         ? Array.from(reachable)
         : files;
 
-    const _profExternRegistry = pmark("extern-registry-build");
+    const _profExternRegistry = pmark();
     buildExternRegistryFromFiles(cacheFiles);
     pend("extern-registry-build", _profExternRegistry);
     if (options?.verbose) {
@@ -423,7 +449,7 @@ export class BatchTranspiler {
       }
     }
 
-    const _profValidate = pmark("inheritance-validate");
+    const _profValidate = pmark();
     const validator = new InheritanceValidator(registry, errorCollector);
     for (const entryPoint of registry.getEntryPoints()) {
       validator.validate(entryPoint.name);
@@ -592,17 +618,17 @@ export class BatchTranspiler {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
         continue;
       }
-      const _profEntryStart = pmark(`entry-${entryPoint.name}`);
+      const _profEntryStart = pmark();
       if (PROF) console.log(`[prof] >>> begin entry ${entryPoint.name}`);
       if (options?.verbose) {
         console.log(`Transpiling entry point: ${entryPoint.name}`);
       }
-      const _profMerge = pmark(`entry-${entryPoint.name}-merge-methods`);
+      const _profMerge = pmark();
       const mergedMethods = registry.getMergedMethods(entryPoint.name);
       const mergedProperties = registry.getMergedProperties(entryPoint.name);
       pend(`entry-${entryPoint.name}-merge-methods`, _profMerge);
 
-      const _profCollectInline = pmark(`entry-${entryPoint.name}-collect-inline`);
+      const _profCollectInline = pmark();
       const inlineClassNames = Array.from(
         this.collectReachableInlineClasses(
           entryPoint.name,
@@ -610,7 +636,11 @@ export class BatchTranspiler {
           registry,
         ),
       );
-      pend(`entry-${entryPoint.name}-collect-inline`, _profCollectInline, `inline=${inlineClassNames.length}`);
+      pend(
+        `entry-${entryPoint.name}-collect-inline`,
+        _profCollectInline,
+        `inline=${inlineClassNames.length}`,
+      );
 
       const filteredInlineClassNames = inlineClassNames.filter((name) => {
         const meta = registry.getClass(name);
@@ -644,7 +674,7 @@ export class BatchTranspiler {
         );
       }
 
-      const _profCollectConsts = pmark(`entry-${entryPoint.name}-collect-consts`);
+      const _profCollectConsts = pmark();
       let topLevelConsts: TopLevelConstInfo[];
       try {
         topLevelConsts = this.collectAllTopLevelConsts(
@@ -656,7 +686,11 @@ export class BatchTranspiler {
         if (this.collectDuplicateConstErrors(e, errorCollector)) continue;
         throw e;
       }
-      pend(`entry-${entryPoint.name}-collect-consts`, _profCollectConsts, `consts=${topLevelConsts.length}`);
+      pend(
+        `entry-${entryPoint.name}-collect-consts`,
+        _profCollectConsts,
+        `consts=${topLevelConsts.length}`,
+      );
       for (const tlc of topLevelConsts) {
         if (!symbolTable.hasInCurrentScope(tlc.name)) {
           symbolTable.addSymbol(
@@ -669,7 +703,7 @@ export class BatchTranspiler {
         }
       }
 
-      const _profBuildProgram = pmark(`entry-${entryPoint.name}-build-program`);
+      const _profBuildProgram = pmark();
       const topLevelConstNodes = topLevelConsts.map((tlc) => tlc.node);
       const methodProgram = this.classesToProgram(
         this.buildClassNodes(
@@ -700,9 +734,13 @@ export class BatchTranspiler {
       // Snapshot the shared collector so we can extract per-entry diagnostics
       // for the output cache (used on fully-cached subsequent runs).
       const diagnosticsBefore = errorCollector.getWarnings().length;
-      const _profTacStart = pmark(`entry-${entryPoint.name}-ast-to-tac`);
+      const _profTacStart = pmark();
       let tacInstructions = tacConverter.convert(methodProgram);
-      pend(`entry-${entryPoint.name}-ast-to-tac`, _profTacStart, `instr=${tacInstructions.length}`);
+      pend(
+        `entry-${entryPoint.name}-ast-to-tac`,
+        _profTacStart,
+        `instr=${tacInstructions.length}`,
+      );
       const entryDiagnostics = errorCollector
         .getWarnings()
         .slice(diagnosticsBefore);
@@ -774,25 +812,34 @@ export class BatchTranspiler {
             entryCompilationOrder,
           ),
         };
+        pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=hit");
         continue;
       }
 
       // Output cache miss: run the full optimization + codegen pipeline.
       if (options.optimize === true) {
-        const _profOpt = pmark(`entry-${entryPoint.name}-optimize`);
+        const _profOpt = pmark();
         const optimizer = new TACOptimizer();
         tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
-        pend(`entry-${entryPoint.name}-optimize`, _profOpt, `instr=${tacInstructions.length}`);
+        pend(
+          `entry-${entryPoint.name}-optimize`,
+          _profOpt,
+          `instr=${tacInstructions.length}`,
+        );
       }
 
-      const _profCodegen = pmark(`entry-${entryPoint.name}-codegen`);
+      const _profCodegen = pmark();
       const udonConverter = new TACToUdonConverter();
       const inlineClassNameSet = new Set(filteredInlineClassNames);
       const udonInstructions = udonConverter.convert(tacInstructions, {
         entryClassName: entryPoint.name,
         inlineClassNames: inlineClassNameSet,
       });
-      pend(`entry-${entryPoint.name}-codegen`, _profCodegen, `instr=${udonInstructions.length}`);
+      pend(
+        `entry-${entryPoint.name}-codegen`,
+        _profCodegen,
+        `instr=${udonInstructions.length}`,
+      );
       const externSignatures = udonConverter.getExternSignatures();
       let dataSectionWithTypes = udonConverter.getDataSectionWithTypes();
       if (options.reflect === true) {
@@ -802,7 +849,7 @@ export class BatchTranspiler {
         );
       }
 
-      const _profAssemble = pmark(`entry-${entryPoint.name}-assemble`);
+      const _profAssemble = pmark();
       const assembler = new UdonAssembler();
       const uasm = assembler.assemble(
         udonInstructions,
@@ -858,7 +905,11 @@ export class BatchTranspiler {
           entryCompilationOrder,
         ),
       };
-      pend(`entry-${entryPoint.name}-assemble`, _profAssemble, `bytes=${uasm.length}`);
+      pend(
+        `entry-${entryPoint.name}-assemble`,
+        _profAssemble,
+        `bytes=${uasm.length}`,
+      );
       outputs.push({
         className: entryPoint.name,
         outputPath: outPath,

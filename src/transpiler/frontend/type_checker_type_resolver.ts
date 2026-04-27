@@ -21,6 +21,12 @@ const TYPE_TO_STRING_FLAGS =
   ts.TypeFormatFlags.UseFullyQualifiedType |
   ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
 
+// Matches lib.es*.d.ts / lib.dom.d.ts / lib.scripthost.d.ts inside the
+// installed `typescript` package. Used to gate the builtin-generic
+// shortcut so user-defined interfaces with library names (Map, Set, …)
+// are not widened.
+const LIB_DTS_RE = /[\\/]typescript[\\/]lib[\\/]lib\..*\.d\.ts$/i;
+
 /**
  * Resolves TypeScript compiler types (ts.Type / ts.Node) to internal TypeSymbols.
  *
@@ -39,11 +45,12 @@ export class TypeCheckerTypeResolver {
   // phase visits the same syntactic AST nodes repeatedly (once per call site
   // × every inline copy of a method body) and each visit otherwise repeats
   // the full AST→ts.Node→ts.Type→TypeSymbol chain. Caching the resolved
-  // result here short-circuits all of that. ObjectType is stored as the
-  // "no-result" sentinel — IR callers already filter `=== ObjectType` and
-  // fall through to legacy resolution, so storing it preserves that
-  // semantic and keeps the cache value type uniform.
+  // result here short-circuits all of that. The "no bridged ts.Node" case
+  // (resolveTsNode returns undefined) is recorded separately in
+  // `astNodeNoTsNodeCache` so it caches as well, while keeping a real
+  // ObjectType resolution distinct from "no-result".
   private readonly astNodeCache = new WeakMap<ASTNode, TypeSymbol>();
+  private readonly astNodeNoTsNodeCache = new WeakSet<ASTNode>();
   // ts.Symbol-keyed cache for non-generic interfaces. The ts.Type-keyed
   // typeCache misses across syntactically-distinct uses of the same
   // interface (TypeScript hands back fresh ts.Type instances), so without
@@ -74,15 +81,23 @@ export class TypeCheckerTypeResolver {
   /** Resolve from a custom AST node that was previously bridged to a ts.Node.
    *  Cached on the AST node so repeat visits (e.g. the same expression
    *  re-encountered in every inline-expanded copy of a method body) skip the
-   *  full ts.Node lookup + getTypeAtLocation + resolveFromTsType chain. */
+   *  full ts.Node lookup + getTypeAtLocation + resolveFromTsType chain.
+   *  The "no bridged ts.Node" path is recorded in `astNodeNoTsNodeCache`
+   *  so synthetic / unmapped nodes don't pay the span-index lookup on
+   *  every revisit either — kept in a separate WeakSet so a real
+   *  ObjectType resolution remains distinguishable from "no-result". */
   resolveFromAstNode(
     node: ASTNode,
     checkerContext: TypeCheckerContext,
   ): TypeSymbol | null {
     const cached = this.astNodeCache.get(node);
     if (cached !== undefined) return cached;
+    if (this.astNodeNoTsNodeCache.has(node)) return null;
     const tsNode = checkerContext.resolveTsNode(node);
-    if (!tsNode) return null;
+    if (!tsNode) {
+      this.astNodeNoTsNodeCache.add(node);
+      return null;
+    }
     const result = this.resolveFromTsNode(tsNode);
     this.astNodeCache.set(node, result);
     return result;
@@ -260,19 +275,33 @@ export class TypeCheckerTypeResolver {
 
       // 7b-c. Interface → build InterfaceTypeSymbol from declared members
       if (symFlags & ts.SymbolFlags.Interface) {
-        const fqn = stripModuleQualifier(this.fqName(symbol));
         // Builtin generic-collection shortcut: avoid the
         // populateMemberMaps recursion through Iterator / IteratorResult /
         // generic protocol members. Mirrors the parser's TypeReference
-        // handling in `parser/types.ts mapTypeWithGenerics`.
-        const builtinShortcut = this.tryResolveBuiltinGenericInterface(fqn);
-        if (builtinShortcut) return builtinShortcut;
-        // Non-generic interfaces — symbol identity is a safe cache key.
-        // Generic instantiations of user interfaces (`IList<A>` vs
-        // `IList<B>`) share a symbol but expand to different member types,
-        // so they cannot share a cached result.
-        const declaredTypeParams = (type as ts.InterfaceType).typeParameters;
-        if (!declaredTypeParams || declaredTypeParams.length === 0) {
+        // handling in `parser/types.ts mapTypeWithGenerics`. Gated on the
+        // declaration originating from a TypeScript lib `.d.ts` so that
+        // user-defined interfaces happening to share a name (e.g. a local
+        // `interface Map { … }`) are NOT widened to the builtin extern.
+        if (this.isLibInterfaceSymbol(symbol)) {
+          const fqn = stripModuleQualifier(this.fqName(symbol));
+          const builtinShortcut = this.tryResolveBuiltinGenericInterface(fqn);
+          if (builtinShortcut) return builtinShortcut;
+        }
+        // Symbol-keyed cache for non-generic interfaces only.
+        // `IList<string>` and `IList<number>` share a symbol but expand to
+        // different member types, so caching by symbol would conflate them.
+        // Detect generic-ness from the *declaration*: an instantiated
+        // generic type is internally a TypeReference whose own
+        // `typeParameters` is undefined (the generic params live on its
+        // `target`), so checking the type flag alone gives a false
+        // negative and would incorrectly cache the instantiation. The
+        // declaration check is independent of how the type was reached.
+        const isGenericInterface = symbol.declarations?.some(
+          (decl) =>
+            ts.isInterfaceDeclaration(decl) &&
+            (decl.typeParameters?.length ?? 0) > 0,
+        );
+        if (!isGenericInterface) {
           const cached = this.nonGenericInterfaceCache.get(symbol);
           if (cached) return cached;
           const built = this.buildInterfaceTypeSymbol(type, symbol);
@@ -453,6 +482,21 @@ export class TypeCheckerTypeResolver {
     // typeToString-based string-parsing fallback that used to live here
     // was removed in favor of this terminal widening.
     return ObjectType;
+  }
+
+  /** Returns true when the interface symbol is declared in a TypeScript
+   *  lib `.d.ts` file (lib.es*.d.ts, lib.dom.d.ts, etc.). Used to gate the
+   *  builtin-generic-interface shortcut so that a user-defined
+   *  `interface Map { … }` is NOT widened to ExternTypes.dataDictionary
+   *  just because it shares a name with the standard library type. */
+  private isLibInterfaceSymbol(symbol: ts.Symbol): boolean {
+    const declarations = symbol.declarations;
+    if (!declarations) return false;
+    for (const decl of declarations) {
+      const fileName = decl.getSourceFile().fileName;
+      if (LIB_DTS_RE.test(fileName)) return true;
+    }
+    return false;
   }
 
   /** Short-circuit well-known generic-collection interfaces from the

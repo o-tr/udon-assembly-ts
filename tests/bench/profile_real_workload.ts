@@ -17,8 +17,8 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { BatchTranspiler } from "../../src/transpiler/batch/batch_transpiler.js";
 import type { BatchTranspilerOptions } from "../../src/transpiler/batch/batch_transpiler.js";
+import { BatchTranspiler } from "../../src/transpiler/batch/batch_transpiler.js";
 
 // Repo-relative defaults: this file lives at <repo>/tests/bench/, so the
 // repo root is two levels up. The default workload assumes a sibling
@@ -36,6 +36,18 @@ interface Args {
   output: string;
   clearCache: boolean;
 }
+
+const HELP = `Usage: tsx tests/bench/profile_real_workload.ts [options]
+
+Options:
+  -i, --input <dir>   Add a source directory (repeatable). Defaults to
+                      ../mahjong-t2/src/{core,vrc} relative to repo root.
+  -o, --output <dir>  Output directory (default: a tmpdir).
+      --no-optimize   Disable the optimizer pass.
+      --keep-cache    Do not clear .transpiler-cache.json / .transpiler-optcache
+                      before running.
+  -h, --help          Show this help and exit.
+`;
 
 function parseArgs(argv: string[]): Args {
   const a: Args = {
@@ -58,6 +70,11 @@ function parseArgs(argv: string[]): Args {
       a.output = v;
     } else if (x === "--keep-cache") {
       a.clearCache = false;
+    } else if (x === "-h" || x === "--help") {
+      process.stdout.write(HELP);
+      process.exit(0);
+    } else {
+      throw new Error(`unknown argument: ${x} (use -h for help)`);
     }
   }
   if (a.inputs.length === 0) {
@@ -89,13 +106,17 @@ function main() {
   let totalEntries = 0;
   let totalUasmBytes = 0;
 
-  for (const input of args.inputs) {
+  // Suffix output dirs with the input index so two inputs sharing a basename
+  // (e.g. `-i a/src -i b/src`) don't overwrite each other's outputs and
+  // double-count `totalUasmBytes`.
+  for (const [index, input] of args.inputs.entries()) {
     if (!fs.existsSync(input)) {
       console.error(`skip (not found): ${input}`);
       continue;
     }
     const transpiler = new BatchTranspiler();
-    const outDir = path.join(args.output, path.basename(input));
+    const outDirName = `${index.toString().padStart(2, "0")}-${path.basename(input)}`;
+    const outDir = path.join(args.output, outDirName);
     fs.mkdirSync(outDir, { recursive: true });
 
     const opts: BatchTranspilerOptions = {
@@ -116,7 +137,15 @@ function main() {
       try {
         const stat = fs.statSync(o.outputPath);
         totalUasmBytes += stat.size;
-      } catch {}
+      } catch (err) {
+        // Surface unexpected I/O errors instead of silently dropping the
+        // entry from the byte total. Missing output usually means the
+        // entry write failed upstream — visibility matters during
+        // bench debugging.
+        console.error(
+          `stat failed for ${o.outputPath}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     console.log(
       `[input ${input}] entries=${result.outputs.length} took=${fmt(t1 - t0)}`,

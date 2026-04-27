@@ -127,7 +127,7 @@ Per-entry compilation — **catastrophic**:
 
 Resolver counters during the 50s window of pass 1 (sampled every ~5s):
 
-```
+```text
 calls=  1,048,576  uncached= 536,368  buildIface= 516,061  populate= 516,105
 calls=  3,145,728  uncached=1,579,043 buildIface=1,555,848 populate=1,555,810
 calls=  5,242,880  uncached=2,618,896 buildIface=2,595,482 populate=2,595,353

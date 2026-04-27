@@ -162,6 +162,11 @@ import {
   visitWhileStatement,
 } from "./visitors/statement.js";
 
+// Module-level so the env-var read happens once at startup, matching the
+// pattern in `batch_transpiler.ts`. Toggling `UDON_PROFILE` mid-run is
+// not supported.
+const PROF = process.env.UDON_PROFILE === "1";
+
 /**
  * AST to TAC converter
  */
@@ -619,7 +624,6 @@ export class ASTToTACConverter {
    * loop that iterates over it) are already known in pass 2.
    */
   convert(program: ProgramNode): TACInstruction[] {
-    const PROF = process.env.UDON_PROFILE === "1";
     const t0 = PROF ? performance.now() : 0;
     // Pass 1: collect inline instance and interface metadata; discard output
     this.resetState();
@@ -627,7 +631,9 @@ export class ASTToTACConverter {
     this.convertImpl(program);
     if (PROF) {
       const dt = (performance.now() - t0).toFixed(1);
-      console.log(`[prof]   tac-pass1 (metadata): ${dt}ms instr-emitted=${this.instructions.length}`);
+      console.log(
+        `[prof]   tac-pass1 (metadata): ${dt}ms instr-emitted=${this.instructions.length}`,
+      );
     }
     const t1 = PROF ? performance.now() : 0;
 
@@ -698,7 +704,9 @@ export class ASTToTACConverter {
     const result = this.convertImpl(program);
     if (PROF) {
       const dt = (performance.now() - t1).toFixed(1);
-      console.log(`[prof]   tac-pass2 (codegen): ${dt}ms instr=${result.length}`);
+      console.log(
+        `[prof]   tac-pass2 (codegen): ${dt}ms instr=${result.length}`,
+      );
     }
     return result;
   }
