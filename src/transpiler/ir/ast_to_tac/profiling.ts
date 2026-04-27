@@ -16,7 +16,7 @@
  *     overhead at 28.6M call rate.
  */
 
-import { TACInstructionKind } from "../tac_instruction.js";
+import { TACInstruction, TACInstructionKind } from "../tac_instruction.js";
 import type { ASTToTACConverter } from "./converter.js";
 
 export const PROF = process.env.UDON_PROFILE === "1";
@@ -101,11 +101,16 @@ export function profExit(c: ASTToTACConverter): void {
   e.totalInstr += totalEmitted;
 }
 
-export function bumpKind(c: ASTToTACConverter, kind: TACInstructionKind): void {
+export function countKinds(
+  c: ASTToTACConverter,
+  instructions: TACInstruction[],
+): void {
   if (!PROF) return;
   c.instructionKindHistogram ??= new Int32Array(KIND_HISTOGRAM_SIZE);
-  const ord = KIND_ORDINALS[kind];
-  if (ord !== undefined) c.instructionKindHistogram[ord]++;
+  for (const instr of instructions) {
+    const ord = KIND_ORDINALS[instr.kind];
+    if (ord !== undefined) c.instructionKindHistogram[ord]++;
+  }
 }
 
 interface InlineRow {
