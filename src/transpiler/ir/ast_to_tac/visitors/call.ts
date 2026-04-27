@@ -85,6 +85,7 @@ import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
+import { PROF, profEnter, profExit } from "../profiling.js";
 import { resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
@@ -4104,10 +4105,20 @@ function visitSetMethodCall(
       if (thisOverride) {
         converter.currentThisOverride = thisOverride;
       }
-      if (callback.body.kind === ASTNodeKind.BlockStatement) {
-        converter.visitBlockStatement(callback.body as BlockStatementNode);
-      } else {
-        converter.visitExpression(callback.body);
+      if (PROF) {
+        profEnter(
+          converter,
+          `${converter.currentClassName ?? "<top>"}::${converter.currentMethodName ?? "<top>"}::<set-forEach-cb>@${callback.loc?.line ?? "?"}`,
+        );
+      }
+      try {
+        if (callback.body.kind === ASTNodeKind.BlockStatement) {
+          converter.visitBlockStatement(callback.body as BlockStatementNode);
+        } else {
+          converter.visitExpression(callback.body);
+        }
+      } finally {
+        profExit(converter);
       }
       converter.currentThisOverride = previousThisOverride;
 
@@ -4371,10 +4382,20 @@ function visitMapMethodCall(
       if (thisOverride) {
         converter.currentThisOverride = thisOverride;
       }
-      if (callback.body.kind === ASTNodeKind.BlockStatement) {
-        converter.visitBlockStatement(callback.body as BlockStatementNode);
-      } else {
-        converter.visitExpression(callback.body);
+      if (PROF) {
+        profEnter(
+          converter,
+          `${converter.currentClassName ?? "<top>"}::${converter.currentMethodName ?? "<top>"}::<map-forEach-cb>@${callback.loc?.line ?? "?"}`,
+        );
+      }
+      try {
+        if (callback.body.kind === ASTNodeKind.BlockStatement) {
+          converter.visitBlockStatement(callback.body as BlockStatementNode);
+        } else {
+          converter.visitExpression(callback.body);
+        }
+      } finally {
+        profExit(converter);
       }
       converter.currentThisOverride = previousThisOverride;
 

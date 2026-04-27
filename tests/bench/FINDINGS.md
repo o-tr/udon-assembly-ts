@@ -1,5 +1,248 @@
 # Transpiler performance — bottleneck investigation
 
+## 2026-04-28 — Inline-expansion histogram instrumentation (measurement, not a fix)
+
+The 28.6M-instruction blowup from the 2026-04-27 section below is the next
+bottleneck. Before picking an architectural fix (out-of-lining vs.
+TAC-level memoization vs. chain-break) we need to know **which methods**
+emit how many TAC instructions and through which call edges, partitioned
+by self-time-equivalent counts so deep chains aren't conflated with hot
+leaves. This run adds the instrumentation; the architectural fix is
+deferred to a follow-up driven by the data.
+
+### Instrumentation
+
+`src/transpiler/ir/ast_to_tac/profiling.ts` (new) provides `profEnter` /
+`profExit` / `bumpKind` helpers gated on `UDON_PROFILE=1`. Wired into:
+
+- `helpers/inline.ts` — `visitInlineStaticMethodCall`,
+  `emitInlineRecursiveStaticMethod`, `emitInlineRecursiveSelfCall`,
+  `inlineResolvedMethodBody` (4 sites).
+- `visitors/call.ts` — Set/Map `forEach` callback inlining (2 sites).
+- `converter.ts` — `emit()` bumps a per-`TACInstructionKind` `Int32Array`;
+  `convert()` resets profile state per-entry and prints histograms at end
+  of pass 2.
+
+Self-instruction counts use a parallel-stack accounting (key/before/childTotal)
+so a parent's `selfInstr` excludes work charged to nested inline children.
+This separates case (a) "hot leaf" from case (c) "deep chain through
+that leaf" — they look identical under cumulative accounting but
+distinct here.
+
+A unified `${className}::${methodName}` key is used at all sites
+(`histKey()` in profiling.ts) so the same method aggregates into one row
+even when reached via different inline helpers.
+
+### Output shape
+
+```text
+[prof] inline self-cost histogram (top 30 by selfInstr; calls(p2) = callsTotal - callsPass1):
+  ClassName::methodName  selfInstr=X  totalInstr=Y  calls(p2)=N  pass1=M
+  ...
+[prof] sanity: sum(selfInstr)=…  total pass-2 instructions=…  (others=…)
+[prof] inline edges (top 20 by call count):
+  Caller::foo -> Callee::bar  count
+  ...
+[prof] TAC instruction kind histogram (pass 2):
+  Assignment: …
+  BinaryOp: …
+  ...
+```
+
+### How to run
+
+```bash
+UDON_PROFILE=1 NODE_OPTIONS="--max-old-space-size=12288" \
+  pnpm tsx tests/bench/profile_real_workload.ts \
+  -i /path/to/mahjong-t2/src/core --no-optimize
+```
+
+Records pass 1 vs pass 2 invocation counts (rough comparison only — pass 1
+recurses through emission-suppressed paths so they may differ).
+
+### Verified
+
+- All 811 unit tests pass with `UDON_PROFILE` unset.
+- `pnpm bench` numbers within run-to-run noise of pre-instrumentation.
+- Smoke test on synthetic 3-call inline fixture: histogram correctly
+  reports `Helper::add selfInstr=18 totalInstr=18 calls(p2)=3 pass1=3`
+  (3 calls × 6 instructions per inlined body) and per-kind totals match
+  pass-2 emission count exactly.
+- Bench fixture with two inline methods: `Service::increment selfInstr=10
+  calls(p2)=2`, `Service::getValue selfInstr=4 calls(p2)=1`; sanity
+  reconciles 14 inline + 15 others = 29 pass-2 instructions.
+
+### Known minor: kind-histogram reconciliation
+
+The per-`TACInstructionKind` histogram does not exactly equal pass-2
+emission count. Two effects exist:
+
+- **Stray emissions bypassing `emit()`** (small undercount, ~1 per pass).
+  Cause: paths that push directly to `this.instructions` without going
+  through `emit()`. Negligible in real runs.
+- **Speculative-emission rollbacks via `instructions.length =
+  savedInstructionCount`** (overcount, dominates in real workloads —
+  observed ~1.67× on mahjong-t2). Sites: `visitors/call.ts:636`, `:867`,
+  `:1126`, `:3004`. Each rollback discards pushed instructions but the
+  `bumpKind` increment is not reverted.
+
+The overcount from rollbacks dominates and the stray undercount is
+negligible noise. The inline `selfInstr`/`totalInstr` counters use
+`instructions.length` deltas which DO net out across rollbacks, so they
+are unaffected (sanity check passes: sum(selfInstr) ≈ pass-2 instr).
+Routing the stray emits through `emit()` and reconciling the rollback
+overcount (e.g. by counting the result array at end of pass 2 instead
+of bumping per-emit) is deferred — kind ratios are still informative
+even with the inflation.
+
+### Real-workload run results (mahjong-t2 src/core + src/vrc, optimize=false)
+
+**Entry 1 (GameOrchestrator) — completed.** Pass 1: 24.3s. Pass 2: 34.7s,
+emits 28,631,600 TAC instructions. Codegen: 54.3s, produces 69,679,084
+Udon instructions. Numbers within run-to-run noise of the 2026-04-27
+baseline (~24/33/63s).
+
+**Entry 2 (TileCache) — OOM at 12GB during codegen.** Genuine memory
+pressure from ~70M Udon instructions per entry × 2 entries; not a
+regression from the instrumentation. (Instrumentation state is
+~1MB max — bounded by unique method/edge counts.) Architectural fix
+needed regardless to bring memory in range.
+
+#### Top inline self-cost (top 30, partial — 28.6M total selfInstr)
+
+| rank | row | selfInstr | totalInstr | calls(p2) | pass1 | notes |
+|----:|---|-----:|-----:|-----:|-----:|---|
+|  1 | `GameStateMachine::dispatch` | **9,707,817** | 28,579,904 | 7 | 7 | top of call tree; owns 99.8% transitive |
+|  2 | `YakuRegistry::registerAllYaku` | 1,451,414 | 2,707,679 | 563 | 563 | inlines `register` 25K× |
+|  3 | `YakuRegistry::register` | 1,256,265 | 1,256,265 | **25,335** | 25,335 | hot leaf, ~50 ix/call |
+|  4 | `Tile::rankFromKind` | 866,712 | 866,712 | 2,800 | 2,800 | leaf, ~310 ix/call |
+|  5 | `Hand::<get>melds` | 546,154 | 546,154 | **39,011** | 13,274 | accessor, ~14 ix/call (should be 1) |
+|  6 | `ScoringService::calculateFu` | 521,083 | 947,003 | 483 | 483 |  |
+|  7 | `Hand::<get>tiles` | 476,616 | 476,616 | **34,044** | 11,384 | accessor, ~14 ix/call (should be 1) |
+|  8 | `TileCountingHelpers::getNumericRank` | 465,640 | 871,696 | 1,680 | 1,680 |  |
+|  9 | `YakuEvaluator::buildOrderedYakuList` | 461,402 | 3,856,725 | 281 | 281 |  |
+| 10 | `HandDecompositionHelpers::checkMelds` | 377,580 | 451,500 | 1,260 | 1,212 |  |
+| 11 | `ChihouYaku::check` | 372,838 | **4,263,770** | 140 | 140 | totalInstr 11× selfInstr — chain |
+| 12 | `TenhouYaku::check` | 372,838 | **4,263,770** | 140 | 140 | mirror of Chihou — same body? |
+| 13 | `Tile::fromKind` | 312,716 | 505,764 | 818 | 802 |  |
+| 14 | `Tile::<get>suit` | 251,076 | 251,076 | 5,124 | 5,124 | accessor |
+| ... | ... | ... | ... | ... | ... | ... |
+|  - | `HandAnalyzer::checkWin` | 145,229 | **18,181,591** | 35 | 35 | totalInstr 125× selfInstr — deep chain |
+
+Sanity: sum(selfInstr) = 28,628,198, total pass-2 = 28,631,600,
+others = 3,402 (entry-method body — 0.01%). Coverage essentially total.
+
+#### Top edges (top 5)
+
+| edge | calls |
+|---|----:|
+| `YakuRegistry::registerAllYaku -> YakuRegistry::register` | **25,335** |
+| `HandPropertyHelpers::isMenzen -> Hand::<get>melds` | 5,460 |
+| `Tile::isHonor -> Tile::isHonorKind` | 5,250 |
+| `TileCountingHelpers::countTripletTiles -> Hand::<get>melds` | 5,040 |
+| `TileCountingHelpers::countTripletTiles -> Hand::<get>tiles` | 5,040 |
+
+#### Decision-tree result: hybrid case (a) + (c)
+
+The plan's decision tree (case a: top 5 ≥ 60% / case b: long flat tail /
+case c: single edge with huge multiplier through deep chain) does **not
+cleanly partition**:
+
+- **Top 5 = 13.83M / 28.6M = 48%** (below case a's 60% threshold).
+- **Top 1 = 34%** is dominant — not a flat tail (rules out case b).
+- `YakuRegistry::registerAllYaku -> register` is a 25K-call edge but
+  the callee body is only ~50 ix — case-c-style multiplier, but no
+  multiplicative chain blowup.
+- `HandAnalyzer::checkWin` totalInstr / selfInstr = 125× — that **is** a
+  deep chain (case c structure), but selfInstr is only 145K (small).
+
+The data points to a **hybrid fix targeting two layers**: out-line big-body
+methods, but leave small-body hot leaves alone (their per-call outline
+overhead exceeds the per-call body cost).
+
+**Outline-win formula**: per-call savings ≈ `body_size − outline_overhead`,
+where `outline_overhead` for the existing `emitInlineRecursiveStaticMethod`
+template (`inline.ts:1697`) is approximately 50–80 ix per call (push
+locals to DataList, increment depth, set params, JUMP, dispatch return,
+pop locals). Multiply by `(calls − 1)` for total saving (one body still
+emitted as the canonical out-of-line copy).
+
+Outline candidates (body_size = selfInstr / calls):
+
+| method | body_size | calls | savings | notes |
+|---|----:|----:|----:|---|
+| `GameStateMachine::dispatch` | 1,386,831 | 7 | **~8.3M** | 29% of pass 2 alone |
+| `YakuEvaluator::buildOrderedYakuList` | 1,642 | 281 | **~440K** | clean win |
+| `ScoringService::calculateFu` | 1,079 | 483 | **~490K** | clean win |
+| `ChihouYaku::check` | 2,663 | 140 | **~360K** | + identical mirror `TenhouYaku::check` |
+| `TenhouYaku::check` | 2,663 | 140 | **~360K** | mirror — possibly dedupable |
+| `Tile::rankFromKind` | 309 | 2,800 | **~700K** | 309 − 80 = 229 × 2799 |
+| `ScoringService::calculateScore` | 676 | 273 | **~165K** |  |
+| `TileCountingHelpers::countTripletTiles` | 108 | 980 | **~30K** | marginal |
+| `HandDecompositionHelpers::checkMelds` | 300 | 1,260 | **~280K** |  |
+
+Combined outline ceiling: **~11M instructions** (38% of 28.6M).
+
+NOT outlining (per-call overhead ≥ body):
+
+| method | body_size | calls | reason |
+|---|----:|----:|---|
+| `YakuRegistry::register` | 50 | 25,335 | body smaller than overhead |
+| `Hand::<get>melds` | 14 | 39,011 | accessor — see fix below |
+| `Hand::<get>tiles` | 14 | 34,044 | accessor — see fix below |
+| `Tile::<get>suit` | 49 | 5,124 | accessor |
+| `Tile::compare` | 103 | 1,621 | barely positive — keep simple |
+| `ScoringService::extractWindFromLabel` | 85 | 2,184 | barely positive |
+
+**Separate fix for inline-class accessors**: `Hand::<get>melds` and
+`Hand::<get>tiles` emit ~14 instructions per call for what should be a
+1–2 ix field read (a getter `return this.melds_;` doesn't need
+param-save/restore + return-label scaffolding). Investigate why
+`inlineResolvedMethodBody` (`inline.ts:2186`) emits ~14 ix for a no-param
+getter; if reducible to 3 ix, saves ~11 × (39K + 34K + 5K) =
+**~860K instructions** without changing the inline strategy.
+
+**Combined estimated win: ~12M instructions (42% reduction)**, taking
+pass 2 from 28.6M → ~16.6M. Codegen scales with TAC count, so codegen
+drops ~42% (54s → ~31s). Pass 2 from 35s → ~20s. Pass 1 also drops
+proportionally because pass 1 walks the same AST. **Total per-entry:
+120s → ~65s (46% off).**
+
+These savings are **per entry**. With 2+ entries, peak heap drops with
+the instruction count (largely from variableAddresses/extern Maps in
+codegen, which scale with unique-temp count, which scales with emitted
+instructions), so the 12GB OOM observed on entry 2 should also clear.
+The fix is bigger than any single case in the plan's decision tree but
+the data made the right structure obvious.
+
+#### Pass-1 vs pass-2 callsite divergence
+
+`Hand::<get>melds` shows pass1=13,274, pass2=39,011 (3× more in pass 2).
+Same for `Hand::<get>tiles`. Per the plan's note this is "rough
+comparison only" — emission-suppressed control flow can change which
+inline branches are entered. The 3× ratio in pass 2 hints at a
+pass-2-only re-inline of the same getter (e.g. via property-access
+visitor branches that depend on materialized operand state). Worth
+investigating but not blocking the architectural fix; the fix targets
+emission count, not invocation count.
+
+#### Kind-histogram overcount in this run
+
+Observed: kind histogram sum 47.8M vs pass-2 instructions 28.6M (1.67×).
+Cause is the rollback overcount described in the "Known minor:
+kind-histogram reconciliation" section above. Inline self/total
+counters are unaffected — the sanity line confirms 99.99% coverage.
+
+### Architectural-fix follow-up plan
+
+A new plan covering the four fixes above will be drafted next. The
+data-driven targets (`GameStateMachine::dispatch`,
+`YakuRegistry::register`, `Hand::<get>melds`/`<get>tiles`, plus 5 hot
+leaves) are concrete enough that the plan can name actual methods
+instead of decision trees.
+
+---
+
 ## 2026-04-27 — Fix 1+2 applied: resolver bottleneck cleared, codegen exposed
 
 ### Fixes applied
