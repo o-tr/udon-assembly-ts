@@ -244,59 +244,13 @@ export function visitVariableDeclaration(
   let src: TACOperand | null = null;
 
   if (node.initializer) {
-    let resolvedType = node.type;
     if (
       node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
-      !(resolvedType instanceof InterfaceTypeSymbol) &&
-      node.originalTypeName
-    ) {
-      const lateResolved = this.typeMapper.mapTypeScriptType(
-        node.originalTypeName,
-      );
-      if (
-        lateResolved instanceof InterfaceTypeSymbol &&
-        lateResolved.properties.size > 0
-      ) {
-        resolvedType = lateResolved;
-      } else {
-        // For union type aliases (e.g. WinResult = WinResultWin | WinResultNotWin),
-        // find the union member whose properties best match the object literal.
-        const unionParts = this.typeMapper.getUnionParts(node.originalTypeName);
-        if (unionParts) {
-          const initNode = node.initializer as ObjectLiteralExpressionNode;
-          const objKeys = new Set(
-            initNode.properties
-              .filter((p) => p.kind === "property")
-              .map((p) => p.key),
-          );
-          let bestMatch: InterfaceTypeSymbol | undefined;
-          let bestMatchSize = 0;
-          for (const partType of unionParts) {
-            if (
-              partType instanceof InterfaceTypeSymbol &&
-              partType.properties.size > 0
-            ) {
-              const partProps = [...partType.properties.keys()];
-              if (
-                partProps.every((k) => objKeys.has(k)) &&
-                partType.properties.size > bestMatchSize
-              ) {
-                bestMatch = partType;
-                bestMatchSize = partType.properties.size;
-              }
-            }
-          }
-          if (bestMatch) resolvedType = bestMatch;
-        }
-      }
-    }
-    if (
-      node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
-      resolvedType instanceof InterfaceTypeSymbol &&
-      resolvedType.properties.size > 0
+      node.type instanceof InterfaceTypeSymbol &&
+      node.type.properties.size > 0
     ) {
       const prev = this.currentExpectedType;
-      this.currentExpectedType = resolvedType;
+      this.currentExpectedType = node.type;
       try {
         src = this.visitExpression(node.initializer);
       } finally {
