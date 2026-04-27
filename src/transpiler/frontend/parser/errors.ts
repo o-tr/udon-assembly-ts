@@ -1,5 +1,6 @@
 import type * as ts from "typescript";
 import { TranspileError } from "../../errors/transpile_errors.js";
+import { PrimitiveTypes } from "../type_symbols.js";
 import { ASTNodeKind, type LiteralNode } from "../types.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
 
@@ -76,7 +77,7 @@ export function createUnsupportedExpressionPlaceholder(
   const result: LiteralNode = {
     kind: ASTNodeKind.Literal,
     value: 0,
-    type: this.typeMapper.mapTypeScriptType("number"),
+    type: PrimitiveTypes.single,
   };
   return tsNode ? this.attachLoc(tsNode, result) : result;
 }

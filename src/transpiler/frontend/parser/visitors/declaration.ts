@@ -2,7 +2,9 @@ import * as ts from "typescript";
 import type { EnumKind } from "../../enum_registry.js";
 import {
   ClassTypeSymbol,
+  ExternTypes,
   InterfaceTypeSymbol,
+  PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
 import {
@@ -137,7 +139,7 @@ export function visitClassDeclaration(
           name: paramName,
           type: param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : this.mapTypeWithGenerics("number", param),
+            : PrimitiveTypes.single,
           ...(serializeFieldParams.has(paramName)
             ? { isSerializeField: true }
             : {}),
@@ -147,10 +149,11 @@ export function visitClassDeclaration(
       });
       // Register parameters in a wrapping scope so that inferType inside the
       // body can resolve parameter types (e.g. `tiles[0]` where `tiles` is a
-      // Tile[] param). Mirrors visitMethodDeclaration; without this, an
-      // ElementAccessExpression falls through to mapTypeScriptType("object")
-      // = DataDictionary, which corrupts DataToken wrapping for inline-class
-      // arrays consumed by constructor bodies.
+      // Tile[] param). Mirrors visitMethodDeclaration; without this, the
+      // ElementAccessExpression branch in `inferType` (parser/types.ts) falls
+      // through to its `ExternTypes.dataDictionary` default — which corrupts
+      // DataToken wrapping for inline-class arrays consumed by constructor
+      // bodies.
       let body: BlockStatementNode | undefined;
       if (member.body) {
         this.symbolTable.enterScope();
@@ -158,7 +161,7 @@ export function visitClassDeclaration(
           const paramName = param.name.getText();
           const paramType = param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : this.mapTypeWithGenerics("number", param);
+            : PrimitiveTypes.single;
           this.symbolTable.addSymbol(paramName, paramType, true, false);
         }
         body = this.visitBlock(member.body);
@@ -179,7 +182,7 @@ export function visitClassDeclaration(
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
           ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-          : this.mapTypeWithGenerics("number", param);
+          : PrimitiveTypes.single;
         const isPublic =
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
@@ -212,7 +215,7 @@ export function visitClassDeclaration(
       if (existingIdx !== -1 && properties[existingIdx].isGetter) continue;
       const propType = member.type
         ? this.mapTypeWithGenerics(member.type.getText(), member.type)
-        : this.mapTypeWithGenerics("object");
+        : ExternTypes.dataDictionary;
       const isStatic = !!member.modifiers?.some(
         (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
       );
@@ -290,7 +293,7 @@ export function visitClassDeclaration(
       const param = member.parameters[0];
       const propType = param?.type
         ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-        : this.mapTypeWithGenerics("object");
+        : ExternTypes.dataDictionary;
       const isStatic = !!member.modifiers?.some(
         (mod) => mod.kind === ts.SyntaxKind.StaticKeyword,
       );
@@ -381,7 +384,7 @@ export function extractInterfaceMembers(
       const propName = member.name.getText();
       const propType = member.type
         ? mapType(member.type.getText(), member.type)
-        : mapType("object");
+        : ExternTypes.dataDictionary;
       const existingIdx = properties.findIndex((p) => p.name === propName);
       if (existingIdx === -1) {
         properties.push({ name: propName, type: propType });
@@ -396,11 +399,11 @@ export function extractInterfaceMembers(
         name: param.name.getText(),
         type: param.type
           ? mapType(param.type.getText(), param.type)
-          : mapType("object"),
+          : ExternTypes.dataDictionary,
       }));
       const returnType = member.type
         ? mapType(member.type.getText(), member.type)
-        : mapType("void");
+        : PrimitiveTypes.void;
       methods.push({ name: methodName, parameters, returnType });
       methodMap.set(methodName, {
         params: parameters.map((param) => param.type),
@@ -411,7 +414,7 @@ export function extractInterfaceMembers(
       const param = member.parameters[0];
       const propType = param?.type
         ? mapType(param.type.getText(), param.type)
-        : mapType("object");
+        : ExternTypes.dataDictionary;
       if (!propertyMap.has(propName)) {
         properties.push({ name: propName, type: propType });
         propertyMap.set(propName, propType);
@@ -502,7 +505,7 @@ export function visitPropertyDeclaration(
   } else if (node.initializer) {
     type = this.inferType(node.initializer);
   } else {
-    type = this.mapTypeWithGenerics("number", node);
+    type = PrimitiveTypes.single;
   }
 
   const initializer = node.initializer
@@ -588,7 +591,7 @@ export function visitMethodDeclaration(
     const paramName = param.name.getText();
     const paramType = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-      : this.mapTypeWithGenerics("number", param);
+      : PrimitiveTypes.single;
     const initializer = param.initializer
       ? this.parseParameterInitializer(param.initializer, param.type)
       : undefined;
@@ -603,12 +606,13 @@ export function visitMethodDeclaration(
   const returnType =
     returnTypeText !== undefined && node.type !== undefined
       ? this.mapTypeWithGenerics(returnTypeText, node.type)
-      : this.mapTypeWithGenerics("void");
+      : PrimitiveTypes.void;
 
   // Register parameters in a wrapping scope so that inferType inside the body
   // can resolve parameter types (e.g. for `let a = tiles[0]` where `tiles` is
-  // a Tile[] param). Without this, ElementAccessExpression falls through to
-  // mapTypeScriptType("object") = DataDictionary, which corrupts DataToken wrapping.
+  // a Tile[] param). Without this, the ElementAccessExpression branch in
+  // `inferType` (parser/types.ts) falls through to its
+  // `ExternTypes.dataDictionary` default — which corrupts DataToken wrapping.
   this.symbolTable.enterScope();
   for (const param of parameters) {
     this.symbolTable.addSymbol(param.name, param.type, true, false);

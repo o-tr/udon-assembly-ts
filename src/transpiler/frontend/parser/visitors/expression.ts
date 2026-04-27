@@ -1,6 +1,10 @@
 import * as ts from "typescript";
 import { isStep10MetricsEnabled } from "../../type_resolution_metrics.js";
-import { ObjectType, type TypeSymbol } from "../../type_symbols.js";
+import {
+  ExternTypes,
+  ObjectType,
+  type TypeSymbol,
+} from "../../type_symbols.js";
 import {
   type ArrayLiteralElementNode,
   type ArrayLiteralExpressionNode,
@@ -255,7 +259,7 @@ export function visitFunctionLiteralExpression(
     const name = param.name.getText();
     const type = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-      : this.typeMapper.mapTypeScriptType("object");
+      : ExternTypes.dataDictionary;
     const initializer = param.initializer
       ? this.parseParameterInitializer(param.initializer, param.type)
       : undefined;
@@ -285,7 +289,7 @@ export function visitRegexLiteralExpression(
   return this.attachLoc(_node, {
     kind: ASTNodeKind.Literal,
     value: 0,
-    type: this.typeMapper.mapTypeScriptType("object"),
+    type: ExternTypes.dataDictionary,
   });
 }
 
@@ -470,7 +474,7 @@ export function visitLiteral(
       break;
     case ts.SyntaxKind.NullKeyword:
       value = null;
-      type = this.typeMapper.mapTypeScriptType("object");
+      type = ExternTypes.dataDictionary;
       break;
     default:
       throw new Error(`Unsupported literal kind: ${ts.SyntaxKind[node.kind]}`);

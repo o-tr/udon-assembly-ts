@@ -3,6 +3,7 @@ import { TranspileError } from "../../errors/transpile_errors.js";
 import type { TypeSymbol } from "../type_symbols.js";
 import {
   ArrayTypeSymbol,
+  ClassTypeSymbol,
   CollectionTypeSymbol,
   ExternTypes,
   GenericTypeParameterSymbol,
@@ -12,7 +13,64 @@ import {
   PrimitiveTypes,
   UDON_BRANDED_TYPE_MAP,
 } from "../type_symbols.js";
+import { UdonType } from "../types.js";
 import type { TypeScriptParser } from "./type_script_parser.js";
+
+// Bare TypeScript identifier — Foo, MyClass, T (uppercase first), etc.
+// Used as the last fallback in `mapTypeWithGenerics` to construct a fresh
+// `ClassTypeSymbol` for a name that wasn't yet registered (forward
+// reference) or wasn't seen by the TypeChecker. NOT a syntactic type-text
+// parse: matches the trimmed canonical name only, never composite shapes
+// like `Foo[]` or `Foo<T>`.
+//
+// Lowercase-leading identifiers (e.g. `myType`) are intentionally excluded:
+// the legacy `tryMapTypeScriptType` also rejected them via the same regex,
+// so an unregistered lowercase name reaches the hard-error path. If a
+// future alias system needs to support lowercase aliases, register them
+// via `typeMapper.registerTypeAlias` so the alias-lookup hits before this
+// regex.
+//
+// Other text-only shapes the legacy text-parsing fallback used to handle
+// — `readonly X`, `asserts x is T`, quoted-string literal types, `true`/
+// `false`, `X | Y`, `X[]`, `X<Y>`, generic-parameter shorthand (`T1`,
+// `_T`, `TName`) — are *not* recovered here. The new design expects every
+// caller to pass the original `ts.Node`; the AST branches earlier in
+// `mapTypeWithGenerics` cover all of those shapes for in-tree call sites.
+// External consumers that still call `mapTypeWithGenerics(text)` without
+// a node will see the throw / ObjectType behaviour described below; the
+// no-node overload is scheduled for removal in a follow-up.
+const SIMPLE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
+// Detects type text containing TS-only constructs (`|`, `&`, `<`,
+// whitespace, `[]`, `?`). Used to decide whether an unrecognised name
+// should be silently widened to ObjectType vs. surfaced as a hard error.
+const COMPLEX_TYPE_TEXT_RE = /[\s|&<>{}[\]?:.()]/;
+
+/**
+ * Symbol-based fallback shared between `mapTypeWithGenerics` and the
+ * `inferType` `new` branch. Order: registered class alias → builtin
+ * (Vector3 etc.) → fresh `ClassTypeSymbol` for an uppercase identifier
+ * (forward-reference safety) → ObjectType. Never parses type text.
+ *
+ * Enum lookup is deliberately omitted: the only call site is the
+ * `NewExpression` branch of `inferType`, and `new EnumName()` is not a
+ * valid construct. Adding `lookupEnumByName` here would make the
+ * helper match `mapTypeWithGenerics`'s own fallback chain, but at the
+ * cost of routing real enum-construction errors through a silent
+ * narrowing. If a future caller needs the symmetry, prefer adding the
+ * lookup at that call site rather than widening this helper.
+ */
+function resolveBareIdentifierFallback(
+  typeMapper: TypeScriptParser["typeMapper"],
+  name: string,
+): TypeSymbol {
+  return (
+    typeMapper.getAlias(name) ??
+    typeMapper.lookupBuiltinByName(name) ??
+    (SIMPLE_USER_TYPE_NAME_RE.test(name)
+      ? new ClassTypeSymbol(name, UdonType.Object)
+      : ObjectType)
+  );
+}
 
 function getTypeLiteralPropertyName(
   name: ts.PropertyName,
@@ -58,62 +116,6 @@ function tryResolveBrandedPrimitive(
     }
   }
   return null;
-}
-
-const typeLiteralSourceFileCache = new Map<string, ts.SourceFile>();
-
-function getOrCreateTypeLiteralSourceFile(
-  trimmedTypeText: string,
-): ts.SourceFile {
-  let cached = typeLiteralSourceFileCache.get(trimmedTypeText);
-  if (!cached) {
-    const sourceText = `type __TypeLiteralFallback = ${trimmedTypeText};`;
-    cached = ts.createSourceFile(
-      "__type_literal_fallback.ts",
-      sourceText,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    );
-    typeLiteralSourceFileCache.set(trimmedTypeText, cached);
-  }
-  return cached;
-}
-
-function parseTypeLiteralFromText(
-  parser: TypeScriptParser,
-  trimmedTypeText: string,
-): InterfaceTypeSymbol | null {
-  const sourceFile = getOrCreateTypeLiteralSourceFile(trimmedTypeText);
-  const typeAlias = sourceFile.statements.find(
-    (statement): statement is ts.TypeAliasDeclaration =>
-      ts.isTypeAliasDeclaration(statement),
-  );
-  if (!typeAlias || !ts.isTypeLiteralNode(typeAlias.type)) return null;
-  const typeLiteral = typeAlias.type;
-  if (typeLiteral.members.length === 0) return null;
-
-  const propertyMap = new Map<string, TypeSymbol>();
-  for (const member of typeLiteral.members) {
-    if (!ts.isPropertySignature(member) || !member.name) {
-      // Keep index signatures/method signatures/etc. on DataDictionary fallback.
-      return null;
-    }
-
-    const nameInfo = getTypeLiteralPropertyName(member.name);
-    if (!nameInfo) return null;
-    const { propName } = nameInfo;
-    if (!propName || !isInlineSafePropertyName(propName)) return null;
-
-    const propType = member.type
-      ? parser.mapTypeWithGenerics(member.type.getText(sourceFile), member.type)
-      : ObjectType;
-    propertyMap.set(propName, propType);
-  }
-
-  if (propertyMap.size === 0) return null;
-  const anonName = `__anon_${++parser.anonTypeCounter}`;
-  return new InterfaceTypeSymbol(anonName, new Map(), propertyMap);
 }
 
 function isNullishUnionBranch(node: ts.TypeNode): boolean {
@@ -296,12 +298,51 @@ export function mapTypeWithGenerics(
 
   if (node && ts.isTypeReferenceNode(node)) {
     const refName = node.typeName.getText();
-    if (refName === "Array" || refName === "ReadonlyArray") {
-      const arg = node.typeArguments?.[0];
-      const elementType = arg
-        ? this.mapTypeWithGenerics(arg.getText(), arg)
-        : ObjectType;
-      return new ArrayTypeSymbol(elementType);
+    const resolveArg = (i: number): TypeSymbol => {
+      const arg = node.typeArguments?.[i];
+      return arg ? this.mapTypeWithGenerics(arg.getText(), arg) : ObjectType;
+    };
+    switch (refName) {
+      case "Array":
+      case "ReadonlyArray":
+        return new ArrayTypeSymbol(resolveArg(0));
+      case "UdonList":
+      case "List":
+      case "UdonQueue":
+      case "Queue":
+      case "UdonStack":
+      case "Stack":
+      case "UdonHashSet":
+      case "HashSet":
+        return new CollectionTypeSymbol(refName, resolveArg(0));
+      case "UdonDictionary":
+      case "Dictionary":
+        return new CollectionTypeSymbol(
+          refName,
+          undefined,
+          resolveArg(0),
+          resolveArg(1),
+        );
+      case "Record":
+        return ExternTypes.dataDictionary;
+      case "Map":
+      case "ReadonlyMap":
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          undefined,
+          resolveArg(0),
+          resolveArg(1),
+        );
+      case "Set":
+      case "ReadonlySet": {
+        const elem = resolveArg(0);
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          elem,
+          elem,
+          PrimitiveTypes.boolean,
+        );
+      }
     }
   }
 
@@ -349,87 +390,33 @@ export function mapTypeWithGenerics(
     if (structuralUnion) return structuralUnion;
   }
 
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    const parsedTypeLiteral = parseTypeLiteralFromText(this, trimmed);
-    if (parsedTypeLiteral) return parsedTypeLiteral;
-    return ExternTypes.dataDictionary;
+  // Final fallback: consult the symbol-based registries directly. The
+  // enum / class-alias / builtin tables cover the common cases that the
+  // TypeChecker resolver might miss (forward-referenced classes,
+  // inline-test sources where the SourceFile isn't fully bound to the
+  // program, etc.). The previous text-parsing pass through TypeMapper
+  // is removed.
+  const aliasMatch = this.typeMapper.getAlias(trimmed);
+  if (aliasMatch) return aliasMatch;
+  const enumMatch = this.typeMapper.lookupEnumByName(trimmed);
+  if (enumMatch) return enumMatch;
+  const builtinMatch = this.typeMapper.lookupBuiltinByName(trimmed);
+  if (builtinMatch) return builtinMatch;
+  // Bare uppercase identifier — assume a forward-referenced or
+  // not-yet-registered class. ObjectType-backed ClassTypeSymbol matches
+  // the legacy `isLikelyUserDefinedType` behavior the TypeMapper used to
+  // perform internally.
+  if (SIMPLE_USER_TYPE_NAME_RE.test(trimmed)) {
+    return new ClassTypeSymbol(trimmed, UdonType.Object);
   }
-
-  if (trimmed.endsWith("[]")) {
-    let base = trimmed;
-    let dimensions = 0;
-    while (base.endsWith("[]")) {
-      base = base.slice(0, -2).trim();
-      dimensions += 1;
-    }
-    const elementType: TypeSymbol = this.mapTypeWithGenerics(base);
-    return new ArrayTypeSymbol(elementType, dimensions);
+  // Composite shape we couldn't classify (`string | number`, generic
+  // text the resolver couldn't process, etc.) — silently widen to
+  // ObjectType rather than throw. This preserves the legacy
+  // `isComplexTypeExpression` behavior without re-introducing a
+  // text-parsing pass.
+  if (COMPLEX_TYPE_TEXT_RE.test(trimmed)) {
+    return ObjectType;
   }
-
-  const genericMatch = this.parseGenericType(trimmed);
-  if (genericMatch) {
-    const { base, args } = genericMatch;
-    switch (base) {
-      case "Array":
-      case "ReadonlyArray":
-        return new ArrayTypeSymbol(
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-        );
-      case "UdonList":
-      case "List":
-        return new CollectionTypeSymbol(
-          base,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-        );
-      case "UdonQueue":
-      case "Queue":
-        return new CollectionTypeSymbol(
-          base,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-        );
-      case "UdonStack":
-      case "Stack":
-        return new CollectionTypeSymbol(
-          base,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-        );
-      case "UdonHashSet":
-      case "HashSet":
-        return new CollectionTypeSymbol(
-          base,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-        );
-      case "UdonDictionary":
-      case "Dictionary":
-        return new CollectionTypeSymbol(
-          base,
-          undefined,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-          this.mapTypeWithGenerics(args[1] ?? "object"),
-        );
-      case "Record":
-        return ExternTypes.dataDictionary;
-      case "Map":
-      case "ReadonlyMap":
-        return new CollectionTypeSymbol(
-          ExternTypes.dataDictionary.name,
-          undefined,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-          this.mapTypeWithGenerics(args[1] ?? "object"),
-        );
-      case "Set":
-      case "ReadonlySet":
-        return new CollectionTypeSymbol(
-          ExternTypes.dataDictionary.name,
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-          this.mapTypeWithGenerics(args[0] ?? "object"),
-          PrimitiveTypes.boolean,
-        );
-    }
-  }
-
-  const finalMapped = this.typeMapper.tryMapTypeScriptType(trimmed);
-  if (finalMapped !== null) return finalMapped;
   const loc = node
     ? this.createLoc(node)
     : { filePath: "<unknown>", line: 0, column: 0 };
@@ -467,34 +454,6 @@ export function resolveGenericParam(
   return undefined;
 }
 
-export function parseGenericType(
-  this: TypeScriptParser,
-  tsType: string,
-): { base: string; args: string[] } | null {
-  const ltIndex = tsType.indexOf("<");
-  if (ltIndex === -1 || !tsType.endsWith(">")) return null;
-  const base = tsType.slice(0, ltIndex).trim();
-  const argsRaw = tsType.slice(ltIndex + 1, -1).trim();
-  if (!argsRaw) return { base, args: [] };
-  const args: string[] = [];
-  let depth = 0;
-  let current = "";
-  for (const char of argsRaw) {
-    if (char === "<") depth += 1;
-    if (char === ">") depth -= 1;
-    if (char === "," && depth === 0) {
-      args.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-  if (current.trim().length > 0) {
-    args.push(current.trim());
-  }
-  return { base, args };
-}
-
 export function inferType(
   this: TypeScriptParser,
   node: ts.Expression,
@@ -519,14 +478,14 @@ export function inferType(
 
   switch (node.kind) {
     case ts.SyntaxKind.NumericLiteral:
-      return this.typeMapper.mapTypeScriptType("number");
+      return PrimitiveTypes.single;
     case ts.SyntaxKind.StringLiteral:
-      return this.typeMapper.mapTypeScriptType("string");
+      return PrimitiveTypes.string;
     case ts.SyntaxKind.TrueKeyword:
     case ts.SyntaxKind.FalseKeyword:
-      return this.typeMapper.mapTypeScriptType("boolean");
+      return PrimitiveTypes.boolean;
     case ts.SyntaxKind.BigIntLiteral:
-      return this.typeMapper.mapTypeScriptType("bigint");
+      return PrimitiveTypes.int64;
     case ts.SyntaxKind.AsExpression:
     case ts.SyntaxKind.TypeAssertionExpression: {
       const asExpr = node as ts.AsExpression;
@@ -569,7 +528,7 @@ export function inferType(
           return propertyType.elementType;
         }
       }
-      return this.typeMapper.mapTypeScriptType("object");
+      return ExternTypes.dataDictionary;
     }
     case ts.SyntaxKind.CallExpression:
       return ObjectType;
@@ -616,24 +575,24 @@ export function inferType(
             );
           }
           // Unknown class with type arguments — degrade to bare-name
-          // resolution. The TypeChecker resolver tried first (above) and
-          // failed; consult typeMapper non-throwingly so unmappable
-          // identifiers (e.g. lowercase `new someThing<T>()`) don't break
-          // best-effort inferType callers. Generic params are checked
+          // resolution via symbol-based lookups. The TypeChecker resolver
+          // tried first (above) and failed; consult registered class aliases
+          // and the builtin table directly so unmappable identifiers don't
+          // break best-effort inferType callers. Generic params are checked
           // first to keep `new K()` parity with the pre-refactor path.
           const generic = this.resolveGenericParam(baseName);
           if (generic) return generic;
-          return this.typeMapper.tryMapTypeScriptType(baseName) ?? ObjectType;
+          return resolveBareIdentifierFallback(this.typeMapper, baseName);
         }
         const genericNoArgs = this.resolveGenericParam(baseName);
         if (genericNoArgs) return genericNoArgs;
-        return this.typeMapper.tryMapTypeScriptType(baseName) ?? ObjectType;
+        return resolveBareIdentifierFallback(this.typeMapper, baseName);
       }
       return ObjectType;
     }
     case ts.SyntaxKind.TemplateExpression:
     case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
-      return this.typeMapper.mapTypeScriptType("string");
+      return PrimitiveTypes.string;
     case ts.SyntaxKind.ParenthesizedExpression:
       return this.inferType((node as ts.ParenthesizedExpression).expression);
     case ts.SyntaxKind.ConditionalExpression: {
@@ -653,9 +612,9 @@ export function inferType(
     case ts.SyntaxKind.PrefixUnaryExpression: {
       const pue = node as ts.PrefixUnaryExpression;
       if (pue.operator === ts.SyntaxKind.ExclamationToken) {
-        return this.typeMapper.mapTypeScriptType("boolean");
+        return PrimitiveTypes.boolean;
       }
-      return this.typeMapper.mapTypeScriptType("number");
+      return PrimitiveTypes.single;
     }
     case ts.SyntaxKind.ArrayLiteralExpression: {
       const arr = node as ts.ArrayLiteralExpression;

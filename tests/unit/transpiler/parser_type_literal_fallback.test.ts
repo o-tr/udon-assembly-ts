@@ -6,7 +6,15 @@ import {
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols.js";
 
-describe("parser type-literal text fallback", () => {
+// The text-based fallback in `mapTypeWithGenerics` was removed; type
+// literals now resolve only via the TypeChecker resolver or node-based
+// branches (i.e. `mapTypeWithGenerics(text, node)` where node is a
+// `ts.TypeLiteralNode`). The single-arg `mapTypeWithGenerics(text)`
+// overload that this file exercised no longer reconstructs a SourceFile
+// from the text, so these cases now reach the hard-error path. Skipping
+// to keep the file intact for review history; safe to delete in a
+// follow-up cleanup PR alongside the metrics module.
+describe.skip("parser type-literal text fallback (removed feature)", () => {
   it("maps string-only type literal text to InterfaceTypeSymbol", () => {
     const parser = new TypeScriptParser();
     const mapped = parser.mapTypeWithGenerics(

@@ -29,7 +29,6 @@ import {
   inferType,
   isStringTypeNode,
   mapTypeWithGenerics,
-  parseGenericType,
   resolveGenericParam,
   resolveStructuralUnionType,
 } from "./types.js";
@@ -230,7 +229,6 @@ export class TypeScriptParser {
   mapTypeWithGenerics = mapTypeWithGenerics;
   isStringTypeNode = isStringTypeNode;
   resolveGenericParam = resolveGenericParam;
-  parseGenericType = parseGenericType;
   inferType = inferType;
   resolveStructuralUnionType = resolveStructuralUnionType;
 
