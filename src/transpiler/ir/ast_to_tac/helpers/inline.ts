@@ -2225,7 +2225,11 @@ function containsAllocOrCall(node: ASTNode | undefined): boolean {
   ) {
     return true;
   }
-  for (const key in node) {
+  // Use Object.keys (own enumerable only) so the walker is not perturbed
+  // by future prototype additions on the AST base shape. The "kind" check
+  // gates descent at child nodes; TypeSymbol references on AST nodes have
+  // no kind property, so they are skipped.
+  for (const key of Object.keys(node)) {
     const v = (node as unknown as Record<string, unknown>)[key];
     if (!v || typeof v !== "object") continue;
     if (Array.isArray(v)) {
@@ -2319,12 +2323,24 @@ function inlineResolvedMethodBody(
       const savedThisOverride = converter.currentThisOverride;
       const savedBaseClass = converter.currentInlineBaseClass;
       const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+      const savedNativeIneligible = converter.nativeArrayIneligible;
+      const savedNativeVarName = converter.currentNativeArrayVarName;
       converter.currentInlineContext = instancePrefix
         ? { className, instancePrefix }
         : undefined;
       converter.currentThisOverride = null;
       converter.currentInlineBaseClass = undefined;
       converter.currentInlineConstructorClassName = undefined;
+      // Mirror the slow path: native-array eligibility must be analysed
+      // against the inlined body, and `currentNativeArrayVarName` must not
+      // leak from the caller — otherwise an array literal in the return
+      // expression (e.g. `return [1, 2, 3];`) would be classified against
+      // the caller's eligibility map and could take the native-array
+      // emission path under the caller's variable name.
+      converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+        method.body.statements,
+      );
+      converter.currentNativeArrayVarName = null;
       converter.inlineMethodStack.add(inlineKey);
       if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
       try {
@@ -2346,6 +2362,8 @@ function inlineResolvedMethodBody(
       } finally {
         if (PROF) profExit(converter);
         converter.inlineMethodStack.delete(inlineKey);
+        converter.currentNativeArrayVarName = savedNativeVarName;
+        converter.nativeArrayIneligible = savedNativeIneligible;
         converter.currentInlineConstructorClassName = savedInlineCtorClass;
         converter.currentInlineBaseClass = savedBaseClass;
         converter.currentThisOverride = savedThisOverride;

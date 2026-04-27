@@ -86,7 +86,7 @@ describe("trivial-return getter fast-path", () => {
     expect(result.tac).toMatch(/inline_return\d*:/);
   });
 
-  it("falls through to the slow path when the body allocates", () => {
+  it("falls through to the slow path when the body allocates via `new`", () => {
     // `return new Vec()` would route through allocateBodyCachedInstance,
     // which keys its cache off the top of inlinedBodyStack. The fast-path
     // doesn't push the body — the eligibility predicate must reject this
@@ -98,6 +98,36 @@ describe("trivial-return getter fast-path", () => {
       class Factory {
         get fresh(): Vec {
           return new Vec();
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const f = new Factory();
+          Debug.Log(f.fresh.x);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    expect(result.tac).toMatch(/inline_return\d*:/);
+  });
+
+  it("falls through to the slow path when the body returns an object literal", () => {
+    // ObjectLiteralExpression also routes through allocateBodyCachedInstance
+    // (when the expected type is an interface with properties). Even though
+    // this case is rarely fast-path-eligible due to the type gate, the AST
+    // predicate must independently reject it so a future change to the type
+    // gate cannot reopen the cache-collision hazard.
+    const source = `
+      interface IVec {
+        x: number;
+        y: number;
+      }
+      class Factory {
+        get fresh(): IVec {
+          return { x: 1, y: 2 };
         }
       }
       @UdonBehaviour()
