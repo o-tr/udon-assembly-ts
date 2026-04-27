@@ -2,7 +2,6 @@ import * as ts from "typescript";
 import { stripModuleQualifier } from "./symbol_naming.js";
 import type { TypeCheckerContext } from "./type_checker_context.js";
 import type { TypeMapper } from "./type_mapper.js";
-import { isStep10MetricsEnabled } from "./type_resolution_metrics.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
@@ -93,9 +92,8 @@ export class TypeCheckerTypeResolver {
     }
 
     // 1b. Enum literals and enum types — resolve before literal collapse.
-    // Consult enum registry → registered alias → builtin table directly
-    // rather than routing through `tryMapTypeScriptType`, which would also
-    // run the text-parsing branches against the FQN. The alias step is for
+    // Consult enum registry → registered alias → builtin table directly,
+    // never going through any text-parsing path. The alias step is for
     // parity with the legacy chain: it catches the (rare) case where an
     // enum-flagged symbol was also registered as a class alias.
     const enumSymbol = type.getSymbol() ?? type.aliasSymbol;
@@ -202,9 +200,10 @@ export class TypeCheckerTypeResolver {
       }
       // Heterogeneous union (incl. alias-of-union like `WinResult = A | B`):
       // Udon has no native union representation. Return ObjectType here as
-      // the terminal path — without this, the type would reach step 7e (which
-      // bails when getDeclaredTypeOfSymbol returns the same instance) and
-      // ultimately the typeToString fallback in step 10.
+      // the terminal path — without this, the type would reach step 7e
+      // (which bails when getDeclaredTypeOfSymbol returns the same instance)
+      // and ultimately the unclassified-shape ObjectType widening at the
+      // end of `resolveFromTsType`.
       return ObjectType;
     }
 
@@ -223,17 +222,6 @@ export class TypeCheckerTypeResolver {
     if (symbol) {
       const symFlags = symbol.flags;
 
-      // The global `symbol` namespace from lib.es5 is a ValueModule symbol.
-      // It surfaces when measurement-mode runs encounter `typeof Symbol.iterator`
-      // or similar references; gate behind metrics so production paths still
-      // throw via step 10 if a user genuinely writes such code.
-      if (isStep10MetricsEnabled() && symFlags & ts.SymbolFlags.ValueModule) {
-        const name = this.checker.symbolToString(symbol);
-        if (name === "symbol") {
-          return this.typeMapper.lookupBuiltinByName("Type") ?? ObjectType;
-        }
-      }
-
       // 7a. Type parameter → GenericTypeParameterSymbol
       if (symFlags & ts.SymbolFlags.TypeParameter) {
         const name = this.checker.symbolToString(symbol);
@@ -247,10 +235,7 @@ export class TypeCheckerTypeResolver {
 
       // 7d. Class → builtin lookup, else fresh ClassTypeSymbol. The
       // builtin lookup takes the canonical class name (no generics, no
-      // unions, no spaces), so `lookupBuiltinByName` is sufficient — the
-      // text-parsing branches in `mapTypeScriptType` are not relevant
-      // here and would in fact misclassify class names like `T` as
-      // generic parameters.
+      // unions, no spaces), so `lookupBuiltinByName` is sufficient.
       if (symFlags & ts.SymbolFlags.Class) {
         const className = stripModuleQualifier(this.fqName(symbol));
         const builtin = this.typeMapper.lookupBuiltinByName(className);
@@ -301,7 +286,8 @@ export class TypeCheckerTypeResolver {
         const builtin = this.typeMapper.lookupBuiltinByName(fullyQualified);
         if (builtin) return builtin;
         // Try alias next (e.g. `type Foo = ...` registered via
-        // registerTypeAlias) before falling through to step 10.
+        // registerTypeAlias) before falling through to the terminal
+        // ObjectType widening at the end of `resolveFromTsType`.
         const alias = this.typeMapper.getAlias(fullyQualified);
         if (alias) return alias;
       }
@@ -390,7 +376,8 @@ export class TypeCheckerTypeResolver {
     // 9a. TypeScript-only constructs without a direct Udon equivalent.
     // keyof T, T[K], T extends U ? X : Y, `${A}_${B}`, Uppercase<T> etc.
     // — Udon has no native form for these, so collapse to ObjectType
-    // before reaching the typeToString-based fallback in step 10.
+    // explicitly rather than letting them fall into the unclassified-
+    // shape ObjectType widening at the end of `resolveFromTsType`.
     if (
       type.flags &
       (ts.TypeFlags.Index |
@@ -413,10 +400,9 @@ export class TypeCheckerTypeResolver {
     // combination we have not classified — return ObjectType so callers
     // (e.g. `parser/types.ts` AST-based intersection brand detection)
     // can take a second crack via paths the resolver doesn't have access
-    // to. The previous text-based fallback (typeToString +
-    // tryMapTypeScriptType) is removed; ObjectType is the conservative
-    // widening that preserves correctness without re-introducing a
-    // string-parsing pass.
+    // to. ObjectType is the conservative widening; the legacy
+    // typeToString-based string-parsing fallback that used to live here
+    // was removed in favor of this terminal widening.
     return ObjectType;
   }
 

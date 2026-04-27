@@ -1,11 +1,8 @@
-import { TranspileError } from "../errors/transpile_errors.js";
 import type { EnumRegistry } from "./enum_registry.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
-  CollectionTypeSymbol,
   ExternTypes,
-  GenericTypeParameterSymbol,
   NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
@@ -14,21 +11,28 @@ import {
 } from "./type_symbols.js";
 import { UdonType } from "./types.js";
 
-// Matches two or more quoted string literals joined by "|",
-// e.g. "'a' | \"b\"" or "\"foo\" | 'bar'". Does not match bare identifiers.
-const STRING_LITERAL_UNION_RE =
-  /^("[^"]*"|'[^']*')(\s*\|\s*("[^"]*"|'[^']*'))+$/;
+// Bare upper-case identifier (Foo, MyClass, T, etc.). Used by
+// `resolveByBareName` to decide whether an unresolved name should be
+// constructed as a fresh `ClassTypeSymbol` (forward reference) or widened
+// to ObjectType. NOT a syntactic type-text parse: matches the trimmed
+// canonical name only, never composite shapes like `Foo[]` or `Foo<T>`.
+// Lowercase-leading identifiers are intentionally excluded to mirror the
+// legacy `isLikelyUserDefinedType` behavior — an unregistered lowercase
+// name reaches the unresolved/error path. Exported so `parser/types.ts`
+// can share the same definition for its own bare-name fallback chain.
+export const BARE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
 
 /**
  * Canonical lookup of TypeScript / C# builtin type names that have a single
- * unambiguous Udon TypeSymbol counterpart. Both `lookupBuiltinByName` and the
- * simple-name branch of `mapTypeScriptTypeImpl` consult this map so the
- * mapping cannot drift between the resolver path and the legacy text path.
+ * unambiguous Udon TypeSymbol counterpart. The sole consumer is
+ * `lookupBuiltinByName` (and its caller `resolveByBareName`); name-only
+ * resolution is the only path left in TypeMapper now that the legacy
+ * text-parsing fallback has been removed.
  *
  * Entries that need parameterised construction (Set/Map/ReadonlySet/
  * ReadonlyMap → CollectionTypeSymbol with key/value slots) are intentionally
- * kept out of this table; those still live as explicit cases in
- * `mapTypeScriptTypeImpl`.
+ * kept out of this table; the parser visitors construct them from the
+ * `ts.TypeReferenceNode` directly via `mapTypeWithGenerics`.
  */
 const BUILTIN_NAME_MAP: ReadonlyMap<string, TypeSymbol> = new Map<
   string,
@@ -93,11 +97,6 @@ const BUILTIN_NAME_MAP: ReadonlyMap<string, TypeSymbol> = new Map<
 
 export class TypeMapper {
   private typeAliases = new Map<string, TypeSymbol>();
-  // Stores both successful (TypeSymbol) and unmappable (null) results.
-  // Use `has()` to distinguish "not yet probed" from "probed and null" so
-  // hot speculative paths (e.g. resolver step 7f's fully-qualified-name
-  // fallback) skip the full mapTypeScriptTypeImpl re-walk on repeat misses.
-  private typeCache = new Map<string, TypeSymbol | null>();
   private unionAliases = new Map<string, TypeSymbol[]>();
 
   constructor(private enumRegistry?: EnumRegistry) {}
@@ -108,7 +107,6 @@ export class TypeMapper {
 
   registerTypeAlias(name: string, symbol: TypeSymbol): void {
     this.typeAliases.set(name, symbol);
-    this.typeCache.clear();
   }
 
   registerUnionAlias(name: string, parts: TypeSymbol[]): void {
@@ -119,275 +117,13 @@ export class TypeMapper {
     return this.unionAliases.get(name);
   }
 
-  mapTypeScriptType(tsType: string): TypeSymbol {
-    const result = this.tryMapTypeScriptType(tsType);
-    if (result !== null) return result;
-    throw new TranspileError(
-      "TypeError",
-      `Unknown TypeScript type "${tsType.trim()}"`,
-      { filePath: "<unknown>", line: 0, column: 0 },
-    );
-  }
-
-  /**
-   * Non-throwing variant of {@link mapTypeScriptType}: returns `null` for
-   * unmappable types instead of throwing a `TranspileError`. Use this when
-   * the call is speculative and the caller falls back to another path.
-   * Avoids `Error.captureStackTrace` cost on every miss in hot paths.
-   */
-  tryMapTypeScriptType(tsType: string): TypeSymbol | null {
-    const trimmed = tsType.trim();
-    // Enum check runs before cache: enumRegistry may gain entries after a
-    // previous call cached a fallback result for the same type name.
-    if (this.enumRegistry?.isEnum(trimmed)) {
-      const kind = this.enumRegistry.getEnumKind(trimmed);
-      const result =
-        kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
-      const existing = this.typeCache.get(trimmed);
-      if (existing !== undefined && existing !== result) {
-        // Enum kind changed after a previous fallback was cached — clear
-        // composites (e.g. Foo[], Array<Foo>) that embedded the old value.
-        this.typeCache.clear();
-      }
-      this.typeCache.set(trimmed, result);
-      return result;
-    }
-    if (this.typeCache.has(trimmed)) {
-      // Returns either the cached TypeSymbol or the cached null sentinel.
-      return this.typeCache.get(trimmed) ?? null;
-    }
-    const result = this.mapTypeScriptTypeImpl(trimmed);
-    this.typeCache.set(trimmed, result);
-    return result;
-  }
-
-  private mapTypeScriptTypeImpl(trimmed: string): TypeSymbol | null {
-    if (trimmed.startsWith("readonly ")) {
-      return this.tryMapTypeScriptType(trimmed.slice(9));
-    }
-    if (trimmed.startsWith("asserts ")) {
-      return PrimitiveTypes.void;
-    }
-    if (/^\w+\s+is\s+\S/.test(trimmed)) {
-      return PrimitiveTypes.boolean;
-    }
-    const alias = this.typeAliases.get(trimmed);
-    if (alias) return alias;
-
-    const genericParamName = this.normalizeGenericTypeParameterName(trimmed);
-    if (genericParamName) {
-      return new GenericTypeParameterSymbol(genericParamName);
-    }
-
-    if (this.isStringLiteralUnionType(trimmed)) {
-      return PrimitiveTypes.string;
-    }
-
-    if (trimmed === "true" || trimmed === "false") {
-      return PrimitiveTypes.boolean;
-    }
-
-    if (/^"[^"]*"$/.test(trimmed) || /^'[^']*'$/.test(trimmed)) {
-      return PrimitiveTypes.string;
-    }
-
-    if (trimmed.includes(" | ")) {
-      const parts = trimmed
-        .split("|")
-        .map((part) => part.trim())
-        .filter((part) => part !== "null" && part !== "undefined");
-      if (parts.length === 1) {
-        return this.tryMapTypeScriptType(parts[0]);
-      }
-      if (
-        parts.length > 0 &&
-        parts.every((part) => part === "true" || part === "false")
-      ) {
-        return PrimitiveTypes.boolean;
-      }
-    }
-
-    if (trimmed.endsWith("[]")) {
-      let base = trimmed;
-      let dimensions = 0;
-      while (base.endsWith("[]")) {
-        base = base.slice(0, -2).trim();
-        dimensions += 1;
-      }
-      const baseType = this.tryMapTypeScriptType(base);
-      if (baseType === null) return null;
-      let elementType: TypeSymbol = baseType;
-      for (let i = 0; i < dimensions; i += 1) {
-        elementType = new ArrayTypeSymbol(elementType);
-      }
-      return elementType;
-    }
-
-    const genericMatch = this.parseGenericType(trimmed);
-    if (genericMatch) {
-      const { base, args } = genericMatch;
-      // Lazily resolve type args: only the cases that need them pay the
-      // lookup cost, and `null` propagates so unmappable args surface a
-      // hard error to callers that expect throwing semantics.
-      const resolveArg = (i: number): TypeSymbol | null =>
-        this.tryMapTypeScriptType(args[i] ?? "object");
-      switch (base) {
-        case "Array":
-        case "ReadonlyArray": {
-          const arg0 = resolveArg(0);
-          if (arg0 === null) return null;
-          return new ArrayTypeSymbol(arg0);
-        }
-        case "UdonList":
-        case "List":
-        case "UdonQueue":
-        case "Queue":
-        case "UdonStack":
-        case "Stack":
-        case "UdonHashSet":
-        case "HashSet": {
-          const arg0 = resolveArg(0);
-          if (arg0 === null) return null;
-          return new CollectionTypeSymbol(base, arg0);
-        }
-        case "UdonDictionary":
-        case "Dictionary": {
-          const arg0 = resolveArg(0);
-          if (arg0 === null) return null;
-          const arg1 = resolveArg(1);
-          if (arg1 === null) return null;
-          return new CollectionTypeSymbol(base, undefined, arg0, arg1);
-        }
-        case "Record":
-          return ExternTypes.dataDictionary;
-        case "Map":
-        case "ReadonlyMap": {
-          const arg0 = resolveArg(0);
-          if (arg0 === null) return null;
-          const arg1 = resolveArg(1);
-          if (arg1 === null) return null;
-          return new CollectionTypeSymbol(
-            ExternTypes.dataDictionary.name,
-            undefined,
-            arg0,
-            arg1,
-          );
-        }
-        case "Set":
-        case "ReadonlySet": {
-          const arg0 = resolveArg(0);
-          if (arg0 === null) return null;
-          return new CollectionTypeSymbol(
-            ExternTypes.dataDictionary.name,
-            arg0,
-            arg0,
-            PrimitiveTypes.boolean,
-          );
-        }
-        case "WeakSet":
-        case "Iterator":
-        case "Exclude":
-        case "Extract":
-        case "ReturnType":
-        case "Partial":
-        case "Required":
-        case "Readonly":
-        case "Pick":
-        case "Omit":
-          return ObjectType;
-      }
-    }
-
-    const builtin = BUILTIN_NAME_MAP.get(trimmed);
-    if (builtin) return builtin;
-
-    // Set/Map/ReadonlySet/ReadonlyMap require parameterised CollectionTypeSymbol
-    // construction (with key/value slots) so they are not part of BUILTIN_NAME_MAP.
-    switch (trimmed) {
-      case "Set":
-      case "ReadonlySet":
-        return new CollectionTypeSymbol(
-          ExternTypes.dataDictionary.name,
-          ObjectType,
-          ObjectType,
-          PrimitiveTypes.boolean,
-        );
-      case "Map":
-      case "ReadonlyMap":
-        return new CollectionTypeSymbol(
-          ExternTypes.dataDictionary.name,
-          undefined,
-          ObjectType,
-          ObjectType,
-        );
-    }
-
-    if (this.isLikelyUserDefinedType(trimmed)) {
-      return new ClassTypeSymbol(trimmed, UdonType.Object);
-    }
-    if (this.isComplexTypeExpression(trimmed)) {
-      return ObjectType;
-    }
-    return null;
-  }
-
-  private isLikelyUserDefinedType(typeText: string): boolean {
-    return /^[A-Z]\w*$/.test(typeText);
-  }
-
-  private normalizeGenericTypeParameterName(typeText: string): string | null {
-    const normalized = typeText.startsWith("_") ? typeText.slice(1) : typeText;
-    if (normalized === "T") return "T";
-    if (/^T[A-Z0-9]\w*$/.test(normalized)) return normalized;
-    return null;
-  }
-
-  private isComplexTypeExpression(typeText: string): boolean {
-    if (typeText.startsWith("typeof ")) return true;
-    return /[<>{}[\]|&?:.\s]/.test(typeText);
-  }
-
-  private parseGenericType(
-    tsType: string,
-  ): { base: string; args: string[] } | null {
-    const ltIndex = tsType.indexOf("<");
-    if (ltIndex === -1 || !tsType.endsWith(">")) return null;
-    const base = tsType.slice(0, ltIndex).trim();
-    const argsRaw = tsType.slice(ltIndex + 1, -1).trim();
-    if (!argsRaw) return { base, args: [] };
-    const args: string[] = [];
-    let depth = 0;
-    let current = "";
-    for (const char of argsRaw) {
-      if (char === "<") depth++;
-      if (char === ">") depth--;
-      if (char === "," && depth === 0) {
-        args.push(current.trim());
-        current = "";
-        continue;
-      }
-      current += char;
-    }
-    if (current.trim().length > 0) {
-      args.push(current.trim());
-    }
-    return { base, args };
-  }
-
-  private isStringLiteralUnionType(typeText: string): boolean {
-    return STRING_LITERAL_UNION_RE.test(typeText.trim());
-  }
-
   /**
    * Look up a TypeSymbol for a known builtin / extern name, without any
    * text-parsing fallback. Returns `null` when the name is not a registered
    * builtin (callers fall back to constructing `ClassTypeSymbol` themselves
    * or whatever else is appropriate). Use this from the TypeChecker resolver
    * where you already know the input is a single canonical name (e.g.
-   * `Vector3`, `VRC.SDK3.Data.DataList`) — bypassing the regex / generic
-   * parsing branches in `mapTypeScriptType` removes a class of false
-   * positives (e.g. a user class literally named `T` matching the
-   * generic-parameter regex).
+   * `Vector3`, `VRC.SDK3.Data.DataList`).
    */
   lookupBuiltinByName(name: string): TypeSymbol | null {
     return BUILTIN_NAME_MAP.get(name) ?? null;
@@ -396,15 +132,35 @@ export class TypeMapper {
   /**
    * Symbol-based enum lookup. Returns the primitive TypeSymbol for a
    * registered enum (`int32` or `string` depending on its kind), or `null`
-   * when the name isn't registered. Use this from the TypeChecker resolver
-   * — it lets the resolver consult the enum registry without going through
-   * `tryMapTypeScriptType` (which otherwise pulls in the regex / generic
-   * parsing branches).
+   * when the name isn't registered.
    */
   lookupEnumByName(name: string): TypeSymbol | null {
     if (!this.enumRegistry?.isEnum(name)) return null;
     const kind = this.enumRegistry.getEnumKind(name);
     return kind === "string" ? PrimitiveTypes.string : PrimitiveTypes.int32;
+  }
+
+  /**
+   * Resolve a single bare identifier (no generics, no unions, no `[]`) to a
+   * TypeSymbol via the symbol-based chain: registered alias → builtin name →
+   * fresh `ClassTypeSymbol` for an upper-case identifier (forward-reference
+   * safety) → `ObjectType`. Never parses type text. Sole entry point for
+   * name-only resolution shared between the parser's `inferType` `new`
+   * branch and the IR `new Foo()` / fixed-name extern lookups.
+   *
+   * Enum lookup is intentionally omitted: `new EnumName()` and StringBuilder
+   * / ctor-style references in IR have no use for the enum-as-primitive
+   * mapping. Callers that need enum resolution should call
+   * `lookupEnumByName` themselves before this.
+   */
+  resolveByBareName(name: string): TypeSymbol {
+    return (
+      this.getAlias(name) ??
+      this.lookupBuiltinByName(name) ??
+      (BARE_USER_TYPE_NAME_RE.test(name)
+        ? new ClassTypeSymbol(name, UdonType.Object)
+        : ObjectType)
+    );
   }
 
   mapUdonType(udonType: UdonType): TypeSymbol {
@@ -505,10 +261,6 @@ export class TypeMapper {
       default:
         return ObjectType;
     }
-  }
-
-  mapBrandedType(brandedType: string): TypeSymbol {
-    return this.mapTypeScriptType(brandedType);
   }
 
   getUdonStorageType(symbol: TypeSymbol): UdonType {

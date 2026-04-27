@@ -750,7 +750,7 @@ const stringBuilderTypeCache = new WeakMap<TypeMapper, TypeSymbol>();
 function getStringBuilderType(typeMapper: TypeMapper): TypeSymbol {
   let cached = stringBuilderTypeCache.get(typeMapper);
   if (!cached) {
-    cached = typeMapper.mapTypeScriptType("StringBuilder");
+    cached = typeMapper.resolveByBareName("StringBuilder");
     stringBuilderTypeCache.set(typeMapper, cached);
   }
   return cached;
