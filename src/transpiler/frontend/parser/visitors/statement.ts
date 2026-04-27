@@ -1,5 +1,4 @@
 import * as ts from "typescript";
-import { isStep10MetricsEnabled } from "../../type_resolution_metrics.js";
 import {
   ArrayTypeSymbol,
   ExternTypes,
@@ -91,15 +90,6 @@ export function visitNode(
     case ts.SyntaxKind.InterfaceDeclaration:
       return this.visitInterfaceDeclaration(node as ts.InterfaceDeclaration);
     default:
-      if (isStep10MetricsEnabled()) {
-        if (
-          node.kind === ts.SyntaxKind.EmptyStatement ||
-          node.kind === ts.SyntaxKind.ExportAssignment ||
-          node.kind === ts.SyntaxKind.ModuleDeclaration
-        ) {
-          return undefined;
-        }
-      }
       this.reportUnsupportedNode(
         node,
         `Unsupported statement: ${ts.SyntaxKind[node.kind]}`,
@@ -115,31 +105,12 @@ export function visitVariableStatement(
 ): ASTNode | undefined {
   const declarations = node.declarationList.declarations;
   if (declarations.length > 1) {
-    if (!isStep10MetricsEnabled()) {
-      this.reportUnsupportedNode(
-        node,
-        "Multiple variable declarations in a single statement are not supported",
-        "Split declarations into separate statements.",
-      );
-      return undefined;
-    }
-    // Metrics mode: visit each declaration individually so type resolution
-    // runs on every initializer. visitNode returns a single ASTNode, so we
-    // visit-and-discard intermediates and return the first to keep symbol-
-    // table side effects without altering downstream AST shape.
-    const flags = node.declarationList.flags;
-    let firstResult: ASTNode | undefined;
-    for (let i = 0; i < declarations.length; i += 1) {
-      const decl = declarations[i];
-      if (!decl) continue;
-      const synth = ts.factory.createVariableStatement(
-        undefined,
-        ts.factory.createVariableDeclarationList([decl], flags),
-      );
-      const result = this.visitVariableStatement(synth);
-      if (i === 0) firstResult = result;
-    }
-    return firstResult;
+    this.reportUnsupportedNode(
+      node,
+      "Multiple variable declarations in a single statement are not supported",
+      "Split declarations into separate statements.",
+    );
+    return undefined;
   }
   const declaration = declarations[0];
   if (!declaration) return undefined;

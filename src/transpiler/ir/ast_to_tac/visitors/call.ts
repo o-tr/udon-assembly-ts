@@ -1780,7 +1780,7 @@ export function visitCallExpression(
     }
     if (node.isNew) {
       const externSig = `__ctor_${calleeName}`;
-      const ctorType = this.typeMapper.mapTypeScriptType(calleeName);
+      const ctorType = this.typeMapper.resolveByBareName(calleeName);
       const ctorResult = this.newTemp(ctorType);
       this.emit(new CallInstruction(ctorResult, externSig, getArgs()));
       return ctorResult;

@@ -23,54 +23,25 @@ import type { TypeScriptParser } from "./type_script_parser.js";
 // parse: matches the trimmed canonical name only, never composite shapes
 // like `Foo[]` or `Foo<T>`.
 //
-// Lowercase-leading identifiers (e.g. `myType`) are intentionally excluded:
-// the legacy `tryMapTypeScriptType` also rejected them via the same regex,
+// Lowercase-leading identifiers (e.g. `myType`) are intentionally excluded
 // so an unregistered lowercase name reaches the hard-error path. If a
 // future alias system needs to support lowercase aliases, register them
 // via `typeMapper.registerTypeAlias` so the alias-lookup hits before this
 // regex.
 //
-// Other text-only shapes the legacy text-parsing fallback used to handle
-// — `readonly X`, `asserts x is T`, quoted-string literal types, `true`/
-// `false`, `X | Y`, `X[]`, `X<Y>`, generic-parameter shorthand (`T1`,
-// `_T`, `TName`) — are *not* recovered here. The new design expects every
-// caller to pass the original `ts.Node`; the AST branches earlier in
-// `mapTypeWithGenerics` cover all of those shapes for in-tree call sites.
-// External consumers that still call `mapTypeWithGenerics(text)` without
-// a node will see the throw / ObjectType behaviour described below; the
-// no-node overload is scheduled for removal in a follow-up.
+// Other text-only shapes — `readonly X`, `asserts x is T`, quoted-string
+// literal types, `true`/`false`, `X | Y`, `X[]`, `X<Y>`, generic-parameter
+// shorthand (`T1`, `_T`, `TName`) — are *not* recovered here. The design
+// expects every caller to pass the original `ts.Node`; the AST branches
+// earlier in `mapTypeWithGenerics` cover all of those shapes for in-tree
+// call sites. External consumers that still call `mapTypeWithGenerics(text)`
+// without a node will see the throw / ObjectType behaviour described below;
+// the no-node overload is scheduled for removal in a follow-up.
 const SIMPLE_USER_TYPE_NAME_RE = /^[A-Z]\w*$/;
 // Detects type text containing TS-only constructs (`|`, `&`, `<`,
 // whitespace, `[]`, `?`). Used to decide whether an unrecognised name
 // should be silently widened to ObjectType vs. surfaced as a hard error.
 const COMPLEX_TYPE_TEXT_RE = /[\s|&<>{}[\]?:.()]/;
-
-/**
- * Symbol-based fallback shared between `mapTypeWithGenerics` and the
- * `inferType` `new` branch. Order: registered class alias → builtin
- * (Vector3 etc.) → fresh `ClassTypeSymbol` for an uppercase identifier
- * (forward-reference safety) → ObjectType. Never parses type text.
- *
- * Enum lookup is deliberately omitted: the only call site is the
- * `NewExpression` branch of `inferType`, and `new EnumName()` is not a
- * valid construct. Adding `lookupEnumByName` here would make the
- * helper match `mapTypeWithGenerics`'s own fallback chain, but at the
- * cost of routing real enum-construction errors through a silent
- * narrowing. If a future caller needs the symmetry, prefer adding the
- * lookup at that call site rather than widening this helper.
- */
-function resolveBareIdentifierFallback(
-  typeMapper: TypeScriptParser["typeMapper"],
-  name: string,
-): TypeSymbol {
-  return (
-    typeMapper.getAlias(name) ??
-    typeMapper.lookupBuiltinByName(name) ??
-    (SIMPLE_USER_TYPE_NAME_RE.test(name)
-      ? new ClassTypeSymbol(name, UdonType.Object)
-      : ObjectType)
-  );
-}
 
 function getTypeLiteralPropertyName(
   name: ts.PropertyName,
@@ -582,11 +553,11 @@ export function inferType(
           // first to keep `new K()` parity with the pre-refactor path.
           const generic = this.resolveGenericParam(baseName);
           if (generic) return generic;
-          return resolveBareIdentifierFallback(this.typeMapper, baseName);
+          return this.typeMapper.resolveByBareName(baseName);
         }
         const genericNoArgs = this.resolveGenericParam(baseName);
         if (genericNoArgs) return genericNoArgs;
-        return resolveBareIdentifierFallback(this.typeMapper, baseName);
+        return this.typeMapper.resolveByBareName(baseName);
       }
       return ObjectType;
     }
