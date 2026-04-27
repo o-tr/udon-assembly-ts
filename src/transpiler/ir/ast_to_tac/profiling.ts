@@ -39,6 +39,13 @@ export interface InlineHistogramEntry {
   totalInstr: number;
 }
 
+export interface EntryProfile {
+  inlineHistogram: Record<string, InlineHistogramEntry>;
+  inlineEdgeHistogram: Record<string, number>;
+  instructionKindHistogram: Record<string, number>;
+  totalInstrCount: number;
+}
+
 export function histKey(className: string, methodName: string): string {
   return `${className}::${methodName}`;
 }
@@ -180,6 +187,41 @@ export function printHistograms(c: ASTToTACConverter): void {
       }
     }
   }
+}
+
+export function extractProfileData(c: ASTToTACConverter): EntryProfile {
+  const inlineHistogram: Record<string, InlineHistogramEntry> = {};
+  if (c.inlineHistogram) {
+    for (const [key, e] of c.inlineHistogram) {
+      inlineHistogram[key] = {
+        callsTotal: e.callsTotal,
+        callsPass1: e.callsPass1,
+        selfInstr: e.selfInstr,
+        totalInstr: e.totalInstr,
+      };
+    }
+  }
+  const inlineEdgeHistogram: Record<string, number> = {};
+  if (c.inlineEdgeHistogram) {
+    for (const [key, count] of c.inlineEdgeHistogram) {
+      inlineEdgeHistogram[key] = count;
+    }
+  }
+  const instructionKindHistogram: Record<string, number> = {};
+  if (c.instructionKindHistogram) {
+    for (let i = 0; i < KIND_HISTOGRAM_SIZE; i++) {
+      const count = c.instructionKindHistogram[i];
+      if (count > 0) {
+        instructionKindHistogram[KIND_NAMES[i]] = count;
+      }
+    }
+  }
+  return {
+    inlineHistogram,
+    inlineEdgeHistogram,
+    instructionKindHistogram,
+    totalInstrCount: c.instructions.length,
+  };
 }
 
 export function resetProfiling(c: ASTToTACConverter): void {

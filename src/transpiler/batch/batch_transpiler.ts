@@ -62,6 +62,8 @@ import {
   UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
+import { extractProfileData } from "../ir/ast_to_tac/profiling.js";
+import type { EntryProfile } from "../ir/ast_to_tac/profiling.js";
 import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
 import { DependencyResolver } from "./dependency_resolver.js";
@@ -194,6 +196,8 @@ export interface BatchFileResult {
 export interface BatchResult {
   outputs: BatchFileResult[];
   diagnostics?: TranspileWarning[];
+  /** UDON_PROFILE=1 のときのみ設定 */
+  profiles?: Record<string, EntryProfile>;
 }
 
 export class BatchTranspiler {
@@ -570,6 +574,9 @@ export class BatchTranspiler {
     }
 
     const outputs: BatchFileResult[] = [];
+    const profiles: Record<string, EntryProfile> | undefined = PROF
+      ? {}
+      : undefined;
     const callAnalyzer = new CallAnalyzer(registry);
     const methodUsage =
       options.optimize === true
@@ -775,6 +782,9 @@ export class BatchTranspiler {
           _profTacStart,
           `instr=${tacInstructions.length}`,
         );
+        if (profiles) {
+          profiles[entryPoint.name] = extractProfileData(tacConverter);
+        }
         const entryDiagnostics = errorCollector
           .getWarnings()
           .slice(diagnosticsBefore);
@@ -992,7 +1002,12 @@ export class BatchTranspiler {
     if (diagnostics.length > 0 && !options.silent) {
       console.warn(formatWarnings(diagnostics));
     }
-    return diagnostics.length > 0 ? { outputs, diagnostics } : { outputs };
+    const result: BatchResult =
+      diagnostics.length > 0 ? { outputs, diagnostics } : { outputs };
+    if (profiles) {
+      result.profiles = profiles;
+    }
+    return result;
   }
 
   private loadCache(cachePath: string): CacheV3 | null {
