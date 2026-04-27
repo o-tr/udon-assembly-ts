@@ -355,6 +355,33 @@ describe("TypeCheckerTypeResolver", () => {
       expect(bHead).toBe(PrimitiveTypes.single);
     });
 
+    it("widens user-augmented lib interfaces too (some-based gate, by design)", () => {
+      // Non-module script file (no `export`/`import`) so the top-level
+      // `interface Map<K,V>` merges into lib.es2015.collection's global
+      // Map symbol — the resulting symbol carries declarations from BOTH
+      // the lib `.d.ts` and the user's file. `isLibInterfaceSymbol` uses
+      // `some`, so the merged case still hits the builtin shortcut and
+      // resolves to `dataDictionary`. The added `myExtension` member is
+      // intentionally dropped — see the comment on `isLibInterfaceSymbol`
+      // for the full trade-off, including why a stricter `every`-based
+      // gate was tried and reverted (it caused a TypeScript-internal
+      // stack overflow when fully populating the merged Map's members).
+      const filePath = "/virtual/type_resolver_user_augmented_map.ts";
+      const source = `
+        interface Map<K, V> { myExtension: number; }
+        declare const m: Map<string, number>;
+      `;
+      const { context, resolver } = createResolverFromSource(source, filePath);
+      const sourceFile = context.getSourceFile(filePath);
+      expect(sourceFile).toBeDefined();
+      const declaration = findVariableDeclarationByName(
+        sourceFile as ts.SourceFile,
+        "m",
+      );
+      const resolved = resolver.resolveFromTsNode(declaration.name);
+      expect(resolved).toBe(ExternTypes.dataDictionary);
+    });
+
     it("returns the same InterfaceTypeSymbol for two uses of a non-generic user interface (symbol-keyed cache)", () => {
       const filePath = "/virtual/type_resolver_nongeneric_iface.ts";
       const source = `

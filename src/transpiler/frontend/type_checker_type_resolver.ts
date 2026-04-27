@@ -488,7 +488,26 @@ export class TypeCheckerTypeResolver {
    *  lib `.d.ts` file (lib.es*.d.ts, lib.dom.d.ts, etc.). Used to gate the
    *  builtin-generic-interface shortcut so that a user-defined
    *  `interface Map { … }` is NOT widened to ExternTypes.dataDictionary
-   *  just because it shares a name with the standard library type. */
+   *  just because it shares a name with the standard library type.
+   *
+   *  Uses `some` (any-declaration-is-lib) deliberately, NOT `every`. A
+   *  stricter `every`-based check was tried and reverted: a user augmenting
+   *  the global lib interface (e.g. `interface Map<K,V> { myExtension:
+   *  number; }` in a non-module script file, which merges into
+   *  lib.es2015.collection's Map symbol) would then fall through to
+   *  `buildInterfaceTypeSymbol` → `populateMemberMaps`, where TypeScript's
+   *  own checker hits a `RangeError: Maximum call stack size exceeded` on
+   *  the fully-merged Map type's recursive generic protocol members. The
+   *  shortcut is what protected us from that explosion in the first place;
+   *  removing it for the merge case crashes instead of silently widening.
+   *
+   *  Trade-off: a user globally augmenting `Map`/`Set`/`Iterator` etc.
+   *  loses their added members in the resolved TypeSymbol (widened to
+   *  `dataDictionary` / `ObjectType`). Acceptable because Udon has no
+   *  runtime for those collection types beyond the widening anyway, so
+   *  augmenting them isn't a supported pattern. The intended escape hatch
+   *  for users wanting structural Map-like behaviour is to declare a
+   *  module-scoped interface with a different name. */
   private isLibInterfaceSymbol(symbol: ts.Symbol): boolean {
     const declarations = symbol.declarations;
     if (!declarations) return false;
