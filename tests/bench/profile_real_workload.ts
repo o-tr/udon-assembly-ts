@@ -129,7 +129,18 @@ function main() {
     };
 
     const t0 = performance.now();
-    const result = transpiler.transpile(opts);
+    let result: ReturnType<typeof transpiler.transpile> | undefined;
+    try {
+      result = transpiler.transpile(opts);
+    } catch (err) {
+      // Don't let one bad input drop the wall-clock summary. Log and
+      // continue; the footer below still prints what we did get.
+      const t1 = performance.now();
+      console.error(
+        `[input ${input}] FAILED after ${fmt(t1 - t0)}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      continue;
+    }
     const t1 = performance.now();
 
     totalEntries += result.outputs.length;

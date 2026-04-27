@@ -378,5 +378,56 @@ describe("TypeCheckerTypeResolver", () => {
       // Identity equality, not just structural — confirms the cache fired.
       expect(x).toBe(y);
     });
+
+    it("astNodeCache returns the cached result on a repeat resolveFromAstNode call", () => {
+      // `astNodeCache` is keyed on AST node identity, so two calls with
+      // the *same* node short-circuit. (The cross-AST-node "different
+      // sites, same symbol" cache hit is already covered above by
+      // resolveFromTsNode — the resolveFromAstNode entry point goes
+      // through the same chain so it inherits that behaviour.)
+      const filePath = "/virtual/type_resolver_ast_cache_repeat.ts";
+      const source = `
+        class Service {
+          Start(): void {
+            const ok = true;
+          }
+        }
+      `;
+      const context = TypeCheckerContext.create({
+        rootNames: [filePath],
+        inMemorySources: { [filePath]: source },
+      });
+      const parser = new TypeScriptParser(undefined, context);
+      const ast = parser.parse(source, filePath);
+      const classNode = ast.statements.find(
+        (stmt): stmt is ClassDeclarationNode =>
+          stmt.kind === ASTNodeKind.ClassDeclaration,
+      );
+      expect(classNode).toBeDefined();
+      const method = (classNode as ClassDeclarationNode).methods.find(
+        (m): m is MethodDeclarationNode => m.name === "Start",
+      );
+      expect(method).toBeDefined();
+      const initializer = (
+        (method as MethodDeclarationNode).body
+          .statements[0] as VariableDeclarationNode
+      ).initializer;
+      expect(initializer).toBeDefined();
+      const resolver = createTypeCheckerTypeResolver(
+        context,
+        parser.typeMapper,
+      );
+      const first = resolver.resolveFromAstNode(
+        initializer as NonNullable<typeof initializer>,
+        context,
+      );
+      const second = resolver.resolveFromAstNode(
+        initializer as NonNullable<typeof initializer>,
+        context,
+      );
+      expect(first).toBe(PrimitiveTypes.boolean);
+      // Same AST node → astNodeCache hit on the second call.
+      expect(second).toBe(first);
+    });
   });
 });
