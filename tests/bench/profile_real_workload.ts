@@ -117,12 +117,31 @@ function fmtNum(n: number): string {
 }
 
 function loadBaseline(filePath: string): PersistedProfile {
-  const raw = fs.readFileSync(filePath, "utf8");
-  const parsed = JSON.parse(raw) as PersistedProfile;
-  if (!parsed || typeof parsed !== "object" || !parsed.entries) {
-    throw new Error(`Invalid profile JSON: ${filePath}`);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (e) {
+    throw new Error(
+      `Cannot read baseline: ${filePath} — ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
-  return parsed;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Invalid JSON in baseline: ${filePath}`);
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    !("entries" in parsed) ||
+    !("metadata" in parsed) ||
+    !parsed.entries ||
+    typeof parsed.entries !== "object"
+  ) {
+    throw new Error(`Invalid profile JSON schema: ${filePath}`);
+  }
+  return parsed as PersistedProfile;
 }
 
 function compareHistogram(
@@ -168,7 +187,11 @@ function compareHistogram(
     });
   }
 
-  rows.sort((a, b) => Math.abs(b.diffSelf) - Math.abs(a.diffSelf));
+  rows.sort((a, b) => {
+    const da = Math.abs(b.diffSelf) - Math.abs(a.diffSelf);
+    if (da !== 0) return da;
+    return a.key.localeCompare(b.key);
+  });
 
   console.log(`\n[compare] Entry: ${label}`);
   console.log(
@@ -183,7 +206,7 @@ function compareHistogram(
     const selfStr = `${fmtNum(r.currSelf)} (${r.diffSelf >= 0 ? "+" : ""}${fmtNum(r.diffSelf)})`;
     const callsStr = `${fmtNum(r.currCallsP2)} (${r.diffCallsP2 >= 0 ? "+" : ""}${fmtNum(r.diffCallsP2)})`;
     console.log(
-      `  ${r.key.slice(0, 48).padEnd(48)} ${selfStr.padStart(22)} ${callsStr.padStart(18)}`,
+      `  ${r.key.padEnd(48)} ${selfStr.padStart(22)} ${callsStr.padStart(18)}`,
     );
   }
 
@@ -193,10 +216,9 @@ function compareHistogram(
       ? ((totalDiff / totalInstrBase) * 100).toFixed(1)
       : "0.0";
   console.log(`  ${"-".repeat(48)} ${"-".repeat(22)} ${"-".repeat(18)}`);
+  const totalStr = `${fmtNum(totalInstrCurr)} (${totalDiff >= 0 ? "+" : ""}${fmtNum(totalDiff)} / ${totalPct}%)`;
   console.log(
-    `  ${"Total instructions (pass2)".padEnd(48)} ${fmtNum(totalInstrCurr)} (${totalDiff >= 0 ? "+" : ""}${fmtNum(totalDiff)} / ${totalPct}%)`.padStart(
-      22 + 48 + 1,
-    ),
+    `  ${"Total instructions (pass2)".padEnd(48)} ${totalStr.padStart(22)} ${"".padStart(18)}`,
   );
 }
 
@@ -213,7 +235,11 @@ function compareKindHistogram(
     const c = current[key] ?? 0;
     rows.push({ key, base: b, curr: c, diff: c - b });
   }
-  rows.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  rows.sort((a, b) => {
+    const da = Math.abs(b.diff) - Math.abs(a.diff);
+    if (da !== 0) return da;
+    return a.key.localeCompare(b.key);
+  });
   console.log(`\n[compare] Kind histogram: ${label}`);
   const limit = Math.min(20, rows.length);
   for (let i = 0; i < limit; i++) {
@@ -260,6 +286,15 @@ function compareProfiles(
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  if (args.saveProfile || args.compareProfile) {
+    if (process.env.UDON_PROFILE !== "1") {
+      console.error(
+        "[profile] UDON_PROFILE=1 is required for --save-profile and --compare-profile",
+      );
+      process.exit(1);
+    }
+  }
 
   if (args.clearCache) {
     for (const input of args.inputs) {
@@ -371,7 +406,18 @@ function main() {
       console.error(`[compare] baseline not found: ${args.compareProfile}`);
       process.exit(1);
     }
+    if (Object.keys(allProfiles).length === 0) {
+      console.error(
+        "[compare] no profile data collected — rerun with UDON_PROFILE=1",
+      );
+      process.exit(1);
+    }
     const baseline = loadBaseline(args.compareProfile);
+    if (baseline.metadata.optimize !== args.optimize) {
+      console.warn(
+        `[compare] warning: baseline optimize=${baseline.metadata.optimize} but current optimize=${args.optimize}`,
+      );
+    }
     const current: PersistedProfile = {
       metadata: {
         timestamp: new Date().toISOString(),
