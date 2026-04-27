@@ -1032,27 +1032,9 @@ export function mapStaticProperty(
     // evaluateInlineGetter that runs with neither an instance prefix nor
     // an entry-point class context; tracked as follow-up.
     if (resolved.prop.isGetter) return undefined;
-    // Late-resolve originalTypeName to match emitStaticPropertyInitializers,
-    // ensuring reads and writes use the same resolved type for the heap slot.
-    let propType = resolved.prop.type;
-    if (
-      resolved.prop.initializer?.kind === ASTNodeKind.ObjectLiteralExpression &&
-      !(propType instanceof InterfaceTypeSymbol) &&
-      resolved.prop.originalTypeName
-    ) {
-      const lateResolved = this.typeMapper.getAlias(
-        resolved.prop.originalTypeName,
-      );
-      if (
-        lateResolved instanceof InterfaceTypeSymbol &&
-        lateResolved.properties.size > 0
-      ) {
-        propType = lateResolved;
-      }
-    }
     return createVariable(
       `${resolved.declaringClassName}__${property}`,
-      propType,
+      resolved.prop.type,
     );
   }
   return undefined;
@@ -1073,20 +1055,7 @@ export function emitStaticPropertyInitializers(
   for (const prop of classNode.properties) {
     if (!prop.initializer || !prop.isStatic) continue;
     const propVarName = `${classNode.name}__${prop.name}`;
-    let resolvedPropType = prop.type;
-    if (
-      prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
-      !(resolvedPropType instanceof InterfaceTypeSymbol) &&
-      prop.originalTypeName
-    ) {
-      const lateResolved = converter.typeMapper.getAlias(prop.originalTypeName);
-      if (
-        lateResolved instanceof InterfaceTypeSymbol &&
-        lateResolved.properties.size > 0
-      ) {
-        resolvedPropType = lateResolved;
-      }
-    }
+    const resolvedPropType = prop.type;
     const propVar = createVariable(propVarName, resolvedPropType);
     const prevExpected = converter.currentExpectedType;
     if (
@@ -1183,20 +1152,7 @@ function emitInlinePropertyInitializersForClass(
 
     const previousSerializeFieldState = converter.inSerializeFieldInitializer;
     converter.inSerializeFieldInitializer = !!prop.isSerializeField;
-    let resolvedPropType = prop.type;
-    if (
-      prop.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
-      !(resolvedPropType instanceof InterfaceTypeSymbol) &&
-      prop.originalTypeName
-    ) {
-      const lateResolved = converter.typeMapper.getAlias(prop.originalTypeName);
-      if (
-        lateResolved instanceof InterfaceTypeSymbol &&
-        lateResolved.properties.size > 0
-      ) {
-        resolvedPropType = lateResolved;
-      }
-    }
+    const resolvedPropType = prop.type;
     const propVar = createVariable(propVarName, resolvedPropType);
     const prevExpected = converter.currentExpectedType;
     if (
@@ -1606,20 +1562,6 @@ export function visitInlineStaticMethodCall(
   const method = resolved.method;
 
   let returnType: TypeSymbol = method.returnType;
-  if (
-    !(returnType instanceof InterfaceTypeSymbol) &&
-    method.originalReturnTypeName
-  ) {
-    const lateResolved = this.typeMapper.getAlias(
-      method.originalReturnTypeName,
-    );
-    if (
-      lateResolved instanceof InterfaceTypeSymbol &&
-      lateResolved.properties.size > 0
-    ) {
-      returnType = lateResolved;
-    }
-  }
 
   // F1: upgrade Object-typed inline-class return type to Int32.
   returnType = resolveInlineClassType(this, returnType);
@@ -1752,7 +1694,6 @@ function emitInlineRecursiveStaticMethod(
     parameters: Array<{ name: string; type: TypeSymbol }>;
     body: BlockStatementNode;
     returnType: TypeSymbol;
-    originalReturnTypeName?: string;
   },
   returnType: TypeSymbol,
   args: TACOperand[],
@@ -2256,20 +2197,6 @@ function inlineResolvedMethodBody(
   }
 
   let returnType: TypeSymbol = method.returnType;
-  if (
-    !(returnType instanceof InterfaceTypeSymbol) &&
-    method.originalReturnTypeName
-  ) {
-    const lateResolved = converter.typeMapper.getAlias(
-      method.originalReturnTypeName,
-    );
-    if (
-      lateResolved instanceof InterfaceTypeSymbol &&
-      lateResolved.properties.size > 0
-    ) {
-      returnType = lateResolved;
-    }
-  }
   // F1: upgrade Object-typed inline-class return type to Int32 (mirrors the
   // same transformation applied in visitInlineStaticMethodCall).
   returnType = resolveInlineClassType(converter, returnType);
@@ -2411,11 +2338,6 @@ export function evaluateInlineGetter(
     name: getterProp.name,
     parameters: [],
     returnType: getterProp.getterReturnType ?? getterProp.type,
-    // Preserve the original type name so inlineResolvedMethodBody's
-    // late-resolution step (which re-resolves interface-typed returns
-    // after all files have been parsed) behaves the same as for a real
-    // method.
-    originalReturnTypeName: getterProp.originalTypeName,
     body: getterProp.getterBody,
     isPublic: getterProp.isPublic,
     // Forward the getter's isStatic so a future static-getter inlining

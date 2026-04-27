@@ -278,11 +278,11 @@ export function visitVariableStatement(
 
   // Infer type from initializer or type annotation
   let type: TypeSymbol = ObjectType;
-  let originalTypeName: string | undefined;
   if (declaration.type) {
-    const typeText = declaration.type.getText();
-    type = this.mapTypeWithGenerics(typeText, declaration.type);
-    originalTypeName = typeText;
+    type = this.mapTypeWithGenerics(
+      declaration.type.getText(),
+      declaration.type,
+    );
   } else if (declaration.initializer) {
     type = this.inferType(declaration.initializer);
   }
@@ -294,7 +294,6 @@ export function visitVariableStatement(
     kind: ASTNodeKind.VariableDeclaration,
     name,
     type,
-    originalTypeName,
     isConst,
   });
 

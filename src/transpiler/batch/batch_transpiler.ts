@@ -28,6 +28,7 @@ import { ClassRegistry } from "../frontend/class_registry.js";
 import { InheritanceValidator } from "../frontend/inheritance_validator.js";
 import { MethodUsageAnalyzer } from "../frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "../frontend/parser/index.js";
+import { resolveDeferredTypes } from "../frontend/post_parse_resolver.js";
 import { SymbolTable } from "../frontend/symbol_table.js";
 import { TypeCheckerContext } from "../frontend/type_checker_context.js";
 import type { TypeSymbol } from "../frontend/type_symbols.js";
@@ -215,10 +216,15 @@ export class BatchTranspiler {
 
     // Register all source files upfront so that registry.getEntryPoints()
     // can identify entry files without a separate ts.createSourceFile() pass.
+    const parsedPrograms = new Map<
+      string,
+      { program: ProgramNode; sourceText: string }
+    >();
     const parseAndRegisterFile = (filePath: string): void => {
       const source =
         inMemorySources[filePath] ?? fs.readFileSync(filePath, "utf8");
       const program = parser.parse(source, filePath);
+      parsedPrograms.set(filePath, { program, sourceText: source });
       registry.registerFromProgram(program, filePath, source);
     };
 
@@ -302,6 +308,16 @@ export class BatchTranspiler {
         fileSet.add(reachableFile);
       }
       resolver.setImportCache(parser.getImportCache());
+    }
+
+    // All aliases (including cross-file forward references) are now
+    // registered in `typeMapper`. Walk every parsed program to upgrade
+    // placeholder types to their registered `InterfaceTypeSymbol`, then
+    // re-register so the ClassRegistry's shallow `MethodInfo`/`PropertyInfo`
+    // copies see the upgraded types as well.
+    for (const [filePath, { program, sourceText }] of parsedPrograms) {
+      resolveDeferredTypes(program, typeMapper);
+      registry.registerFromProgram(program, filePath, sourceText);
     }
 
     const cacheFiles =

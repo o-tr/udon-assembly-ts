@@ -15,6 +15,7 @@ import { CallAnalyzer } from "./frontend/call_analyzer.js";
 import { ClassRegistry } from "./frontend/class_registry.js";
 import { MethodUsageAnalyzer } from "./frontend/method_usage_analyzer.js";
 import { TypeScriptParser } from "./frontend/parser/index.js";
+import { resolveDeferredTypes } from "./frontend/post_parse_resolver.js";
 import { TypeCheckerContext } from "./frontend/type_checker_context.js";
 import { ASTNodeKind, type ClassDeclarationNode } from "./frontend/types.js";
 import {
@@ -73,6 +74,7 @@ export class TypeScriptToUdonTranspiler {
     });
     const parser = new TypeScriptParser(undefined, checkerContext);
     const ast = parser.parse(source, sourceFilePath);
+    resolveDeferredTypes(ast, parser.typeMapper);
     const registry = new ClassRegistry();
     registry.registerFromProgram(ast, sourceFilePath);
     const symbolTable = parser.getSymbolTable();

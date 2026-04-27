@@ -239,12 +239,6 @@ export function visitClassDeclaration(
         kind: ASTNodeKind.PropertyDeclaration,
         name: propName,
         type: propType,
-        // Preserve the raw type text so `evaluateInlineGetter` can forward
-        // it to `method.originalReturnTypeName`, letting
-        // `inlineResolvedMethodBody`'s late-resolution branch recover the
-        // correct `InterfaceTypeSymbol` when the interface is defined
-        // after the class (same file) or in a later-parsed file.
-        originalTypeName: member.type?.getText(),
         isPublic,
         isStatic,
         isGetter: true,
@@ -497,11 +491,8 @@ export function visitPropertyDeclaration(
   const name = node.name.getText();
 
   let type: TypeSymbol;
-  let originalTypeName: string | undefined;
   if (node.type) {
-    const typeText = node.type.getText();
-    type = this.mapTypeWithGenerics(typeText, node.type);
-    originalTypeName = typeText;
+    type = this.mapTypeWithGenerics(node.type.getText(), node.type);
   } else if (node.initializer) {
     type = this.inferType(node.initializer);
   } else {
@@ -563,7 +554,6 @@ export function visitPropertyDeclaration(
     kind: ASTNodeKind.PropertyDeclaration,
     name,
     type,
-    originalTypeName,
     initializer,
     isPublic,
     isStatic,
@@ -602,11 +592,9 @@ export function visitMethodDeclaration(
     };
   });
 
-  const returnTypeText = node.type ? node.type.getText() : undefined;
-  const returnType =
-    returnTypeText !== undefined && node.type !== undefined
-      ? this.mapTypeWithGenerics(returnTypeText, node.type)
-      : PrimitiveTypes.void;
+  const returnType = node.type
+    ? this.mapTypeWithGenerics(node.type.getText(), node.type)
+    : PrimitiveTypes.void;
 
   // Register parameters in a wrapping scope so that inferType inside the body
   // can resolve parameter types (e.g. for `let a = tiles[0]` where `tiles` is
@@ -646,7 +634,6 @@ export function visitMethodDeclaration(
     name,
     parameters,
     returnType,
-    originalReturnTypeName: returnTypeText,
     body,
     isPublic,
     isStatic,
