@@ -1694,6 +1694,11 @@ function visitInlineStaticMethodCallImpl(
     );
   }
 
+  // --- Recursive guard: do NOT route to outline if we're already inlining ---
+  if (this.inlineMethodStack.has(inlineKey)) {
+    return null;
+  }
+
   // --- Outline check (pass 2 only) ---
   if (!this.metadataOnlyMode) {
     const outlineKey = outlineMapKey(
@@ -2167,8 +2172,7 @@ function hasInlineClassParamFieldAccess(
 ): boolean {
   const inlineParamNames = new Set<string>();
   for (const param of params) {
-    const classNode = resolveClassNode(converter, param.type.name);
-    if (classNode && !converter.udonBehaviourClasses.has(param.type.name)) {
+    if (isInlineHandleType(converter, param.type)) {
       inlineParamNames.add(param.name);
     }
   }
@@ -2293,7 +2297,13 @@ function emitInlineOutlinedBody(
   try {
     const { effectiveReturnType, isErasedReturn } =
       resolveInlineReturnType(returnType);
-    const prefix = `__outline_${className}_${methodName}`;
+    const uniqueKey = outlineMapKey(
+      declaringClassName,
+      methodName,
+      instancePrefix,
+    );
+    const sanitizedKey = uniqueKey.replace(/[^a-zA-Z0-9_]/g, "_");
+    const prefix = `__outline_${sanitizedKey}`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
     const result = createVariable(`${prefix}_retVal`, effectiveReturnType, {
       isLocal: true,

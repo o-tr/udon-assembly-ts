@@ -165,8 +165,10 @@ ${buildLargeBody(150)}
       outlineBodyInstrThreshold: LOW_THRESHOLD,
     });
 
-    expect(result.tac).toContain("__outline_Helper_compute_retVal");
-    expect(result.tac).toContain("__outline_Helper_compute_returnSiteIdx");
+    expect(result.tac).toContain("__outline_static_Helper_compute_retVal");
+    expect(result.tac).toContain(
+      "__outline_static_Helper_compute_returnSiteIdx",
+    );
     // Both call sites should produce distinct return labels
     const returnLabels = result.tac.match(/outline_return\d+:/g);
     expect(returnLabels).not.toBeNull();
@@ -403,9 +405,74 @@ ${buildBodyUsingParams(150)}
     expect(result.tac).toContain("y = 4");
     // Both call sites should have distinct return site indices
     const returnSiteAssigns = result.tac.match(
-      /__outline_Helper_compute_returnSiteIdx = \d+/g,
+      /__outline_static_Helper_compute_returnSiteIdx = \d+/g,
     );
     expect(returnSiteAssigns).not.toBeNull();
     expect(returnSiteAssigns?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("outlines an instance method called multiple times on the same receiver", () => {
+    const source = `
+      class Engine {
+        compute(): number {
+${buildLargeBody(150)}
+        }
+        process(): number {
+          return this.compute();
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const e = new Engine();
+          const r1: number = e.process();
+          const r2: number = e.process();
+          const r3: number = e.process();
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    // Instance method should be outlined via inlineResolvedMethodBody path.
+    // Both compute() and process() may be outlined (pass-1 counts both above
+    // threshold because inlining expands compute inside each process call).
+    expect(result.tac).toContain("outline_entry");
+    expect(result.tac).toContain("outline_dispatch");
+    expect(result.tac).toContain(
+      "__outline_inst_Engine_process___inst_Engine_0_retVal",
+    );
+  });
+
+  it("outlines a void-return method without corrupting caller flow", () => {
+    const source = `
+      class Helper {
+        static doWork(): void {
+          let acc: number = 0;
+${Array.from({ length: 150 }, (_, i) => `          acc = acc + ${i};`).join("\n")}
+          Debug.Log(acc);
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          Helper.doWork();
+          Helper.doWork();
+          Debug.Log("after");
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    // "after" should still be logged — caller flow is not corrupted
+    expect(result.tac).toContain('"after"');
   });
 });
