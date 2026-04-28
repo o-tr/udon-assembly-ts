@@ -1647,6 +1647,9 @@ export function visitInlineStaticMethodCall(
         captureBodyInstr();
       }
     }
+    // When bodyInstr is already set (second+ call site in pass 1), fall
+    // through to the normal inline path so metadata like soaClasses is
+    // still collected.
   }
 
   return visitInlineStaticMethodCallImpl.call(
@@ -2486,6 +2489,10 @@ function emitInlineOutlinedBody(
       );
     }
     converter.emit(new LabelInstruction(doneLabel));
+    // Defensive: doneLabel should be unreachable in valid code (all return
+    // sites are matched). Emit an explicit return to avoid falling off the
+    // end of the instruction stream in the Udon VM.
+    converter.emit(new ReturnInstruction());
   });
 
   // --- Emit the first call site ---
@@ -2972,6 +2979,9 @@ function inlineResolvedMethodBody(
         info.bodyInstr = converter.pass1EmitCount - emitBefore;
       }
     }
+    // When bodyInstr is already set (second+ call site in pass 1), fall
+    // through to the normal inline path so metadata like soaClasses is
+    // still collected.
   }
 
   // --- Pass-2 outline check ---
