@@ -428,8 +428,10 @@ export class ASTToTACConverter {
   pass1EmitCount = 0;
   /** Per-method call count and body instruction estimate from pass 1.
    *  Key: outlineMapKey() — "static:Cls.method" or "inst:Cls.method:prefix" */
-  inlineStaticCallInfo: Map<string, { callSites: number; bodyInstr: number }> =
-    new Map();
+  inlineStaticCallInfo: Map<
+    string,
+    { callSites: number; bodyInstr?: number; selfCallCount?: number }
+  > = new Map();
   /** Set of method keys eligible for outlining. Computed between passes from
    *  inlineStaticCallInfo and survives resetState(). */
   outlineCandidates: Set<string> = new Set();
@@ -760,7 +762,7 @@ export class ASTToTACConverter {
         `[prof] outline candidates (threshold=${this.outlineBodyInstrThreshold}, minCalls=${OUTLINE_MIN_CALL_SITES}):`,
       );
       const sorted = [...this.inlineStaticCallInfo.entries()]
-        .sort((a, b) => b[1].bodyInstr - a[1].bodyInstr)
+        .sort((a, b) => (b[1].bodyInstr ?? 0) - (a[1].bodyInstr ?? 0))
         .slice(0, 10);
       for (const [key, info] of sorted) {
         console.log(
@@ -771,7 +773,9 @@ export class ASTToTACConverter {
     for (const [key, info] of this.inlineStaticCallInfo) {
       if (
         info.callSites >= OUTLINE_MIN_CALL_SITES &&
-        info.bodyInstr >= this.outlineBodyInstrThreshold
+        info.bodyInstr !== undefined &&
+        info.bodyInstr >= this.outlineBodyInstrThreshold &&
+        (info.selfCallCount ?? 0) === 0
       ) {
         outlineCandidatesFromPass1.add(key);
       }

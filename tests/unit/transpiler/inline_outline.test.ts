@@ -392,6 +392,37 @@ ${buildLargeBody(150)}
     );
   });
 
+  it("preserves inline-instance tracking after outlined inline-class return", () => {
+    const source = `
+      class Box {
+        value: number = 1;
+      }
+      class Helper {
+        static make(): Box {
+${buildLargeBody(150)}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const box = Helper.make();
+          const box2 = Helper.make();
+          Debug.Log(box.value);
+          Debug.Log(box.value + 1);
+          Debug.Log(box2.value);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    expect(result.tac).toContain("box.value");
+  });
+
   it("outlines a void-return method without corrupting caller flow", () => {
     const source = `
       class Helper {

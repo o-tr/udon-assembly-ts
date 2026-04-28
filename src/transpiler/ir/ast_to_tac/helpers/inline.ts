@@ -109,6 +109,7 @@ export interface OutlinedMethodState {
   dispatchLabel: TACOperand;
   doneLabel: TACOperand;
   returnVar: VariableOperand;
+  returnVarInlineInstance?: { prefix: string; className: string };
   returnSiteIdxVarName: string;
   returnSites: Array<{ index: number; labelName: string }>;
   nextReturnSiteIndex: number;
@@ -1611,11 +1612,18 @@ export function visitInlineStaticMethodCall(
     );
     let info = this.inlineStaticCallInfo.get(infoKey);
     if (!info) {
-      info = { callSites: 0, bodyInstr: 0 };
+      info = { callSites: 0 };
       this.inlineStaticCallInfo.set(infoKey, info);
     }
     info.callSites++;
-    if (info.bodyInstr === 0) {
+    if (info.selfCallCount === undefined) {
+      info.selfCallCount = countStaticSelfCalls(
+        resolved.declaringClassName,
+        methodName,
+        method.body,
+      );
+    }
+    if (info.bodyInstr === undefined) {
       const emitBefore = this.pass1EmitCount;
       // Let the existing pass-1 traversal run below; capture emit delta after.
       // We use a one-shot flag to capture bodyInstr at the end of this function.
@@ -2319,6 +2327,9 @@ function emitInlineOutlinedBody(
       isLocal: true,
       isInlineReturn: true,
     });
+    let returnVarInlineInstance:
+      | { prefix: string; className: string }
+      | undefined;
 
     const entryLabel = converter.newLabel("outline_entry");
     const dispatchLabel = converter.newLabel("outline_dispatch");
@@ -2352,6 +2363,7 @@ function emitInlineOutlinedBody(
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
+    const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
     converter.currentParamExportMap = new Map();
     converter.currentParamExportReverseMap = new Map();
     converter.currentMethodLayout = null;
@@ -2368,6 +2380,12 @@ function emitInlineOutlinedBody(
       returnType.properties.size > 0
         ? result.name
         : undefined;
+    if (returnInstancePrefix !== undefined) {
+      converter.inlineInstanceMap.set(result.name, {
+        prefix: returnInstancePrefix,
+        className: returnType.name,
+      });
+    }
     converter.inlineReturnStack.push({
       returnVar: result,
       returnLabel: dispatchLabel,
@@ -2400,6 +2418,12 @@ function emitInlineOutlinedBody(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
+      // Preserve caller tracking across outlined body emission.
+      returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
+      converter.inlineInstanceMap.clear();
+      for (const [k, v] of savedInlineInstanceMap) {
+        converter.inlineInstanceMap.set(k, v);
+      }
       converter.symbolTable.exitScope();
     }
 
@@ -2429,6 +2453,7 @@ function emitInlineOutlinedBody(
       methodName,
       instancePrefix,
     };
+    state.returnVarInlineInstance = returnVarInlineInstance;
     converter.outlinedMethods.set(
       outlineMapKey(declaringClassName, methodName, instancePrefix),
       state,
@@ -2519,7 +2544,24 @@ function emitOutlinedCallSite(
     const capturedResult = converter.newTemp(
       converter.getOperandType(state.returnVar),
     );
+    const savedReturnVarInlineInstance = converter.inlineInstanceMap.get(
+      state.returnVar.name,
+    );
+    if (state.returnVarInlineInstance !== undefined) {
+      converter.inlineInstanceMap.set(state.returnVar.name, {
+        prefix: state.returnVarInlineInstance.prefix,
+        className: state.returnVarInlineInstance.className,
+      });
+    }
     converter.emitCopyWithTracking(capturedResult, state.returnVar);
+    if (savedReturnVarInlineInstance === undefined) {
+      converter.inlineInstanceMap.delete(state.returnVar.name);
+    } else {
+      converter.inlineInstanceMap.set(
+        state.returnVar.name,
+        savedReturnVarInlineInstance,
+      );
+    }
 
     // Restore caller state
     restoreInlineParams(converter, savedParamEntries);
@@ -2903,11 +2945,18 @@ function inlineResolvedMethodBody(
     );
     let info = converter.inlineStaticCallInfo.get(infoKey);
     if (!info) {
-      info = { callSites: 0, bodyInstr: 0 };
+      info = { callSites: 0 };
       converter.inlineStaticCallInfo.set(infoKey, info);
     }
     info.callSites++;
-    if (info.bodyInstr === 0) {
+    if (info.selfCallCount === undefined) {
+      info.selfCallCount = countStaticSelfCalls(
+        declaringClassName,
+        methodName,
+        method.body,
+      );
+    }
+    if (info.bodyInstr === undefined) {
       const emitBefore = converter.pass1EmitCount;
       try {
         return inlineResolvedMethodBodyImpl(
