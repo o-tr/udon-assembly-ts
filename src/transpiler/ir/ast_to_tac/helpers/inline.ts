@@ -1693,10 +1693,8 @@ function visitInlineStaticMethodCallImpl(
     );
   }
 
-  // --- Recursive guard: do NOT route to outline if we're already inlining ---
-  if (this.inlineMethodStack.has(inlineKey)) {
-    return null;
-  }
+  // NOTE: the inlineMethodStack recursion guard lives in the caller
+  // (visitInlineStaticMethodCall) so it does not need to be repeated here.
 
   // --- Outline check (pass 2 only) ---
   if (!this.metadataOnlyMode) {
