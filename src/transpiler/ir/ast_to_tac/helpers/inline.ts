@@ -2251,15 +2251,16 @@ function checkOutlineIneligible(
   body: BlockStatementNode,
   returnType: TypeSymbol,
 ): boolean {
-  const cached = converter.outlineIneligibleCache.get(body);
-  if (cached !== undefined) return cached;
   // Inline-class returns share a single returnVar across call sites, so
   // later calls overwrite earlier ones' field slots. Fall back to full
   // inline so each call site gets its own inlineInstanceMap entry.
+  // This check is O(1) and not cached — the cache is reserved for the
+  // expensive AST walk in hasInlineClassParamDependentUse.
   if (isInlineHandleType(converter, returnType)) {
-    converter.outlineIneligibleCache.set(body, true);
     return true;
   }
+  const cached = converter.outlineIneligibleCache.get(body);
+  if (cached !== undefined) return cached;
   const result = hasInlineClassParamDependentUse(converter, params, body);
   converter.outlineIneligibleCache.set(body, result);
   return result;
@@ -3597,6 +3598,9 @@ export function collectRecursiveLocals(
         for (const stmt of block.statements) visitNode(stmt);
         break;
       }
+      // ExpressionStatement cannot declare locals directly, but traversing
+      // it ensures completeness of the AST walk (e.g. for nested calls
+      // that may contain closures or other local-declaring constructs).
       case ASTNodeKind.ExpressionStatement: {
         const exprStmt = node as ExpressionStatementNode;
         visitNode(exprStmt.expression);

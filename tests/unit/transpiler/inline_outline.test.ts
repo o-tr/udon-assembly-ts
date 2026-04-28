@@ -142,6 +142,35 @@ ${buildLargeBody(150)}
     expect(result.tac).toContain("__inlineRec_");
   });
 
+  it("inlines recursive method with expression statements in body", () => {
+    const source = `
+      class Helper {
+        static factorial(n: number): number {
+          Debug.Log(n);
+          if (n <= 1) {
+            return 1;
+          }
+          return n * Helper.factorial(n - 1);
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r1: number = Helper.factorial(5);
+          const r2: number = Helper.factorial(10);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).not.toContain("outline_entry");
+    expect(result.tac).toContain("__inlineRec_");
+  });
+
   it("correctly communicates return values through outlined calls", () => {
     const source = `
       class Helper {
