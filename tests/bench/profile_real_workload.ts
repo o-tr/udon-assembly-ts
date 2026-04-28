@@ -144,6 +144,32 @@ function loadBaseline(filePath: string): PersistedProfile {
   ) {
     throw new Error(`Invalid profile JSON schema: ${filePath}`);
   }
+
+  const metadata = parsed.metadata as Record<string, unknown>;
+  if (
+    typeof metadata.timestamp !== "string" ||
+    !Array.isArray(metadata.inputs) ||
+    metadata.inputs.some((i: unknown) => typeof i !== "string") ||
+    typeof metadata.optimize !== "boolean"
+  ) {
+    throw new Error(`Invalid profile metadata fields: ${filePath}`);
+  }
+
+  const entries = parsed.entries as Record<string, unknown>;
+  for (const [key, entry] of Object.entries(entries)) {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      !("inlineHistogram" in entry) ||
+      !("inlineEdgeHistogram" in entry) ||
+      !("instructionKindHistogram" in entry) ||
+      !("totalInstrCount" in entry) ||
+      typeof (entry as Record<string, unknown>).totalInstrCount !== "number"
+    ) {
+      throw new Error(`Invalid profile entry "${key}" in ${filePath}`);
+    }
+  }
+
   return parsed as PersistedProfile;
 }
 
@@ -370,9 +396,13 @@ function main() {
 
     if (result.profiles) {
       for (const [entryName, profile] of Object.entries(result.profiles)) {
-        // If the same entry name appears in multiple inputs, keep the first or
-        // overwrite. This mirrors the behaviour of `outputs` today.
-        allProfiles[entryName] = profile;
+        if (allProfiles[entryName] !== undefined) {
+          console.warn(
+            `[profile] duplicate entry "${entryName}" from ${input}; keeping first`,
+          );
+        } else {
+          allProfiles[entryName] = profile;
+        }
       }
     }
 
@@ -402,6 +432,8 @@ function main() {
         },
         entries: allProfiles,
       };
+      const profileDir = path.dirname(args.saveProfile);
+      fs.mkdirSync(profileDir, { recursive: true });
       fs.writeFileSync(
         args.saveProfile,
         JSON.stringify(payload, null, 2),
