@@ -425,7 +425,7 @@ ${buildLargeBody(150)}
     );
   });
 
-  it("preserves inline-instance tracking after outlined inline-class return", () => {
+  it("falls through to full inline when return type is an inline class", () => {
     const source = `
       class Box {
         value: number = 1;
@@ -452,7 +452,10 @@ ${buildLargeBody(150)}
       outlineBodyInstrThreshold: LOW_THRESHOLD,
     });
 
-    expect(result.tac).toContain("outline_entry");
+    // Inline-class returns share a single returnVar across call sites,
+    // so outlining is ineligible; full inline gives each call site its
+    // own inlineInstanceMap entry.
+    expect(result.tac).not.toContain("outline_entry");
     expect(result.tac).toContain("box.value");
   });
 

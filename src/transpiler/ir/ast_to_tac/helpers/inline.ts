@@ -1718,7 +1718,14 @@ function visitInlineStaticMethodCallImpl(
       undefined,
     );
     if (this.outlineCandidates.has(outlineKey)) {
-      if (!checkOutlineIneligible(this, method.parameters, method.body)) {
+      if (
+        !checkOutlineIneligible(
+          this,
+          method.parameters,
+          method.body,
+          method.returnType,
+        )
+      ) {
         const existing = this.outlinedMethods.get(outlineKey);
         if (existing) {
           return emitOutlinedCallSite(this, existing, args);
@@ -2242,9 +2249,17 @@ function checkOutlineIneligible(
   converter: ASTToTACConverter,
   params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
   body: BlockStatementNode,
+  returnType: TypeSymbol,
 ): boolean {
   const cached = converter.outlineIneligibleCache.get(body);
   if (cached !== undefined) return cached;
+  // Inline-class returns share a single returnVar across call sites, so
+  // later calls overwrite earlier ones' field slots. Fall back to full
+  // inline so each call site gets its own inlineInstanceMap entry.
+  if (isInlineHandleType(converter, returnType)) {
+    converter.outlineIneligibleCache.set(body, true);
+    return true;
+  }
   const result = hasInlineClassParamDependentUse(converter, params, body);
   converter.outlineIneligibleCache.set(body, result);
   return result;
@@ -2993,7 +3008,14 @@ function inlineResolvedMethodBody(
       instancePrefix,
     );
     if (converter.outlineCandidates.has(outlineKey)) {
-      if (!checkOutlineIneligible(converter, method.parameters, method.body)) {
+      if (
+        !checkOutlineIneligible(
+          converter,
+          method.parameters,
+          method.body,
+          method.returnType,
+        )
+      ) {
         const existing = converter.outlinedMethods.get(outlineKey);
         if (existing) {
           return emitOutlinedCallSite(converter, existing, args);
