@@ -1822,7 +1822,7 @@ function visitInlineStaticMethodCallImpl(
 
     return result;
   } finally {
-    profExit(this);
+    if (PROF) profExit(this);
   }
 }
 
@@ -2318,6 +2318,7 @@ function emitInlineOutlinedBody(
   declaringClassName: string,
   instancePrefix: string | undefined,
 ): TACOperand {
+  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     const { effectiveReturnType, isErasedReturn } =
       resolveInlineReturnType(returnType);
@@ -2490,6 +2491,7 @@ function emitInlineOutlinedBody(
           ),
         );
       }
+      converter.emit(new UnconditionalJumpInstruction(doneLabel));
       converter.emit(new LabelInstruction(doneLabel));
     });
 
@@ -2497,6 +2499,7 @@ function emitInlineOutlinedBody(
     converter.emit(new LabelInstruction(firstCallSiteLabel));
     return emitOutlinedCallSite(converter, state, args);
   } finally {
+    if (PROF) profExit(converter);
   }
 }
 
@@ -2574,7 +2577,7 @@ function emitOutlinedCallSite(
 
     return capturedResult;
   } finally {
-    profExit(converter);
+    if (PROF) profExit(converter);
   }
 }
 
@@ -2730,7 +2733,7 @@ function emitInlineRecursiveSelfCall(
     converter.emitCopyWithTracking(selfCallResultVar, capturedTemp);
     return selfCallResultVar;
   } finally {
-    profExit(converter);
+    if (PROF) profExit(converter);
   }
 }
 
@@ -3122,7 +3125,7 @@ function inlineResolvedMethodBodyImpl(
 
     return result;
   } finally {
-    profExit(converter);
+    if (PROF) profExit(converter);
   }
 }
 
