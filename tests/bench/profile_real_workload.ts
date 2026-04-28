@@ -113,7 +113,8 @@ function fmt(ms: number): string {
 }
 
 function fmtNum(n: number): string {
-  return n.toLocaleString();
+  if (!Number.isFinite(n)) return String(n);
+  return n.toLocaleString("en-US");
 }
 
 function loadBaseline(filePath: string): PersistedProfile {
@@ -136,6 +137,8 @@ function loadBaseline(filePath: string): PersistedProfile {
     typeof parsed !== "object" ||
     !("entries" in parsed) ||
     !("metadata" in parsed) ||
+    typeof parsed.metadata !== "object" ||
+    !parsed.metadata ||
     !parsed.entries ||
     typeof parsed.entries !== "object"
   ) {
@@ -384,28 +387,31 @@ function main() {
     `Total wall-clock: ${fmt(overallEnd - overallStart)}  entries=${totalEntries}  uasm=${(totalUasmBytes / 1024 / 1024).toFixed(1)} MiB  optimize=${args.optimize}`,
   );
 
-  if (args.saveProfile && Object.keys(allProfiles).length > 0) {
-    const payload: PersistedProfile = {
-      metadata: {
-        timestamp: new Date().toISOString(),
-        inputs: args.inputs,
-        optimize: args.optimize,
-      },
-      entries: allProfiles,
-    };
-    fs.writeFileSync(
-      args.saveProfile,
-      JSON.stringify(payload, null, 2),
-      "utf8",
-    );
-    console.log(`[profile] saved to ${args.saveProfile}`);
+  if (args.saveProfile) {
+    if (Object.keys(allProfiles).length === 0) {
+      console.error(
+        "[profile] no profile data collected — no entries transpiled successfully",
+      );
+      process.exit(1);
+    } else {
+      const payload: PersistedProfile = {
+        metadata: {
+          timestamp: new Date().toISOString(),
+          inputs: args.inputs,
+          optimize: args.optimize,
+        },
+        entries: allProfiles,
+      };
+      fs.writeFileSync(
+        args.saveProfile,
+        JSON.stringify(payload, null, 2),
+        "utf8",
+      );
+      console.log(`[profile] saved to ${args.saveProfile}`);
+    }
   }
 
   if (args.compareProfile) {
-    if (!fs.existsSync(args.compareProfile)) {
-      console.error(`[compare] baseline not found: ${args.compareProfile}`);
-      process.exit(1);
-    }
     if (Object.keys(allProfiles).length === 0) {
       console.error(
         "[compare] no profile data collected — rerun with UDON_PROFILE=1",
