@@ -2439,7 +2439,6 @@ function emitInlineOutlinedBody(
           ),
         );
       }
-      converter.emit(new UnconditionalJumpInstruction(doneLabel));
       converter.emit(new LabelInstruction(doneLabel));
     });
 
