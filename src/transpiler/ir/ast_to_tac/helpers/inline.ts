@@ -139,13 +139,14 @@ type InlineInitializerState = NonNullable<
  * across distinct inline instances.
  */
 function outlineMapKey(
+  kind: "static" | "inst",
   declaringClassName: string,
   methodName: string,
   instancePrefix: string | undefined,
 ): string {
   return instancePrefix
-    ? `inst:${declaringClassName}.${methodName}:${instancePrefix}`
-    : `static:${declaringClassName}.${methodName}`;
+    ? `${kind}:${declaringClassName}.${methodName}:${instancePrefix}`
+    : `${kind}:${declaringClassName}.${methodName}`;
 }
 
 /**
@@ -1606,6 +1607,7 @@ export function visitInlineStaticMethodCall(
   // --- Pass-1 outline candidate detection (static path) ---
   if (this.metadataOnlyMode) {
     const infoKey = outlineMapKey(
+      "static",
       resolved.declaringClassName,
       methodName,
       undefined,
@@ -1707,6 +1709,7 @@ function visitInlineStaticMethodCallImpl(
   // --- Outline check (pass 2 only) ---
   if (!this.metadataOnlyMode) {
     const outlineKey = outlineMapKey(
+      "static",
       resolved.declaringClassName,
       methodName,
       undefined,
@@ -2277,6 +2280,7 @@ function emitInlineOutlinedMethodBody(
     inlineKey,
     declaringClassName,
     instancePrefix,
+    "inst",
   );
 }
 
@@ -2304,6 +2308,7 @@ function emitInlineOutlinedStaticMethod(
     inlineKey,
     declaringClassName,
     undefined,
+    "static",
   );
 }
 
@@ -2317,190 +2322,183 @@ function emitInlineOutlinedBody(
   inlineKey: string,
   declaringClassName: string,
   instancePrefix: string | undefined,
+  kind: "static" | "inst",
 ): TACOperand {
-  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
-  try {
-    const { effectiveReturnType, isErasedReturn } =
-      resolveInlineReturnType(returnType);
-    const uniqueKey = outlineMapKey(
-      declaringClassName,
-      methodName,
-      instancePrefix,
-    );
-    const sanitizedKey = sanitizeIdentifierToken(uniqueKey);
-    const prefix = `__outline_${sanitizedKey}`;
-    const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
-    const result = createVariable(`${prefix}_retVal`, effectiveReturnType, {
-      isLocal: true,
-      isInlineReturn: true,
-    });
-    let returnVarInlineInstance:
-      | { prefix: string; className: string }
-      | undefined;
+  const { effectiveReturnType, isErasedReturn } =
+    resolveInlineReturnType(returnType);
+  const uniqueKey = outlineMapKey(
+    kind,
+    declaringClassName,
+    methodName,
+    instancePrefix,
+  );
+  const sanitizedKey = sanitizeIdentifierToken(uniqueKey);
+  const prefix = `__outline_${sanitizedKey}`;
+  const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+  const result = createVariable(`${prefix}_retVal`, effectiveReturnType, {
+    isLocal: true,
+    isInlineReturn: true,
+  });
+  let returnVarInlineInstance:
+    | { prefix: string; className: string }
+    | undefined;
 
-    const entryLabel = converter.newLabel("outline_entry");
-    const dispatchLabel = converter.newLabel("outline_dispatch");
-    const doneLabel = converter.newLabel("outline_done");
+  const entryLabel = converter.newLabel("outline_entry");
+  const dispatchLabel = converter.newLabel("outline_dispatch");
+  const doneLabel = converter.newLabel("outline_done");
 
-    // Skip-around: jump past the outlined body to the first call site.
-    const firstCallSiteLabel = converter.newLabel("outline_first_call");
-    converter.emit(new UnconditionalJumpInstruction(firstCallSiteLabel));
+  // Skip-around: jump past the outlined body to the first call site.
+  const firstCallSiteLabel = converter.newLabel("outline_first_call");
+  converter.emit(new UnconditionalJumpInstruction(firstCallSiteLabel));
 
-    // --- Entry label (JUMP target for all call sites) ---
-    converter.emit(new LabelInstruction(entryLabel));
+  // --- Entry label (JUMP target for all call sites) ---
+  converter.emit(new LabelInstruction(entryLabel));
 
-    // --- Body emission (exactly once) ---
-    converter.symbolTable.enterScope();
-    for (const param of method.parameters) {
-      const effectiveParamType = resolveInlineClassType(converter, param.type);
-      if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-        converter.symbolTable.addSymbol(
-          param.name,
-          effectiveParamType,
-          true,
-          false,
-        );
-      }
-    }
-
-    const savedParamExportMap = converter.currentParamExportMap;
-    const savedParamExportReverseMap = converter.currentParamExportReverseMap;
-    const savedMethodLayout = converter.currentMethodLayout;
-    const savedInlineContext = converter.currentInlineContext;
-    const savedInlineCtorClass = converter.currentInlineConstructorClassName;
-    const savedThisOverride = converter.currentThisOverride;
-    const savedBaseClass = converter.currentInlineBaseClass;
-    const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
-    converter.currentParamExportMap = new Map();
-    converter.currentParamExportReverseMap = new Map();
-    converter.currentMethodLayout = null;
-    converter.currentInlineContext = instancePrefix
-      ? { className, instancePrefix }
-      : undefined;
-    converter.currentInlineConstructorClassName = undefined;
-    converter.currentThisOverride = null;
-    converter.currentInlineBaseClass = undefined;
-
-    converter.inlineMethodStack.add(inlineKey);
-    const returnInstancePrefix =
-      returnType instanceof InterfaceTypeSymbol &&
-      returnType.properties.size > 0
-        ? result.name
-        : undefined;
-    if (returnInstancePrefix !== undefined) {
-      converter.inlineInstanceMap.set(result.name, {
-        prefix: returnInstancePrefix,
-        className: returnType.name,
-      });
-    }
-    converter.inlineReturnStack.push({
-      returnVar: result,
-      returnLabel: dispatchLabel,
-      returnTrackingInvalidated: false,
-      loopDepth: converter.loopContextStack.length,
-      returnInstancePrefix,
-      isErasedReturn,
-    });
-    converter.methodBodyConstructorIndex.set(method.body, 0);
-    converter.inlinedBodyStack.push(method.body);
-    const savedNativeIneligible = converter.nativeArrayIneligible;
-    const savedNativeVarName = converter.currentNativeArrayVarName;
-    converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
-      method.body.statements,
-    );
-    converter.currentNativeArrayVarName = null;
-
-    try {
-      converter.visitBlockStatement(method.body);
-    } finally {
-      converter.nativeArrayIneligible = savedNativeIneligible;
-      converter.currentNativeArrayVarName = savedNativeVarName;
-      converter.inlinedBodyStack.pop();
-      converter.inlineReturnStack.pop();
-      converter.inlineMethodStack.delete(inlineKey);
-      converter.currentParamExportMap = savedParamExportMap;
-      converter.currentParamExportReverseMap = savedParamExportReverseMap;
-      converter.currentMethodLayout = savedMethodLayout;
-      converter.currentInlineContext = savedInlineContext;
-      converter.currentInlineConstructorClassName = savedInlineCtorClass;
-      converter.currentThisOverride = savedThisOverride;
-      converter.currentInlineBaseClass = savedBaseClass;
-      // Preserve caller tracking across outlined body emission.
-      returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
-      converter.inlineInstanceMap.clear();
-      for (const [k, v] of savedInlineInstanceMap) {
-        converter.inlineInstanceMap.set(k, v);
-      }
-      converter.symbolTable.exitScope();
-    }
-
-    // Fallthrough at end of body: jump to dispatch
-    converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
-
-    // --- Register the outlined method state ---
-    const state: OutlinedMethodState = {
-      entryLabel,
-      dispatchLabel,
-      doneLabel,
-      returnVar: result,
-      returnSiteIdxVarName,
-      returnSites: [],
-      nextReturnSiteIndex: 1,
-      method: {
-        parameters: method.parameters.map((p) => ({
-          name: p.name,
-          type: p.type,
-          initializer: p.initializer,
-        })),
-        body: method.body,
-        returnType: method.returnType,
-      },
-      declaringClassName,
-      className,
-      methodName,
-      instancePrefix,
-    };
-    state.returnVarInlineInstance = returnVarInlineInstance;
-    converter.outlinedMethods.set(
-      outlineMapKey(declaringClassName, methodName, instancePrefix),
-      state,
-    );
-
-    // Deferred dispatch table emission (all return sites must be registered first).
-    converter.pendingOutlineDispatches.push(() => {
-      converter.emit(new LabelInstruction(dispatchLabel));
-      const returnSiteIdxVarOp = createVariable(
-        returnSiteIdxVarName,
-        PrimitiveTypes.int32,
-        { isLocal: true },
+  // --- Body emission (exactly once) ---
+  converter.symbolTable.enterScope();
+  for (const param of method.parameters) {
+    const effectiveParamType = resolveInlineClassType(converter, param.type);
+    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+      converter.symbolTable.addSymbol(
+        param.name,
+        effectiveParamType,
+        true,
+        false,
       );
-      for (const site of state.returnSites) {
-        const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
-        converter.emit(
-          new BinaryOpInstruction(
-            cmpResult,
-            returnSiteIdxVarOp,
-            "!=",
-            createConstant(site.index, PrimitiveTypes.int32),
-          ),
-        );
-        converter.emit(
-          new ConditionalJumpInstruction(
-            cmpResult,
-            createLabel(site.labelName),
-          ),
-        );
-      }
-      converter.emit(new UnconditionalJumpInstruction(doneLabel));
-      converter.emit(new LabelInstruction(doneLabel));
-    });
-
-    // --- Emit the first call site ---
-    converter.emit(new LabelInstruction(firstCallSiteLabel));
-    return emitOutlinedCallSite(converter, state, args);
-  } finally {
-    if (PROF) profExit(converter);
+    }
   }
+
+  const savedParamExportMap = converter.currentParamExportMap;
+  const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+  const savedMethodLayout = converter.currentMethodLayout;
+  const savedInlineContext = converter.currentInlineContext;
+  const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+  const savedThisOverride = converter.currentThisOverride;
+  const savedBaseClass = converter.currentInlineBaseClass;
+  const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
+  converter.currentParamExportMap = new Map();
+  converter.currentParamExportReverseMap = new Map();
+  converter.currentMethodLayout = null;
+  converter.currentInlineContext = instancePrefix
+    ? { className, instancePrefix }
+    : undefined;
+  converter.currentInlineConstructorClassName = undefined;
+  converter.currentThisOverride = null;
+  converter.currentInlineBaseClass = undefined;
+
+  converter.inlineMethodStack.add(inlineKey);
+  const returnInstancePrefix =
+    returnType instanceof InterfaceTypeSymbol && returnType.properties.size > 0
+      ? result.name
+      : undefined;
+  if (returnInstancePrefix !== undefined) {
+    converter.inlineInstanceMap.set(result.name, {
+      prefix: returnInstancePrefix,
+      className: returnType.name,
+    });
+  }
+  converter.inlineReturnStack.push({
+    returnVar: result,
+    returnLabel: dispatchLabel,
+    returnTrackingInvalidated: false,
+    loopDepth: converter.loopContextStack.length,
+    returnInstancePrefix,
+    isErasedReturn,
+  });
+  converter.methodBodyConstructorIndex.set(method.body, 0);
+  converter.inlinedBodyStack.push(method.body);
+  const savedNativeIneligible = converter.nativeArrayIneligible;
+  const savedNativeVarName = converter.currentNativeArrayVarName;
+  converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+    method.body.statements,
+  );
+  converter.currentNativeArrayVarName = null;
+
+  try {
+    converter.visitBlockStatement(method.body);
+  } finally {
+    converter.nativeArrayIneligible = savedNativeIneligible;
+    converter.currentNativeArrayVarName = savedNativeVarName;
+    converter.inlinedBodyStack.pop();
+    converter.inlineReturnStack.pop();
+    converter.inlineMethodStack.delete(inlineKey);
+    converter.currentParamExportMap = savedParamExportMap;
+    converter.currentParamExportReverseMap = savedParamExportReverseMap;
+    converter.currentMethodLayout = savedMethodLayout;
+    converter.currentInlineContext = savedInlineContext;
+    converter.currentInlineConstructorClassName = savedInlineCtorClass;
+    converter.currentThisOverride = savedThisOverride;
+    converter.currentInlineBaseClass = savedBaseClass;
+    // Preserve caller tracking across outlined body emission.
+    returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
+    converter.inlineInstanceMap.clear();
+    for (const [k, v] of savedInlineInstanceMap) {
+      converter.inlineInstanceMap.set(k, v);
+    }
+    converter.symbolTable.exitScope();
+  }
+
+  // Fallthrough at end of body: jump to dispatch
+  converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+
+  // --- Register the outlined method state ---
+  const state: OutlinedMethodState = {
+    entryLabel,
+    dispatchLabel,
+    doneLabel,
+    returnVar: result,
+    returnSiteIdxVarName,
+    returnSites: [],
+    nextReturnSiteIndex: 1,
+    method: {
+      parameters: method.parameters.map((p) => ({
+        name: p.name,
+        type: p.type,
+        initializer: p.initializer,
+      })),
+      body: method.body,
+      returnType: method.returnType,
+    },
+    declaringClassName,
+    className,
+    methodName,
+    instancePrefix,
+  };
+  state.returnVarInlineInstance = returnVarInlineInstance;
+  converter.outlinedMethods.set(
+    outlineMapKey(kind, declaringClassName, methodName, instancePrefix),
+    state,
+  );
+
+  // Deferred dispatch table emission (all return sites must be registered first).
+  converter.pendingOutlineDispatches.push(() => {
+    converter.emit(new LabelInstruction(dispatchLabel));
+    const returnSiteIdxVarOp = createVariable(
+      returnSiteIdxVarName,
+      PrimitiveTypes.int32,
+      { isLocal: true },
+    );
+    for (const site of state.returnSites) {
+      const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          cmpResult,
+          returnSiteIdxVarOp,
+          "!=",
+          createConstant(site.index, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emit(
+        new ConditionalJumpInstruction(cmpResult, createLabel(site.labelName)),
+      );
+    }
+    converter.emit(new UnconditionalJumpInstruction(doneLabel));
+    converter.emit(new LabelInstruction(doneLabel));
+  });
+
+  // --- Emit the first call site ---
+  converter.emit(new LabelInstruction(firstCallSiteLabel));
+  return emitOutlinedCallSite(converter, state, args);
 }
 
 /**
@@ -2517,65 +2515,69 @@ function emitOutlinedCallSite(
     profEnter(converter, histKey(state.declaringClassName, state.methodName));
   try {
     converter.symbolTable.enterScope();
-    const savedParamEntries = saveAndBindInlineParams(
-      converter,
-      state.method.parameters,
-      args,
-    );
-
-    // Assign return site index
-    const returnLabel = converter.newLabel("outline_return") as LabelOperand;
-    const returnSiteIdx = state.nextReturnSiteIndex++;
-    state.returnSites.push({
-      index: returnSiteIdx,
-      labelName: returnLabel.name,
-    });
-    const returnSiteIdxVar = createVariable(
-      state.returnSiteIdxVarName,
-      PrimitiveTypes.int32,
-      { isLocal: true },
-    );
-    converter.emit(
-      new CopyInstruction(
-        returnSiteIdxVar,
-        createConstant(returnSiteIdx, PrimitiveTypes.int32),
-      ),
-    );
-
-    // JUMP to outlined body
-    converter.emit(new UnconditionalJumpInstruction(state.entryLabel));
-
-    // Return label (dispatch routes here)
-    converter.emit(new LabelInstruction(returnLabel));
-
-    // Capture return value
-    const capturedResult = converter.newTemp(
-      converter.getOperandType(state.returnVar),
-    );
-    const savedReturnVarInlineInstance = converter.inlineInstanceMap.get(
-      state.returnVar.name,
-    );
-    if (state.returnVarInlineInstance !== undefined) {
-      converter.inlineInstanceMap.set(state.returnVar.name, {
-        prefix: state.returnVarInlineInstance.prefix,
-        className: state.returnVarInlineInstance.className,
-      });
-    }
-    converter.emitCopyWithTracking(capturedResult, state.returnVar);
-    if (savedReturnVarInlineInstance === undefined) {
-      converter.inlineInstanceMap.delete(state.returnVar.name);
-    } else {
-      converter.inlineInstanceMap.set(
-        state.returnVar.name,
-        savedReturnVarInlineInstance,
+    let savedParamEntries: InlineParamSave | undefined;
+    try {
+      savedParamEntries = saveAndBindInlineParams(
+        converter,
+        state.method.parameters,
+        args,
       );
+
+      // Assign return site index
+      const returnLabel = converter.newLabel("outline_return") as LabelOperand;
+      const returnSiteIdx = state.nextReturnSiteIndex++;
+      state.returnSites.push({
+        index: returnSiteIdx,
+        labelName: returnLabel.name,
+      });
+      const returnSiteIdxVar = createVariable(
+        state.returnSiteIdxVarName,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
+      converter.emit(
+        new CopyInstruction(
+          returnSiteIdxVar,
+          createConstant(returnSiteIdx, PrimitiveTypes.int32),
+        ),
+      );
+
+      // JUMP to outlined body
+      converter.emit(new UnconditionalJumpInstruction(state.entryLabel));
+
+      // Return label (dispatch routes here)
+      converter.emit(new LabelInstruction(returnLabel));
+
+      // Capture return value
+      const capturedResult = converter.newTemp(
+        converter.getOperandType(state.returnVar),
+      );
+      const savedReturnVarInlineInstance = converter.inlineInstanceMap.get(
+        state.returnVar.name,
+      );
+      if (state.returnVarInlineInstance !== undefined) {
+        converter.inlineInstanceMap.set(state.returnVar.name, {
+          prefix: state.returnVarInlineInstance.prefix,
+          className: state.returnVarInlineInstance.className,
+        });
+      }
+      converter.emitCopyWithTracking(capturedResult, state.returnVar);
+      if (savedReturnVarInlineInstance === undefined) {
+        converter.inlineInstanceMap.delete(state.returnVar.name);
+      } else {
+        converter.inlineInstanceMap.set(
+          state.returnVar.name,
+          savedReturnVarInlineInstance,
+        );
+      }
+
+      return capturedResult;
+    } finally {
+      if (savedParamEntries !== undefined) {
+        restoreInlineParams(converter, savedParamEntries);
+      }
+      converter.symbolTable.exitScope();
     }
-
-    // Restore caller state
-    restoreInlineParams(converter, savedParamEntries);
-    converter.symbolTable.exitScope();
-
-    return capturedResult;
   } finally {
     if (PROF) profExit(converter);
   }
@@ -2947,6 +2949,7 @@ function inlineResolvedMethodBody(
   //     static methods are counted in visitInlineStaticMethodCall) ---
   if (converter.metadataOnlyMode) {
     const infoKey = outlineMapKey(
+      "inst",
       declaringClassName,
       methodName,
       instancePrefix,
@@ -2982,6 +2985,7 @@ function inlineResolvedMethodBody(
   // --- Pass-2 outline check ---
   if (!converter.metadataOnlyMode) {
     const outlineKey = outlineMapKey(
+      "inst",
       declaringClassName,
       methodName,
       instancePrefix,

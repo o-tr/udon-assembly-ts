@@ -484,4 +484,75 @@ ${Array.from({ length: 150 }, (_, i) => `          acc = acc + ${i};`).join("\n"
     // "after" should still be logged — caller flow is not corrupted
     expect(result.tac).toContain('"after"');
   });
+
+  it("handles early return inside outlined body via dispatch table", () => {
+    const source = `
+      class Helper {
+        static clamp(x: number): number {
+          if (x < 0) {
+            return 0;
+          }
+${buildLargeBody(150)}
+          return x;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r1: number = Helper.clamp(-5);
+          const r2: number = Helper.clamp(10);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    expect(result.tac).toContain("outline_dispatch");
+  });
+
+  it("keeps static and instance outlines distinct for same method name", () => {
+    const source = `
+      class Dual {
+        static foo(): number {
+${buildLargeBody(150)}
+          return 1;
+        }
+        foo(): number {
+${buildLargeBody(150)}
+          return 2;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r1: number = Dual.foo();
+          const r2: number = Dual.foo();
+          const d = new Dual();
+          const r3: number = d.foo();
+          const r4: number = d.foo();
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    expect(result.tac).toContain("outline_dispatch");
+    // Both static and instance should be outlined — verify distinct keys
+    const staticMatches = result.tac.match(
+      /__outline_static_Dual_foo__h[0-9a-f]+_retVal/g,
+    );
+    const instMatches = result.tac.match(
+      /__outline_inst_Dual_foo___inst_Dual_\d+__h[0-9a-f]+_retVal/g,
+    );
+    expect(staticMatches).not.toBeNull();
+    expect(instMatches).not.toBeNull();
+  });
 });
