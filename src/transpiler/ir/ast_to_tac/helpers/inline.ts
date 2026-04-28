@@ -1642,6 +1642,7 @@ export function visitInlineStaticMethodCall(
           resolved,
           args,
           inlineKey,
+          info.selfCallCount,
         );
       } finally {
         captureBodyInstr();
@@ -1660,6 +1661,7 @@ export function visitInlineStaticMethodCall(
     resolved,
     args,
     inlineKey,
+    undefined,
   );
 }
 
@@ -1671,6 +1673,7 @@ function visitInlineStaticMethodCallImpl(
   resolved: { method: MethodDeclarationNode; declaringClassName: string },
   args: TACOperand[],
   inlineKey: string,
+  knownSelfCallCount: number | undefined,
 ): TACOperand | null {
   let returnType: TypeSymbol = method.returnType;
 
@@ -1678,11 +1681,9 @@ function visitInlineStaticMethodCallImpl(
   returnType = resolveInlineClassType(this, returnType);
 
   // --- Check for self-recursion ---
-  const selfCallCount = countStaticSelfCalls(
-    resolved.declaringClassName,
-    methodName,
-    method.body,
-  );
+  const selfCallCount =
+    knownSelfCallCount ??
+    countStaticSelfCalls(resolved.declaringClassName, methodName, method.body);
   if (selfCallCount > 0) {
     // TODO: erased return types on recursive paths need separate analysis;
     // DataToken promotion is not applied here.
