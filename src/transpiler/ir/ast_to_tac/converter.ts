@@ -67,6 +67,7 @@ import {
   emitDictionaryFromProperties,
 } from "./helpers/data_dictionary.js";
 import { requireExternSignature } from "./helpers/extern.js";
+import type { OutlinedMethodState } from "./helpers/inline.js";
 import {
   allocateBodyCachedInstance,
   collectRecursiveLocals,
@@ -167,6 +168,13 @@ import {
 // pattern in `batch_transpiler.ts`. Toggling `UDON_PROFILE` mid-run is
 // not supported.
 const PROF = process.env.UDON_PROFILE === "1";
+
+/** Minimum call sites for a static method to be considered for outlining. */
+export const OUTLINE_MIN_CALL_SITES = 2;
+/** Minimum estimated body instructions (pass-1 emit count) for outlining.
+ *  Default 50 000 targets only very large methods (GameStateMachine::dispatch).
+ *  Overridable per-converter via constructor options for testing. */
+export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 50_000;
 
 /**
  * AST to TAC converter
@@ -414,6 +422,24 @@ export class ASTToTACConverter {
   inlineEdgeHistogram?: Map<string, number>;
   instructionKindHistogram?: Int32Array;
 
+  // --- Static method outlining (always-on, not PROF-gated) ---
+  /** Incremented inside emit() during metadataOnlyMode to estimate per-method
+   *  instruction counts without materialising TACInstruction objects. */
+  pass1EmitCount = 0;
+  /** Per-method call count and body instruction estimate from pass 1.
+   *  Key: "declaringClassName.methodName" */
+  inlineStaticCallInfo: Map<string, { callSites: number; bodyInstr: number }> =
+    new Map();
+  /** Set of method keys eligible for outlining. Computed between passes from
+   *  inlineStaticCallInfo and survives resetState(). */
+  outlineCandidates: Set<string> = new Set();
+  /** Pass-2 only: tracks outlined methods whose body has already been emitted. */
+  outlinedMethods: Map<string, OutlinedMethodState> = new Map();
+  /** Deferred dispatch-table emitters executed after convertImpl finishes. */
+  pendingOutlineDispatches: Array<() => void> = [];
+  /** Per-instance body instruction threshold for outlining. */
+  outlineBodyInstrThreshold: number = OUTLINE_MIN_BODY_INSTR_ESTIMATE;
+
   constructor(
     symbolTable: SymbolTable,
     enumRegistry?: EnumRegistry,
@@ -428,6 +454,7 @@ export class ASTToTACConverter {
       errorCollector?: ErrorCollector;
       checkerContext?: TypeCheckerContext;
       checkerTypeResolver?: TypeCheckerTypeResolver;
+      outlineBodyInstrThreshold?: number;
     },
   ) {
     this.symbolTable = symbolTable;
@@ -439,6 +466,8 @@ export class ASTToTACConverter {
     this.useStringBuilder = options?.useStringBuilder !== false;
     this.stringBuilderThreshold =
       options?.stringBuilderThreshold ?? this.stringBuilderThreshold;
+    if (options?.outlineBodyInstrThreshold !== undefined)
+      this.outlineBodyInstrThreshold = options.outlineBodyInstrThreshold;
     if (options?.sourceFilePath) this.sourceFilePath = options.sourceFilePath;
     this.errorCollector = options?.errorCollector;
     this.checkerContext = options?.checkerContext;
@@ -622,6 +651,11 @@ export class ASTToTACConverter {
     this.inSerializeFieldInitializer = false;
     this.nativeArrayIneligible = new Set();
     this.currentNativeArrayVarName = null;
+    this.pass1EmitCount = 0;
+    this.inlineStaticCallInfo = new Map();
+    // outlineCandidates intentionally NOT cleared — survives between passes
+    this.outlinedMethods = new Map();
+    this.pendingOutlineDispatches = [];
   }
 
   /**
@@ -630,7 +664,10 @@ export class ASTToTACConverter {
    * on every call site.
    */
   emit(instruction: TACInstruction): void {
-    if (this.metadataOnlyMode) return;
+    if (this.metadataOnlyMode) {
+      this.pass1EmitCount++;
+      return;
+    }
     this.instructions.push(instruction);
   }
 
@@ -713,10 +750,40 @@ export class ASTToTACConverter {
     );
     const soaClassesFromPass1 = new Set(this.soaClasses);
 
+    // Compute outline candidates from pass-1 call info.
+    const outlineCandidatesFromPass1 = new Set<string>();
+    if (PROF) {
+      console.log(
+        `[prof] outline candidates (threshold=${this.outlineBodyInstrThreshold}, minCalls=${OUTLINE_MIN_CALL_SITES}):`,
+      );
+      const sorted = [...this.inlineStaticCallInfo.entries()]
+        .sort((a, b) => b[1].bodyInstr - a[1].bodyInstr)
+        .slice(0, 10);
+      for (const [key, info] of sorted) {
+        console.log(
+          `  ${key}  callSites=${info.callSites}  bodyInstr=${info.bodyInstr}`,
+        );
+      }
+    }
+    for (const [key, info] of this.inlineStaticCallInfo) {
+      if (
+        info.callSites >= OUTLINE_MIN_CALL_SITES &&
+        info.bodyInstr >= this.outlineBodyInstrThreshold
+      ) {
+        outlineCandidatesFromPass1.add(key);
+      }
+    }
+    if (PROF && outlineCandidatesFromPass1.size > 0) {
+      console.log(
+        `[prof] outline selected: ${[...outlineCandidatesFromPass1].join(", ")}`,
+      );
+    }
+
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
     // resetState() already clears metadataOnlyMode, so no explicit reset here.
     this.resetState();
     this.allInlineInstances = allInstancesFromPass1;
+    this.outlineCandidates = outlineCandidatesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
     const result = this.convertImpl(program);
@@ -858,6 +925,10 @@ export class ASTToTACConverter {
         }
       }
       this.visitStatement(statement);
+    }
+
+    for (const emitDispatch of this.pendingOutlineDispatches) {
+      emitDispatch();
     }
 
     return this.instructions;

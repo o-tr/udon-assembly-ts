@@ -102,6 +102,30 @@ export type InlineParamSaveEntry = {
   valueBackup?: { temp: TACOperand; slotType: TypeSymbol };
 };
 export type InlineParamSave = Map<string, InlineParamSaveEntry>;
+
+/** State for a method that has been outlined (body emitted once). */
+export interface OutlinedMethodState {
+  entryLabel: TACOperand;
+  dispatchLabel: TACOperand;
+  doneLabel: TACOperand;
+  returnVar: VariableOperand;
+  returnSiteIdxVarName: string;
+  returnSites: Array<{ index: number; labelName: string }>;
+  nextReturnSiteIndex: number;
+  method: {
+    parameters: Array<{
+      name: string;
+      type: TypeSymbol;
+      initializer?: ASTNode;
+    }>;
+    body: BlockStatementNode;
+    returnType: TypeSymbol;
+  };
+  declaringClassName: string;
+  className: string;
+  instancePrefix: string | undefined;
+}
+
 type InlineInitializerState = NonNullable<
   ASTToTACConverter["currentInlineInitializerState"]
 >;
@@ -1562,6 +1586,59 @@ export function visitInlineStaticMethodCall(
   if (!resolved) return null;
   const method = resolved.method;
 
+  // --- Pass-1 outline candidate detection ---
+  if (this.metadataOnlyMode) {
+    const infoKey = `${resolved.declaringClassName}.${methodName}`;
+    let info = this.inlineStaticCallInfo.get(infoKey);
+    if (!info) {
+      info = { callSites: 0, bodyInstr: 0 };
+      this.inlineStaticCallInfo.set(infoKey, info);
+    }
+    info.callSites++;
+    if (info.bodyInstr === 0) {
+      const emitBefore = this.pass1EmitCount;
+      // Let the existing pass-1 traversal run below; capture emit delta after.
+      // We use a one-shot flag to capture bodyInstr at the end of this function.
+      const captureBodyInstr = (): void => {
+        info.bodyInstr = this.pass1EmitCount - emitBefore;
+      };
+      // Schedule capture after the normal path finishes.
+      try {
+        return visitInlineStaticMethodCallImpl.call(
+          this,
+          className,
+          methodName,
+          method,
+          resolved,
+          args,
+          inlineKey,
+        );
+      } finally {
+        captureBodyInstr();
+      }
+    }
+  }
+
+  return visitInlineStaticMethodCallImpl.call(
+    this,
+    className,
+    methodName,
+    method,
+    resolved,
+    args,
+    inlineKey,
+  );
+}
+
+function visitInlineStaticMethodCallImpl(
+  this: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  resolved: { method: MethodDeclarationNode; declaringClassName: string },
+  args: TACOperand[],
+  inlineKey: string,
+): TACOperand | null {
   let returnType: TypeSymbol = method.returnType;
 
   // F1: upgrade Object-typed inline-class return type to Int32.
@@ -1594,6 +1671,31 @@ export function visitInlineStaticMethodCall(
       inlineKey,
       resolved.declaringClassName,
     );
+  }
+
+  // --- Outline check (pass 2 only) ---
+  if (!this.metadataOnlyMode) {
+    const outlineKey = `${resolved.declaringClassName}.${methodName}`;
+    if (this.outlineCandidates.has(outlineKey)) {
+      if (
+        !hasInlineClassParamFieldAccess(this, method.parameters, method.body)
+      ) {
+        const existing = this.outlinedMethods.get(outlineKey);
+        if (existing) {
+          return emitOutlinedCallSite(this, existing, args);
+        }
+        return emitInlineOutlinedStaticMethod(
+          this,
+          className,
+          methodName,
+          method,
+          returnType,
+          args,
+          inlineKey,
+          resolved.declaringClassName,
+        );
+      }
+    }
   }
 
   // --- Non-recursive path ---
@@ -2026,6 +2128,354 @@ function emitInlineRecursiveStaticMethod(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Static method outlining — shared body + JUMP-based call/return
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a method body accesses properties on parameters typed as
+ * inline classes.  If so, the method is NOT eligible for outlining because
+ * inlineInstanceMap tracking is per-call-site.
+ */
+function hasInlineClassParamFieldAccess(
+  converter: ASTToTACConverter,
+  params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
+  body: BlockStatementNode,
+): boolean {
+  const inlineParamNames = new Set<string>();
+  for (const param of params) {
+    const classNode = resolveClassNode(converter, param.type.name);
+    if (classNode && !converter.udonBehaviourClasses.has(param.type.name)) {
+      inlineParamNames.add(param.name);
+    }
+  }
+  if (inlineParamNames.size === 0) return false;
+
+  let found = false;
+  const walk = (node: ASTNode): void => {
+    if (found) return;
+    if (node.kind === ASTNodeKind.PropertyAccessExpression) {
+      const pa = node as PropertyAccessExpressionNode;
+      if (
+        pa.object.kind === ASTNodeKind.Identifier &&
+        inlineParamNames.has((pa.object as IdentifierNode).name)
+      ) {
+        found = true;
+        return;
+      }
+    }
+    for (const key of Object.keys(node)) {
+      const v = (node as unknown as Record<string, unknown>)[key];
+      if (!v || typeof v !== "object") continue;
+      if (Array.isArray(v)) {
+        for (const item of v) {
+          if (item && typeof item === "object" && "kind" in (item as object)) {
+            walk(item as ASTNode);
+            if (found) return;
+          }
+        }
+      } else if ("kind" in (v as object)) {
+        walk(v as ASTNode);
+        if (found) return;
+      }
+    }
+  };
+  for (const stmt of body.statements) {
+    walk(stmt);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * Emit the shared body of a non-recursive outlined method (static or instance).
+ * Called once (first encounter in pass 2) from inlineResolvedMethodBody.
+ */
+function emitInlineOutlinedMethodBody(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+  declaringClassName: string,
+  inlineKey: string,
+): TACOperand {
+  let returnType: TypeSymbol = method.returnType;
+  returnType = resolveInlineClassType(converter, returnType);
+  return emitInlineOutlinedBody(
+    converter,
+    className,
+    methodName,
+    method,
+    returnType,
+    args,
+    inlineKey,
+    declaringClassName,
+    instancePrefix,
+  );
+}
+
+/**
+ * Emit the shared body of a non-recursive outlined static method.
+ * Called once (first encounter in pass 2) from visitInlineStaticMethodCall.
+ */
+function emitInlineOutlinedStaticMethod(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  returnType: TypeSymbol,
+  args: TACOperand[],
+  inlineKey: string,
+  declaringClassName: string,
+): TACOperand {
+  return emitInlineOutlinedBody(
+    converter,
+    className,
+    methodName,
+    method,
+    returnType,
+    args,
+    inlineKey,
+    declaringClassName,
+    undefined,
+  );
+}
+
+function emitInlineOutlinedBody(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  returnType: TypeSymbol,
+  args: TACOperand[],
+  inlineKey: string,
+  declaringClassName: string,
+  instancePrefix: string | undefined,
+): TACOperand {
+  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
+  try {
+    const { effectiveReturnType, isErasedReturn } =
+      resolveInlineReturnType(returnType);
+    const prefix = `__outline_${className}_${methodName}`;
+    const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+    const result = createVariable(`${prefix}_retVal`, effectiveReturnType, {
+      isLocal: true,
+      isInlineReturn: true,
+    });
+
+    const entryLabel = converter.newLabel("outline_entry");
+    const dispatchLabel = converter.newLabel("outline_dispatch");
+    const doneLabel = converter.newLabel("outline_done");
+
+    // Skip-around: jump past the outlined body to the first call site.
+    const firstCallSiteLabel = converter.newLabel("outline_first_call");
+    converter.emit(new UnconditionalJumpInstruction(firstCallSiteLabel));
+
+    // --- Entry label (JUMP target for all call sites) ---
+    converter.emit(new LabelInstruction(entryLabel));
+
+    // --- Body emission (exactly once) ---
+    converter.symbolTable.enterScope();
+    for (const param of method.parameters) {
+      const effectiveParamType = resolveInlineClassType(converter, param.type);
+      if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+        converter.symbolTable.addSymbol(
+          param.name,
+          effectiveParamType,
+          true,
+          false,
+        );
+      }
+    }
+
+    const savedParamExportMap = converter.currentParamExportMap;
+    const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+    const savedMethodLayout = converter.currentMethodLayout;
+    const savedInlineContext = converter.currentInlineContext;
+    const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+    const savedThisOverride = converter.currentThisOverride;
+    const savedBaseClass = converter.currentInlineBaseClass;
+    converter.currentParamExportMap = new Map();
+    converter.currentParamExportReverseMap = new Map();
+    converter.currentMethodLayout = null;
+    converter.currentInlineContext = instancePrefix
+      ? { className, instancePrefix }
+      : undefined;
+    converter.currentInlineConstructorClassName = undefined;
+    converter.currentThisOverride = null;
+    converter.currentInlineBaseClass = undefined;
+
+    converter.inlineMethodStack.add(inlineKey);
+    const returnInstancePrefix =
+      returnType instanceof InterfaceTypeSymbol &&
+      returnType.properties.size > 0
+        ? result.name
+        : undefined;
+    converter.inlineReturnStack.push({
+      returnVar: result,
+      returnLabel: dispatchLabel,
+      returnTrackingInvalidated: false,
+      loopDepth: converter.loopContextStack.length,
+      returnInstancePrefix,
+      isErasedReturn,
+    });
+    converter.methodBodyConstructorIndex.set(method.body, 0);
+    converter.inlinedBodyStack.push(method.body);
+    const savedNativeIneligible = converter.nativeArrayIneligible;
+    const savedNativeVarName = converter.currentNativeArrayVarName;
+    converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+      method.body.statements,
+    );
+    converter.currentNativeArrayVarName = null;
+
+    try {
+      converter.visitBlockStatement(method.body);
+    } finally {
+      converter.nativeArrayIneligible = savedNativeIneligible;
+      converter.currentNativeArrayVarName = savedNativeVarName;
+      converter.inlinedBodyStack.pop();
+      converter.inlineReturnStack.pop();
+      converter.inlineMethodStack.delete(inlineKey);
+      converter.currentParamExportMap = savedParamExportMap;
+      converter.currentParamExportReverseMap = savedParamExportReverseMap;
+      converter.currentMethodLayout = savedMethodLayout;
+      converter.currentInlineContext = savedInlineContext;
+      converter.currentInlineConstructorClassName = savedInlineCtorClass;
+      converter.currentThisOverride = savedThisOverride;
+      converter.currentInlineBaseClass = savedBaseClass;
+      converter.symbolTable.exitScope();
+    }
+
+    // Fallthrough at end of body: jump to dispatch
+    converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+
+    // --- Register the outlined method state ---
+    const state: OutlinedMethodState = {
+      entryLabel,
+      dispatchLabel,
+      doneLabel,
+      returnVar: result,
+      returnSiteIdxVarName,
+      returnSites: [],
+      nextReturnSiteIndex: 1,
+      method: {
+        parameters: method.parameters.map((p) => ({
+          name: p.name,
+          type: p.type,
+          initializer: p.initializer,
+        })),
+        body: method.body,
+        returnType: method.returnType,
+      },
+      declaringClassName,
+      className,
+      instancePrefix,
+    };
+    converter.outlinedMethods.set(`${declaringClassName}.${methodName}`, state);
+
+    // Deferred dispatch table emission (all return sites must be registered first).
+    converter.pendingOutlineDispatches.push(() => {
+      converter.emit(new LabelInstruction(dispatchLabel));
+      const returnSiteIdxVarOp = createVariable(
+        returnSiteIdxVarName,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
+      for (const site of state.returnSites) {
+        const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
+        converter.emit(
+          new BinaryOpInstruction(
+            cmpResult,
+            returnSiteIdxVarOp,
+            "!=",
+            createConstant(site.index, PrimitiveTypes.int32),
+          ),
+        );
+        converter.emit(
+          new ConditionalJumpInstruction(
+            cmpResult,
+            createLabel(site.labelName),
+          ),
+        );
+      }
+      converter.emit(new UnconditionalJumpInstruction(doneLabel));
+      converter.emit(new LabelInstruction(doneLabel));
+    });
+
+    // --- Emit the first call site ---
+    converter.emit(new LabelInstruction(firstCallSiteLabel));
+    return emitOutlinedCallSite(converter, state, args);
+  } finally {
+    profExit(converter);
+  }
+}
+
+/**
+ * Emit a lightweight call stub for an already-outlined static method.
+ * Binds arguments to the method's parameter slots, sets the return-site
+ * dispatch index, JUMPs to the shared body, and captures the return value.
+ */
+function emitOutlinedCallSite(
+  converter: ASTToTACConverter,
+  state: OutlinedMethodState,
+  args: TACOperand[],
+): TACOperand {
+  if (PROF)
+    profEnter(
+      converter,
+      histKey(state.declaringClassName, state.method.returnType.name),
+    );
+  try {
+    converter.symbolTable.enterScope();
+    const savedParamEntries = saveAndBindInlineParams(
+      converter,
+      state.method.parameters,
+      args,
+    );
+
+    // Assign return site index
+    const returnLabel = converter.newLabel("outline_return") as LabelOperand;
+    const returnSiteIdx = state.nextReturnSiteIndex++;
+    state.returnSites.push({
+      index: returnSiteIdx,
+      labelName: returnLabel.name,
+    });
+    const returnSiteIdxVar = createVariable(
+      state.returnSiteIdxVarName,
+      PrimitiveTypes.int32,
+      { isLocal: true },
+    );
+    converter.emit(
+      new CopyInstruction(
+        returnSiteIdxVar,
+        createConstant(returnSiteIdx, PrimitiveTypes.int32),
+      ),
+    );
+
+    // JUMP to outlined body
+    converter.emit(new UnconditionalJumpInstruction(state.entryLabel));
+
+    // Return label (dispatch routes here)
+    converter.emit(new LabelInstruction(returnLabel));
+
+    // Capture return value
+    const capturedResult = converter.newTemp(
+      converter.getOperandType(state.returnVar),
+    );
+    converter.emitCopyWithTracking(capturedResult, state.returnVar);
+
+    // Restore caller state
+    restoreInlineParams(converter, savedParamEntries);
+    converter.symbolTable.exitScope();
+
+    return capturedResult;
+  } finally {
+    profExit(converter);
+  }
+}
+
 /**
  * Emit a JUMP-based self-call for a recursive inline static method.
  * Called when the recursion guard fires inside visitInlineStaticMethodCall.
@@ -2388,6 +2838,93 @@ function inlineResolvedMethodBody(
     }
   }
 
+  // --- Pass-1 outline candidate detection (covers both static & instance) ---
+  if (converter.metadataOnlyMode) {
+    const infoKey = `${declaringClassName}.${methodName}`;
+    let info = converter.inlineStaticCallInfo.get(infoKey);
+    if (!info) {
+      info = { callSites: 0, bodyInstr: 0 };
+      converter.inlineStaticCallInfo.set(infoKey, info);
+    }
+    info.callSites++;
+    if (info.bodyInstr === 0) {
+      const emitBefore = converter.pass1EmitCount;
+      try {
+        return inlineResolvedMethodBodyImpl(
+          converter,
+          className,
+          methodName,
+          method,
+          args,
+          instancePrefix,
+          declaringClassName,
+          inlineKey,
+        );
+      } finally {
+        info.bodyInstr = converter.pass1EmitCount - emitBefore;
+      }
+    }
+  }
+
+  // --- Pass-2 outline check ---
+  if (!converter.metadataOnlyMode) {
+    const outlineKey = `${declaringClassName}.${methodName}`;
+    if (converter.outlineCandidates.has(outlineKey)) {
+      if (
+        !hasInlineClassParamFieldAccess(
+          converter,
+          method.parameters,
+          method.body,
+        )
+      ) {
+        const existing = converter.outlinedMethods.get(outlineKey);
+        if (existing) {
+          if (existing.instancePrefix === instancePrefix) {
+            return emitOutlinedCallSite(converter, existing, args);
+          }
+          // Different instancePrefix → fall through to full inline
+        } else {
+          return emitInlineOutlinedMethodBody(
+            converter,
+            className,
+            methodName,
+            method,
+            args,
+            instancePrefix,
+            declaringClassName,
+            inlineKey,
+          );
+        }
+      }
+    }
+  }
+
+  return inlineResolvedMethodBodyImpl(
+    converter,
+    className,
+    methodName,
+    method,
+    args,
+    instancePrefix,
+    declaringClassName,
+    inlineKey,
+  );
+}
+
+/**
+ * Core body emission for inlineResolvedMethodBody. Split out so the pass-1
+ * counting and pass-2 outline check can wrap it.
+ */
+function inlineResolvedMethodBodyImpl(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+  declaringClassName: string,
+  inlineKey: string,
+): TACOperand | null {
   if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     let returnType: TypeSymbol = method.returnType;
