@@ -165,9 +165,11 @@ ${buildLargeBody(150)}
       outlineBodyInstrThreshold: LOW_THRESHOLD,
     });
 
-    expect(result.tac).toContain("__outline_static_Helper_compute_retVal");
-    expect(result.tac).toContain(
-      "__outline_static_Helper_compute_returnSiteIdx",
+    expect(result.tac).toMatch(
+      /__outline_static_Helper_compute__h[0-9a-f]+_retVal/,
+    );
+    expect(result.tac).toMatch(
+      /__outline_static_Helper_compute__h[0-9a-f]+_returnSiteIdx/,
     );
     // Both call sites should produce distinct return labels
     const returnLabels = result.tac.match(/outline_return\d+:/g);
@@ -175,7 +177,7 @@ ${buildLargeBody(150)}
     expect(returnLabels?.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("falls through to full inline when params access inline-class fields", () => {
+  it("outlines a large method whose inline-class param is never accessed as a field", () => {
     const source = `
       class InlineObj {
         value: number = 0;
@@ -405,7 +407,7 @@ ${buildBodyUsingParams(150)}
     expect(result.tac).toContain("y = 4");
     // Both call sites should have distinct return site indices
     const returnSiteAssigns = result.tac.match(
-      /__outline_static_Helper_compute_returnSiteIdx = \d+/g,
+      /__outline_static_Helper_compute__h[0-9a-f]+_returnSiteIdx = \d+/g,
     );
     expect(returnSiteAssigns).not.toBeNull();
     expect(returnSiteAssigns?.length).toBeGreaterThanOrEqual(2);
@@ -442,8 +444,8 @@ ${buildLargeBody(150)}
     // threshold because inlining expands compute inside each process call).
     expect(result.tac).toContain("outline_entry");
     expect(result.tac).toContain("outline_dispatch");
-    expect(result.tac).toContain(
-      "__outline_inst_Engine_process___inst_Engine_0_retVal",
+    expect(result.tac).toMatch(
+      /__outline_inst_Engine_process___inst_Engine_0__h[0-9a-f]+_retVal/,
     );
   });
 

@@ -1579,7 +1579,11 @@ export function visitInlineStaticMethodCall(
   methodName: string,
   args: TACOperand[],
 ): TACOperand | null {
-  const inlineKey = `${className}.${methodName}`;
+  // Walk inheritance chain to find the static method (may be on a base class).
+  const resolved = resolveClassMethod(this, className, methodName, true);
+  if (!resolved) return null;
+  const method = resolved.method;
+  const inlineKey = `${resolved.declaringClassName}.${methodName}`;
 
   // --- Recursive re-entry: emit JUMP-based self-call ---
   if (this.inlineMethodStack.has(inlineKey)) {
@@ -1597,11 +1601,6 @@ export function visitInlineStaticMethodCall(
     );
     return null;
   }
-
-  // Walk inheritance chain to find the static method (may be on a base class).
-  const resolved = resolveClassMethod(this, className, methodName, true);
-  if (!resolved) return null;
-  const method = resolved.method;
 
   // --- Pass-1 outline candidate detection (static path) ---
   if (this.metadataOnlyMode) {
@@ -1667,7 +1666,7 @@ function visitInlineStaticMethodCallImpl(
 
   // --- Check for self-recursion ---
   const selfCallCount = countStaticSelfCalls(
-    className,
+    resolved.declaringClassName,
     methodName,
     method.body,
   );
@@ -2181,7 +2180,12 @@ function hasInlineClassParamFieldAccess(
   let found = false;
   const walk = (node: ASTNode): void => {
     if (found) return;
-    if (node.kind === ASTNodeKind.PropertyAccessExpression) {
+    if (node.kind === ASTNodeKind.Identifier) {
+      if (inlineParamNames.has((node as IdentifierNode).name)) {
+        found = true;
+        return;
+      }
+    } else if (node.kind === ASTNodeKind.PropertyAccessExpression) {
       const pa = node as PropertyAccessExpressionNode;
       if (
         pa.object.kind === ASTNodeKind.Identifier &&
@@ -2302,7 +2306,7 @@ function emitInlineOutlinedBody(
       methodName,
       instancePrefix,
     );
-    const sanitizedKey = uniqueKey.replace(/[^a-zA-Z0-9_]/g, "_");
+    const sanitizedKey = sanitizeIdentifierToken(uniqueKey);
     const prefix = `__outline_${sanitizedKey}`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
     const result = createVariable(`${prefix}_retVal`, effectiveReturnType, {
