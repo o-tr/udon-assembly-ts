@@ -2160,9 +2160,9 @@ function emitInlineRecursiveStaticMethod(
 // ---------------------------------------------------------------------------
 
 /**
- * Check whether a method body accesses properties on parameters typed as
- * inline classes.  If so, the method is NOT eligible for outlining because
- * inlineInstanceMap tracking is per-call-site.
+ * Check whether a method body accesses properties or methods on parameters
+ * typed as inline classes.  If so, the method is NOT eligible for outlining
+ * because inlineInstanceMap tracking is per-call-site.
  */
 function hasInlineClassParamFieldAccess(
   converter: ASTToTACConverter,
@@ -2180,12 +2180,7 @@ function hasInlineClassParamFieldAccess(
   let found = false;
   const walk = (node: ASTNode): void => {
     if (found) return;
-    if (node.kind === ASTNodeKind.Identifier) {
-      if (inlineParamNames.has((node as IdentifierNode).name)) {
-        found = true;
-        return;
-      }
-    } else if (node.kind === ASTNodeKind.PropertyAccessExpression) {
+    if (node.kind === ASTNodeKind.PropertyAccessExpression) {
       const pa = node as PropertyAccessExpressionNode;
       if (
         pa.object.kind === ASTNodeKind.Identifier &&
