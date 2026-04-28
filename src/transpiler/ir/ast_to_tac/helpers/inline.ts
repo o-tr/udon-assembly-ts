@@ -1847,7 +1847,6 @@ function emitInlineRecursiveStaticMethod(
   inlineKey: string,
   declaringClassName: string = className,
 ): TACOperand {
-  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     const prefix = `__inlineRec_${className}_${methodName}`;
     const depthVar = `${prefix}_depth`;
@@ -2157,7 +2156,6 @@ function emitInlineRecursiveStaticMethod(
     converter.emit(new LabelInstruction(doneLabel));
     return result;
   } finally {
-    profExit(converter);
   }
 }
 
@@ -2311,7 +2309,6 @@ function emitInlineOutlinedBody(
   declaringClassName: string,
   instancePrefix: string | undefined,
 ): TACOperand {
-  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     const { effectiveReturnType, isErasedReturn } =
       resolveInlineReturnType(returnType);
@@ -2491,7 +2488,6 @@ function emitInlineOutlinedBody(
     converter.emit(new LabelInstruction(firstCallSiteLabel));
     return emitOutlinedCallSite(converter, state, args);
   } finally {
-    profExit(converter);
   }
 }
 
@@ -2950,11 +2946,9 @@ function inlineResolvedMethodBody(
     }
     info.callSites++;
     if (info.selfCallCount === undefined) {
-      info.selfCallCount = countStaticSelfCalls(
-        declaringClassName,
-        methodName,
-        method.body,
-      );
+      info.selfCallCount = instancePrefix
+        ? countSelfCalls(method.body, methodName)
+        : countStaticSelfCalls(declaringClassName, methodName, method.body);
     }
     if (info.bodyInstr === undefined) {
       const emitBefore = converter.pass1EmitCount;
@@ -3563,6 +3557,11 @@ export function collectRecursiveLocals(
       case ASTNodeKind.BlockStatement: {
         const block = node as BlockStatementNode;
         for (const stmt of block.statements) visitNode(stmt);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        visitNode(exprStmt.expression);
         break;
       }
       case ASTNodeKind.IfStatement: {
