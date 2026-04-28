@@ -2212,13 +2212,6 @@ function hasInlineClassParamDependentUse(
         }
       }
     }
-    if (
-      node.kind === ASTNodeKind.Identifier &&
-      inlineParamNames.has((node as IdentifierNode).name)
-    ) {
-      found = true;
-      return;
-    }
     for (const key of Object.keys(node)) {
       const v = (node as unknown as Record<string, unknown>)[key];
       if (!v || typeof v !== "object") continue;
@@ -2492,7 +2485,6 @@ function emitInlineOutlinedBody(
         new ConditionalJumpInstruction(cmpResult, createLabel(site.labelName)),
       );
     }
-    converter.emit(new UnconditionalJumpInstruction(doneLabel));
     converter.emit(new LabelInstruction(doneLabel));
   });
 
