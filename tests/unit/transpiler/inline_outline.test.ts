@@ -392,6 +392,39 @@ ${buildLargeBody(150)}
     );
   });
 
+  it("keeps instance recursion on the recursive path while outlining the caller", () => {
+    const source = `
+      class Engine {
+        compute(): number {
+          return this.compute();
+        }
+        process(): number {
+${buildLargeBody(150)}
+          return this.compute();
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const e = new Engine();
+          const r1: number = e.process();
+          const r2: number = e.process();
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    expect(result.tac).toContain("outline_dispatch");
+    expect(result.tac).toMatch(
+      /__outline_inst_Engine_process___inst_Engine_0__h[0-9a-f]+_retVal/,
+    );
+  });
+
   it("preserves inline-instance tracking after outlined inline-class return", () => {
     const source = `
       class Box {

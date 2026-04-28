@@ -1847,6 +1847,7 @@ function emitInlineRecursiveStaticMethod(
   inlineKey: string,
   declaringClassName: string = className,
 ): TACOperand {
+  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     const prefix = `__inlineRec_${className}_${methodName}`;
     const depthVar = `${prefix}_depth`;
@@ -2156,6 +2157,7 @@ function emitInlineRecursiveStaticMethod(
     converter.emit(new LabelInstruction(doneLabel));
     return result;
   } finally {
+    if (PROF) profExit(converter);
   }
 }
 
@@ -2206,6 +2208,13 @@ function hasInlineClassParamDependentUse(
           return;
         }
       }
+    }
+    if (
+      node.kind === ASTNodeKind.Identifier &&
+      inlineParamNames.has((node as IdentifierNode).name)
+    ) {
+      found = true;
+      return;
     }
     for (const key of Object.keys(node)) {
       const v = (node as unknown as Record<string, unknown>)[key];
@@ -2946,9 +2955,7 @@ function inlineResolvedMethodBody(
     }
     info.callSites++;
     if (info.selfCallCount === undefined) {
-      info.selfCallCount = instancePrefix
-        ? countSelfCalls(method.body, methodName)
-        : countStaticSelfCalls(declaringClassName, methodName, method.body);
+      info.selfCallCount = countSelfCalls(methodName, method.body);
     }
     if (info.bodyInstr === undefined) {
       const emitBefore = converter.pass1EmitCount;
