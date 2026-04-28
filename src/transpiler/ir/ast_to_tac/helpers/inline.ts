@@ -2158,11 +2158,13 @@ function emitInlineRecursiveStaticMethod(
 // ---------------------------------------------------------------------------
 
 /**
- * Check whether a method body accesses properties or methods on parameters
- * typed as inline classes.  If so, the method is NOT eligible for outlining
- * because inlineInstanceMap tracking is per-call-site.
+ * Check whether a method body uses inline-class parameters in ways that
+ * require per-call-site inlineInstanceMap tracking.  This includes direct
+ * field/method access (obj.field) as well as passing the parameter to nested
+ * inline calls, because outlined bodies are compiled once without their
+ * own inlineInstanceMap entries.
  */
-function hasInlineClassParamFieldAccess(
+function hasInlineClassParamDependentUse(
   converter: ASTToTACConverter,
   params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
   body: BlockStatementNode,
@@ -2186,6 +2188,17 @@ function hasInlineClassParamFieldAccess(
       ) {
         found = true;
         return;
+      }
+    } else if (node.kind === ASTNodeKind.CallExpression) {
+      const ce = node as CallExpressionNode;
+      for (const arg of ce.arguments) {
+        if (
+          arg.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((arg as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
       }
     }
     for (const key of Object.keys(node)) {
@@ -2218,7 +2231,7 @@ function checkOutlineIneligible(
 ): boolean {
   const cached = converter.outlineIneligibleCache.get(body);
   if (cached !== undefined) return cached;
-  const result = hasInlineClassParamFieldAccess(converter, params, body);
+  const result = hasInlineClassParamDependentUse(converter, params, body);
   converter.outlineIneligibleCache.set(body, result);
   return result;
 }

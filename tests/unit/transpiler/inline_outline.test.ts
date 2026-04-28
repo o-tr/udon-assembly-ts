@@ -213,113 +213,18 @@ ${buildLargeBody(150)}
   });
 
   it("falls through to full inline when body reads inline-class param field", () => {
+    const bodyLines = ["    let acc: number = obj.value;"];
+    for (let i = 0; i < 150; i++) {
+      bodyLines.push(`    acc = acc + ${i};`);
+    }
+    bodyLines.push("    return acc;");
     const source = `
       class InlineObj {
         value: number = 0;
       }
       class Helper {
         static process(obj: InlineObj): number {
-          let acc: number = obj.value;
-          acc = acc + 1;
-          acc = acc + 2;
-          acc = acc + 3;
-          acc = acc + 4;
-          acc = acc + 5;
-          acc = acc + 6;
-          acc = acc + 7;
-          acc = acc + 8;
-          acc = acc + 9;
-          acc = acc + 10;
-          acc = acc + 11;
-          acc = acc + 12;
-          acc = acc + 13;
-          acc = acc + 14;
-          acc = acc + 15;
-          acc = acc + 16;
-          acc = acc + 17;
-          acc = acc + 18;
-          acc = acc + 19;
-          acc = acc + 20;
-          acc = acc + 21;
-          acc = acc + 22;
-          acc = acc + 23;
-          acc = acc + 24;
-          acc = acc + 25;
-          acc = acc + 26;
-          acc = acc + 27;
-          acc = acc + 28;
-          acc = acc + 29;
-          acc = acc + 30;
-          acc = acc + 31;
-          acc = acc + 32;
-          acc = acc + 33;
-          acc = acc + 34;
-          acc = acc + 35;
-          acc = acc + 36;
-          acc = acc + 37;
-          acc = acc + 38;
-          acc = acc + 39;
-          acc = acc + 40;
-          acc = acc + 41;
-          acc = acc + 42;
-          acc = acc + 43;
-          acc = acc + 44;
-          acc = acc + 45;
-          acc = acc + 46;
-          acc = acc + 47;
-          acc = acc + 48;
-          acc = acc + 49;
-          acc = acc + 50;
-          acc = acc + 51;
-          acc = acc + 52;
-          acc = acc + 53;
-          acc = acc + 54;
-          acc = acc + 55;
-          acc = acc + 56;
-          acc = acc + 57;
-          acc = acc + 58;
-          acc = acc + 59;
-          acc = acc + 60;
-          acc = acc + 61;
-          acc = acc + 62;
-          acc = acc + 63;
-          acc = acc + 64;
-          acc = acc + 65;
-          acc = acc + 66;
-          acc = acc + 67;
-          acc = acc + 68;
-          acc = acc + 69;
-          acc = acc + 70;
-          acc = acc + 71;
-          acc = acc + 72;
-          acc = acc + 73;
-          acc = acc + 74;
-          acc = acc + 75;
-          acc = acc + 76;
-          acc = acc + 77;
-          acc = acc + 78;
-          acc = acc + 79;
-          acc = acc + 80;
-          acc = acc + 81;
-          acc = acc + 82;
-          acc = acc + 83;
-          acc = acc + 84;
-          acc = acc + 85;
-          acc = acc + 86;
-          acc = acc + 87;
-          acc = acc + 88;
-          acc = acc + 89;
-          acc = acc + 90;
-          acc = acc + 91;
-          acc = acc + 92;
-          acc = acc + 93;
-          acc = acc + 94;
-          acc = acc + 95;
-          acc = acc + 96;
-          acc = acc + 97;
-          acc = acc + 98;
-          acc = acc + 99;
-          return acc;
+${bodyLines.join("\n")}
         }
       }
       @UdonBehaviour()
@@ -339,6 +244,44 @@ ${buildLargeBody(150)}
     });
 
     // Body accesses obj.value → ineligible for outlining
+    expect(result.tac).not.toContain("outline_entry");
+  });
+
+  it("falls through to full inline when body passes inline-class param to nested inline call", () => {
+    const bodyLines = ["    let acc: number = Helper.inner(obj);"];
+    for (let i = 0; i < 150; i++) {
+      bodyLines.push(`    acc = acc + ${i};`);
+    }
+    bodyLines.push("    return acc;");
+    const source = `
+      class InlineObj {
+        value: number = 0;
+      }
+      class Helper {
+        static inner(obj: InlineObj): number {
+          return obj.value;
+        }
+        static process(obj: InlineObj): number {
+${bodyLines.join("\n")}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const o = new InlineObj();
+          const r1: number = Helper.process(o);
+          const r2: number = Helper.process(o);
+          const r3: number = Helper.process(o);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    // Body passes obj to a nested inline call → ineligible for outlining
     expect(result.tac).not.toContain("outline_entry");
   });
 

@@ -437,7 +437,7 @@ export class ASTToTACConverter {
   outlinedMethods: Map<string, OutlinedMethodState> = new Map();
   /** Deferred dispatch-table emitters executed after convertImpl finishes. */
   pendingOutlineDispatches: Array<() => void> = [];
-  /** Cached results of hasInlineClassParamFieldAccess, keyed by body AST node. */
+  /** Cached results of hasInlineClassParamDependentUse, keyed by body AST node. */
   outlineIneligibleCache: WeakMap<ASTNode, boolean> = new WeakMap();
   /** Per-instance body instruction threshold for outlining. */
   outlineBodyInstrThreshold: number = OUTLINE_MIN_BODY_INSTR_ESTIMATE;
