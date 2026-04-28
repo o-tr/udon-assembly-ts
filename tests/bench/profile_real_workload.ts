@@ -446,7 +446,7 @@ function main() {
   if (args.compareProfile) {
     if (Object.keys(allProfiles).length === 0) {
       console.error(
-        "[compare] no profile data collected — rerun with UDON_PROFILE=1",
+        "[compare] no profile data collected — no entries transpiled successfully",
       );
       process.exit(1);
     }
