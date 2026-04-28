@@ -123,12 +123,29 @@ export interface OutlinedMethodState {
   };
   declaringClassName: string;
   className: string;
+  methodName: string;
   instancePrefix: string | undefined;
 }
 
 type InlineInitializerState = NonNullable<
   ASTToTACConverter["currentInlineInitializerState"]
 >;
+
+/**
+ * Build a map key for outline candidate tracking. Instance methods encode
+ * their instancePrefix so different receivers are tracked separately —
+ * the emitted body bakes field-access prefixes and cannot be shared
+ * across distinct inline instances.
+ */
+function outlineMapKey(
+  declaringClassName: string,
+  methodName: string,
+  instancePrefix: string | undefined,
+): string {
+  return instancePrefix
+    ? `inst:${declaringClassName}.${methodName}:${instancePrefix}`
+    : `static:${declaringClassName}.${methodName}`;
+}
 
 /**
  * Check if a type represents an inline class instance stored as an Int32 handle.
@@ -1586,9 +1603,13 @@ export function visitInlineStaticMethodCall(
   if (!resolved) return null;
   const method = resolved.method;
 
-  // --- Pass-1 outline candidate detection ---
+  // --- Pass-1 outline candidate detection (static path) ---
   if (this.metadataOnlyMode) {
-    const infoKey = `${resolved.declaringClassName}.${methodName}`;
+    const infoKey = outlineMapKey(
+      resolved.declaringClassName,
+      methodName,
+      undefined,
+    );
     let info = this.inlineStaticCallInfo.get(infoKey);
     if (!info) {
       info = { callSites: 0, bodyInstr: 0 };
@@ -1675,11 +1696,13 @@ function visitInlineStaticMethodCallImpl(
 
   // --- Outline check (pass 2 only) ---
   if (!this.metadataOnlyMode) {
-    const outlineKey = `${resolved.declaringClassName}.${methodName}`;
+    const outlineKey = outlineMapKey(
+      resolved.declaringClassName,
+      methodName,
+      undefined,
+    );
     if (this.outlineCandidates.has(outlineKey)) {
-      if (
-        !hasInlineClassParamFieldAccess(this, method.parameters, method.body)
-      ) {
+      if (!checkOutlineIneligible(this, method.parameters, method.body)) {
         const existing = this.outlinedMethods.get(outlineKey);
         if (existing) {
           return emitOutlinedCallSite(this, existing, args);
@@ -2187,6 +2210,18 @@ function hasInlineClassParamFieldAccess(
   return false;
 }
 
+function checkOutlineIneligible(
+  converter: ASTToTACConverter,
+  params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
+  body: BlockStatementNode,
+): boolean {
+  const cached = converter.outlineIneligibleCache.get(body);
+  if (cached !== undefined) return cached;
+  const result = hasInlineClassParamFieldAccess(converter, params, body);
+  converter.outlineIneligibleCache.set(body, result);
+  return result;
+}
+
 /**
  * Emit the shared body of a non-recursive outlined method (static or instance).
  * Called once (first encounter in pass 2) from inlineResolvedMethodBody.
@@ -2371,9 +2406,13 @@ function emitInlineOutlinedBody(
       },
       declaringClassName,
       className,
+      methodName,
       instancePrefix,
     };
-    converter.outlinedMethods.set(`${declaringClassName}.${methodName}`, state);
+    converter.outlinedMethods.set(
+      outlineMapKey(declaringClassName, methodName, instancePrefix),
+      state,
+    );
 
     // Deferred dispatch table emission (all return sites must be registered first).
     converter.pendingOutlineDispatches.push(() => {
@@ -2423,10 +2462,7 @@ function emitOutlinedCallSite(
   args: TACOperand[],
 ): TACOperand {
   if (PROF)
-    profEnter(
-      converter,
-      histKey(state.declaringClassName, state.method.returnType.name),
-    );
+    profEnter(converter, histKey(state.declaringClassName, state.methodName));
   try {
     converter.symbolTable.enterScope();
     const savedParamEntries = saveAndBindInlineParams(
@@ -2838,9 +2874,14 @@ function inlineResolvedMethodBody(
     }
   }
 
-  // --- Pass-1 outline candidate detection (covers both static & instance) ---
+  // --- Pass-1 outline candidate detection (instance methods only;
+  //     static methods are counted in visitInlineStaticMethodCall) ---
   if (converter.metadataOnlyMode) {
-    const infoKey = `${declaringClassName}.${methodName}`;
+    const infoKey = outlineMapKey(
+      declaringClassName,
+      methodName,
+      instancePrefix,
+    );
     let info = converter.inlineStaticCallInfo.get(infoKey);
     if (!info) {
       info = { callSites: 0, bodyInstr: 0 };
@@ -2868,33 +2909,27 @@ function inlineResolvedMethodBody(
 
   // --- Pass-2 outline check ---
   if (!converter.metadataOnlyMode) {
-    const outlineKey = `${declaringClassName}.${methodName}`;
+    const outlineKey = outlineMapKey(
+      declaringClassName,
+      methodName,
+      instancePrefix,
+    );
     if (converter.outlineCandidates.has(outlineKey)) {
-      if (
-        !hasInlineClassParamFieldAccess(
-          converter,
-          method.parameters,
-          method.body,
-        )
-      ) {
+      if (!checkOutlineIneligible(converter, method.parameters, method.body)) {
         const existing = converter.outlinedMethods.get(outlineKey);
         if (existing) {
-          if (existing.instancePrefix === instancePrefix) {
-            return emitOutlinedCallSite(converter, existing, args);
-          }
-          // Different instancePrefix → fall through to full inline
-        } else {
-          return emitInlineOutlinedMethodBody(
-            converter,
-            className,
-            methodName,
-            method,
-            args,
-            instancePrefix,
-            declaringClassName,
-            inlineKey,
-          );
+          return emitOutlinedCallSite(converter, existing, args);
         }
+        return emitInlineOutlinedMethodBody(
+          converter,
+          className,
+          methodName,
+          method,
+          args,
+          instancePrefix,
+          declaringClassName,
+          inlineKey,
+        );
       }
     }
   }

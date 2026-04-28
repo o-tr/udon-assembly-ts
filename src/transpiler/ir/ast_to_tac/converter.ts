@@ -427,7 +427,7 @@ export class ASTToTACConverter {
    *  instruction counts without materialising TACInstruction objects. */
   pass1EmitCount = 0;
   /** Per-method call count and body instruction estimate from pass 1.
-   *  Key: "declaringClassName.methodName" */
+   *  Key: outlineMapKey() — "static:Cls.method" or "inst:Cls.method:prefix" */
   inlineStaticCallInfo: Map<string, { callSites: number; bodyInstr: number }> =
     new Map();
   /** Set of method keys eligible for outlining. Computed between passes from
@@ -437,6 +437,8 @@ export class ASTToTACConverter {
   outlinedMethods: Map<string, OutlinedMethodState> = new Map();
   /** Deferred dispatch-table emitters executed after convertImpl finishes. */
   pendingOutlineDispatches: Array<() => void> = [];
+  /** Cached results of hasInlineClassParamFieldAccess, keyed by body AST node. */
+  outlineIneligibleCache: WeakMap<ASTNode, boolean> = new WeakMap();
   /** Per-instance body instruction threshold for outlining. */
   outlineBodyInstrThreshold: number = OUTLINE_MIN_BODY_INSTR_ESTIMATE;
 
@@ -656,6 +658,7 @@ export class ASTToTACConverter {
     // outlineCandidates intentionally NOT cleared — survives between passes
     this.outlinedMethods = new Map();
     this.pendingOutlineDispatches = [];
+    this.outlineIneligibleCache = new WeakMap();
   }
 
   /**

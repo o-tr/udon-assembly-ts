@@ -362,10 +362,20 @@ ${buildLargeBody(150)}
   });
 
   it("outlined method with parameters binds args correctly", () => {
+    function buildBodyUsingParams(lines: number): string {
+      const stmts: string[] = [];
+      stmts.push("    let acc: number = x + y;");
+      for (let i = 0; i < lines; i++) {
+        stmts.push(`    acc = acc + ${i};`);
+      }
+      stmts.push("    return acc;");
+      return stmts.join("\n");
+    }
+
     const source = `
       class Helper {
         static compute(x: number, y: number): number {
-${buildLargeBody(150)}
+${buildBodyUsingParams(150)}
         }
       }
       @UdonBehaviour()
@@ -373,6 +383,9 @@ ${buildLargeBody(150)}
         Start(): void {
           const r1: number = Helper.compute(1, 2);
           const r2: number = Helper.compute(3, 4);
+          // Prevent dead-code elimination of r1/r2
+          Debug.Log(r1);
+          Debug.Log(r2);
         }
       }
     `;
@@ -383,6 +396,11 @@ ${buildLargeBody(150)}
     });
 
     expect(result.tac).toContain("outline_entry");
+    // Both call sites bind x and y before the JUMP
+    expect(result.tac).toContain("x = 1");
+    expect(result.tac).toContain("y = 2");
+    expect(result.tac).toContain("x = 3");
+    expect(result.tac).toContain("y = 4");
     // Both call sites should have distinct return site indices
     const returnSiteAssigns = result.tac.match(
       /__outline_Helper_compute_returnSiteIdx = \d+/g,
