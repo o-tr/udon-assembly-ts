@@ -1276,14 +1276,18 @@ export function inlineSuperConstructorFromArgs(
         ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries: InlineParamSave = new Map();
+      let enteredScope = false;
+      let prologueComplete = false;
       try {
         converter.symbolTable.enterScope();
+        enteredScope = true;
         saveAndBindInlineParams(
           converter,
           typedParams,
           superArgs,
           savedParamEntries,
         );
+        prologueComplete = true;
         if (!baseClassNode.baseClass) {
           emitDeferredInlineInitializers(converter, baseClassNode.name);
           emitParamPropertyAssignments(converter, baseClassNode.name);
@@ -1299,8 +1303,9 @@ export function inlineSuperConstructorFromArgs(
           emitDeferredInlineInitializers(converter, baseClassNode.name);
         }
       } finally {
-        restoreInlineParams(converter, savedParamEntries);
-        converter.symbolTable.exitScope();
+        if (prologueComplete)
+          restoreInlineParams(converter, savedParamEntries);
+        if (enteredScope) converter.symbolTable.exitScope();
       }
       return;
     }
@@ -1451,9 +1456,13 @@ export function visitInlineConstructor(
         ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries: InlineParamSave = new Map();
+      let enteredScope = false;
+      let prologueComplete = false;
       try {
         this.symbolTable.enterScope();
+        enteredScope = true;
         saveAndBindInlineParams(this, typedParams, args, savedParamEntries);
+        prologueComplete = true;
         if (!classNode.baseClass) {
           emitDeferredInlineInitializers(this, classNode.name);
           emitParamPropertyAssignments(this, classNode.name);
@@ -1467,8 +1476,9 @@ export function visitInlineConstructor(
           emitDeferredInlineInitializers(this, classNode.name);
         }
       } finally {
-        restoreInlineParams(this, savedParamEntries);
-        this.symbolTable.exitScope();
+        if (prologueComplete)
+          restoreInlineParams(this, savedParamEntries);
+        if (enteredScope) this.symbolTable.exitScope();
       }
     } else if (classNode.baseClass) {
       inlineSuperConstructorFromArgs(this, classNode.baseClass, args);
@@ -1626,6 +1636,7 @@ export function visitInlineStaticMethodCall(
   let savedParamEntries: InlineParamSave | undefined;
   let enteredScope = false;
   let prologueComplete = false;
+  let addedInlineMethodKey = false;
   try {
     try {
       savedParamEntries = new Map();
@@ -1643,6 +1654,7 @@ export function visitInlineStaticMethodCall(
       this.currentInlineBaseClass = undefined;
 
       this.inlineMethodStack.add(inlineKey);
+      addedInlineMethodKey = true;
       // Only apply the stable-prefix strategy for interface return types.
       // For concrete ClassTypeSymbol returns, direct tracking is preserved so
       // that property writes (e.g. compound assignments) reach the original
@@ -1677,7 +1689,7 @@ export function visitInlineStaticMethodCall(
         this.inlinedBodyStack.pop();
       if (this.inlineReturnStack.length > returnStackDepth)
         this.inlineReturnStack.pop();
-      this.inlineMethodStack.delete(inlineKey);
+      if (addedInlineMethodKey) this.inlineMethodStack.delete(inlineKey);
       this.currentParamExportMap = savedParamExportMap;
       this.currentParamExportReverseMap = savedParamExportReverseMap;
       this.currentMethodLayout = savedMethodLayout;
@@ -1809,6 +1821,7 @@ function emitInlineRecursiveStaticMethod(
     savedInitialParams = new Map();
     let enteredScope = false;
     let prologueComplete = false;
+    let addedInlineMethodKey = false;
     try {
       converter.symbolTable.enterScope();
       enteredScope = true;
@@ -1962,6 +1975,7 @@ function emitInlineRecursiveStaticMethod(
       converter.currentInlineBaseClass = undefined;
 
       converter.inlineMethodStack.add(inlineKey);
+      addedInlineMethodKey = true;
       converter.inlineReturnStack.push({
         returnVar: result,
         returnLabel: dispatchLabel,
@@ -1983,7 +1997,7 @@ function emitInlineRecursiveStaticMethod(
         converter.inlinedBodyStack.pop();
       if (converter.inlineReturnStack.length > returnStackDepth)
         converter.inlineReturnStack.pop();
-      converter.inlineMethodStack.delete(inlineKey);
+      if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
       converter.currentParamExportMap = savedParamExportMap;
       converter.currentParamExportReverseMap = savedParamExportReverseMap;
       converter.currentMethodLayout = savedMethodLayout;
