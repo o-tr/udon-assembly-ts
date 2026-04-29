@@ -1625,12 +1625,14 @@ export function visitInlineStaticMethodCall(
   const bodyStackDepth = this.inlinedBodyStack.length;
   let savedParamEntries: InlineParamSave | undefined;
   let enteredScope = false;
+  let prologueComplete = false;
   try {
     try {
       savedParamEntries = new Map();
       this.symbolTable.enterScope();
       enteredScope = true;
       saveAndBindInlineParams(this, method.parameters, args, savedParamEntries);
+      prologueComplete = true;
 
       this.currentParamExportMap = new Map();
       this.currentParamExportReverseMap = new Map();
@@ -1686,9 +1688,7 @@ export function visitInlineStaticMethodCall(
       // Emit the inline return label BEFORE restoring params so all early
       // `goto inline_return*` paths from the body fall through into the
       // restore COPYs. Otherwise the restore is dead code (gotos jump past it).
-      // Only emit when the prologue succeeded — on early throw the IR is
-      // discarded, so an orphan label would be harmless but unnecessary.
-      if (savedParamEntries && enteredScope) {
+      if (prologueComplete && savedParamEntries) {
         this.emit(new LabelInstruction(returnLabel));
         restoreInlineParams(this, savedParamEntries);
       }
@@ -1808,6 +1808,7 @@ function emitInlineRecursiveStaticMethod(
 
     savedInitialParams = new Map();
     let enteredScope = false;
+    let prologueComplete = false;
     try {
       converter.symbolTable.enterScope();
       enteredScope = true;
@@ -1817,6 +1818,7 @@ function emitInlineRecursiveStaticMethod(
         args,
         savedInitialParams,
       );
+      prologueComplete = true;
       // Set initial return site index to 0 (sentinel: initial caller)
       const returnSiteIdxVar = createVariable(
         returnSiteIdxVarName,
@@ -1989,7 +1991,7 @@ function emitInlineRecursiveStaticMethod(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
-      if (savedInitialParams && enteredScope)
+      if (prologueComplete && savedInitialParams)
         restoreInlineParams(converter, savedInitialParams);
       if (enteredScope) converter.symbolTable.exitScope();
       converter.currentInlineRecursiveContext = savedInlineRecCtx;
@@ -2428,6 +2430,7 @@ function inlineResolvedMethodBody(
     const savedInstNativeIneligible = converter.nativeArrayIneligible;
     const savedInstNativeVarName = converter.currentNativeArrayVarName;
     let enteredScope = false;
+    let prologueComplete = false;
     let addedInlineMethodKey = false;
     let pushedInlineReturn = false;
     let pushedInlineBody = false;
@@ -2441,6 +2444,7 @@ function inlineResolvedMethodBody(
         args,
         savedParamEntries,
       );
+      prologueComplete = true;
 
       converter.currentParamExportMap = new Map();
       converter.currentParamExportReverseMap = new Map();
@@ -2495,13 +2499,12 @@ function inlineResolvedMethodBody(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
-      // See visitInlineStaticMethodCall: emit the label BEFORE the restore so
-      // early `goto inline_return*` paths fall through into the restore COPYs.
-      if (enteredScope) {
+      // Emit label BEFORE restore so goto inline_return* falls through into COPYs.
+      if (prologueComplete) {
         converter.emit(new LabelInstruction(returnLabel));
         restoreInlineParams(converter, savedParamEntries);
-        converter.symbolTable.exitScope();
       }
+      if (enteredScope) converter.symbolTable.exitScope();
     }
 
     return result;
