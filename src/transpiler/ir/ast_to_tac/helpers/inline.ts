@@ -2185,6 +2185,10 @@ function emitInlineRecursiveStaticMethod(
  * field/method access (obj.field) as well as passing the parameter to nested
  * inline calls, because outlined bodies are compiled once without their
  * own inlineInstanceMap entries.
+ *
+ * Only detects direct PropertyAccessExpression / CallExpression on parameter
+ * identifiers — aliased uses (e.g. `const x = p; x.field;`) are NOT caught
+ * and will surface as a missing-extern-signature error at codegen time.
  */
 function hasInlineClassParamDependentUse(
   converter: ASTToTACConverter,
@@ -2507,8 +2511,20 @@ function emitInlineOutlinedBody(
     }
     converter.emit(new LabelInstruction(doneLabel));
     // Defensive: doneLabel should be unreachable in valid code (all return
-    // sites are matched). Emit an explicit return to avoid falling off the
-    // end of the instruction stream in the Udon VM.
+    // sites are matched). Log the invariant violation and return to avoid
+    // falling off the end of the instruction stream in the Udon VM.
+    const logErrorExtern = converter.requireExternSignature(
+      "Debug",
+      "LogError",
+      "method",
+      ["object"],
+      "void",
+    );
+    const errMsg = createConstant(
+      `[udon-assembly-ts] Outline dispatch miss: no return site matched at ${(doneLabel as LabelOperand).name}`,
+      PrimitiveTypes.string,
+    );
+    converter.emit(new CallInstruction(undefined, logErrorExtern, [errMsg]));
     converter.emit(new ReturnInstruction());
   });
 
