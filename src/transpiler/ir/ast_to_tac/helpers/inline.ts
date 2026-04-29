@@ -2488,7 +2488,8 @@ function emitInlineOutlinedBody(
   );
 
   // Deferred dispatch table: linear scan over return sites (O(N) per call).
-  // N is typically 2–5; acceptable for the Udon VM's execution model.
+  // N is typically 2–5. Even at higher N the 2N dispatch instructions are
+  // negligible vs. the ≥50k-instruction body being deduplicated, so no cap.
   converter.pendingOutlineDispatches.push(() => {
     converter.emit(new LabelInstruction(dispatchLabel));
     const returnSiteIdxVarOp = createVariable(
