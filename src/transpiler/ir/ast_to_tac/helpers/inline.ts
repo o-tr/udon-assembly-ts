@@ -1608,6 +1608,7 @@ export function visitInlineStaticMethodCall(
     return null;
   }
 
+  let selfCallCountHint: number | undefined;
   // --- Pass-1 outline candidate detection (static path) ---
   if (this.metadataOnlyMode) {
     const infoKey = outlineMapKey(
@@ -1629,6 +1630,7 @@ export function visitInlineStaticMethodCall(
         method.body,
       );
     }
+    selfCallCountHint = info.selfCallCount;
     if (info.bodyInstr === undefined) {
       // Invariant: pass1EmitCount is monotonically increasing within a
       // single pass-1 run (resetState clears it only between passes).
@@ -1657,6 +1659,18 @@ export function visitInlineStaticMethodCall(
     // When bodyInstr is already set (second+ call site in pass 1), fall
     // through to the normal inline path so metadata like soaClasses is
     // still collected.
+  } else {
+    // Pass-2: reuse cached selfCallCount from pass-1 if available.
+    const infoKey = outlineMapKey(
+      "static",
+      resolved.declaringClassName,
+      methodName,
+      undefined,
+    );
+    const info = this.inlineStaticCallInfo.get(infoKey);
+    if (info && info.selfCallCount !== undefined) {
+      selfCallCountHint = info.selfCallCount;
+    }
   }
 
   return visitInlineStaticMethodCallImpl.call(
@@ -1667,7 +1681,7 @@ export function visitInlineStaticMethodCall(
     resolved,
     args,
     inlineKey,
-    undefined,
+    selfCallCountHint,
   );
 }
 
@@ -2192,8 +2206,19 @@ function emitInlineRecursiveStaticMethod(
  *
  * Also catches direct aliasing via VariableDeclaration / AssignmentExpression
  * (e.g. `const x = p;`) so that `x.field` doesn't silently break.
- * Indirect aliasing (e.g. `const x = cond ? p : other`) is not caught
- * and will surface as a missing-extern-signature error at codegen time.
+ *
+ * **Known gap:** ternary aliasing (`const x = cond ? p : other`) is NOT
+ * caught.  If the outlined body later does `x.field`, the transpiler will
+ * emit a missing-extern-signature error at codegen time pointing at the
+ * shared outlined body (not the call site), which is hard to diagnose.
+ * The same limitation applies to other indirect aliasing patterns
+ * (array-element extraction, function-return propagation, destructuring,
+ * spread, etc.) because the walker only inspects direct
+ * `VariableDeclaration` / `AssignmentExpression` initialisers / right-hand
+ * sides for a plain `Identifier`.
+ * Work-around: avoid any indirect aliasing of inline-class parameters in
+ * methods that may be outlined, or ensure the aliased variable is never used
+ * for field/property access inside the body.
  */
 function hasInlineClassParamDependentUse(
   converter: ASTToTACConverter,

@@ -584,6 +584,49 @@ ${buildLargeBody(150)}
     expect(staticMatches).not.toBeNull();
     expect(instMatches).not.toBeNull();
   });
+
+  it("KNOWN GAP: ternary aliasing of inline-class param is not caught", () => {
+    // This test documents that ternary aliasing (cond ? p : other) is NOT
+    // detected by hasInlineClassParamDependentUse.  If a future change adds
+    // detection for ternary aliasing, this test will fail (outline_entry will
+    // disappear) — the fix MUST also ensure outlined bodies handle the aliased
+    // variable correctly, not just block outlining.
+    const bodyLines = [
+      "    const x: InlineObj = n > 0 ? obj : new InlineObj();",
+    ];
+    for (let i = 0; i < 150; i++) {
+      bodyLines.push(`    acc = acc + ${i};`);
+    }
+    bodyLines.push("    return acc;");
+    const source = `
+      class InlineObj {
+        value: number = 0;
+      }
+      class Helper {
+        static process(n: number, obj: InlineObj): number {
+          let acc: number = 0;
+${bodyLines.join("\n")}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const o = new InlineObj();
+          const r1: number = Helper.process(1, o);
+          const r2: number = Helper.process(2, o);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    // Because ternary aliasing is NOT detected, outlining is allowed even
+    // though `obj` is indirectly aliased to `x`.
+    expect(result.tac).toContain("outline_entry");
+  });
 });
 
 describe("inline recursive static method", () => {
