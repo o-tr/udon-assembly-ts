@@ -2211,8 +2211,7 @@ function isCallToInlineClassMethod(
   if (ce.isNew && ce.callee.kind === ASTNodeKind.Identifier) {
     const name = (ce.callee as IdentifierNode).name;
     return (
-      converter.classMap.has(name) &&
-      !converter.udonBehaviourClasses.has(name)
+      converter.classMap.has(name) && !converter.udonBehaviourClasses.has(name)
     );
   }
   if (ce.callee.kind === ASTNodeKind.PropertyAccessExpression) {
@@ -2497,90 +2496,94 @@ function emitInlineOutlinedBody(
 
   // --- Body emission (exactly once) ---
   converter.symbolTable.enterScope();
-  for (const param of method.parameters) {
-    const effectiveParamType = resolveInlineClassType(converter, param.type);
-    if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-      converter.symbolTable.addSymbol(
-        param.name,
-        effectiveParamType,
-        true,
-        false,
-      );
-    }
-  }
-
-  const savedParamExportMap = converter.currentParamExportMap;
-  const savedParamExportReverseMap = converter.currentParamExportReverseMap;
-  const savedMethodLayout = converter.currentMethodLayout;
-  const savedInlineContext = converter.currentInlineContext;
-  const savedInlineCtorClass = converter.currentInlineConstructorClassName;
-  const savedThisOverride = converter.currentThisOverride;
-  const savedBaseClass = converter.currentInlineBaseClass;
-  const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
-  converter.currentParamExportMap = new Map();
-  converter.currentParamExportReverseMap = new Map();
-  converter.currentMethodLayout = null;
-  converter.currentInlineContext = instancePrefix
-    ? { className, instancePrefix }
-    : undefined;
-  converter.currentInlineConstructorClassName = undefined;
-  converter.currentThisOverride = null;
-  converter.currentInlineBaseClass = undefined;
-
-  converter.inlineMethodStack.add(inlineKey);
-  const returnInstancePrefix =
-    returnType instanceof InterfaceTypeSymbol && returnType.properties.size > 0
-      ? result.name
-      : undefined;
-  if (returnInstancePrefix !== undefined) {
-    converter.inlineInstanceMap.set(result.name, {
-      prefix: returnInstancePrefix,
-      className: returnType.name,
-    });
-  }
-  // returnLabel routes to a body-local label so that early returns land
-  // here first; from there we unconditionally jump to the deferred dispatch
-  // label.  This keeps dispatchLabel exclusively inside the deferred lambda
-  // and avoids duplicate label definitions if visitReturnStatement ever
-  // starts emitting a return label inline.
-  converter.inlineReturnStack.push({
-    returnVar: result,
-    returnLabel: bodyReturnLabel,
-    returnTrackingInvalidated: false,
-    loopDepth: converter.loopContextStack.length,
-    returnInstancePrefix,
-    isErasedReturn,
-  });
-  converter.methodBodyConstructorIndex.set(method.body, 0);
-  converter.inlinedBodyStack.push(method.body);
-  const savedNativeIneligible = converter.nativeArrayIneligible;
-  const savedNativeVarName = converter.currentNativeArrayVarName;
-  converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
-    method.body.statements,
-  );
-  converter.currentNativeArrayVarName = null;
-
   try {
-    converter.visitBlockStatement(method.body);
-  } finally {
-    converter.nativeArrayIneligible = savedNativeIneligible;
-    converter.currentNativeArrayVarName = savedNativeVarName;
-    converter.inlinedBodyStack.pop();
-    converter.inlineReturnStack.pop();
-    converter.inlineMethodStack.delete(inlineKey);
-    converter.currentParamExportMap = savedParamExportMap;
-    converter.currentParamExportReverseMap = savedParamExportReverseMap;
-    converter.currentMethodLayout = savedMethodLayout;
-    converter.currentInlineContext = savedInlineContext;
-    converter.currentInlineConstructorClassName = savedInlineCtorClass;
-    converter.currentThisOverride = savedThisOverride;
-    converter.currentInlineBaseClass = savedBaseClass;
-    // Preserve caller tracking across outlined body emission.
-    returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
-    converter.inlineInstanceMap.clear();
-    for (const [k, v] of savedInlineInstanceMap) {
-      converter.inlineInstanceMap.set(k, v);
+    for (const param of method.parameters) {
+      const effectiveParamType = resolveInlineClassType(converter, param.type);
+      if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+        converter.symbolTable.addSymbol(
+          param.name,
+          effectiveParamType,
+          true,
+          false,
+        );
+      }
     }
+
+    const savedParamExportMap = converter.currentParamExportMap;
+    const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+    const savedMethodLayout = converter.currentMethodLayout;
+    const savedInlineContext = converter.currentInlineContext;
+    const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+    const savedThisOverride = converter.currentThisOverride;
+    const savedBaseClass = converter.currentInlineBaseClass;
+    const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
+    converter.currentParamExportMap = new Map();
+    converter.currentParamExportReverseMap = new Map();
+    converter.currentMethodLayout = null;
+    converter.currentInlineContext = instancePrefix
+      ? { className, instancePrefix }
+      : undefined;
+    converter.currentInlineConstructorClassName = undefined;
+    converter.currentThisOverride = null;
+    converter.currentInlineBaseClass = undefined;
+
+    converter.inlineMethodStack.add(inlineKey);
+    const returnInstancePrefix =
+      returnType instanceof InterfaceTypeSymbol &&
+      returnType.properties.size > 0
+        ? result.name
+        : undefined;
+    if (returnInstancePrefix !== undefined) {
+      converter.inlineInstanceMap.set(result.name, {
+        prefix: returnInstancePrefix,
+        className: returnType.name,
+      });
+    }
+    // returnLabel routes to a body-local label so that early returns land
+    // here first; from there we unconditionally jump to the deferred dispatch
+    // label.  This keeps dispatchLabel exclusively inside the deferred lambda
+    // and avoids duplicate label definitions if visitReturnStatement ever
+    // starts emitting a return label inline.
+    converter.inlineReturnStack.push({
+      returnVar: result,
+      returnLabel: bodyReturnLabel,
+      returnTrackingInvalidated: false,
+      loopDepth: converter.loopContextStack.length,
+      returnInstancePrefix,
+      isErasedReturn,
+    });
+    converter.methodBodyConstructorIndex.set(method.body, 0);
+    converter.inlinedBodyStack.push(method.body);
+    const savedNativeIneligible = converter.nativeArrayIneligible;
+    const savedNativeVarName = converter.currentNativeArrayVarName;
+    converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+      method.body.statements,
+    );
+    converter.currentNativeArrayVarName = null;
+
+    try {
+      converter.visitBlockStatement(method.body);
+    } finally {
+      converter.nativeArrayIneligible = savedNativeIneligible;
+      converter.currentNativeArrayVarName = savedNativeVarName;
+      converter.inlinedBodyStack.pop();
+      converter.inlineReturnStack.pop();
+      converter.inlineMethodStack.delete(inlineKey);
+      converter.currentParamExportMap = savedParamExportMap;
+      converter.currentParamExportReverseMap = savedParamExportReverseMap;
+      converter.currentMethodLayout = savedMethodLayout;
+      converter.currentInlineContext = savedInlineContext;
+      converter.currentInlineConstructorClassName = savedInlineCtorClass;
+      converter.currentThisOverride = savedThisOverride;
+      converter.currentInlineBaseClass = savedBaseClass;
+      // Preserve caller tracking across outlined body emission.
+      returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
+      converter.inlineInstanceMap.clear();
+      for (const [k, v] of savedInlineInstanceMap) {
+        converter.inlineInstanceMap.set(k, v);
+      }
+    }
+  } finally {
     converter.symbolTable.exitScope();
   }
 
