@@ -2879,12 +2879,13 @@ function emitOutlinedCallSite(
     profEnter(converter, histKey(state.declaringClassName, state.methodName));
   try {
     converter.symbolTable.enterScope();
-    let savedParamEntries: InlineParamSave | undefined;
+    const savedParamEntries: InlineParamSave = new Map();
     try {
-      savedParamEntries = saveAndBindInlineParams(
+      saveAndBindInlineParams(
         converter,
         state.method.parameters,
         args,
+        savedParamEntries,
       );
 
       // Assign return site index
@@ -2937,7 +2938,7 @@ function emitOutlinedCallSite(
 
       return capturedResult;
     } finally {
-      if (savedParamEntries !== undefined) {
+      if (savedParamEntries.size > 0) {
         restoreInlineParams(converter, savedParamEntries);
       }
       converter.symbolTable.exitScope();
