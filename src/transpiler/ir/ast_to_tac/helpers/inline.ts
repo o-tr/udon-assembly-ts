@@ -2487,7 +2487,8 @@ function emitInlineOutlinedBody(
     state,
   );
 
-  // Deferred dispatch table emission (all return sites must be registered first).
+  // Deferred dispatch table: linear scan over return sites (O(N) per call).
+  // N is typically 2–5; acceptable for the Udon VM's execution model.
   converter.pendingOutlineDispatches.push(() => {
     converter.emit(new LabelInstruction(dispatchLabel));
     const returnSiteIdxVarOp = createVariable(
@@ -3999,6 +4000,11 @@ export function countSelfCalls(
         }
         visitNode(callNode.callee);
         for (const arg of callNode.arguments) visitNode(arg);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        visitNode(exprStmt.expression);
         break;
       }
       case ASTNodeKind.BlockStatement: {

@@ -424,7 +424,10 @@ export class ASTToTACConverter {
 
   // --- Static method outlining (always-on, not PROF-gated) ---
   /** Incremented inside emit() during metadataOnlyMode to estimate per-method
-   *  instruction counts without materialising TACInstruction objects. */
+   *  instruction counts without materialising TACInstruction objects.
+   *  Counts include recursively-expanded nested inline calls, so a small
+   *  wrapper around a large inlined callee will appear large. This is
+   *  conservative: it may outline methods that are themselves tiny. */
   pass1EmitCount = 0;
   /** Per-method call count and body instruction estimate from pass 1.
    *  Key: outlineMapKey() — "static:Cls.method" or "inst:Cls.method:prefix" */
