@@ -1624,10 +1624,12 @@ export function visitInlineStaticMethodCall(
   const returnStackDepth = this.inlineReturnStack.length;
   const bodyStackDepth = this.inlinedBodyStack.length;
   let savedParamEntries: InlineParamSave | undefined;
+  let enteredScope = false;
   try {
     try {
       savedParamEntries = new Map();
       this.symbolTable.enterScope();
+      enteredScope = true;
       saveAndBindInlineParams(this, method.parameters, args, savedParamEntries);
 
       this.currentParamExportMap = new Map();
@@ -1686,11 +1688,11 @@ export function visitInlineStaticMethodCall(
       // restore COPYs. Otherwise the restore is dead code (gotos jump past it).
       // Only emit when the prologue succeeded — on early throw the IR is
       // discarded, so an orphan label would be harmless but unnecessary.
-      if (savedParamEntries) {
+      if (savedParamEntries && enteredScope) {
         this.emit(new LabelInstruction(returnLabel));
         restoreInlineParams(this, savedParamEntries);
       }
-      this.symbolTable.exitScope();
+      if (enteredScope) this.symbolTable.exitScope();
     }
 
     return result;
@@ -1805,8 +1807,10 @@ function emitInlineRecursiveStaticMethod(
     };
 
     savedInitialParams = new Map();
+    let enteredScope = false;
     try {
       converter.symbolTable.enterScope();
+      enteredScope = true;
       saveAndBindInlineParams(
         converter,
         method.parameters,
@@ -1985,9 +1989,9 @@ function emitInlineRecursiveStaticMethod(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
-      if (savedInitialParams)
+      if (savedInitialParams && enteredScope)
         restoreInlineParams(converter, savedInitialParams);
-      converter.symbolTable.exitScope();
+      if (enteredScope) converter.symbolTable.exitScope();
       converter.currentInlineRecursiveContext = savedInlineRecCtx;
     }
 
