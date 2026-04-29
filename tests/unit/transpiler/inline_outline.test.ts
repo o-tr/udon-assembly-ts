@@ -521,13 +521,19 @@ ${buildLargeBody(150)}
   });
 
   it("falls through to full inline when return type is an inline class", () => {
+    const bodyLines: string[] = [];
+    bodyLines.push("          const b = new Box();");
+    for (let i = 0; i < 150; i++) {
+      bodyLines.push(`          b.value = b.value + ${i};`);
+    }
+    bodyLines.push("          return b;");
     const source = `
       class Box {
         value: number = 1;
       }
       class Helper {
         static make(): Box {
-${buildLargeBody(150)}
+${bodyLines.join("\n")}
         }
       }
       @UdonBehaviour()
@@ -551,7 +557,7 @@ ${buildLargeBody(150)}
     // so outlining is ineligible; full inline gives each call site its
     // own inlineInstanceMap entry.
     expect(result.tac).not.toContain("outline_entry");
-    expect(result.tac).toContain("box.value");
+    expect(result.tac).toContain("__inst_Box_");
   });
 
   it("outlines a void-return method without corrupting caller flow", () => {

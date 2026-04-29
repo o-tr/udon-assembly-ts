@@ -698,7 +698,7 @@ export class ASTToTACConverter {
     if (PROF) {
       const dt = (performance.now() - t0).toFixed(1);
       console.log(
-        `[prof]   tac-pass1 (metadata): ${dt}ms instr-emitted=${this.instructions.length}`,
+        `[prof]   tac-pass1 (metadata): ${dt}ms instr-emitted=${this.pass1EmitCount}`,
       );
     }
     const t1 = PROF ? performance.now() : 0;

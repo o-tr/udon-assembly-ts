@@ -2272,6 +2272,13 @@ function hasInlineClassParamDependentUse(
   }
   if (inlineParamNames.size === 0) return false;
 
+  // Incrementally collected during the walk: local variable names whose
+  // declared type is an inline class.  Used to detect instance method
+  // calls like localVar.method(inlineParam) where localVar is a
+  // locally-created inline class instance (not caught by the static
+  // ClassName.method() check in isCallToInlineClassMethod).
+  const localInlineVarNames = new Set<string>();
+
   let found = false;
   const walk = (node: ASTNode): void => {
     if (found) return;
@@ -2286,13 +2293,23 @@ function hasInlineClassParamDependentUse(
       }
     } else if (node.kind === ASTNodeKind.CallExpression) {
       const ce = node as CallExpressionNode;
-      // Only flag calls to TypeScript inline-class methods. Passing an
-      // Int32 handle to a C# extern (e.g. Debug.Log) is safe — no
-      // inlineInstanceMap tracking is involved.
-      // Gap: instance calls on local inline variables
-      // (localVar.method(inlineParam)) are not detected without type
-      // resolution.
-      if (isCallToInlineClassMethod(converter, ce)) {
+      // Flag calls to inline-class methods: static (ClassName.method),
+      // constructor (new ClassName), this.method() in an inline class,
+      // or instance calls on locally-declared inline-typed variables.
+      let isInlineCall = isCallToInlineClassMethod(converter, ce);
+      if (
+        !isInlineCall &&
+        ce.callee.kind === ASTNodeKind.PropertyAccessExpression
+      ) {
+        const pa = ce.callee as PropertyAccessExpressionNode;
+        if (
+          pa.object.kind === ASTNodeKind.Identifier &&
+          localInlineVarNames.has((pa.object as IdentifierNode).name)
+        ) {
+          isInlineCall = true;
+        }
+      }
+      if (isInlineCall) {
         for (const arg of ce.arguments) {
           if (
             arg.kind === ASTNodeKind.Identifier &&
@@ -2305,6 +2322,9 @@ function hasInlineClassParamDependentUse(
       }
     } else if (node.kind === ASTNodeKind.VariableDeclaration) {
       const vd = node as VariableDeclarationNode;
+      if (isInlineHandleType(converter, vd.type)) {
+        localInlineVarNames.add(vd.name);
+      }
       if (
         vd.initializer?.kind === ASTNodeKind.Identifier &&
         inlineParamNames.has((vd.initializer as IdentifierNode).name)
