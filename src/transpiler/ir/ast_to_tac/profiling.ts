@@ -16,7 +16,7 @@
  *     overhead at 28.6M call rate.
  */
 
-import { TACInstruction, TACInstructionKind } from "../tac_instruction.js";
+import { type TACInstruction, TACInstructionKind } from "../tac_instruction.js";
 import type { ASTToTACConverter } from "./converter.js";
 
 export const PROF = process.env.UDON_PROFILE === "1";
