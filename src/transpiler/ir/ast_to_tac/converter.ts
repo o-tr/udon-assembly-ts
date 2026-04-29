@@ -225,7 +225,7 @@ export class ASTToTACConverter {
    */
   currentInlineRecursiveContext:
     | {
-        className: string;
+        declaringClassName: string;
         methodName: string;
         locals: Array<{ name: string; type: TypeSymbol }>;
         depthVar: string;

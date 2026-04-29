@@ -1,9 +1,6 @@
 /**
- * Tests for the static-method outlining optimisation.
- * When a non-recursive static method is called from enough call sites and
- * its body exceeds the instruction-count threshold, the transpiler emits
- * the body once (with entry/dispatch labels) and generates lightweight
- * JUMP-based call stubs at each call site.
+ * Tests for the static-method outlining optimisation and inline recursive
+ * static method handling.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -586,5 +583,40 @@ ${buildLargeBody(150)}
     );
     expect(staticMatches).not.toBeNull();
     expect(instMatches).not.toBeNull();
+  });
+});
+
+describe("inline recursive static method", () => {
+  beforeAll(() => {
+    buildExternRegistryFromFiles([]);
+  });
+
+  it("handles inherited recursive static method via derived class", () => {
+    const source = `
+      class Base {
+        static factorial(n: number): number {
+          if (n <= 1) {
+            return 1;
+          }
+          return n * Base.factorial(n - 1);
+        }
+      }
+      class Derived extends Base {}
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r: number = Derived.factorial(5);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(result.tac).toContain("__inlineRec_Base_factorial");
+    expect(result.tac).toContain("__inlineRec_Base_factorial_selfCallResult_");
+    expect(result.tac).toMatch(/goto inline_rec_entry/);
+    expect(result.tac).not.toContain("__inlineRec_Derived_factorial");
   });
 });

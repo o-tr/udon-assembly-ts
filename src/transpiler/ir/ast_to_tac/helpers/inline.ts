@@ -1590,7 +1590,11 @@ export function visitInlineStaticMethodCall(
   // --- Recursive re-entry: emit JUMP-based self-call ---
   if (this.inlineMethodStack.has(inlineKey)) {
     const ctx = this.currentInlineRecursiveContext;
-    if (ctx && ctx.className === className && ctx.methodName === methodName) {
+    if (
+      ctx &&
+      ctx.declaringClassName === resolved.declaringClassName &&
+      ctx.methodName === methodName
+    ) {
       return emitInlineRecursiveSelfCall(this, ctx, args);
     }
     // No matching recursive context — this can happen for non-recursive
@@ -1599,7 +1603,7 @@ export function visitInlineStaticMethodCall(
     this.warnAt(
       undefined,
       "InlineRecursiveReentry",
-      `recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+      `recursive re-entry for ${resolved.declaringClassName}.${methodName} but no matching inline recursive context — falling through to extern.`,
     );
     return null;
   }
@@ -1693,12 +1697,11 @@ function visitInlineStaticMethodCallImpl(
       this.warnAt(
         undefined,
         "InlineErasedReturnType",
-        `inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
+        `inline recursive static method ${resolved.declaringClassName}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
       );
     }
     return emitInlineRecursiveStaticMethod(
       this,
-      className,
       methodName,
       method,
       returnType,
@@ -1850,7 +1853,6 @@ function visitInlineStaticMethodCallImpl(
  */
 function emitInlineRecursiveStaticMethod(
   converter: ASTToTACConverter,
-  className: string,
   methodName: string,
   method: {
     parameters: Array<{ name: string; type: TypeSymbol }>;
@@ -1861,11 +1863,11 @@ function emitInlineRecursiveStaticMethod(
   args: TACOperand[],
   selfCallCount: number,
   inlineKey: string,
-  declaringClassName: string = className,
+  declaringClassName: string,
 ): TACOperand {
   if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
-    const prefix = `__inlineRec_${className}_${methodName}`;
+    const prefix = `__inlineRec_${declaringClassName}_${methodName}`;
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
@@ -2027,7 +2029,7 @@ function emitInlineRecursiveStaticMethod(
         "void",
       );
       const overflowMsg = createConstant(
-        `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${className}.${methodName}.`,
+        `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${declaringClassName}.${methodName}.`,
         PrimitiveTypes.string,
       );
       converter.emit(
@@ -2054,7 +2056,7 @@ function emitInlineRecursiveStaticMethod(
 
     // Set up inline recursive context
     const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
-      className,
+      declaringClassName,
       methodName,
       locals,
       depthVar,
@@ -2656,13 +2658,8 @@ function emitInlineRecursiveSelfCall(
   ctx: NonNullable<typeof converter.currentInlineRecursiveContext>,
   args: TACOperand[],
 ): TACOperand {
-  // ctx.className is the receiver passed by the outer
-  // emitInlineRecursiveStaticMethod call. For the histogram this means
-  // self-calls within one outer-call lifetime aggregate cleanly, but
-  // multiple outer calls with different receivers (rare for static
-  // recursion) would split. Acceptable: the outer key already merges
-  // via declaringClassName above.
-  if (PROF) profEnter(converter, histKey(ctx.className, ctx.methodName));
+  if (PROF)
+    profEnter(converter, histKey(ctx.declaringClassName, ctx.methodName));
   try {
     // 0. Save inlineInstanceMap state so the caller's tracking is restored
     //    after the recursive call (push/pop only covers runtime locals, not
@@ -2686,10 +2683,10 @@ function emitInlineRecursiveSelfCall(
     converter.emitCopyWithTracking(depthVarOp, depthInc);
 
     // 3. Set parameters for the callee (find param names from the method)
-    const classNode = resolveClassNode(converter, ctx.className);
+    const classNode = resolveClassNode(converter, ctx.declaringClassName);
     if (!classNode) {
       throw new Error(
-        `emitInlineRecursiveSelfCall: class '${ctx.className}' not found`,
+        `emitInlineRecursiveSelfCall: class '${ctx.declaringClassName}' not found`,
       );
     }
     const method = classNode.methods.find(
@@ -2697,7 +2694,7 @@ function emitInlineRecursiveSelfCall(
     );
     if (!method) {
       throw new Error(
-        `emitInlineRecursiveSelfCall: static method '${ctx.className}.${ctx.methodName}' not found`,
+        `emitInlineRecursiveSelfCall: static method '${ctx.declaringClassName}.${ctx.methodName}' not found`,
       );
     }
     for (let i = 0; i < method.parameters.length; i++) {
@@ -2753,7 +2750,7 @@ function emitInlineRecursiveSelfCall(
       index: returnSiteIdx,
       labelName: returnLabel.name,
     });
-    const prefix = `__inlineRec_${ctx.className}_${ctx.methodName}`;
+    const prefix = `__inlineRec_${ctx.declaringClassName}_${ctx.methodName}`;
     const returnSiteIdxVar = createVariable(
       `${prefix}_returnSiteIdx`,
       PrimitiveTypes.int32,
