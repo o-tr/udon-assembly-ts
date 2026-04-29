@@ -1685,8 +1685,12 @@ export function visitInlineStaticMethodCall(
       // Emit the inline return label BEFORE restoring params so all early
       // `goto inline_return*` paths from the body fall through into the
       // restore COPYs. Otherwise the restore is dead code (gotos jump past it).
-      this.emit(new LabelInstruction(returnLabel));
-      if (savedParamEntries) restoreInlineParams(this, savedParamEntries);
+      // Only emit when the prologue succeeded — on early throw the IR is
+      // discarded, so an orphan label would be harmless but unnecessary.
+      if (savedParamEntries) {
+        this.emit(new LabelInstruction(returnLabel));
+        restoreInlineParams(this, savedParamEntries);
+      }
       this.symbolTable.exitScope();
     }
 
@@ -1781,7 +1785,8 @@ function emitInlineRecursiveStaticMethod(
     const returnStackDepth = converter.inlineReturnStack.length;
     const bodyStackDepth = converter.inlinedBodyStack.length;
     let savedInitialParams: InlineParamSave | undefined;
-    let ctx!: NonNullable<typeof converter.currentInlineRecursiveContext>;
+    let ctx: NonNullable<typeof converter.currentInlineRecursiveContext> | null =
+      null;
 
     converter.symbolTable.enterScope();
     try {
@@ -2014,7 +2019,7 @@ function emitInlineRecursiveStaticMethod(
         PrimitiveTypes.int32,
         { isLocal: true },
       );
-      for (const site of ctx.returnSites) {
+      for (const site of ctx!.returnSites) {
         const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
         converter.emit(
           new BinaryOpInstruction(
