@@ -2423,9 +2423,14 @@ function inlineResolvedMethodBody(
     const savedBaseClass = converter.currentInlineBaseClass;
     const savedInstNativeIneligible = converter.nativeArrayIneligible;
     const savedInstNativeVarName = converter.currentNativeArrayVarName;
+    let enteredScope = false;
+    let addedInlineMethodKey = false;
+    let pushedInlineReturn = false;
+    let pushedInlineBody = false;
 
     try {
       converter.symbolTable.enterScope();
+      enteredScope = true;
       saveAndBindInlineParams(
         converter,
         method.parameters,
@@ -2444,6 +2449,7 @@ function inlineResolvedMethodBody(
         : undefined;
 
       converter.inlineMethodStack.add(inlineKey);
+      addedInlineMethodKey = true;
       // Only apply the stable-prefix strategy for interface return types.
       // For concrete ClassTypeSymbol returns, direct tracking is preserved so
       // that property writes (e.g. compound assignments) reach the original
@@ -2461,10 +2467,12 @@ function inlineResolvedMethodBody(
         returnInstancePrefix,
         isErasedReturn,
       });
+      pushedInlineReturn = true;
       // Reset constructor index for this body so deduplication picks up from
       // position 0 on each invocation (cache may already be populated).
       converter.methodBodyConstructorIndex.set(method.body, 0);
       converter.inlinedBodyStack.push(method.body);
+      pushedInlineBody = true;
       converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
         method.body.statements,
       );
@@ -2473,9 +2481,9 @@ function inlineResolvedMethodBody(
     } finally {
       converter.nativeArrayIneligible = savedInstNativeIneligible;
       converter.currentNativeArrayVarName = savedInstNativeVarName;
-      converter.inlinedBodyStack.pop();
-      converter.inlineReturnStack.pop();
-      converter.inlineMethodStack.delete(inlineKey);
+      if (pushedInlineBody) converter.inlinedBodyStack.pop();
+      if (pushedInlineReturn) converter.inlineReturnStack.pop();
+      if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
       converter.currentParamExportMap = savedParamExportMap;
       converter.currentParamExportReverseMap = savedParamExportReverseMap;
       converter.currentMethodLayout = savedMethodLayout;
@@ -2485,9 +2493,11 @@ function inlineResolvedMethodBody(
       converter.currentInlineBaseClass = savedBaseClass;
       // See visitInlineStaticMethodCall: emit the label BEFORE the restore so
       // early `goto inline_return*` paths fall through into the restore COPYs.
-      converter.emit(new LabelInstruction(returnLabel));
-      restoreInlineParams(converter, savedParamEntries);
-      converter.symbolTable.exitScope();
+      if (enteredScope) {
+        converter.emit(new LabelInstruction(returnLabel));
+        restoreInlineParams(converter, savedParamEntries);
+        converter.symbolTable.exitScope();
+      }
     }
 
     return result;
