@@ -1560,7 +1560,7 @@ export function visitInlineStaticMethodCall(
     this.warnAt(
       undefined,
       "InlineRecursiveReentry",
-      `recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+      `recursive re-entry for ${resolved.declaringClassName}.${methodName} but no matching inline recursive context — falling through to extern.`,
     );
     return null;
   }
@@ -1583,12 +1583,11 @@ export function visitInlineStaticMethodCall(
       this.warnAt(
         undefined,
         "InlineErasedReturnType",
-        `inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
+        `inline recursive static method ${resolved.declaringClassName}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
       );
     }
     return emitInlineRecursiveStaticMethod(
       this,
-      className,
       methodName,
       method,
       returnType,
@@ -1702,7 +1701,6 @@ export function visitInlineStaticMethodCall(
  */
 function emitInlineRecursiveStaticMethod(
   converter: ASTToTACConverter,
-  className: string,
   methodName: string,
   method: {
     parameters: Array<{ name: string; type: TypeSymbol }>;
@@ -1713,7 +1711,7 @@ function emitInlineRecursiveStaticMethod(
   args: TACOperand[],
   selfCallCount: number,
   inlineKey: string,
-  declaringClassName: string = className,
+  declaringClassName: string,
 ): TACOperand {
   if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {

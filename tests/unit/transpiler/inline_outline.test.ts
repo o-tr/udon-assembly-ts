@@ -36,5 +36,6 @@ describe("inline recursive static method", () => {
 
     expect(result.tac).toContain("__inlineRec_Base_factorial");
     expect(result.tac).toContain("__inlineRec_Base_factorial_selfCallResult_");
+    expect(result.tac).not.toContain("__inlineRec_Derived_factorial");
   });
 });
