@@ -2310,6 +2310,8 @@ function hasInlineClassParamDependentUse(
         }
       }
       if (isInlineCall) {
+        // Only guard params here; locals get their own instance-map
+        // entry during body emission, so passing them is safe.
         for (const arg of ce.arguments) {
           if (
             arg.kind === ASTNodeKind.Identifier &&
@@ -2611,6 +2613,10 @@ function emitInlineOutlinedBody(
     methodName,
     instancePrefix,
   };
+  // Currently always undefined: checkOutlineIneligible rejects
+  // isInlineHandleType returns, which subsumes the returnInstancePrefix
+  // condition. Retained for defensive correctness in case the
+  // subsumption invariant is ever relaxed.
   state.returnVarInlineInstance = returnVarInlineInstance;
   converter.outlinedMethods.set(
     outlineMapKey(kind, declaringClassName, methodName, instancePrefix),
@@ -2647,6 +2653,8 @@ function emitInlineOutlinedBody(
           createConstant(site.index, PrimitiveTypes.int32),
         ),
       );
+      // ConditionalJumpInstruction is "ifFalse goto": jumps when
+      // cmpResult is false (i.e. idx == site.index → match found).
       converter.emit(
         new ConditionalJumpInstruction(cmpResult, createLabel(site.labelName)),
       );
