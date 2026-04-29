@@ -2013,7 +2013,7 @@ function emitInlineRecursiveStaticMethod(
         PrimitiveTypes.int32,
         { isLocal: true },
       );
-      for (const site of ctx?.returnSites) {
+      for (const site of ctx.returnSites) {
         const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
         converter.emit(
           new BinaryOpInstruction(
