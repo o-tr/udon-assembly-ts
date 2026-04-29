@@ -1906,7 +1906,6 @@ function emitInlineRecursiveStaticMethod(
 
     // Set up inline recursive context
     const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
-      className,
       declaringClassName,
       methodName,
       locals,
