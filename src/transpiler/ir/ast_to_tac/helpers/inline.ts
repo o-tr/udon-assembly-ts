@@ -1646,26 +1646,18 @@ export function visitInlineStaticMethodCall(
       // Invariant: pass1EmitCount is monotonically increasing within a
       // single pass-1 run (resetState clears it only between passes).
       const emitBefore = this.pass1EmitCount;
-      // Let the existing pass-1 traversal run below; capture emit delta after.
-      // We use a one-shot flag to capture bodyInstr at the end of this function.
-      const captureBodyInstr = (): void => {
-        info.bodyInstr = this.pass1EmitCount - emitBefore;
-      };
-      // Schedule capture after the normal path finishes.
-      try {
-        return visitInlineStaticMethodCallImpl.call(
-          this,
-          className,
-          methodName,
-          method,
-          resolved,
-          args,
-          inlineKey,
-          info.selfCallCount,
-        );
-      } finally {
-        captureBodyInstr();
-      }
+      const result = visitInlineStaticMethodCallImpl.call(
+        this,
+        className,
+        methodName,
+        method,
+        resolved,
+        args,
+        inlineKey,
+        info.selfCallCount,
+      );
+      info.bodyInstr = this.pass1EmitCount - emitBefore;
+      return result;
     }
     // When bodyInstr is already set (second+ call site in pass 1), fall
     // through to the normal inline path so metadata like soaClasses is
@@ -2812,7 +2804,7 @@ function emitInlineOutlinedBody(
     // registered after this lambda was pushed would be silently missing.
     if (state.returnSites.length < OUTLINE_MIN_CALL_SITES) {
       converter.warnAt(
-        undefined,
+        state.method.body,
         "OutlineDispatchInvariant",
         `Outline dispatch for ${declaringClassName}.${methodName} has ${state.returnSites.length} return site(s), expected at least ${OUTLINE_MIN_CALL_SITES}.`,
       );
@@ -3481,20 +3473,18 @@ function inlineResolvedMethodBody(
       // Invariant: pass1EmitCount is monotonically increasing within a
       // single pass-1 run (resetState clears it only between passes).
       const emitBefore = converter.pass1EmitCount;
-      try {
-        return inlineResolvedMethodBodyImpl(
-          converter,
-          className,
-          methodName,
-          method,
-          args,
-          instancePrefix,
-          declaringClassName,
-          inlineKey,
-        );
-      } finally {
-        info.bodyInstr = converter.pass1EmitCount - emitBefore;
-      }
+      const result = inlineResolvedMethodBodyImpl(
+        converter,
+        className,
+        methodName,
+        method,
+        args,
+        instancePrefix,
+        declaringClassName,
+        inlineKey,
+      );
+      info.bodyInstr = converter.pass1EmitCount - emitBefore;
+      return result;
     }
     // When bodyInstr is already set (second+ call site in pass 1), fall
     // through to the normal inline path so metadata like soaClasses is
