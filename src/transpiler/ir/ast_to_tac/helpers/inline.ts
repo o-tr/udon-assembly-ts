@@ -2188,9 +2188,10 @@ function emitInlineRecursiveStaticMethod(
  * inline calls, because outlined bodies are compiled once without their
  * own inlineInstanceMap entries.
  *
- * Also catches any other Identifier reference to an inline-class param
- * (assignment, ternary, short-circuit) so aliased uses like
- * `const x = p; x.field;` conservatively block outlining.
+ * Also catches direct aliasing via VariableDeclaration / AssignmentExpression
+ * (e.g. `const x = p;`) so that `x.field` doesn't silently break.
+ * Indirect aliasing (e.g. `const x = cond ? p : other`) is not caught
+ * and will surface as a missing-extern-signature error at codegen time.
  */
 function hasInlineClassParamDependentUse(
   converter: ASTToTACConverter,
@@ -2228,8 +2229,21 @@ function hasInlineClassParamDependentUse(
           return;
         }
       }
-    } else if (node.kind === ASTNodeKind.Identifier) {
-      if (inlineParamNames.has((node as IdentifierNode).name)) {
+    } else if (node.kind === ASTNodeKind.VariableDeclaration) {
+      const vd = node as VariableDeclarationNode;
+      if (
+        vd.initializer?.kind === ASTNodeKind.Identifier &&
+        inlineParamNames.has((vd.initializer as IdentifierNode).name)
+      ) {
+        found = true;
+        return;
+      }
+    } else if (node.kind === ASTNodeKind.AssignmentExpression) {
+      const ae = node as AssignmentExpressionNode;
+      if (
+        ae.value.kind === ASTNodeKind.Identifier &&
+        inlineParamNames.has((ae.value as IdentifierNode).name)
+      ) {
         found = true;
         return;
       }
@@ -2425,6 +2439,8 @@ function emitInlineOutlinedBody(
       className: returnType.name,
     });
   }
+  // returnLabel is the deferred dispatch label — its LabelInstruction is
+  // emitted only after all call sites are registered (forward reference).
   converter.inlineReturnStack.push({
     returnVar: result,
     returnLabel: dispatchLabel,
@@ -2522,6 +2538,9 @@ function emitInlineOutlinedBody(
         new ConditionalJumpInstruction(cmpResult, createLabel(site.labelName)),
       );
     }
+    // doneLabel is reachable by fallthrough from the last dispatch comparison
+    // (no match found). Optimizer CFG passes see it as a valid basic block
+    // with a predecessor, so it won't be stripped as dead code.
     converter.emit(new LabelInstruction(doneLabel));
     // Defensive: doneLabel should be unreachable in valid code (all return
     // sites are matched). Log the invariant violation and return to avoid
