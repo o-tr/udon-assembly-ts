@@ -686,6 +686,9 @@ export class ASTToTACConverter {
    * loop that iterates over it) are already known in pass 2.
    */
   convert(program: ProgramNode): TACInstruction[] {
+    // Clear candidates from any previous convert() invocation so that stale
+    // pass-1 data from run N-1 doesn't leak into run N's pass-2.
+    this.outlineCandidates.clear();
     const t0 = PROF ? performance.now() : 0;
     if (PROF) resetProfiling(this);
     // Pass 1: collect inline instance and interface metadata; discard output

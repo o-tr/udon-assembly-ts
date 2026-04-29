@@ -1744,7 +1744,7 @@ function visitInlineStaticMethodCallImpl(
           this,
           method.parameters,
           method.body,
-          method.returnType,
+          returnType,
         )
       ) {
         const existing = this.outlinedMethods.get(outlineKey);
@@ -3108,12 +3108,16 @@ function inlineResolvedMethodBody(
       instancePrefix,
     );
     if (converter.outlineCandidates.has(outlineKey)) {
+      const resolvedReturnType = resolveInlineClassType(
+        converter,
+        method.returnType,
+      );
       if (
         !checkOutlineIneligible(
           converter,
           method.parameters,
           method.body,
-          method.returnType,
+          resolvedReturnType,
         )
       ) {
         const existing = converter.outlinedMethods.get(outlineKey);
