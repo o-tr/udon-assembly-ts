@@ -1626,6 +1626,8 @@ export function visitInlineStaticMethodCall(
       );
     }
     if (info.bodyInstr === undefined) {
+      // Invariant: pass1EmitCount is monotonically increasing within a
+      // single pass-1 run (resetState clears it only between passes).
       const emitBefore = this.pass1EmitCount;
       // Let the existing pass-1 traversal run below; capture emit delta after.
       // We use a one-shot flag to capture bodyInstr at the end of this function.
@@ -2186,9 +2188,9 @@ function emitInlineRecursiveStaticMethod(
  * inline calls, because outlined bodies are compiled once without their
  * own inlineInstanceMap entries.
  *
- * Only detects direct PropertyAccessExpression / CallExpression on parameter
- * identifiers — aliased uses (e.g. `const x = p; x.field;`) are NOT caught
- * and will surface as a missing-extern-signature error at codegen time.
+ * Also catches any other Identifier reference to an inline-class param
+ * (assignment, ternary, short-circuit) so aliased uses like
+ * `const x = p; x.field;` conservatively block outlining.
  */
 function hasInlineClassParamDependentUse(
   converter: ASTToTACConverter,
@@ -2226,6 +2228,11 @@ function hasInlineClassParamDependentUse(
           return;
         }
       }
+    } else if (node.kind === ASTNodeKind.Identifier) {
+      if (inlineParamNames.has((node as IdentifierNode).name)) {
+        found = true;
+        return;
+      }
     }
     for (const key of Object.keys(node)) {
       const v = (node as unknown as Record<string, unknown>)[key];
@@ -2261,6 +2268,10 @@ function checkOutlineIneligible(
   // inline so each call site gets its own inlineInstanceMap entry.
   // This check is O(1) and not cached — the cache is reserved for the
   // expensive AST walk in hasInlineClassParamDependentUse.
+  // Note: isInlineHandleType covers ClassTypeSymbol (in classMap) and
+  // InterfaceTypeSymbol (in interfaceClassIdMap). Type-alias resolution
+  // in saveAndBindInlineParams operates on argument types at each call
+  // site, not the compiled body, so it doesn't create a gap here.
   if (isInlineHandleType(converter, returnType)) {
     return true;
   }
@@ -2998,6 +3009,8 @@ function inlineResolvedMethodBody(
       info.selfCallCount = countSelfCalls(methodName, method.body);
     }
     if (info.bodyInstr === undefined) {
+      // Invariant: pass1EmitCount is monotonically increasing within a
+      // single pass-1 run (resetState clears it only between passes).
       const emitBefore = converter.pass1EmitCount;
       try {
         return inlineResolvedMethodBodyImpl(
