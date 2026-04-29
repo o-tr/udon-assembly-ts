@@ -1303,8 +1303,7 @@ export function inlineSuperConstructorFromArgs(
           emitDeferredInlineInitializers(converter, baseClassNode.name);
         }
       } finally {
-        if (prologueComplete)
-          restoreInlineParams(converter, savedParamEntries);
+        if (prologueComplete) restoreInlineParams(converter, savedParamEntries);
         if (enteredScope) converter.symbolTable.exitScope();
       }
       return;
@@ -1476,8 +1475,7 @@ export function visitInlineConstructor(
           emitDeferredInlineInitializers(this, classNode.name);
         }
       } finally {
-        if (prologueComplete)
-          restoreInlineParams(this, savedParamEntries);
+        if (prologueComplete) restoreInlineParams(this, savedParamEntries);
         if (enteredScope) this.symbolTable.exitScope();
       }
     } else if (classNode.baseClass) {
