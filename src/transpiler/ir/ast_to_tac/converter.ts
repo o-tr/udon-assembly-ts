@@ -692,6 +692,7 @@ export class ASTToTACConverter {
     // here protects the window inside resetState() where the old reference
     // is still live.
     this.outlineCandidates.clear();
+    this.inlineStaticCallInfo = new Map();
     const t0 = PROF ? performance.now() : 0;
     if (PROF) resetProfiling(this);
     // Pass 1: collect inline instance and interface metadata; discard output
