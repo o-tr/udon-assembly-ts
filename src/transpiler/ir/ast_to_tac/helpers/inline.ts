@@ -1538,7 +1538,11 @@ export function visitInlineStaticMethodCall(
   methodName: string,
   args: TACOperand[],
 ): TACOperand | null {
-  const inlineKey = `${className}.${methodName}`;
+  // Walk inheritance chain to find the static method (may be on a base class).
+  const resolved = resolveClassMethod(this, className, methodName, true);
+  if (!resolved) return null;
+  const method = resolved.method;
+  const inlineKey = `${resolved.declaringClassName}.${methodName}`;
 
   // --- Recursive re-entry: emit JUMP-based self-call ---
   if (this.inlineMethodStack.has(inlineKey)) {
@@ -1561,11 +1565,6 @@ export function visitInlineStaticMethodCall(
     return null;
   }
 
-  // Walk inheritance chain to find the static method (may be on a base class).
-  const resolved = resolveClassMethod(this, className, methodName, true);
-  if (!resolved) return null;
-  const method = resolved.method;
-
   let returnType: TypeSymbol = method.returnType;
 
   // F1: upgrade Object-typed inline-class return type to Int32.
@@ -1573,7 +1572,7 @@ export function visitInlineStaticMethodCall(
 
   // --- Check for self-recursion ---
   const selfCallCount = countStaticSelfCalls(
-    className,
+    resolved.declaringClassName,
     methodName,
     method.body,
   );
@@ -2040,7 +2039,8 @@ function emitInlineRecursiveSelfCall(
   ctx: NonNullable<typeof converter.currentInlineRecursiveContext>,
   args: TACOperand[],
 ): TACOperand {
-  if (PROF) profEnter(converter, histKey(ctx.declaringClassName, ctx.methodName));
+  if (PROF)
+    profEnter(converter, histKey(ctx.declaringClassName, ctx.methodName));
   try {
     // 0. Save inlineInstanceMap state so the caller's tracking is restored
     //    after the recursive call (push/pop only covers runtime locals, not
