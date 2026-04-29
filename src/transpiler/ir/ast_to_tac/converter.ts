@@ -688,6 +688,9 @@ export class ASTToTACConverter {
   convert(program: ProgramNode): TACInstruction[] {
     // Clear candidates from any previous convert() invocation so that stale
     // pass-1 data from run N-1 doesn't leak into run N's pass-2.
+    // The set is replaced entirely after pass-1 (line ~799), but clearing
+    // here protects the window inside resetState() where the old reference
+    // is still live.
     this.outlineCandidates.clear();
     const t0 = PROF ? performance.now() : 0;
     if (PROF) resetProfiling(this);

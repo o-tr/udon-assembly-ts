@@ -2525,6 +2525,7 @@ function hasInlineClassParamDependentUse(
         walk(throwNode.expression);
         break;
       }
+      case ASTNodeKind.FunctionDeclaration:
       case ASTNodeKind.FunctionExpression: {
         // Do NOT recurse into closure bodies: inline-class parameter uses
         // inside a closure are not part of the enclosing method's body.
@@ -2817,6 +2818,15 @@ function emitInlineOutlinedBody(
       );
     }
     converter.emit(new LabelInstruction(dispatchLabel));
+    if (state.returnSites.length === 1) {
+      // Single return site — direct jump, no dispatch table needed.
+      converter.emit(
+        new UnconditionalJumpInstruction(
+          createLabel(state.returnSites[0].labelName),
+        ),
+      );
+      return;
+    }
     const returnSiteIdxVarOp = createVariable(
       returnSiteIdxVarName,
       PrimitiveTypes.int32,
