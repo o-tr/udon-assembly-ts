@@ -2442,6 +2442,13 @@ function hasInlineClassParamDependentUse(
       }
       case ASTNodeKind.ReturnStatement: {
         const retNode = node as ReturnStatementNode;
+        if (
+          retNode.value?.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((retNode.value as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
         if (retNode.value) walk(retNode.value);
         break;
       }
