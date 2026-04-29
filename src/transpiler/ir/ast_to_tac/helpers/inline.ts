@@ -35,6 +35,8 @@ import {
   type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
+  type FunctionDeclarationNode,
+  type FunctionExpressionNode,
   type IdentifierNode,
   type IfStatementNode,
   isNumericUdonType,
@@ -2281,82 +2283,226 @@ function hasInlineClassParamDependentUse(
   let found = false;
   const walk = (node: ASTNode): void => {
     if (found) return;
-    if (node.kind === ASTNodeKind.PropertyAccessExpression) {
-      const pa = node as PropertyAccessExpressionNode;
-      if (
-        pa.object.kind === ASTNodeKind.Identifier &&
-        inlineParamNames.has((pa.object as IdentifierNode).name)
-      ) {
-        found = true;
-        return;
-      }
-    } else if (node.kind === ASTNodeKind.CallExpression) {
-      const ce = node as CallExpressionNode;
-      // Flag calls to inline-class methods: static (ClassName.method),
-      // constructor (new ClassName), this.method() in an inline class,
-      // or instance calls on locally-declared inline-typed variables.
-      let isInlineCall = isCallToInlineClassMethod(converter, ce);
-      if (
-        !isInlineCall &&
-        ce.callee.kind === ASTNodeKind.PropertyAccessExpression
-      ) {
-        const pa = ce.callee as PropertyAccessExpressionNode;
+    switch (node.kind) {
+      case ASTNodeKind.PropertyAccessExpression: {
+        const pa = node as PropertyAccessExpressionNode;
         if (
           pa.object.kind === ASTNodeKind.Identifier &&
-          localInlineVarNames.has((pa.object as IdentifierNode).name)
+          inlineParamNames.has((pa.object as IdentifierNode).name)
         ) {
-          isInlineCall = true;
+          found = true;
+          return;
         }
+        walk(pa.object);
+        break;
       }
-      if (isInlineCall) {
-        // Only guard params here; locals get their own instance-map
-        // entry during body emission, so passing them is safe.
-        for (const arg of ce.arguments) {
+      case ASTNodeKind.CallExpression: {
+        const ce = node as CallExpressionNode;
+        // Flag calls to inline-class methods: static (ClassName.method),
+        // constructor (new ClassName), this.method() in an inline class,
+        // or instance calls on locally-declared inline-typed variables.
+        let isInlineCall = isCallToInlineClassMethod(converter, ce);
+        if (
+          !isInlineCall &&
+          ce.callee.kind === ASTNodeKind.PropertyAccessExpression
+        ) {
+          const pa = ce.callee as PropertyAccessExpressionNode;
           if (
-            arg.kind === ASTNodeKind.Identifier &&
-            inlineParamNames.has((arg as IdentifierNode).name)
+            pa.object.kind === ASTNodeKind.Identifier &&
+            localInlineVarNames.has((pa.object as IdentifierNode).name)
           ) {
-            found = true;
-            return;
+            isInlineCall = true;
           }
         }
-      }
-    } else if (node.kind === ASTNodeKind.VariableDeclaration) {
-      const vd = node as VariableDeclarationNode;
-      if (isInlineHandleType(converter, vd.type)) {
-        localInlineVarNames.add(vd.name);
-      }
-      if (
-        vd.initializer?.kind === ASTNodeKind.Identifier &&
-        inlineParamNames.has((vd.initializer as IdentifierNode).name)
-      ) {
-        found = true;
-        return;
-      }
-    } else if (node.kind === ASTNodeKind.AssignmentExpression) {
-      const ae = node as AssignmentExpressionNode;
-      if (
-        ae.value.kind === ASTNodeKind.Identifier &&
-        inlineParamNames.has((ae.value as IdentifierNode).name)
-      ) {
-        found = true;
-        return;
-      }
-    }
-    for (const key of Object.keys(node)) {
-      const v = (node as unknown as Record<string, unknown>)[key];
-      if (!v || typeof v !== "object") continue;
-      if (Array.isArray(v)) {
-        for (const item of v) {
-          if (item && typeof item === "object" && "kind" in (item as object)) {
-            walk(item as ASTNode);
-            if (found) return;
+        if (isInlineCall) {
+          // Only guard params here; locals get their own instance-map
+          // entry during body emission, so passing them is safe.
+          for (const arg of ce.arguments) {
+            if (
+              arg.kind === ASTNodeKind.Identifier &&
+              inlineParamNames.has((arg as IdentifierNode).name)
+            ) {
+              found = true;
+              return;
+            }
           }
         }
-      } else if ("kind" in (v as object)) {
-        walk(v as ASTNode);
-        if (found) return;
+        walk(ce.callee);
+        for (const arg of ce.arguments) walk(arg);
+        break;
       }
+      case ASTNodeKind.VariableDeclaration: {
+        const vd = node as VariableDeclarationNode;
+        if (isInlineHandleType(converter, vd.type)) {
+          localInlineVarNames.add(vd.name);
+        }
+        if (
+          vd.initializer?.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((vd.initializer as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
+        if (vd.initializer) walk(vd.initializer);
+        break;
+      }
+      case ASTNodeKind.AssignmentExpression: {
+        const ae = node as AssignmentExpressionNode;
+        if (
+          ae.value.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((ae.value as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
+        walk(ae.target);
+        walk(ae.value);
+        break;
+      }
+      case ASTNodeKind.BlockStatement: {
+        const block = node as BlockStatementNode;
+        for (const stmt of block.statements) walk(stmt);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        walk(exprStmt.expression);
+        break;
+      }
+      case ASTNodeKind.IfStatement: {
+        const ifNode = node as IfStatementNode;
+        walk(ifNode.condition);
+        walk(ifNode.thenBranch);
+        if (ifNode.elseBranch) walk(ifNode.elseBranch);
+        break;
+      }
+      case ASTNodeKind.WhileStatement: {
+        const whileNode = node as WhileStatementNode;
+        walk(whileNode.condition);
+        walk(whileNode.body);
+        break;
+      }
+      case ASTNodeKind.ForStatement: {
+        const forNode = node as ForStatementNode;
+        if (forNode.initializer) walk(forNode.initializer);
+        if (forNode.condition) walk(forNode.condition);
+        if (forNode.incrementor) walk(forNode.incrementor);
+        walk(forNode.body);
+        break;
+      }
+      case ASTNodeKind.ForOfStatement: {
+        const forOfNode = node as ForOfStatementNode;
+        walk(forOfNode.iterable);
+        walk(forOfNode.body);
+        break;
+      }
+      case ASTNodeKind.DoWhileStatement: {
+        const doNode = node as DoWhileStatementNode;
+        walk(doNode.body);
+        walk(doNode.condition);
+        break;
+      }
+      case ASTNodeKind.SwitchStatement: {
+        const switchNode = node as SwitchStatementNode;
+        walk(switchNode.expression);
+        for (const clause of switchNode.cases) {
+          if (clause.expression) walk(clause.expression);
+          for (const stmt of clause.statements) walk(stmt);
+        }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        walk(tryNode.tryBody);
+        if (tryNode.catchBody) walk(tryNode.catchBody);
+        if (tryNode.finallyBody) walk(tryNode.finallyBody);
+        break;
+      }
+      case ASTNodeKind.ReturnStatement: {
+        const retNode = node as ReturnStatementNode;
+        if (retNode.value) walk(retNode.value);
+        break;
+      }
+      case ASTNodeKind.BinaryExpression: {
+        const binNode = node as BinaryExpressionNode;
+        walk(binNode.left);
+        walk(binNode.right);
+        break;
+      }
+      case ASTNodeKind.UnaryExpression: {
+        const unaryNode = node as UnaryExpressionNode;
+        walk(unaryNode.operand);
+        break;
+      }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        walk(condNode.condition);
+        walk(condNode.whenTrue);
+        walk(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const ncNode = node as NullCoalescingExpressionNode;
+        walk(ncNode.left);
+        walk(ncNode.right);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const templateNode = node as TemplateExpressionNode;
+        for (const part of templateNode.parts) {
+          if (part.kind === "expression") walk(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) walk(prop.value);
+        break;
+      }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const el of arrNode.elements) walk(el.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        walk(delNode.target);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updateNode = node as UpdateExpressionNode;
+        walk(updateNode.operand);
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        const asNode = node as AsExpressionNode;
+        walk(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accessNode = node as ArrayAccessExpressionNode;
+        walk(accessNode.array);
+        walk(accessNode.index);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        walk(optNode.object);
+        break;
+      }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        walk(throwNode.expression);
+        break;
+      }
+      case ASTNodeKind.FunctionExpression: {
+        // Do NOT recurse into closure bodies: inline-class parameter uses
+        // inside a closure are not part of the enclosing method's body.
+        break;
+      }
+      // Leaf nodes (and decorators) require no traversal.
+      default:
+        break;
     }
   };
   for (const stmt of body.statements) {
@@ -2957,37 +3103,177 @@ function inlineInstanceMethodCallCore(
  * so admitting either kind would cause one body's allocations to be cached
  * under the parent body's frame.
  */
-function containsAllocOrCall(node: ASTNode | undefined): boolean {
+function containsAllocOrCall(node: ASTNode | null | undefined): boolean {
   if (!node) return false;
-  if (
-    node.kind === ASTNodeKind.CallExpression ||
-    node.kind === ASTNodeKind.ObjectLiteralExpression
-  ) {
-    return true;
-  }
-  // Use Object.keys (own enumerable only) so the walker is not perturbed
-  // by future prototype additions on the AST base shape. The "kind" check
-  // gates descent at child nodes; TypeSymbol references on AST nodes have
-  // no kind property, so they are skipped.
-  for (const key of Object.keys(node)) {
-    const v = (node as unknown as Record<string, unknown>)[key];
-    if (!v || typeof v !== "object") continue;
-    if (Array.isArray(v)) {
-      for (const item of v) {
+  switch (node.kind) {
+    case ASTNodeKind.CallExpression:
+    case ASTNodeKind.ObjectLiteralExpression:
+      return true;
+    case ASTNodeKind.PropertyAccessExpression: {
+      const pa = node as PropertyAccessExpressionNode;
+      return containsAllocOrCall(pa.object);
+    }
+    case ASTNodeKind.VariableDeclaration: {
+      const vd = node as VariableDeclarationNode;
+      return containsAllocOrCall(vd.initializer);
+    }
+    case ASTNodeKind.AssignmentExpression: {
+      const ae = node as AssignmentExpressionNode;
+      return containsAllocOrCall(ae.target) || containsAllocOrCall(ae.value);
+    }
+    case ASTNodeKind.BlockStatement: {
+      const block = node as BlockStatementNode;
+      for (const stmt of block.statements) {
+        if (containsAllocOrCall(stmt)) return true;
+      }
+      return false;
+    }
+    case ASTNodeKind.ExpressionStatement: {
+      const exprStmt = node as ExpressionStatementNode;
+      return containsAllocOrCall(exprStmt.expression);
+    }
+    case ASTNodeKind.IfStatement: {
+      const ifNode = node as IfStatementNode;
+      return (
+        containsAllocOrCall(ifNode.condition) ||
+        containsAllocOrCall(ifNode.thenBranch) ||
+        containsAllocOrCall(ifNode.elseBranch)
+      );
+    }
+    case ASTNodeKind.WhileStatement: {
+      const whileNode = node as WhileStatementNode;
+      return (
+        containsAllocOrCall(whileNode.condition) ||
+        containsAllocOrCall(whileNode.body)
+      );
+    }
+    case ASTNodeKind.ForStatement: {
+      const forNode = node as ForStatementNode;
+      return (
+        containsAllocOrCall(forNode.initializer) ||
+        containsAllocOrCall(forNode.condition) ||
+        containsAllocOrCall(forNode.incrementor) ||
+        containsAllocOrCall(forNode.body)
+      );
+    }
+    case ASTNodeKind.ForOfStatement: {
+      const forOfNode = node as ForOfStatementNode;
+      return (
+        containsAllocOrCall(forOfNode.iterable) ||
+        containsAllocOrCall(forOfNode.body)
+      );
+    }
+    case ASTNodeKind.DoWhileStatement: {
+      const doNode = node as DoWhileStatementNode;
+      return (
+        containsAllocOrCall(doNode.body) ||
+        containsAllocOrCall(doNode.condition)
+      );
+    }
+    case ASTNodeKind.SwitchStatement: {
+      const switchNode = node as SwitchStatementNode;
+      if (containsAllocOrCall(switchNode.expression)) return true;
+      for (const clause of switchNode.cases) {
+        if (containsAllocOrCall(clause.expression)) return true;
+        for (const stmt of clause.statements) {
+          if (containsAllocOrCall(stmt)) return true;
+        }
+      }
+      return false;
+    }
+    case ASTNodeKind.TryCatchStatement: {
+      const tryNode = node as TryCatchStatementNode;
+      return (
+        containsAllocOrCall(tryNode.tryBody) ||
+        containsAllocOrCall(tryNode.catchBody) ||
+        containsAllocOrCall(tryNode.finallyBody)
+      );
+    }
+    case ASTNodeKind.ReturnStatement: {
+      const retNode = node as ReturnStatementNode;
+      return containsAllocOrCall(retNode.value);
+    }
+    case ASTNodeKind.BinaryExpression: {
+      const binNode = node as BinaryExpressionNode;
+      return (
+        containsAllocOrCall(binNode.left) || containsAllocOrCall(binNode.right)
+      );
+    }
+    case ASTNodeKind.UnaryExpression: {
+      const unaryNode = node as UnaryExpressionNode;
+      return containsAllocOrCall(unaryNode.operand);
+    }
+    case ASTNodeKind.ConditionalExpression: {
+      const condNode = node as ConditionalExpressionNode;
+      return (
+        containsAllocOrCall(condNode.condition) ||
+        containsAllocOrCall(condNode.whenTrue) ||
+        containsAllocOrCall(condNode.whenFalse)
+      );
+    }
+    case ASTNodeKind.NullCoalescingExpression: {
+      const ncNode = node as NullCoalescingExpressionNode;
+      return (
+        containsAllocOrCall(ncNode.left) || containsAllocOrCall(ncNode.right)
+      );
+    }
+    case ASTNodeKind.TemplateExpression: {
+      const templateNode = node as TemplateExpressionNode;
+      for (const part of templateNode.parts) {
         if (
-          item &&
-          typeof item === "object" &&
-          "kind" in (item as object) &&
-          containsAllocOrCall(item as ASTNode)
+          part.kind === "expression" &&
+          containsAllocOrCall(part.expression)
         ) {
           return true;
         }
       }
-    } else if ("kind" in (v as object)) {
-      if (containsAllocOrCall(v as ASTNode)) return true;
+      return false;
     }
+    case ASTNodeKind.DeleteExpression: {
+      const delNode = node as DeleteExpressionNode;
+      return containsAllocOrCall(delNode.target);
+    }
+    case ASTNodeKind.UpdateExpression: {
+      const updateNode = node as UpdateExpressionNode;
+      return containsAllocOrCall(updateNode.operand);
+    }
+    case ASTNodeKind.AsExpression: {
+      const asNode = node as AsExpressionNode;
+      return containsAllocOrCall(asNode.expression);
+    }
+    case ASTNodeKind.ArrayAccessExpression: {
+      const accessNode = node as ArrayAccessExpressionNode;
+      return (
+        containsAllocOrCall(accessNode.array) ||
+        containsAllocOrCall(accessNode.index)
+      );
+    }
+    case ASTNodeKind.OptionalChainingExpression: {
+      const optNode = node as OptionalChainingExpressionNode;
+      return containsAllocOrCall(optNode.object);
+    }
+    case ASTNodeKind.ThrowStatement: {
+      const throwNode = node as ThrowStatementNode;
+      return containsAllocOrCall(throwNode.expression);
+    }
+    case ASTNodeKind.ArrayLiteralExpression: {
+      const arrNode = node as ArrayLiteralExpressionNode;
+      for (const el of arrNode.elements) {
+        if (containsAllocOrCall(el.value)) return true;
+      }
+      return false;
+    }
+    case ASTNodeKind.FunctionExpression: {
+      const fnNode = node as FunctionExpressionNode;
+      return containsAllocOrCall(fnNode.body);
+    }
+    case ASTNodeKind.FunctionDeclaration: {
+      const fnNode = node as FunctionDeclarationNode;
+      return containsAllocOrCall(fnNode.body);
+    }
+    default:
+      return false;
   }
-  return false;
 }
 
 /**
