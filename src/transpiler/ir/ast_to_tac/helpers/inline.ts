@@ -2911,7 +2911,7 @@ function emitOutlinedCallSite(
         { isLocal: true },
       );
       converter.emit(
-        new CopyInstruction(
+        new AssignmentInstruction(
           returnSiteIdxVar,
           createConstant(returnSiteIdx, PrimitiveTypes.int32),
         ),
@@ -3313,6 +3313,10 @@ function containsAllocOrCall(node: ASTNode | null | undefined): boolean {
       return containsAllocOrCall(fnNode.body);
     }
     default:
+      // Leaf nodes (Identifier, ThisExpression, literals, etc.) and any
+      // unrecognised future node kinds.  Returning false here matches
+      // leaf semantics; if a new composite node kind is added, it must
+      // be given an explicit case to avoid silently skipping children.
       return false;
   }
 }
