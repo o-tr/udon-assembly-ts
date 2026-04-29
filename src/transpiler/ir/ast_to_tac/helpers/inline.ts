@@ -77,8 +77,8 @@ import {
   type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
-import { OUTLINE_MIN_CALL_SITES } from "../converter.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { OUTLINE_MIN_CALL_SITES } from "../converter.js";
 import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
@@ -2604,6 +2604,12 @@ function emitInlineOutlinedBody(
       PrimitiveTypes.string,
     );
     converter.emit(new CallInstruction(undefined, logErrorExtern, [errMsg]));
+    // Use a JUMP to a local abort label instead of RETURN inline so that
+    // the doneLabel block ends with a control-flow instruction and never
+    // leaves a post-RETURN instruction-stream head for the backend.
+    const abortLabel = converter.newLabel("outline_abort");
+    converter.emit(new UnconditionalJumpInstruction(abortLabel));
+    converter.emit(new LabelInstruction(abortLabel));
     converter.emit(new ReturnInstruction());
   });
 
