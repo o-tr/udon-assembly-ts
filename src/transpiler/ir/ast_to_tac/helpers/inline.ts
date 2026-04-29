@@ -1785,8 +1785,24 @@ function emitInlineRecursiveStaticMethod(
     const returnStackDepth = converter.inlineReturnStack.length;
     const bodyStackDepth = converter.inlinedBodyStack.length;
     let savedInitialParams: InlineParamSave | undefined;
-    let ctx: NonNullable<typeof converter.currentInlineRecursiveContext> | null =
-      null;
+    const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
+      className,
+      methodName,
+      locals,
+      depthVar,
+      spVar,
+      stackVars,
+      returnSites: [],
+      // Start at 1: index 0 is reserved as sentinel for the initial
+      // (non-recursive) caller. The dispatch table only contains sites
+      // 1, 2, … and falls through to doneLabel for index 0.
+      nextReturnSiteIndex: 1,
+      nextSelfCallResultIndex: 0,
+      entryLabel,
+      dispatchLabel,
+      overflowLabel,
+      returnVar: result,
+    };
 
     converter.symbolTable.enterScope();
     try {
@@ -1871,9 +1887,7 @@ function emitInlineRecursiveStaticMethod(
             createConstant(0, PrimitiveTypes.int32),
           ),
         );
-        const skipSpResetLabel = converter.newLabel(
-          "inline_rec_skip_sp_reset",
-        );
+        const skipSpResetLabel = converter.newLabel("inline_rec_skip_sp_reset");
         converter.emit(
           new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
         );
@@ -1928,26 +1942,6 @@ function emitInlineRecursiveStaticMethod(
 
       // --- Entry label (JUMP target for recursive calls) ---
       converter.emit(new LabelInstruction(entryLabel));
-
-      // Set up inline recursive context
-      ctx = {
-        className,
-        methodName,
-        locals,
-        depthVar,
-        spVar,
-        stackVars,
-        returnSites: [],
-        // Start at 1: index 0 is reserved as sentinel for the initial
-        // (non-recursive) caller. The dispatch table only contains sites
-        // 1, 2, … and falls through to doneLabel for index 0.
-        nextReturnSiteIndex: 1,
-        nextSelfCallResultIndex: 0,
-        entryLabel,
-        dispatchLabel,
-        overflowLabel,
-        returnVar: result,
-      };
 
       converter.currentInlineRecursiveContext = ctx;
 
@@ -2019,7 +2013,7 @@ function emitInlineRecursiveStaticMethod(
         PrimitiveTypes.int32,
         { isLocal: true },
       );
-      for (const site of ctx!.returnSites) {
+      for (const site of ctx?.returnSites) {
         const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
         converter.emit(
           new BinaryOpInstruction(
