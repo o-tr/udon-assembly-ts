@@ -77,6 +77,7 @@ import {
   type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
+import { OUTLINE_MIN_CALL_SITES } from "../converter.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
@@ -2310,9 +2311,11 @@ function checkOutlineIneligible(
   // This check is O(1) and not cached — the cache is reserved for the
   // expensive AST walk in hasInlineClassParamDependentUse.
   // Note: isInlineHandleType covers ClassTypeSymbol (in classMap) and
-  // InterfaceTypeSymbol (in interfaceClassIdMap). Type-alias resolution
-  // in saveAndBindInlineParams operates on argument types at each call
-  // site, not the compiled body, so it doesn't create a gap here.
+  // InterfaceTypeSymbol (in interfaceClassIdMap), which subsumes the
+  // returnInstancePrefix condition (InterfaceTypeSymbol with properties).
+  // Type-alias resolution in saveAndBindInlineParams operates on argument
+  // types at each call site, not the compiled body, so it doesn't create
+  // a gap here.
   if (isInlineHandleType(converter, returnType)) {
     return true;
   }
@@ -2414,6 +2417,7 @@ function emitInlineOutlinedBody(
 
   const entryLabel = converter.newLabel("outline_entry");
   const dispatchLabel = converter.newLabel("outline_dispatch");
+  const bodyReturnLabel = converter.newLabel("outline_body_return");
   const doneLabel = converter.newLabel("outline_done");
 
   // Skip-around: jump past the outlined body to the first call site.
@@ -2466,11 +2470,14 @@ function emitInlineOutlinedBody(
       className: returnType.name,
     });
   }
-  // returnLabel is the deferred dispatch label — its LabelInstruction is
-  // emitted only after all call sites are registered (forward reference).
+  // returnLabel routes to a body-local label so that early returns land
+  // here first; from there we unconditionally jump to the deferred dispatch
+  // label.  This keeps dispatchLabel exclusively inside the deferred lambda
+  // and avoids duplicate label definitions if visitReturnStatement ever
+  // starts emitting a return label inline.
   converter.inlineReturnStack.push({
     returnVar: result,
-    returnLabel: dispatchLabel,
+    returnLabel: bodyReturnLabel,
     returnTrackingInvalidated: false,
     loopDepth: converter.loopContextStack.length,
     returnInstancePrefix,
@@ -2509,7 +2516,10 @@ function emitInlineOutlinedBody(
     converter.symbolTable.exitScope();
   }
 
-  // Fallthrough at end of body: jump to dispatch
+  // Fallthrough at end of body: land at bodyReturnLabel, then jump to
+  // the deferred dispatch label.  bodyReturnLabel is also the target for
+  // all early returns inside the outlined body.
+  converter.emit(new LabelInstruction(bodyReturnLabel));
   converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
 
   // --- Register the outlined method state ---
@@ -2545,6 +2555,16 @@ function emitInlineOutlinedBody(
   // N is typically 2–5. Even at higher N the 2N dispatch instructions are
   // negligible vs. the ≥50k-instruction body being deduplicated, so no cap.
   converter.pendingOutlineDispatches.push(() => {
+    // Invariant: all call sites must be registered before the dispatch is
+    // built.  If the converter were ever flushed incrementally, sites
+    // registered after this lambda was pushed would be silently missing.
+    if (state.returnSites.length < OUTLINE_MIN_CALL_SITES) {
+      converter.warnAt(
+        undefined,
+        "OutlineDispatchInvariant",
+        `Outline dispatch for ${declaringClassName}.${methodName} has ${state.returnSites.length} return site(s), expected at least ${OUTLINE_MIN_CALL_SITES}.`,
+      );
+    }
     converter.emit(new LabelInstruction(dispatchLabel));
     const returnSiteIdxVarOp = createVariable(
       returnSiteIdxVarName,
