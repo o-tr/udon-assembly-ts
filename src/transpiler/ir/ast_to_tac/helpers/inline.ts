@@ -1538,12 +1538,20 @@ export function visitInlineStaticMethodCall(
   methodName: string,
   args: TACOperand[],
 ): TACOperand | null {
-  const inlineKey = `${className}.${methodName}`;
+  // Walk inheritance chain to find the static method (may be on a base class).
+  const resolved = resolveClassMethod(this, className, methodName, true);
+  if (!resolved) return null;
+  const method = resolved.method;
+  const inlineKey = `${resolved.declaringClassName}.${methodName}`;
 
   // --- Recursive re-entry: emit JUMP-based self-call ---
   if (this.inlineMethodStack.has(inlineKey)) {
     const ctx = this.currentInlineRecursiveContext;
-    if (ctx && ctx.className === className && ctx.methodName === methodName) {
+    if (
+      ctx &&
+      ctx.declaringClassName === resolved.declaringClassName &&
+      ctx.methodName === methodName
+    ) {
       return emitInlineRecursiveSelfCall(this, ctx, args);
     }
     // No matching recursive context — this can happen for non-recursive
@@ -1552,15 +1560,10 @@ export function visitInlineStaticMethodCall(
     this.warnAt(
       undefined,
       "InlineRecursiveReentry",
-      `recursive re-entry for ${className}.${methodName} but no matching inline recursive context — falling through to extern.`,
+      `recursive re-entry for ${resolved.declaringClassName}.${methodName} but no matching inline recursive context — falling through to extern.`,
     );
     return null;
   }
-
-  // Walk inheritance chain to find the static method (may be on a base class).
-  const resolved = resolveClassMethod(this, className, methodName, true);
-  if (!resolved) return null;
-  const method = resolved.method;
 
   let returnType: TypeSymbol = method.returnType;
 
@@ -1569,7 +1572,7 @@ export function visitInlineStaticMethodCall(
 
   // --- Check for self-recursion ---
   const selfCallCount = countStaticSelfCalls(
-    className,
+    resolved.declaringClassName,
     methodName,
     method.body,
   );
@@ -1580,12 +1583,11 @@ export function visitInlineStaticMethodCall(
       this.warnAt(
         undefined,
         "InlineErasedReturnType",
-        `inline recursive static method ${className}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
+        `inline recursive static method ${resolved.declaringClassName}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
       );
     }
     return emitInlineRecursiveStaticMethod(
       this,
-      className,
       methodName,
       method,
       returnType,
@@ -1708,7 +1710,6 @@ export function visitInlineStaticMethodCall(
  */
 function emitInlineRecursiveStaticMethod(
   converter: ASTToTACConverter,
-  className: string,
   methodName: string,
   method: {
     parameters: Array<{ name: string; type: TypeSymbol }>;
@@ -1719,11 +1720,11 @@ function emitInlineRecursiveStaticMethod(
   args: TACOperand[],
   selfCallCount: number,
   inlineKey: string,
-  declaringClassName: string = className,
+  declaringClassName: string,
 ): TACOperand {
   if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
-    const prefix = `__inlineRec_${className}_${methodName}`;
+    const prefix = `__inlineRec_${declaringClassName}_${methodName}`;
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
@@ -1785,8 +1786,148 @@ function emitInlineRecursiveStaticMethod(
     const returnStackDepth = converter.inlineReturnStack.length;
     const bodyStackDepth = converter.inlinedBodyStack.length;
     let savedInitialParams: InlineParamSave | undefined;
+
+    converter.symbolTable.enterScope();
+    savedInitialParams = saveAndBindInlineParams(
+      converter,
+      method.parameters,
+      args,
+    );
+    // Set initial return site index to 0 (sentinel: initial caller)
+    const returnSiteIdxVar = createVariable(
+      returnSiteIdxVarName,
+      PrimitiveTypes.int32,
+      { isLocal: true },
+    );
+    converter.emit(
+      new AssignmentInstruction(
+        returnSiteIdxVar,
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+    );
+
+    // --- Prologue: stack allocation (once) ---
+    const stackInitFlagName = `${prefix}_stackInit`;
+    const stackInitFlag = createVariable(
+      stackInitFlagName,
+      PrimitiveTypes.boolean,
+    );
+    const notInitialized = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        notInitialized,
+        stackInitFlag,
+        "==",
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
+    );
+    const skipAllocLabel = converter.newLabel("inline_rec_skip_alloc");
+    converter.emit(
+      new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
+    );
+    {
+      converter.emitCopyWithTracking(
+        stackInitFlag,
+        createConstant(true, PrimitiveTypes.boolean),
+      );
+      const defaultToken = converter.wrapDataToken(
+        createConstant(0, PrimitiveTypes.single),
+      );
+      for (const stackVarInfo of stackVars) {
+        const stackVar = createVariable(
+          stackVarInfo.name,
+          ExternTypes.dataList,
+        );
+        const externSig = converter.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
+        converter.emit(new CallInstruction(stackVar, externSig, []));
+        for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
+          converter.emit(
+            new MethodCallInstruction(undefined, stackVar, "Add", [
+              defaultToken,
+            ]),
+          );
+        }
+      }
+    }
+    converter.emit(new LabelInstruction(skipAllocLabel));
+
+    // Reset SP when at top level
+    {
+      const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+      const depthAtTopLevel = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          depthAtTopLevel,
+          depthVarOp,
+          "<=",
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      const skipSpResetLabel = converter.newLabel("inline_rec_skip_sp_reset");
+      converter.emit(
+        new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
+      );
+      const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+      converter.emitCopyWithTracking(
+        spVarOp,
+        createConstant(-1, PrimitiveTypes.int32),
+      );
+      converter.emitCopyWithTracking(
+        depthVarOp,
+        createConstant(0, PrimitiveTypes.int32),
+      );
+      converter.emit(new LabelInstruction(skipSpResetLabel));
+    }
+
+    // Overflow handler
+    {
+      const afterOverflowLabel = converter.newLabel(
+        "inline_rec_after_overflow",
+      );
+      converter.emit(new UnconditionalJumpInstruction(afterOverflowLabel));
+      converter.emit(new LabelInstruction(overflowLabel));
+      const logErrorExtern = converter.requireExternSignature(
+        "Debug",
+        "LogError",
+        "method",
+        ["object"],
+        "void",
+      );
+      const overflowMsg = createConstant(
+        `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${declaringClassName}.${methodName}.`,
+        PrimitiveTypes.string,
+      );
+      converter.emit(
+        new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+      );
+      // Reset depth and SP so subsequent invocations can re-enter cleanly.
+      converter.emitCopyWithTracking(
+        createVariable(depthVar, PrimitiveTypes.int32),
+        createConstant(0, PrimitiveTypes.int32),
+      );
+      // SP = -1 (empty-stack sentinel, consistent with top-level entry reset)
+      converter.emitCopyWithTracking(
+        createVariable(spVar, PrimitiveTypes.int32),
+        createConstant(-1, PrimitiveTypes.int32),
+      );
+      // Jump to done (return default value) instead of ReturnInstruction
+      // because we're inside an inlined method, not a top-level method.
+      converter.emit(new UnconditionalJumpInstruction(doneLabel));
+      converter.emit(new LabelInstruction(afterOverflowLabel));
+    }
+
+    // --- Entry label (JUMP target for recursive calls) ---
+    converter.emit(new LabelInstruction(entryLabel));
+
+    // Set up inline recursive context
     const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
-      className,
+      declaringClassName,
       methodName,
       locals,
       depthVar,
@@ -1804,145 +1945,7 @@ function emitInlineRecursiveStaticMethod(
       returnVar: result,
     };
 
-    converter.symbolTable.enterScope();
     try {
-      savedInitialParams = saveAndBindInlineParams(
-        converter,
-        method.parameters,
-        args,
-      );
-      // Set initial return site index to 0 (sentinel: initial caller)
-      const returnSiteIdxVar = createVariable(
-        returnSiteIdxVarName,
-        PrimitiveTypes.int32,
-        { isLocal: true },
-      );
-      converter.emit(
-        new AssignmentInstruction(
-          returnSiteIdxVar,
-          createConstant(0, PrimitiveTypes.int32),
-        ),
-      );
-
-      // --- Prologue: stack allocation (once) ---
-      const stackInitFlagName = `${prefix}_stackInit`;
-      const stackInitFlag = createVariable(
-        stackInitFlagName,
-        PrimitiveTypes.boolean,
-      );
-      const notInitialized = converter.newTemp(PrimitiveTypes.boolean);
-      converter.emit(
-        new BinaryOpInstruction(
-          notInitialized,
-          stackInitFlag,
-          "==",
-          createConstant(false, PrimitiveTypes.boolean),
-        ),
-      );
-      const skipAllocLabel = converter.newLabel("inline_rec_skip_alloc");
-      converter.emit(
-        new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
-      );
-      {
-        converter.emitCopyWithTracking(
-          stackInitFlag,
-          createConstant(true, PrimitiveTypes.boolean),
-        );
-        const defaultToken = converter.wrapDataToken(
-          createConstant(0, PrimitiveTypes.single),
-        );
-        for (const stackVarInfo of stackVars) {
-          const stackVar = createVariable(
-            stackVarInfo.name,
-            ExternTypes.dataList,
-          );
-          const externSig = converter.requireExternSignature(
-            "DataList",
-            "ctor",
-            "method",
-            [],
-            "DataList",
-          );
-          converter.emit(new CallInstruction(stackVar, externSig, []));
-          for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
-            converter.emit(
-              new MethodCallInstruction(undefined, stackVar, "Add", [
-                defaultToken,
-              ]),
-            );
-          }
-        }
-      }
-      converter.emit(new LabelInstruction(skipAllocLabel));
-
-      // Reset SP when at top level
-      {
-        const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
-        const depthAtTopLevel = converter.newTemp(PrimitiveTypes.boolean);
-        converter.emit(
-          new BinaryOpInstruction(
-            depthAtTopLevel,
-            depthVarOp,
-            "<=",
-            createConstant(0, PrimitiveTypes.int32),
-          ),
-        );
-        const skipSpResetLabel = converter.newLabel("inline_rec_skip_sp_reset");
-        converter.emit(
-          new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
-        );
-        const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
-        converter.emitCopyWithTracking(
-          spVarOp,
-          createConstant(-1, PrimitiveTypes.int32),
-        );
-        converter.emitCopyWithTracking(
-          depthVarOp,
-          createConstant(0, PrimitiveTypes.int32),
-        );
-        converter.emit(new LabelInstruction(skipSpResetLabel));
-      }
-
-      // Overflow handler
-      {
-        const afterOverflowLabel = converter.newLabel(
-          "inline_rec_after_overflow",
-        );
-        converter.emit(new UnconditionalJumpInstruction(afterOverflowLabel));
-        converter.emit(new LabelInstruction(overflowLabel));
-        const logErrorExtern = converter.requireExternSignature(
-          "Debug",
-          "LogError",
-          "method",
-          ["object"],
-          "void",
-        );
-        const overflowMsg = createConstant(
-          `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${className}.${methodName}.`,
-          PrimitiveTypes.string,
-        );
-        converter.emit(
-          new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
-        );
-        // Reset depth and SP so subsequent invocations can re-enter cleanly.
-        converter.emitCopyWithTracking(
-          createVariable(depthVar, PrimitiveTypes.int32),
-          createConstant(0, PrimitiveTypes.int32),
-        );
-        // SP = -1 (empty-stack sentinel, consistent with top-level entry reset)
-        converter.emitCopyWithTracking(
-          createVariable(spVar, PrimitiveTypes.int32),
-          createConstant(-1, PrimitiveTypes.int32),
-        );
-        // Jump to done (return default value) instead of ReturnInstruction
-        // because we're inside an inlined method, not a top-level method.
-        converter.emit(new UnconditionalJumpInstruction(doneLabel));
-        converter.emit(new LabelInstruction(afterOverflowLabel));
-      }
-
-      // --- Entry label (JUMP target for recursive calls) ---
-      converter.emit(new LabelInstruction(entryLabel));
-
       converter.currentInlineRecursiveContext = ctx;
 
       converter.currentParamExportMap = new Map();
@@ -2046,13 +2049,8 @@ function emitInlineRecursiveSelfCall(
   ctx: NonNullable<typeof converter.currentInlineRecursiveContext>,
   args: TACOperand[],
 ): TACOperand {
-  // ctx.className is the receiver passed by the outer
-  // emitInlineRecursiveStaticMethod call. For the histogram this means
-  // self-calls within one outer-call lifetime aggregate cleanly, but
-  // multiple outer calls with different receivers (rare for static
-  // recursion) would split. Acceptable: the outer key already merges
-  // via declaringClassName above.
-  if (PROF) profEnter(converter, histKey(ctx.className, ctx.methodName));
+  if (PROF)
+    profEnter(converter, histKey(ctx.declaringClassName, ctx.methodName));
   try {
     // 0. Save inlineInstanceMap state so the caller's tracking is restored
     //    after the recursive call (push/pop only covers runtime locals, not
@@ -2076,10 +2074,10 @@ function emitInlineRecursiveSelfCall(
     converter.emitCopyWithTracking(depthVarOp, depthInc);
 
     // 3. Set parameters for the callee (find param names from the method)
-    const classNode = resolveClassNode(converter, ctx.className);
+    const classNode = resolveClassNode(converter, ctx.declaringClassName);
     if (!classNode) {
       throw new Error(
-        `emitInlineRecursiveSelfCall: class '${ctx.className}' not found`,
+        `emitInlineRecursiveSelfCall: class '${ctx.declaringClassName}' not found`,
       );
     }
     const method = classNode.methods.find(
@@ -2087,7 +2085,7 @@ function emitInlineRecursiveSelfCall(
     );
     if (!method) {
       throw new Error(
-        `emitInlineRecursiveSelfCall: static method '${ctx.className}.${ctx.methodName}' not found`,
+        `emitInlineRecursiveSelfCall: static method '${ctx.declaringClassName}.${ctx.methodName}' not found`,
       );
     }
     for (let i = 0; i < method.parameters.length; i++) {
@@ -2143,7 +2141,7 @@ function emitInlineRecursiveSelfCall(
       index: returnSiteIdx,
       labelName: returnLabel.name,
     });
-    const prefix = `__inlineRec_${ctx.className}_${ctx.methodName}`;
+    const prefix = `__inlineRec_${ctx.declaringClassName}_${ctx.methodName}`;
     const returnSiteIdxVar = createVariable(
       `${prefix}_returnSiteIdx`,
       PrimitiveTypes.int32,
