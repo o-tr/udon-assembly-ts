@@ -168,6 +168,39 @@ ${buildLargeBody(150)}
     expect(result.tac).toContain("__inlineRec_");
   });
 
+  it("detects self-recursive calls used as expression statements (void return)", () => {
+    const bodyLines: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      bodyLines.push(`          Debug.Log(${i});`);
+    }
+    const source = `
+      class Helper {
+        static sideEffectRec(n: number): void {
+          if (n <= 0) {
+            return;
+          }
+${bodyLines.join("\n")}
+          Helper.sideEffectRec(n - 1);
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          Helper.sideEffectRec(5);
+          Helper.sideEffectRec(10);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).not.toContain("outline_entry");
+    expect(result.tac).toContain("__inlineRec_");
+  });
+
   it("correctly communicates return values through outlined calls", () => {
     const source = `
       class Helper {
@@ -309,6 +342,42 @@ ${bodyLines.join("\n")}
 
     // Body passes obj to a nested inline call → ineligible for outlining
     expect(result.tac).not.toContain("outline_entry");
+  });
+
+  it("allows outlining when inline-class param is only passed to a C# extern", () => {
+    const bodyLines: string[] = ["    Debug.Log(obj);"];
+    for (let i = 0; i < 150; i++) {
+      bodyLines.push(`    acc = acc + ${i};`);
+    }
+    bodyLines.push("    return acc;");
+    const source = `
+      class InlineObj {
+        value: number = 0;
+      }
+      class Helper {
+        static process(obj: InlineObj): number {
+          let acc: number = 0;
+${bodyLines.join("\n")}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const o = new InlineObj();
+          const r1: number = Helper.process(o);
+          const r2: number = Helper.process(o);
+          const r3: number = Helper.process(o);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    // Passing inline-class param to Debug.Log (C# extern) is safe
+    expect(result.tac).toContain("outline_entry");
   });
 
   it("does NOT outline a method called only once", () => {

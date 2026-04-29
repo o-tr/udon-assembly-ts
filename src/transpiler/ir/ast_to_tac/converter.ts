@@ -794,11 +794,13 @@ export class ASTToTACConverter {
 
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
     // resetState() already clears metadataOnlyMode, so no explicit reset here.
+    const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
     this.resetState();
     this.allInlineInstances = allInstancesFromPass1;
     this.outlineCandidates = outlineCandidatesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
+    this.inlineStaticCallInfo = inlineStaticCallInfoFromPass1;
     const result = this.convertImpl(program);
     if (PROF) {
       countKinds(this, result);

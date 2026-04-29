@@ -2199,6 +2199,44 @@ function emitInlineRecursiveStaticMethod(
 // ---------------------------------------------------------------------------
 
 /**
+ * Check whether a CallExpression targets a TypeScript inline-class method
+ * (static call, constructor, or this.method() in an inline class). C# extern
+ * calls (e.g. Debug.Log) are NOT inline-class methods and are safe to pass
+ * Int32 handles to.
+ */
+function isCallToInlineClassMethod(
+  converter: ASTToTACConverter,
+  ce: CallExpressionNode,
+): boolean {
+  if (ce.isNew && ce.callee.kind === ASTNodeKind.Identifier) {
+    const name = (ce.callee as IdentifierNode).name;
+    return (
+      converter.classMap.has(name) &&
+      !converter.udonBehaviourClasses.has(name)
+    );
+  }
+  if (ce.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+    const pa = ce.callee as PropertyAccessExpressionNode;
+    if (pa.object.kind === ASTNodeKind.Identifier) {
+      const name = (pa.object as IdentifierNode).name;
+      return (
+        converter.classMap.has(name) &&
+        !converter.udonBehaviourClasses.has(name)
+      );
+    }
+    if (
+      pa.object.kind === ASTNodeKind.ThisExpression &&
+      converter.currentClassName !== undefined &&
+      converter.classMap.has(converter.currentClassName) &&
+      !converter.udonBehaviourClasses.has(converter.currentClassName)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Check whether a method body uses inline-class parameters in ways that
  * require per-call-site inlineInstanceMap tracking.  This includes direct
  * field/method access (obj.field) as well as passing the parameter to nested
@@ -2248,13 +2286,21 @@ function hasInlineClassParamDependentUse(
       }
     } else if (node.kind === ASTNodeKind.CallExpression) {
       const ce = node as CallExpressionNode;
-      for (const arg of ce.arguments) {
-        if (
-          arg.kind === ASTNodeKind.Identifier &&
-          inlineParamNames.has((arg as IdentifierNode).name)
-        ) {
-          found = true;
-          return;
+      // Only flag calls to TypeScript inline-class methods. Passing an
+      // Int32 handle to a C# extern (e.g. Debug.Log) is safe — no
+      // inlineInstanceMap tracking is involved.
+      // Gap: instance calls on local inline variables
+      // (localVar.method(inlineParam)) are not detected without type
+      // resolution.
+      if (isCallToInlineClassMethod(converter, ce)) {
+        for (const arg of ce.arguments) {
+          if (
+            arg.kind === ASTNodeKind.Identifier &&
+            inlineParamNames.has((arg as IdentifierNode).name)
+          ) {
+            found = true;
+            return;
+          }
         }
       }
     } else if (node.kind === ASTNodeKind.VariableDeclaration) {
@@ -2604,12 +2650,6 @@ function emitInlineOutlinedBody(
       PrimitiveTypes.string,
     );
     converter.emit(new CallInstruction(undefined, logErrorExtern, [errMsg]));
-    // Use a JUMP to a local abort label instead of RETURN inline so that
-    // the doneLabel block ends with a control-flow instruction and never
-    // leaves a post-RETURN instruction-stream head for the backend.
-    const abortLabel = converter.newLabel("outline_abort");
-    converter.emit(new UnconditionalJumpInstruction(abortLabel));
-    converter.emit(new LabelInstruction(abortLabel));
     converter.emit(new ReturnInstruction());
   });
 
