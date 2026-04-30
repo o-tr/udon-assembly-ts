@@ -2281,11 +2281,9 @@ export function visitCallExpression(
 
       return VOID_RETURN;
     }
-    const dataListMethods = new Set(["Add", "push", "Remove"]);
     const listObject =
-      (objectType.name === ExternTypes.dataToken.name ||
-        objectType.udonType === UdonType.DataToken) &&
-      dataListMethods.has(propAccess.property)
+      objectType.name === ExternTypes.dataToken.name ||
+      objectType.udonType === UdonType.DataToken
         ? this.unwrapDataToken(object, ExternTypes.dataList)
         : object;
     const listObjectType = this.getOperandType(listObject);
