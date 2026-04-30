@@ -35,6 +35,8 @@ import {
   type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
+  type FunctionDeclarationNode,
+  type FunctionExpressionNode,
   type IdentifierNode,
   type IfStatementNode,
   isNumericUdonType,
@@ -78,6 +80,7 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { OUTLINE_MIN_CALL_SITES } from "../converter.js";
 import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
@@ -102,9 +105,52 @@ export type InlineParamSaveEntry = {
   valueBackup?: { temp: TACOperand; slotType: TypeSymbol };
 };
 export type InlineParamSave = Map<string, InlineParamSaveEntry>;
+
+/** State for a method that has been outlined (body emitted once). */
+export interface OutlinedMethodState {
+  entryLabel: TACOperand;
+  dispatchLabel: TACOperand;
+  doneLabel: TACOperand;
+  returnVar: VariableOperand;
+  returnVarInlineInstance?: { prefix: string; className: string };
+  returnSiteIdxVarName: string;
+  returnSites: Array<{ index: number; labelName: string }>;
+  nextReturnSiteIndex: number;
+  method: {
+    parameters: Array<{
+      name: string;
+      type: TypeSymbol;
+      initializer?: ASTNode;
+    }>;
+    body: BlockStatementNode;
+    returnType: TypeSymbol;
+  };
+  declaringClassName: string;
+  className: string;
+  methodName: string;
+  instancePrefix: string | undefined;
+}
+
 type InlineInitializerState = NonNullable<
   ASTToTACConverter["currentInlineInitializerState"]
 >;
+
+/**
+ * Build a map key for outline candidate tracking. Instance methods encode
+ * their instancePrefix so different receivers are tracked separately —
+ * the emitted body bakes field-access prefixes and cannot be shared
+ * across distinct inline instances.
+ */
+function outlineMapKey(
+  kind: "static" | "inst",
+  declaringClassName: string,
+  methodName: string,
+  instancePrefix: string | undefined,
+): string {
+  return instancePrefix
+    ? `${kind}:${declaringClassName}.${methodName}:${instancePrefix}`
+    : `${kind}:${declaringClassName}.${methodName}`;
+}
 
 /**
  * Check if a type represents an inline class instance stored as an Int32 handle.
@@ -1573,17 +1619,94 @@ export function visitInlineStaticMethodCall(
     return null;
   }
 
+  let selfCallCountHint: number | undefined;
+  // --- Pass-1 outline candidate detection (static path) ---
+  if (this.metadataOnlyMode) {
+    const infoKey = outlineMapKey(
+      "static",
+      resolved.declaringClassName,
+      methodName,
+      undefined,
+    );
+    let info = this.inlineStaticCallInfo.get(infoKey);
+    if (!info) {
+      info = { callSites: 0 };
+      this.inlineStaticCallInfo.set(infoKey, info);
+    }
+    info.callSites++;
+    if (info.selfCallCount === undefined) {
+      info.selfCallCount = countStaticSelfCalls(
+        resolved.declaringClassName,
+        methodName,
+        method.body,
+      );
+    }
+    selfCallCountHint = info.selfCallCount;
+    if (info.bodyInstr === undefined) {
+      // Invariant: pass1EmitCount is monotonically increasing within a
+      // single pass-1 run (resetState clears it only between passes).
+      const emitBefore = this.pass1EmitCount;
+      const result = visitInlineStaticMethodCallImpl.call(
+        this,
+        className,
+        methodName,
+        method,
+        resolved,
+        args,
+        inlineKey,
+        info.selfCallCount,
+      );
+      info.bodyInstr = this.pass1EmitCount - emitBefore;
+      return result;
+    }
+    // When bodyInstr is already set (second+ call site in pass 1), fall
+    // through to the normal inline path so metadata like soaClasses is
+    // still collected.
+  } else {
+    // Pass-2: reuse cached selfCallCount from pass-1 if available.
+    const infoKey = outlineMapKey(
+      "static",
+      resolved.declaringClassName,
+      methodName,
+      undefined,
+    );
+    const info = this.inlineStaticCallInfo.get(infoKey);
+    if (info && info.selfCallCount !== undefined) {
+      selfCallCountHint = info.selfCallCount;
+    }
+  }
+
+  return visitInlineStaticMethodCallImpl.call(
+    this,
+    className,
+    methodName,
+    method,
+    resolved,
+    args,
+    inlineKey,
+    selfCallCountHint,
+  );
+}
+
+function visitInlineStaticMethodCallImpl(
+  this: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  resolved: { method: MethodDeclarationNode; declaringClassName: string },
+  args: TACOperand[],
+  inlineKey: string,
+  knownSelfCallCount: number | undefined,
+): TACOperand | null {
   let returnType: TypeSymbol = method.returnType;
 
   // F1: upgrade Object-typed inline-class return type to Int32.
   returnType = resolveInlineClassType(this, returnType);
 
   // --- Check for self-recursion ---
-  const selfCallCount = countStaticSelfCalls(
-    resolved.declaringClassName,
-    methodName,
-    method.body,
-  );
+  const selfCallCount =
+    knownSelfCallCount ??
+    countStaticSelfCalls(resolved.declaringClassName, methodName, method.body);
   if (selfCallCount > 0) {
     // TODO: erased return types on recursive paths need separate analysis;
     // DataToken promotion is not applied here.
@@ -1604,6 +1727,44 @@ export function visitInlineStaticMethodCall(
       inlineKey,
       resolved.declaringClassName,
     );
+  }
+
+  // NOTE: the inlineMethodStack recursion guard lives in the caller
+  // (visitInlineStaticMethodCall) so it does not need to be repeated here.
+
+  // --- Outline check (pass 2 only) ---
+  if (!this.metadataOnlyMode) {
+    const outlineKey = outlineMapKey(
+      "static",
+      resolved.declaringClassName,
+      methodName,
+      undefined,
+    );
+    if (this.outlineCandidates.has(outlineKey)) {
+      if (
+        !checkOutlineIneligible(
+          this,
+          method.parameters,
+          method.body,
+          returnType,
+        )
+      ) {
+        const existing = this.outlinedMethods.get(outlineKey);
+        if (existing) {
+          return emitOutlinedCallSite(this, existing, args);
+        }
+        return emitInlineOutlinedStaticMethod(
+          this,
+          className,
+          methodName,
+          method,
+          returnType,
+          args,
+          inlineKey,
+          resolved.declaringClassName,
+        );
+      }
+    }
   }
 
   // --- Non-recursive path ---
@@ -1707,7 +1868,7 @@ export function visitInlineStaticMethodCall(
 
     return result;
   } finally {
-    profExit(this);
+    if (PROF) profExit(this);
   }
 }
 
@@ -2053,7 +2214,746 @@ function emitInlineRecursiveStaticMethod(
     converter.emit(new LabelInstruction(doneLabel));
     return result;
   } finally {
-    profExit(converter);
+    if (PROF) profExit(converter);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Static method outlining — shared body + JUMP-based call/return
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a CallExpression targets a TypeScript inline-class method
+ * (static call, constructor, or this.method() in an inline class). C# extern
+ * calls (e.g. Debug.Log) are NOT inline-class methods and are safe to pass
+ * Int32 handles to.
+ */
+function isCallToInlineClassMethod(
+  converter: ASTToTACConverter,
+  ce: CallExpressionNode,
+): boolean {
+  if (ce.isNew && ce.callee.kind === ASTNodeKind.Identifier) {
+    const name = (ce.callee as IdentifierNode).name;
+    return (
+      converter.classMap.has(name) && !converter.udonBehaviourClasses.has(name)
+    );
+  }
+  if (ce.callee.kind === ASTNodeKind.PropertyAccessExpression) {
+    const pa = ce.callee as PropertyAccessExpressionNode;
+    if (pa.object.kind === ASTNodeKind.Identifier) {
+      const name = (pa.object as IdentifierNode).name;
+      return (
+        converter.classMap.has(name) &&
+        !converter.udonBehaviourClasses.has(name)
+      );
+    }
+    if (
+      pa.object.kind === ASTNodeKind.ThisExpression &&
+      converter.currentClassName !== undefined &&
+      converter.classMap.has(converter.currentClassName) &&
+      !converter.udonBehaviourClasses.has(converter.currentClassName)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Check whether a method body uses inline-class parameters in ways that
+ * require per-call-site inlineInstanceMap tracking.  This includes direct
+ * field/method access (obj.field) as well as passing the parameter to nested
+ * inline calls, because outlined bodies are compiled once without their
+ * own inlineInstanceMap entries.
+ *
+ * Also catches direct aliasing via VariableDeclaration / AssignmentExpression
+ * (e.g. `const x = p;`) so that `x.field` doesn't silently break.
+ *
+ * **Known gap:** ternary aliasing (`const x = cond ? p : other`) is NOT
+ * caught.  If the outlined body later does `x.field`, the transpiler will
+ * emit a missing-extern-signature error at codegen time pointing at the
+ * shared outlined body (not the call site), which is hard to diagnose.
+ * The same limitation applies to other indirect aliasing patterns
+ * (array-element extraction, function-return propagation, destructuring,
+ * spread, etc.) because the walker only inspects direct
+ * `VariableDeclaration` / `AssignmentExpression` initialisers / right-hand
+ * sides for a plain `Identifier`.
+ * Work-around: avoid any indirect aliasing of inline-class parameters in
+ * methods that may be outlined, or ensure the aliased variable is never used
+ * for field/property access inside the body.
+ */
+function hasInlineClassParamDependentUse(
+  converter: ASTToTACConverter,
+  params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
+  body: BlockStatementNode,
+): boolean {
+  const inlineParamNames = new Set<string>();
+  for (const param of params) {
+    if (isInlineHandleType(converter, param.type)) {
+      inlineParamNames.add(param.name);
+    }
+  }
+  if (inlineParamNames.size === 0) return false;
+
+  // Incrementally collected during the walk: local variable names whose
+  // declared type is an inline class.  Used to detect instance method
+  // calls like localVar.method(inlineParam) where localVar is a
+  // locally-created inline class instance (not caught by the static
+  // ClassName.method() check in isCallToInlineClassMethod).
+  const localInlineVarNames = new Set<string>();
+
+  let found = false;
+  const walk = (node: ASTNode): void => {
+    if (found) return;
+    switch (node.kind) {
+      case ASTNodeKind.PropertyAccessExpression: {
+        const pa = node as PropertyAccessExpressionNode;
+        if (
+          pa.object.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((pa.object as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
+        walk(pa.object);
+        break;
+      }
+      case ASTNodeKind.CallExpression: {
+        const ce = node as CallExpressionNode;
+        // Flag calls to inline-class methods: static (ClassName.method),
+        // constructor (new ClassName), this.method() in an inline class,
+        // or instance calls on locally-declared inline-typed variables.
+        let isInlineCall = isCallToInlineClassMethod(converter, ce);
+        if (
+          !isInlineCall &&
+          ce.callee.kind === ASTNodeKind.PropertyAccessExpression
+        ) {
+          const pa = ce.callee as PropertyAccessExpressionNode;
+          if (
+            pa.object.kind === ASTNodeKind.Identifier &&
+            localInlineVarNames.has((pa.object as IdentifierNode).name)
+          ) {
+            isInlineCall = true;
+          }
+        }
+        if (isInlineCall) {
+          // Only guard params here; locals get their own instance-map
+          // entry during body emission, so passing them is safe.
+          for (const arg of ce.arguments) {
+            if (
+              arg.kind === ASTNodeKind.Identifier &&
+              inlineParamNames.has((arg as IdentifierNode).name)
+            ) {
+              found = true;
+              return;
+            }
+          }
+        }
+        walk(ce.callee);
+        for (const arg of ce.arguments) walk(arg);
+        break;
+      }
+      case ASTNodeKind.VariableDeclaration: {
+        const vd = node as VariableDeclarationNode;
+        if (isInlineHandleType(converter, vd.type)) {
+          localInlineVarNames.add(vd.name);
+        }
+        if (
+          vd.initializer?.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((vd.initializer as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
+        if (vd.initializer) walk(vd.initializer);
+        break;
+      }
+      case ASTNodeKind.AssignmentExpression: {
+        const ae = node as AssignmentExpressionNode;
+        if (
+          ae.value.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((ae.value as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
+        walk(ae.target);
+        walk(ae.value);
+        break;
+      }
+      case ASTNodeKind.BlockStatement: {
+        const block = node as BlockStatementNode;
+        for (const stmt of block.statements) walk(stmt);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        walk(exprStmt.expression);
+        break;
+      }
+      case ASTNodeKind.IfStatement: {
+        const ifNode = node as IfStatementNode;
+        walk(ifNode.condition);
+        walk(ifNode.thenBranch);
+        if (ifNode.elseBranch) walk(ifNode.elseBranch);
+        break;
+      }
+      case ASTNodeKind.WhileStatement: {
+        const whileNode = node as WhileStatementNode;
+        walk(whileNode.condition);
+        walk(whileNode.body);
+        break;
+      }
+      case ASTNodeKind.ForStatement: {
+        const forNode = node as ForStatementNode;
+        if (forNode.initializer) walk(forNode.initializer);
+        if (forNode.condition) walk(forNode.condition);
+        if (forNode.incrementor) walk(forNode.incrementor);
+        walk(forNode.body);
+        break;
+      }
+      case ASTNodeKind.ForOfStatement: {
+        const forOfNode = node as ForOfStatementNode;
+        walk(forOfNode.iterable);
+        walk(forOfNode.body);
+        break;
+      }
+      case ASTNodeKind.DoWhileStatement: {
+        const doNode = node as DoWhileStatementNode;
+        walk(doNode.body);
+        walk(doNode.condition);
+        break;
+      }
+      case ASTNodeKind.SwitchStatement: {
+        const switchNode = node as SwitchStatementNode;
+        walk(switchNode.expression);
+        for (const clause of switchNode.cases) {
+          if (clause.expression) walk(clause.expression);
+          for (const stmt of clause.statements) walk(stmt);
+        }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        walk(tryNode.tryBody);
+        if (tryNode.catchBody) walk(tryNode.catchBody);
+        if (tryNode.finallyBody) walk(tryNode.finallyBody);
+        break;
+      }
+      case ASTNodeKind.ReturnStatement: {
+        const retNode = node as ReturnStatementNode;
+        if (
+          retNode.value?.kind === ASTNodeKind.Identifier &&
+          inlineParamNames.has((retNode.value as IdentifierNode).name)
+        ) {
+          found = true;
+          return;
+        }
+        if (retNode.value) walk(retNode.value);
+        break;
+      }
+      case ASTNodeKind.BinaryExpression: {
+        const binNode = node as BinaryExpressionNode;
+        walk(binNode.left);
+        walk(binNode.right);
+        break;
+      }
+      case ASTNodeKind.UnaryExpression: {
+        const unaryNode = node as UnaryExpressionNode;
+        walk(unaryNode.operand);
+        break;
+      }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        walk(condNode.condition);
+        walk(condNode.whenTrue);
+        walk(condNode.whenFalse);
+        break;
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const ncNode = node as NullCoalescingExpressionNode;
+        walk(ncNode.left);
+        walk(ncNode.right);
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        const templateNode = node as TemplateExpressionNode;
+        for (const part of templateNode.parts) {
+          if (part.kind === "expression") walk(part.expression);
+        }
+        break;
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        const objNode = node as ObjectLiteralExpressionNode;
+        for (const prop of objNode.properties) walk(prop.value);
+        break;
+      }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        const arrNode = node as ArrayLiteralExpressionNode;
+        for (const el of arrNode.elements) walk(el.value);
+        break;
+      }
+      case ASTNodeKind.DeleteExpression: {
+        const delNode = node as DeleteExpressionNode;
+        walk(delNode.target);
+        break;
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updateNode = node as UpdateExpressionNode;
+        walk(updateNode.operand);
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        const asNode = node as AsExpressionNode;
+        walk(asNode.expression);
+        break;
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const accessNode = node as ArrayAccessExpressionNode;
+        walk(accessNode.array);
+        walk(accessNode.index);
+        break;
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        const optNode = node as OptionalChainingExpressionNode;
+        walk(optNode.object);
+        break;
+      }
+      case ASTNodeKind.ThrowStatement: {
+        const throwNode = node as ThrowStatementNode;
+        walk(throwNode.expression);
+        break;
+      }
+      case ASTNodeKind.FunctionDeclaration:
+      case ASTNodeKind.FunctionExpression: {
+        // Do NOT recurse into closure bodies: inline-class parameter uses
+        // inside a closure are not part of the enclosing method's body.
+        break;
+      }
+      // Leaf nodes (and decorators) require no traversal.
+      default:
+        break;
+    }
+  };
+  for (const stmt of body.statements) {
+    walk(stmt);
+    if (found) return true;
+  }
+  return false;
+}
+
+function checkOutlineIneligible(
+  converter: ASTToTACConverter,
+  params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
+  body: BlockStatementNode,
+  returnType: TypeSymbol,
+): boolean {
+  // Inline-class returns share a single returnVar across call sites, so
+  // later calls overwrite earlier ones' field slots. Fall back to full
+  // inline so each call site gets its own inlineInstanceMap entry.
+  // This check is O(1) and not cached — the cache is reserved for the
+  // expensive AST walk in hasInlineClassParamDependentUse.
+  // Note: isInlineHandleType covers ClassTypeSymbol (in classMap) and
+  // InterfaceTypeSymbol (in interfaceClassIdMap), which subsumes the
+  // returnInstancePrefix condition (InterfaceTypeSymbol with properties).
+  // Type-alias resolution in saveAndBindInlineParams operates on argument
+  // types at each call site, not the compiled body, so it doesn't create
+  // a gap here.
+  if (isInlineHandleType(converter, returnType)) {
+    return true;
+  }
+  const cached = converter.outlineIneligibleCache.get(body);
+  if (cached !== undefined) return cached;
+  const result = hasInlineClassParamDependentUse(converter, params, body);
+  converter.outlineIneligibleCache.set(body, result);
+  return result;
+}
+
+/**
+ * Emit the shared body of a non-recursive outlined method (static or instance).
+ * Called once (first encounter in pass 2) from inlineResolvedMethodBody.
+ */
+function emitInlineOutlinedMethodBody(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+  declaringClassName: string,
+  inlineKey: string,
+): TACOperand {
+  let returnType: TypeSymbol = method.returnType;
+  returnType = resolveInlineClassType(converter, returnType);
+  return emitInlineOutlinedBody(
+    converter,
+    className,
+    methodName,
+    method,
+    returnType,
+    args,
+    inlineKey,
+    declaringClassName,
+    instancePrefix,
+    "inst",
+  );
+}
+
+/**
+ * Emit the shared body of a non-recursive outlined static method.
+ * Called once (first encounter in pass 2) from visitInlineStaticMethodCall.
+ */
+function emitInlineOutlinedStaticMethod(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  returnType: TypeSymbol,
+  args: TACOperand[],
+  inlineKey: string,
+  declaringClassName: string,
+): TACOperand {
+  return emitInlineOutlinedBody(
+    converter,
+    className,
+    methodName,
+    method,
+    returnType,
+    args,
+    inlineKey,
+    declaringClassName,
+    undefined,
+    "static",
+  );
+}
+
+function emitInlineOutlinedBody(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  returnType: TypeSymbol,
+  args: TACOperand[],
+  inlineKey: string,
+  declaringClassName: string,
+  instancePrefix: string | undefined,
+  kind: "static" | "inst",
+): TACOperand {
+  const { effectiveReturnType, isErasedReturn } =
+    resolveInlineReturnType(returnType);
+  const uniqueKey = outlineMapKey(
+    kind,
+    declaringClassName,
+    methodName,
+    instancePrefix,
+  );
+  const sanitizedKey = sanitizeIdentifierToken(uniqueKey);
+  const prefix = `__outline_${sanitizedKey}`;
+  const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+  const result = createVariable(`${prefix}_retVal`, effectiveReturnType, {
+    isLocal: true,
+    isInlineReturn: true,
+  });
+  let returnVarInlineInstance:
+    | { prefix: string; className: string }
+    | undefined;
+
+  const entryLabel = converter.newLabel("outline_entry");
+  const dispatchLabel = converter.newLabel("outline_dispatch");
+  const bodyReturnLabel = converter.newLabel("outline_body_return");
+  const doneLabel = converter.newLabel("outline_done");
+
+  // Skip-around: jump past the outlined body to the first call site.
+  const firstCallSiteLabel = converter.newLabel("outline_first_call");
+  converter.emit(new UnconditionalJumpInstruction(firstCallSiteLabel));
+
+  // --- Entry label (JUMP target for all call sites) ---
+  converter.emit(new LabelInstruction(entryLabel));
+
+  // --- Body emission (exactly once) ---
+  converter.symbolTable.enterScope();
+  try {
+    for (const param of method.parameters) {
+      const effectiveParamType = resolveInlineClassType(converter, param.type);
+      if (!converter.symbolTable.hasInCurrentScope(param.name)) {
+        converter.symbolTable.addSymbol(
+          param.name,
+          effectiveParamType,
+          true,
+          false,
+        );
+      }
+    }
+
+    const savedParamExportMap = converter.currentParamExportMap;
+    const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+    const savedMethodLayout = converter.currentMethodLayout;
+    const savedInlineContext = converter.currentInlineContext;
+    const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+    const savedThisOverride = converter.currentThisOverride;
+    const savedBaseClass = converter.currentInlineBaseClass;
+    const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
+    converter.currentParamExportMap = new Map();
+    converter.currentParamExportReverseMap = new Map();
+    converter.currentMethodLayout = null;
+    converter.currentInlineContext = instancePrefix
+      ? { className, instancePrefix }
+      : undefined;
+    converter.currentInlineConstructorClassName = undefined;
+    converter.currentThisOverride = null;
+    converter.currentInlineBaseClass = undefined;
+
+    converter.inlineMethodStack.add(inlineKey);
+    const returnInstancePrefix =
+      returnType instanceof InterfaceTypeSymbol &&
+      returnType.properties.size > 0
+        ? result.name
+        : undefined;
+    if (returnInstancePrefix !== undefined) {
+      converter.inlineInstanceMap.set(result.name, {
+        prefix: returnInstancePrefix,
+        className: returnType.name,
+      });
+    }
+    // returnLabel routes to a body-local label so that early returns land
+    // here first; from there we unconditionally jump to the deferred dispatch
+    // label.  This keeps dispatchLabel exclusively inside the deferred lambda
+    // and avoids duplicate label definitions if visitReturnStatement ever
+    // starts emitting a return label inline.
+    converter.inlineReturnStack.push({
+      returnVar: result,
+      returnLabel: bodyReturnLabel,
+      returnTrackingInvalidated: false,
+      loopDepth: converter.loopContextStack.length,
+      returnInstancePrefix,
+      isErasedReturn,
+    });
+    converter.methodBodyConstructorIndex.set(method.body, 0);
+    converter.inlinedBodyStack.push(method.body);
+    const savedNativeIneligible = converter.nativeArrayIneligible;
+    const savedNativeVarName = converter.currentNativeArrayVarName;
+    converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+      method.body.statements,
+    );
+    converter.currentNativeArrayVarName = null;
+
+    try {
+      converter.visitBlockStatement(method.body);
+    } finally {
+      converter.nativeArrayIneligible = savedNativeIneligible;
+      converter.currentNativeArrayVarName = savedNativeVarName;
+      converter.inlinedBodyStack.pop();
+      converter.inlineReturnStack.pop();
+      converter.inlineMethodStack.delete(inlineKey);
+      converter.currentParamExportMap = savedParamExportMap;
+      converter.currentParamExportReverseMap = savedParamExportReverseMap;
+      converter.currentMethodLayout = savedMethodLayout;
+      converter.currentInlineContext = savedInlineContext;
+      converter.currentInlineConstructorClassName = savedInlineCtorClass;
+      converter.currentThisOverride = savedThisOverride;
+      converter.currentInlineBaseClass = savedBaseClass;
+      // Preserve caller tracking across outlined body emission.
+      returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
+      converter.inlineInstanceMap.clear();
+      for (const [k, v] of savedInlineInstanceMap) {
+        converter.inlineInstanceMap.set(k, v);
+      }
+    }
+  } finally {
+    converter.symbolTable.exitScope();
+  }
+
+  // Fallthrough at end of body: land at bodyReturnLabel, then jump to
+  // the deferred dispatch label.  bodyReturnLabel is also the target for
+  // all early returns inside the outlined body.
+  converter.emit(new LabelInstruction(bodyReturnLabel));
+  converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+
+  // --- Register the outlined method state ---
+  const state: OutlinedMethodState = {
+    entryLabel,
+    dispatchLabel,
+    doneLabel,
+    returnVar: result,
+    returnSiteIdxVarName,
+    returnSites: [],
+    nextReturnSiteIndex: 1,
+    method: {
+      parameters: method.parameters.map((p) => ({
+        name: p.name,
+        type: p.type,
+        initializer: p.initializer,
+      })),
+      body: method.body,
+      returnType: method.returnType,
+    },
+    declaringClassName,
+    className,
+    methodName,
+    instancePrefix,
+  };
+  // Currently always undefined: checkOutlineIneligible rejects
+  // isInlineHandleType returns, which subsumes the returnInstancePrefix
+  // condition. Retained for defensive correctness in case the
+  // subsumption invariant is ever relaxed.
+  state.returnVarInlineInstance = returnVarInlineInstance;
+  converter.outlinedMethods.set(
+    outlineMapKey(kind, declaringClassName, methodName, instancePrefix),
+    state,
+  );
+
+  // Deferred dispatch table: linear scan over return sites (O(N) per call).
+  // N is typically 2–5. Even at higher N the 2N dispatch instructions are
+  // negligible vs. the ≥50k-instruction body being deduplicated, so no cap.
+  converter.pendingOutlineDispatches.push(() => {
+    // Invariant: all call sites must be registered before the dispatch is
+    // built.  If the converter were ever flushed incrementally, sites
+    // registered after this lambda was pushed would be silently missing.
+    if (state.returnSites.length < OUTLINE_MIN_CALL_SITES) {
+      converter.warnAt(
+        state.method.body,
+        "OutlineDispatchInvariant",
+        `Outline dispatch for ${declaringClassName}.${methodName} has ${state.returnSites.length} return site(s), expected at least ${OUTLINE_MIN_CALL_SITES}.`,
+      );
+    }
+    converter.emit(new LabelInstruction(dispatchLabel));
+    if (state.returnSites.length === 1) {
+      // Single return site — direct jump, no dispatch table needed.
+      converter.emit(
+        new UnconditionalJumpInstruction(
+          createLabel(state.returnSites[0].labelName),
+        ),
+      );
+      return;
+    }
+    const returnSiteIdxVarOp = createVariable(
+      returnSiteIdxVarName,
+      PrimitiveTypes.int32,
+      { isLocal: true },
+    );
+    for (const site of state.returnSites) {
+      const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          cmpResult,
+          returnSiteIdxVarOp,
+          "!=",
+          createConstant(site.index, PrimitiveTypes.int32),
+        ),
+      );
+      // ConditionalJumpInstruction is "ifFalse goto": jumps when
+      // cmpResult is false (i.e. idx == site.index → match found).
+      converter.emit(
+        new ConditionalJumpInstruction(cmpResult, createLabel(site.labelName)),
+      );
+    }
+    // doneLabel is reachable by fallthrough from the last dispatch comparison
+    // (no match found). Optimizer CFG passes see it as a valid basic block
+    // with a predecessor, so it won't be stripped as dead code.
+    converter.emit(new LabelInstruction(doneLabel));
+    // Defensive: doneLabel should be unreachable in valid code (all return
+    // sites are matched). Log the invariant violation and return to avoid
+    // falling off the end of the instruction stream in the Udon VM.
+    const logErrorExtern = converter.requireExternSignature(
+      "Debug",
+      "LogError",
+      "method",
+      ["object"],
+      "void",
+    );
+    const errMsg = createConstant(
+      `[udon-assembly-ts] Outline dispatch miss: no return site matched at ${(doneLabel as LabelOperand).name}`,
+      PrimitiveTypes.string,
+    );
+    converter.emit(new CallInstruction(undefined, logErrorExtern, [errMsg]));
+    converter.emit(new ReturnInstruction());
+  });
+
+  // --- Emit the first call site ---
+  converter.emit(new LabelInstruction(firstCallSiteLabel));
+  return emitOutlinedCallSite(converter, state, args);
+}
+
+/**
+ * Emit a lightweight call stub for an already-outlined static method.
+ * Binds arguments to the method's parameter slots, sets the return-site
+ * dispatch index, JUMPs to the shared body, and captures the return value.
+ */
+function emitOutlinedCallSite(
+  converter: ASTToTACConverter,
+  state: OutlinedMethodState,
+  args: TACOperand[],
+): TACOperand {
+  if (PROF)
+    profEnter(converter, histKey(state.declaringClassName, state.methodName));
+  try {
+    converter.symbolTable.enterScope();
+    const savedParamEntries: InlineParamSave = new Map();
+    try {
+      saveAndBindInlineParams(
+        converter,
+        state.method.parameters,
+        args,
+        savedParamEntries,
+      );
+
+      // Assign return site index
+      const returnLabel = converter.newLabel("outline_return") as LabelOperand;
+      const returnSiteIdx = state.nextReturnSiteIndex++;
+      state.returnSites.push({
+        index: returnSiteIdx,
+        labelName: returnLabel.name,
+      });
+      const returnSiteIdxVar = createVariable(
+        state.returnSiteIdxVarName,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
+      converter.emit(
+        new AssignmentInstruction(
+          returnSiteIdxVar,
+          createConstant(returnSiteIdx, PrimitiveTypes.int32),
+        ),
+      );
+
+      // JUMP to outlined body
+      converter.emit(new UnconditionalJumpInstruction(state.entryLabel));
+
+      // Return label (dispatch routes here)
+      converter.emit(new LabelInstruction(returnLabel));
+
+      // Capture return value
+      const capturedResult = converter.newTemp(
+        converter.getOperandType(state.returnVar),
+      );
+      const savedReturnVarInlineInstance = converter.inlineInstanceMap.get(
+        state.returnVar.name,
+      );
+      if (state.returnVarInlineInstance !== undefined) {
+        converter.inlineInstanceMap.set(state.returnVar.name, {
+          prefix: state.returnVarInlineInstance.prefix,
+          className: state.returnVarInlineInstance.className,
+        });
+      }
+      converter.emitCopyWithTracking(capturedResult, state.returnVar);
+      if (savedReturnVarInlineInstance === undefined) {
+        converter.inlineInstanceMap.delete(state.returnVar.name);
+      } else {
+        converter.inlineInstanceMap.set(
+          state.returnVar.name,
+          savedReturnVarInlineInstance,
+        );
+      }
+
+      return capturedResult;
+    } finally {
+      if (savedParamEntries.size > 0) {
+        restoreInlineParams(converter, savedParamEntries);
+      }
+      converter.symbolTable.exitScope();
+    }
+  } finally {
+    if (PROF) profExit(converter);
   }
 }
 
@@ -2204,7 +3104,7 @@ function emitInlineRecursiveSelfCall(
     converter.emitCopyWithTracking(selfCallResultVar, capturedTemp);
     return selfCallResultVar;
   } finally {
-    profExit(converter);
+    if (PROF) profExit(converter);
   }
 }
 
@@ -2243,37 +3143,181 @@ function inlineInstanceMethodCallCore(
  * so admitting either kind would cause one body's allocations to be cached
  * under the parent body's frame.
  */
-function containsAllocOrCall(node: ASTNode | undefined): boolean {
+function containsAllocOrCall(node: ASTNode | null | undefined): boolean {
   if (!node) return false;
-  if (
-    node.kind === ASTNodeKind.CallExpression ||
-    node.kind === ASTNodeKind.ObjectLiteralExpression
-  ) {
-    return true;
-  }
-  // Use Object.keys (own enumerable only) so the walker is not perturbed
-  // by future prototype additions on the AST base shape. The "kind" check
-  // gates descent at child nodes; TypeSymbol references on AST nodes have
-  // no kind property, so they are skipped.
-  for (const key of Object.keys(node)) {
-    const v = (node as unknown as Record<string, unknown>)[key];
-    if (!v || typeof v !== "object") continue;
-    if (Array.isArray(v)) {
-      for (const item of v) {
+  switch (node.kind) {
+    case ASTNodeKind.CallExpression:
+    case ASTNodeKind.ObjectLiteralExpression:
+      return true;
+    case ASTNodeKind.PropertyAccessExpression: {
+      const pa = node as PropertyAccessExpressionNode;
+      return containsAllocOrCall(pa.object);
+    }
+    case ASTNodeKind.VariableDeclaration: {
+      const vd = node as VariableDeclarationNode;
+      return containsAllocOrCall(vd.initializer);
+    }
+    case ASTNodeKind.AssignmentExpression: {
+      const ae = node as AssignmentExpressionNode;
+      return containsAllocOrCall(ae.target) || containsAllocOrCall(ae.value);
+    }
+    case ASTNodeKind.BlockStatement: {
+      const block = node as BlockStatementNode;
+      for (const stmt of block.statements) {
+        if (containsAllocOrCall(stmt)) return true;
+      }
+      return false;
+    }
+    case ASTNodeKind.ExpressionStatement: {
+      const exprStmt = node as ExpressionStatementNode;
+      return containsAllocOrCall(exprStmt.expression);
+    }
+    case ASTNodeKind.IfStatement: {
+      const ifNode = node as IfStatementNode;
+      return (
+        containsAllocOrCall(ifNode.condition) ||
+        containsAllocOrCall(ifNode.thenBranch) ||
+        containsAllocOrCall(ifNode.elseBranch)
+      );
+    }
+    case ASTNodeKind.WhileStatement: {
+      const whileNode = node as WhileStatementNode;
+      return (
+        containsAllocOrCall(whileNode.condition) ||
+        containsAllocOrCall(whileNode.body)
+      );
+    }
+    case ASTNodeKind.ForStatement: {
+      const forNode = node as ForStatementNode;
+      return (
+        containsAllocOrCall(forNode.initializer) ||
+        containsAllocOrCall(forNode.condition) ||
+        containsAllocOrCall(forNode.incrementor) ||
+        containsAllocOrCall(forNode.body)
+      );
+    }
+    case ASTNodeKind.ForOfStatement: {
+      const forOfNode = node as ForOfStatementNode;
+      return (
+        containsAllocOrCall(forOfNode.iterable) ||
+        containsAllocOrCall(forOfNode.body)
+      );
+    }
+    case ASTNodeKind.DoWhileStatement: {
+      const doNode = node as DoWhileStatementNode;
+      return (
+        containsAllocOrCall(doNode.body) ||
+        containsAllocOrCall(doNode.condition)
+      );
+    }
+    case ASTNodeKind.SwitchStatement: {
+      const switchNode = node as SwitchStatementNode;
+      if (containsAllocOrCall(switchNode.expression)) return true;
+      for (const clause of switchNode.cases) {
+        if (containsAllocOrCall(clause.expression)) return true;
+        for (const stmt of clause.statements) {
+          if (containsAllocOrCall(stmt)) return true;
+        }
+      }
+      return false;
+    }
+    case ASTNodeKind.TryCatchStatement: {
+      const tryNode = node as TryCatchStatementNode;
+      return (
+        containsAllocOrCall(tryNode.tryBody) ||
+        containsAllocOrCall(tryNode.catchBody) ||
+        containsAllocOrCall(tryNode.finallyBody)
+      );
+    }
+    case ASTNodeKind.ReturnStatement: {
+      const retNode = node as ReturnStatementNode;
+      return containsAllocOrCall(retNode.value);
+    }
+    case ASTNodeKind.BinaryExpression: {
+      const binNode = node as BinaryExpressionNode;
+      return (
+        containsAllocOrCall(binNode.left) || containsAllocOrCall(binNode.right)
+      );
+    }
+    case ASTNodeKind.UnaryExpression: {
+      const unaryNode = node as UnaryExpressionNode;
+      return containsAllocOrCall(unaryNode.operand);
+    }
+    case ASTNodeKind.ConditionalExpression: {
+      const condNode = node as ConditionalExpressionNode;
+      return (
+        containsAllocOrCall(condNode.condition) ||
+        containsAllocOrCall(condNode.whenTrue) ||
+        containsAllocOrCall(condNode.whenFalse)
+      );
+    }
+    case ASTNodeKind.NullCoalescingExpression: {
+      const ncNode = node as NullCoalescingExpressionNode;
+      return (
+        containsAllocOrCall(ncNode.left) || containsAllocOrCall(ncNode.right)
+      );
+    }
+    case ASTNodeKind.TemplateExpression: {
+      const templateNode = node as TemplateExpressionNode;
+      for (const part of templateNode.parts) {
         if (
-          item &&
-          typeof item === "object" &&
-          "kind" in (item as object) &&
-          containsAllocOrCall(item as ASTNode)
+          part.kind === "expression" &&
+          containsAllocOrCall(part.expression)
         ) {
           return true;
         }
       }
-    } else if ("kind" in (v as object)) {
-      if (containsAllocOrCall(v as ASTNode)) return true;
+      return false;
     }
+    case ASTNodeKind.DeleteExpression: {
+      const delNode = node as DeleteExpressionNode;
+      return containsAllocOrCall(delNode.target);
+    }
+    case ASTNodeKind.UpdateExpression: {
+      const updateNode = node as UpdateExpressionNode;
+      return containsAllocOrCall(updateNode.operand);
+    }
+    case ASTNodeKind.AsExpression: {
+      const asNode = node as AsExpressionNode;
+      return containsAllocOrCall(asNode.expression);
+    }
+    case ASTNodeKind.ArrayAccessExpression: {
+      const accessNode = node as ArrayAccessExpressionNode;
+      return (
+        containsAllocOrCall(accessNode.array) ||
+        containsAllocOrCall(accessNode.index)
+      );
+    }
+    case ASTNodeKind.OptionalChainingExpression: {
+      const optNode = node as OptionalChainingExpressionNode;
+      return containsAllocOrCall(optNode.object);
+    }
+    case ASTNodeKind.ThrowStatement: {
+      const throwNode = node as ThrowStatementNode;
+      return containsAllocOrCall(throwNode.expression);
+    }
+    case ASTNodeKind.ArrayLiteralExpression: {
+      const arrNode = node as ArrayLiteralExpressionNode;
+      for (const el of arrNode.elements) {
+        if (containsAllocOrCall(el.value)) return true;
+      }
+      return false;
+    }
+    case ASTNodeKind.FunctionExpression: {
+      const fnNode = node as FunctionExpressionNode;
+      return containsAllocOrCall(fnNode.body);
+    }
+    case ASTNodeKind.FunctionDeclaration: {
+      const fnNode = node as FunctionDeclarationNode;
+      return containsAllocOrCall(fnNode.body);
+    }
+    default:
+      // Leaf nodes (Identifier, ThisExpression, literals, etc.) and any
+      // unrecognised future node kinds.  Returning false here matches
+      // leaf semantics; if a new composite node kind is added, it must
+      // be given an explicit case to avoid silently skipping children.
+      return false;
   }
-  return false;
 }
 
 /**
@@ -2414,6 +3458,111 @@ function inlineResolvedMethodBody(
     }
   }
 
+  // --- Pass-1 outline candidate detection (instance methods only;
+  //     static methods are counted in visitInlineStaticMethodCall) ---
+  if (converter.metadataOnlyMode) {
+    const infoKey = outlineMapKey(
+      "inst",
+      declaringClassName,
+      methodName,
+      instancePrefix,
+    );
+    let info = converter.inlineStaticCallInfo.get(infoKey);
+    if (!info) {
+      info = { callSites: 0 };
+      converter.inlineStaticCallInfo.set(infoKey, info);
+    }
+    info.callSites++;
+    if (info.selfCallCount === undefined) {
+      info.selfCallCount = countSelfCalls(methodName, method.body);
+    }
+    if (info.bodyInstr === undefined) {
+      // Invariant: pass1EmitCount is monotonically increasing within a
+      // single pass-1 run (resetState clears it only between passes).
+      const emitBefore = converter.pass1EmitCount;
+      const result = inlineResolvedMethodBodyImpl(
+        converter,
+        className,
+        methodName,
+        method,
+        args,
+        instancePrefix,
+        declaringClassName,
+        inlineKey,
+      );
+      info.bodyInstr = converter.pass1EmitCount - emitBefore;
+      return result;
+    }
+    // When bodyInstr is already set (second+ call site in pass 1), fall
+    // through to the normal inline path so metadata like soaClasses is
+    // still collected.
+  }
+
+  // --- Pass-2 outline check ---
+  if (!converter.metadataOnlyMode) {
+    const outlineKey = outlineMapKey(
+      "inst",
+      declaringClassName,
+      methodName,
+      instancePrefix,
+    );
+    if (converter.outlineCandidates.has(outlineKey)) {
+      const resolvedReturnType = resolveInlineClassType(
+        converter,
+        method.returnType,
+      );
+      if (
+        !checkOutlineIneligible(
+          converter,
+          method.parameters,
+          method.body,
+          resolvedReturnType,
+        )
+      ) {
+        const existing = converter.outlinedMethods.get(outlineKey);
+        if (existing) {
+          return emitOutlinedCallSite(converter, existing, args);
+        }
+        return emitInlineOutlinedMethodBody(
+          converter,
+          className,
+          methodName,
+          method,
+          args,
+          instancePrefix,
+          declaringClassName,
+          inlineKey,
+        );
+      }
+    }
+  }
+
+  return inlineResolvedMethodBodyImpl(
+    converter,
+    className,
+    methodName,
+    method,
+    args,
+    instancePrefix,
+    declaringClassName,
+    inlineKey,
+  );
+}
+
+/**
+ * Core body emission for inlineResolvedMethodBody. Split out so the pass-1
+ * counting and pass-2 outline check can wrap it.
+ */
+function inlineResolvedMethodBodyImpl(
+  converter: ASTToTACConverter,
+  className: string,
+  methodName: string,
+  method: MethodDeclarationNode,
+  args: TACOperand[],
+  instancePrefix: string | undefined,
+  declaringClassName: string,
+  inlineKey: string,
+): TACOperand | null {
   if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
   try {
     let returnType: TypeSymbol = method.returnType;
@@ -2521,7 +3670,7 @@ function inlineResolvedMethodBody(
 
     return result;
   } finally {
-    profExit(converter);
+    if (PROF) profExit(converter);
   }
 }
 
@@ -2965,6 +4114,14 @@ export function collectRecursiveLocals(
         for (const stmt of block.statements) visitNode(stmt);
         break;
       }
+      // ExpressionStatement cannot declare locals directly, but traversing
+      // it ensures completeness of the AST walk (e.g. for nested calls
+      // that may contain closures or other local-declaring constructs).
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        visitNode(exprStmt.expression);
+        break;
+      }
       case ASTNodeKind.IfStatement: {
         const ifNode = node as IfStatementNode;
         visitNode(ifNode.condition);
@@ -3341,6 +4498,11 @@ export function countSelfCalls(
         }
         visitNode(callNode.callee);
         for (const arg of callNode.arguments) visitNode(arg);
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        const exprStmt = node as ExpressionStatementNode;
+        visitNode(exprStmt.expression);
         break;
       }
       case ASTNodeKind.BlockStatement: {

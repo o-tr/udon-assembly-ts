@@ -43,6 +43,8 @@ export interface TranspilerOptions {
    * test harnesses that render warnings themselves.
    */
   silent?: boolean;
+  /** Override the body-instruction threshold for method outlining (applies to both static and instance methods). */
+  outlineBodyInstrThreshold?: number;
 }
 
 /**
@@ -146,6 +148,7 @@ export class TypeScriptToUdonTranspiler {
         errorCollector: parser.getErrorCollector(),
         checkerContext: parser.checkerContext,
         checkerTypeResolver: parser.checkerTypeResolver,
+        outlineBodyInstrThreshold: options.outlineBodyInstrThreshold,
       },
     );
     let tacInstructions = tacConverter.convert(program);
