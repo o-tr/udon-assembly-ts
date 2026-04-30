@@ -10,6 +10,7 @@ interface Options {
   verbose: boolean;
   optimize: boolean;
   reflect: boolean;
+  useOutputCache: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -19,6 +20,7 @@ function parseArgs(argv: string[]): Options {
     verbose: false,
     optimize: true,
     reflect: false,
+    useOutputCache: true,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -49,6 +51,10 @@ function parseArgs(argv: string[]): Options {
       opts.reflect = true;
       continue;
     }
+    if (arg === "--no-output-cache") {
+      opts.useOutputCache = false;
+      continue;
+    }
     if (arg === "-h" || arg === "--help") {
       printHelp();
       process.exit(0);
@@ -72,6 +78,7 @@ Options:
   -v, --verbose         Verbose logging
   --no-optimize         Disable TAC optimizer
   --reflect             Append reflection metadata to data section
+  --no-output-cache     Disable assembled-output cache (for cold/one-shot runs)
   -h, --help            Show this help
 
 Examples:
@@ -118,6 +125,7 @@ async function main() {
       optimize: opts.optimize,
       reflect: opts.reflect,
       verbose: opts.verbose,
+      useOutputCache: opts.useOutputCache,
     };
 
     try {

@@ -1912,12 +1912,14 @@ function emitInlineRecursiveStaticMethod(
     const locals = collectRecursiveLocals.call(converter, method);
     // Add return site index
     locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
-    // Add self-call result variables
-    for (let i = 0; i < selfCallCount; i++) {
-      locals.push({
-        name: `${prefix}_selfCallResult_${i}`,
-        type: effectiveReturnType,
-      });
+    // Add self-call result variables (void methods never read these)
+    if (returnType.udonType !== UdonType.Void) {
+      for (let i = 0; i < selfCallCount; i++) {
+        locals.push({
+          name: `${prefix}_selfCallResult_${i}`,
+          type: effectiveReturnType,
+        });
+      }
     }
     // Add synthesized try/catch error flag/value variables so they survive
     // across recursive self-call boundaries (same pattern as @RecursiveMethod).
@@ -2222,6 +2224,9 @@ function emitInlineRecursiveStaticMethod(
     }
 
     converter.emit(new LabelInstruction(doneLabel));
+    if (ctx.returnsVoid) {
+      return VOID_INLINE_RESULT;
+    }
     return result;
   } finally {
     if (PROF) profExit(converter);

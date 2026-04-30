@@ -11,6 +11,7 @@ import {
   type MethodCallInstruction,
   TACInstructionKind,
 } from "../../../src/transpiler/ir/tac_instruction";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 describe("custom type array operations", () => {
   beforeAll(() => {
@@ -99,7 +100,6 @@ describe("custom type array operations", () => {
   });
 
   it("unwraps Map.get() array values before emitting .push()", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Meld {
         value: number = 0;
@@ -113,27 +113,12 @@ describe("custom type array operations", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    const udonConverter = new TACToUdonConverter();
-    udonConverter.convert(tac);
-    const externs = udonConverter.getExternSignatures();
-
-    expect(
-      externs.some((sig) =>
-        sig.includes(
-          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
-        ),
-      ),
-    ).toBe(true);
-    expect(externs.some((sig) => sig.includes("DataToken.__push__"))).toBe(
-      false,
+    expect(result.uasm).toContain(
+      "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
     );
+    expect(result.uasm).not.toContain("DataToken.__push__");
   });
 
   it("generates valid length extern for known type arrays (number[], string[])", () => {
