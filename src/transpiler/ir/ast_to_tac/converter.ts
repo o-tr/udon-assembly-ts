@@ -172,9 +172,10 @@ const PROF = process.env.UDON_PROFILE === "1";
 /** Minimum call sites for a static method to be considered for outlining. */
 export const OUTLINE_MIN_CALL_SITES = 2;
 /** Minimum estimated body instructions (pass-1 emit count) for outlining.
- *  Default 50 000 targets only very large methods (GameStateMachine::dispatch).
+ *  Default 200 targets mid-size and large methods; very small methods
+ *  (accessors, tiny helpers) remain fully inlined.
  *  Overridable per-converter via constructor options for testing. */
-export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 50_000;
+export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 200;
 
 /**
  * AST to TAC converter
