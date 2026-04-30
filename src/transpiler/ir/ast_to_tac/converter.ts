@@ -239,6 +239,7 @@ export class ASTToTACConverter {
         dispatchLabel: TACOperand;
         overflowLabel: TACOperand;
         returnVar: VariableOperand;
+        returnsVoid: boolean;
       }
     | undefined;
   /**

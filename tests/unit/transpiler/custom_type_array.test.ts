@@ -98,6 +98,44 @@ describe("custom type array operations", () => {
     ).toBe(true);
   });
 
+  it("unwraps Map.get() array values before emitting .push()", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Meld {
+        value: number = 0;
+      }
+      class Demo {
+        private byKey: Map<string, Meld[]> = new Map<string, Meld[]>();
+        Start(): void {
+          this.byKey.set("a", []);
+          const m: Meld = new Meld();
+          this.byKey.get("a")!.push(m);
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+
+    const udonConverter = new TACToUdonConverter();
+    udonConverter.convert(tac);
+    const externs = udonConverter.getExternSignatures();
+
+    expect(
+      externs.some((sig) =>
+        sig.includes(
+          "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+        ),
+      ),
+    ).toBe(true);
+    expect(externs.some((sig) => sig.includes("DataToken.__push__"))).toBe(
+      false,
+    );
+  });
+
   it("generates valid length extern for known type arrays (number[], string[])", () => {
     const parser = new TypeScriptParser();
     const source = `

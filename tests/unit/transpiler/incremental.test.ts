@@ -180,6 +180,30 @@ describe("incremental compilation", () => {
     expect(uasm2).toBe(uasm1);
   });
 
+  it("can disable Tier 2 output cache for cold one-shot runs", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "transpiler-t2off-"));
+    const srcDir = path.join(tempDir, "src");
+    const outDir = path.join(tempDir, "out");
+    const fileA = path.join(srcDir, "A.ts");
+
+    writeFile(fileA, srcA);
+
+    const transpiler = new BatchTranspiler();
+    const result = transpiler.transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      optimize: false,
+      excludeDirs: [],
+      useOutputCache: false,
+    });
+
+    expect(result.outputs.length).toBe(1);
+    expect(fs.existsSync(path.join(outDir, "A.tasm"))).toBe(true);
+    expect(fs.existsSync(path.join(srcDir, ".transpiler-optcache"))).toBe(
+      false,
+    );
+  });
+
   it("Tier 2: output cache is invalidated when source changes", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "transpiler-t2b-"));
     const srcDir = path.join(tempDir, "src");

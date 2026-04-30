@@ -24,6 +24,11 @@ import type { TACToUdonConverter } from "./converter.js";
  * ArrayTypeSymbol uses DataList in Udon, not the raw "Array" udonType.
  */
 function resolveHeapType(typeSymbol: TypeSymbol): string {
+  // System.Void is a method return marker, not an allocatable Udon heap type.
+  // Any surviving void-typed operand is a compiler sentinel/dummy slot.
+  if (typeSymbol.udonType === UdonType.Void) {
+    return UdonType.Object;
+  }
   // Native array: use the specific Udon type name (e.g. "SystemSingleArray").
   if (typeSymbol instanceof NativeArrayTypeSymbol) {
     return typeSymbol.nativeUdonTypeName;
@@ -136,6 +141,9 @@ export function getOperandTypeName(
         (typeSymbol.name ?? "").endsWith("[]")
       ) {
         return "VRCSDK3DataDataList";
+      }
+      if (typeSymbol.udonType === UdonType.Void) {
+        return "SystemObject";
       }
       return toUdonTypeNameWithArray(udonTypeToCSharp(typeSymbol.udonType));
     }
