@@ -58,7 +58,6 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
-  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
@@ -70,6 +69,7 @@ import {
   countSelfCalls,
   countTryCatchBlocks,
   MAX_RECURSION_STACK_DEPTH,
+  operandTrackingKey,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
@@ -1373,10 +1373,10 @@ export function visitReturnStatement(
     emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
     // Capture valueMapping AFTER the epilogue so inlineInstanceMap reflects
     // the post-loop state (viface entries are restored/removed by the epilogue).
-    const valueMapping =
-      value?.kind === TACOperandKind.Variable
-        ? this.inlineInstanceMap.get((value as VariableOperand).name)
-        : undefined;
+    const valueTrackingKey = value ? operandTrackingKey(value) : undefined;
+    const valueMapping = valueTrackingKey
+      ? this.resolveInlineInstance(valueTrackingKey)
+      : undefined;
 
     // When the method declares an InterfaceTypeSymbol or inline ClassTypeSymbol
     // return type, copy each field from the returned instance to a stable

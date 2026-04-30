@@ -104,6 +104,55 @@ describe("inline erased return handling", () => {
     expect(result.tac).not.toContain("DataToken");
   });
 
+  it("propagates outlined delegated structural return fields through temporaries", () => {
+    const source = `
+      type TenpaiResult = { isTenpai: boolean; waits: string[] };
+
+      class Inner {
+        check(): TenpaiResult {
+          const waits: string[] = ["1m"];
+          return { isTenpai: true, waits };
+        }
+      }
+
+      class Outer {
+        private inner: Inner = new Inner();
+        check(): TenpaiResult {
+          return this.inner.check();
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const outer = new Outer();
+          const first = outer.check();
+          const ok1 = first.isTenpai;
+          const second = outer.check();
+          const ok2 = second.isTenpai;
+          const waits = second.waits.length;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      outlineBodyInstrThreshold: 0,
+    });
+
+    expect(
+      result.diagnostics?.find(
+        (diagnostic) =>
+          diagnostic.code === "UntrackedStructuralUnionReturn",
+      ),
+    ).toBeUndefined();
+    expect(result.tac).toMatch(
+      /(__outline_[A-Za-z0-9_]+_retVal)_isTenpai = (__outline_[A-Za-z0-9_]+_retVal)_isTenpai/,
+    );
+    expect(result.tac).toMatch(
+      /(__outline_[A-Za-z0-9_]+_retVal)_waits = (__outline_[A-Za-z0-9_]+_retVal)_waits/,
+    );
+    expect(result.tac).not.toMatch(/__uninst_prop_\d+/);
+  });
+
   it("propagates structural union field copies across nested inline returns", () => {
     // Mirrors pr170_union_with_array_field VM fixture. The leading ternary
     // return `return cond ? a : b` was the trigger: at TAC generation time
