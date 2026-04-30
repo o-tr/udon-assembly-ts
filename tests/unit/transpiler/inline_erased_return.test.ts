@@ -140,8 +140,7 @@ describe("inline erased return handling", () => {
 
     expect(
       result.diagnostics?.find(
-        (diagnostic) =>
-          diagnostic.code === "UntrackedStructuralUnionReturn",
+        (diagnostic) => diagnostic.code === "UntrackedStructuralUnionReturn",
       ),
     ).toBeUndefined();
     expect(result.tac).toMatch(
