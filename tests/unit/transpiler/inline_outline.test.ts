@@ -28,6 +28,16 @@ describe("static method outlining", () => {
     return lines.join("\n");
   }
 
+  function buildLargeVoidBody(varCount: number): string {
+    const lines: string[] = [];
+    lines.push("    let acc: number = 0;");
+    for (let i = 0; i < varCount; i++) {
+      lines.push(`    acc = acc + ${i};`);
+    }
+    lines.push("    Debug.Log(acc);");
+    return lines.join("\n");
+  }
+
   it("outlines a large static method called from multiple sites", () => {
     // 150 statements × ~2 ix each ≈ 300 instructions → above threshold (200)
     const source = `
@@ -59,6 +69,32 @@ ${buildLargeBody(150)}
     // Dispatch and return labels should exist
     expect(result.tac).toContain("outline_dispatch");
     expect(result.tac).toContain("outline_return");
+  });
+
+  it("does not emit SystemVoid heap slots for outlined void methods", () => {
+    const source = `
+      class Helper {
+        static touch(): void {
+${buildLargeVoidBody(150)}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          Helper.touch();
+          Helper.touch();
+          Helper.touch();
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    expect(result.uasm).not.toMatch(/%SystemVoid/);
   });
 
   it("does NOT outline a small static method (below threshold)", () => {

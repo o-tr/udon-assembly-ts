@@ -2281,39 +2281,51 @@ export function visitCallExpression(
 
       return VOID_RETURN;
     }
+    const listObject =
+      objectType.name === ExternTypes.dataToken.name ||
+      objectType.udonType === UdonType.DataToken
+        ? this.unwrapDataToken(object, ExternTypes.dataList)
+        : object;
+    const listObjectType = this.getOperandType(listObject);
     if (
-      objectType.name === ExternTypes.dataList.name ||
-      objectType instanceof DataListTypeSymbol ||
-      objectType.udonType === UdonType.DataList
+      listObjectType.name === ExternTypes.dataList.name ||
+      listObjectType instanceof DataListTypeSymbol ||
+      listObjectType.udonType === UdonType.DataList
     ) {
       if (propAccess.property === "Add" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
-        this.emit(new MethodCallInstruction(undefined, object, "Add", [token]));
+        this.emit(
+          new MethodCallInstruction(undefined, listObject, "Add", [token]),
+        );
         return VOID_RETURN;
       }
       if (propAccess.property === "push") {
         if (evaluatedArgs.length === 0) {
           // push() with no args: no mutation, return current count
           const countResult = this.newTemp(PrimitiveTypes.int32);
-          this.emit(new PropertyGetInstruction(countResult, object, "Count"));
+          this.emit(
+            new PropertyGetInstruction(countResult, listObject, "Count"),
+          );
           return countResult;
         }
         // DataList.push(value) → DataList.Add(wrapDataToken(value)) for each arg
         for (const arg of evaluatedArgs) {
           const token = this.wrapDataToken(arg);
           this.emit(
-            new MethodCallInstruction(undefined, object, "Add", [token]),
+            new MethodCallInstruction(undefined, listObject, "Add", [token]),
           );
         }
         const countResult = this.newTemp(PrimitiveTypes.int32);
-        this.emit(new PropertyGetInstruction(countResult, object, "Count"));
+        this.emit(new PropertyGetInstruction(countResult, listObject, "Count"));
         return countResult;
       }
       if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
         const removeResult = this.newTemp(PrimitiveTypes.boolean);
         this.emit(
-          new MethodCallInstruction(removeResult, object, "Remove", [token]),
+          new MethodCallInstruction(removeResult, listObject, "Remove", [
+            token,
+          ]),
         );
         return removeResult;
       }

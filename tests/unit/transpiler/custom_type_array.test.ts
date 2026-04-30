@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 import {
   type MethodCallInstruction,
@@ -96,6 +97,28 @@ describe("custom type array operations", () => {
     expect(
       externs.some((sig) => sig.includes("VRCSDK3DataDataToken.__ctor__")),
     ).toBe(true);
+  });
+
+  it("unwraps Map.get() array values before emitting .push()", () => {
+    const source = `
+      class Meld {
+        value: number = 0;
+      }
+      class Demo {
+        private byKey: Map<string, Meld[]> = new Map<string, Meld[]>();
+        Start(): void {
+          this.byKey.set("a", []);
+          const m: Meld = new Meld();
+          this.byKey.get("a")!.push(m);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toContain(
+      "VRCSDK3DataDataList.__Add__VRCSDK3DataDataToken__SystemVoid",
+    );
+    expect(result.uasm).not.toContain("DataToken.__push__");
   });
 
   it("generates valid length extern for known type arrays (number[], string[])", () => {

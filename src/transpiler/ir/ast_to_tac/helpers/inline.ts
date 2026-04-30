@@ -732,12 +732,20 @@ function resolveInlineReturnType(returnType: TypeSymbol): {
   effectiveReturnType: TypeSymbol;
   isErasedReturn: boolean;
 } {
+  if (returnType.udonType === UdonType.Void) {
+    return {
+      effectiveReturnType: ObjectType,
+      isErasedReturn: false,
+    };
+  }
   const isErasedReturn = isPlainObjectType(returnType);
   return {
     effectiveReturnType: isErasedReturn ? ExternTypes.dataToken : returnType,
     isErasedReturn,
   };
 }
+
+const VOID_INLINE_RESULT = createConstant(null, ObjectType);
 
 function getEntryPointPropertyNameForClass(
   converter: ASTToTACConverter,
@@ -1898,17 +1906,20 @@ function emitInlineRecursiveStaticMethod(
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+    const { effectiveReturnType } = resolveInlineReturnType(returnType);
 
     // Collect locals (parameters + declared variables)
     const locals = collectRecursiveLocals.call(converter, method);
     // Add return site index
     locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
-    // Add self-call result variables
-    for (let i = 0; i < selfCallCount; i++) {
-      locals.push({
-        name: `${prefix}_selfCallResult_${i}`,
-        type: returnType,
-      });
+    // Add self-call result variables (void methods never read these)
+    if (returnType.udonType !== UdonType.Void) {
+      for (let i = 0; i < selfCallCount; i++) {
+        locals.push({
+          name: `${prefix}_selfCallResult_${i}`,
+          type: effectiveReturnType,
+        });
+      }
     }
     // Add synthesized try/catch error flag/value variables so they survive
     // across recursive self-call boundaries (same pattern as @RecursiveMethod).
@@ -1934,7 +1945,7 @@ function emitInlineRecursiveStaticMethod(
 
     const result = createVariable(
       `${prefix}_retVal_${converter.tempCounter++}`,
-      returnType,
+      effectiveReturnType,
       { isLocal: true, isInlineReturn: true },
     );
     const entryLabel = converter.newLabel("inline_rec_entry");
@@ -1975,6 +1986,7 @@ function emitInlineRecursiveStaticMethod(
       dispatchLabel,
       overflowLabel,
       returnVar: result,
+      returnsVoid: returnType.udonType === UdonType.Void,
     };
 
     savedInitialParams = new Map();
@@ -2212,6 +2224,9 @@ function emitInlineRecursiveStaticMethod(
     }
 
     converter.emit(new LabelInstruction(doneLabel));
+    if (ctx.returnsVoid) {
+      return VOID_INLINE_RESULT;
+    }
     return result;
   } finally {
     if (PROF) profExit(converter);
@@ -2922,6 +2937,10 @@ function emitOutlinedCallSite(
       // Return label (dispatch routes here)
       converter.emit(new LabelInstruction(returnLabel));
 
+      if (state.method.returnType.udonType === UdonType.Void) {
+        return VOID_INLINE_RESULT;
+      }
+
       // Capture return value
       const capturedResult = converter.newTemp(
         converter.getOperandType(state.returnVar),
@@ -3076,6 +3095,15 @@ function emitInlineRecursiveSelfCall(
 
     // 6. Return label (dispatch brings us back here)
     converter.emit(new LabelInstruction(returnLabel));
+
+    if (ctx.returnsVoid) {
+      emitInlineRecursivePop.call(converter);
+      converter.inlineInstanceMap.clear();
+      for (const [k, v] of savedInstanceMap) {
+        converter.inlineInstanceMap.set(k, v);
+      }
+      return VOID_INLINE_RESULT;
+    }
 
     // 7. Read return value into temp BEFORE pop
     const capturedTemp = converter.newTemp(

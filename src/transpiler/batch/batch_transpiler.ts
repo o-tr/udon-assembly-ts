@@ -179,6 +179,12 @@ export interface BatchTranspilerOptions {
   outputExtension?: string;
   heapLimit?: number;
   /**
+   * Enables the assembled-output cache (.transpiler-optcache). Disable this
+   * for intentionally cold one-shot runs to avoid TAC fingerprinting and
+   * writing large cached UASM JSON blobs.
+   */
+  useOutputCache?: boolean;
+  /**
    * When true, suppress the terminal `console.warn(formatWarnings(...))`
    * emission. Structured diagnostics are still returned on
    * `BatchResult.diagnostics`. Per-entry per-file warnings from assembler /
@@ -491,11 +497,15 @@ export class BatchTranspiler {
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
+    const useOutputCache = options.useOutputCache !== false;
     // Sweep stale output-cache entries when there is no prior cache or when the
     // transpiler hash changed (including v2→v3 upgrades where loadCache injects
     // the current hash but old optcache entries still carry the prior version's).
     const currentTranspilerHash = getTranspilerHash();
-    if (cache === null || cache.transpilerHash !== currentTranspilerHash) {
+    if (
+      useOutputCache &&
+      (cache === null || cache.transpilerHash !== currentTranspilerHash)
+    ) {
       this.sweepOutputCache(optCacheDir);
     }
 
@@ -506,49 +516,55 @@ export class BatchTranspiler {
     // Record slot files for ALL entry points (including skipped ones) so
     // sweepUnusedSlotFiles does not delete cache files for cached entries.
     const activeSlotFiles = new Set<string>();
-    for (const ep of registry.getEntryPoints()) {
-      activeSlotFiles.add(
-        this.outputCacheFilePath(
-          optCacheDir,
-          ep.name,
-          reflect,
-          optimize,
-          useStringBuilder,
-          ext,
-          heapLimit,
-        ),
-      );
+    if (useOutputCache) {
+      for (const ep of registry.getEntryPoints()) {
+        activeSlotFiles.add(
+          this.outputCacheFilePath(
+            optCacheDir,
+            ep.name,
+            reflect,
+            optimize,
+            useStringBuilder,
+            ext,
+            heapLimit,
+          ),
+        );
+      }
     }
 
     if (entryFilesToCompile.size === 0) {
-      this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
+      if (useOutputCache) {
+        this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
+      }
       // Replay structured diagnostics from the per-entry output cache so that
       // BatchResult.diagnostics (used by CI gating, IDE integrations) is still
       // populated on unchanged rebuilds. The per-entry cache-hit path inside
       // the main loop does NOT replay because tacConverter reruns there and
       // re-adds them; this no-op early-return has no other source.
-      const currentTranspilerHash = getTranspilerHash();
-      for (const entry of registry.getEntryPoints()) {
-        const slot = this.outputCacheFilePath(
-          optCacheDir,
-          entry.name,
-          reflect,
-          optimize,
-          useStringBuilder,
-          ext,
-          heapLimit,
-        );
-        const cached = this.loadOutputCacheAny(slot);
-        if (!cached?.diagnostics) continue;
-        // Defensive guard for hand-edited optcache directories: skip entries
-        // whose transpilerHash no longer matches this build.
-        if (
-          cached.transpilerHash &&
-          cached.transpilerHash !== currentTranspilerHash
-        ) {
-          continue;
+      if (useOutputCache) {
+        const currentTranspilerHash = getTranspilerHash();
+        for (const entry of registry.getEntryPoints()) {
+          const slot = this.outputCacheFilePath(
+            optCacheDir,
+            entry.name,
+            reflect,
+            optimize,
+            useStringBuilder,
+            ext,
+            heapLimit,
+          );
+          const cached = this.loadOutputCacheAny(slot);
+          if (!cached?.diagnostics) continue;
+          // Defensive guard for hand-edited optcache directories: skip entries
+          // whose transpilerHash no longer matches this build.
+          if (
+            cached.transpilerHash &&
+            cached.transpilerHash !== currentTranspilerHash
+          ) {
+            continue;
+          }
+          for (const d of cached.diagnostics) errorCollector.addWarning(d);
         }
-        for (const d of cached.diagnostics) errorCollector.addWarning(d);
       }
       // Save trackedFiles (not just cacheFiles) so transitive dependencies
       // discovered in prior runs (e.g. base-class files with no explicit import)
@@ -807,60 +823,64 @@ export class BatchTranspiler {
             syncModes.set(prop.name, prop.syncMode.toLowerCase());
           }
         }
-        const cacheFilePath = this.outputCacheFilePath(
-          optCacheDir,
-          entryPoint.name,
-          reflect,
-          optimize,
-          useStringBuilder,
-          ext,
-          heapLimit,
-        );
-        const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
-        const outputCacheKey = this.computeOutputCacheKey(
-          tacFp1,
-          tacFp2,
-          exposedLabels,
-          entryPoint.name,
-          filteredInlineClassNames,
-          syncModes,
-          entryPoint.behaviourSyncMode,
-          reflect,
-          optimize,
-          useStringBuilder,
-          ext,
-        );
-        const cachedOutput = this.loadOutputCache(
-          cacheFilePath,
-          outputCacheKey,
-        );
-        if (cachedOutput !== null) {
-          if (options?.verbose) {
-            console.log(`  - Output cache hit for ${entryPoint.name}.`);
-          }
-          const outPath = path.join(
-            options.outputDir,
-            `${entryPoint.name}.${ext}`,
+        let cacheFilePath: string | undefined;
+        let outputCacheKey: string | undefined;
+        if (useOutputCache) {
+          cacheFilePath = this.outputCacheFilePath(
+            optCacheDir,
+            entryPoint.name,
+            reflect,
+            optimize,
+            useStringBuilder,
+            ext,
+            heapLimit,
           );
-          fs.mkdirSync(path.dirname(outPath), { recursive: true });
-          fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
-          for (const w of cachedOutput.warnings ?? []) console.warn(w);
-          outputs.push({
-            className: entryPoint.name,
-            outputPath: outPath,
-            warnings: cachedOutput.warnings,
-          });
-          entryPointsCache[entryPoint.name] = {
-            usedFiles: this.collectUsedFiles(
-              entryPoint.filePath,
-              entryPoint.name,
-              filteredInlineClassNames,
-              registry,
-              entryCompilationOrder,
-            ),
-          };
-          pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=hit");
-          continue;
+          const [tacFp1, tacFp2] = computeFingerprintPair(tacInstructions);
+          outputCacheKey = this.computeOutputCacheKey(
+            tacFp1,
+            tacFp2,
+            exposedLabels,
+            entryPoint.name,
+            filteredInlineClassNames,
+            syncModes,
+            entryPoint.behaviourSyncMode,
+            reflect,
+            optimize,
+            useStringBuilder,
+            ext,
+          );
+          const cachedOutput = this.loadOutputCache(
+            cacheFilePath,
+            outputCacheKey,
+          );
+          if (cachedOutput !== null) {
+            if (options?.verbose) {
+              console.log(`  - Output cache hit for ${entryPoint.name}.`);
+            }
+            const outPath = path.join(
+              options.outputDir,
+              `${entryPoint.name}.${ext}`,
+            );
+            fs.mkdirSync(path.dirname(outPath), { recursive: true });
+            fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
+            for (const w of cachedOutput.warnings ?? []) console.warn(w);
+            outputs.push({
+              className: entryPoint.name,
+              outputPath: outPath,
+              warnings: cachedOutput.warnings,
+            });
+            entryPointsCache[entryPoint.name] = {
+              usedFiles: this.collectUsedFiles(
+                entryPoint.filePath,
+                entryPoint.name,
+                filteredInlineClassNames,
+                registry,
+                entryCompilationOrder,
+              ),
+            };
+            pend(`entry-${entryPoint.name}`, _profEntryStart, "cache=hit");
+            continue;
+          }
         }
 
         // Output cache miss: run the full optimization + codegen pipeline.
@@ -938,14 +958,16 @@ export class BatchTranspiler {
         const allWarnings = [...heapWarnings, ...assemblerWarnings];
         const warnings = allWarnings.length > 0 ? allWarnings : undefined;
         // Tier 2: Save assembled output to cache.
-        this.saveOutputCache(cacheFilePath, {
-          key: outputCacheKey,
-          uasm,
-          warnings,
-          diagnostics:
-            entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
-          transpilerHash: getTranspilerHash(),
-        });
+        if (useOutputCache && cacheFilePath && outputCacheKey) {
+          this.saveOutputCache(cacheFilePath, {
+            key: outputCacheKey,
+            uasm,
+            warnings,
+            diagnostics:
+              entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
+            transpilerHash: getTranspilerHash(),
+          });
+        }
         // Tier 3: Record which files contributed to this entry point.
         entryPointsCache[entryPoint.name] = {
           usedFiles: this.collectUsedFiles(
@@ -982,7 +1004,9 @@ export class BatchTranspiler {
     // Remove output-cache slot files that were not used in this run (e.g. from
     // a prior build with different options). This prevents unbounded growth of
     // .transpiler-optcache/ when build flags cycle in CI.
-    this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
+    if (useOutputCache) {
+      this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
+    }
 
     // Union trackedFiles (which already includes prior usedFiles) with new
     // entryPointsCache usedFiles so freshly-discovered transitive dependencies
