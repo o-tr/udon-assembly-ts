@@ -702,6 +702,54 @@ ${bodyLines.join("\n")}
     // though `obj` is indirectly aliased to `x`.
     expect(result.tac).toContain("outline_entry");
   });
+
+  it("outlines at the default threshold without explicit option", () => {
+    const source = `
+      class Helper {
+        static compute(): number {
+${buildLargeBody(150)}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r1: number = Helper.compute();
+          const r2: number = Helper.compute();
+          const r3: number = Helper.compute();
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+  });
+
+  it("does NOT outline a small method at the default threshold", () => {
+    const source = `
+      class Helper {
+        static add(a: number, b: number): number {
+          return a + b;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r1: number = Helper.add(1, 2);
+          const r2: number = Helper.add(3, 4);
+          const r3: number = Helper.add(5, 6);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(result.tac).not.toContain("outline_entry");
+  });
 });
 
 describe("inline recursive static method", () => {
