@@ -43,7 +43,7 @@ export interface TranspilerOptions {
    * test harnesses that render warnings themselves.
    */
   silent?: boolean;
-  /** Override the body-instruction threshold for static method outlining. */
+  /** Override the body-instruction threshold for method outlining (applies to both static and instance methods). */
   outlineBodyInstrThreshold?: number;
 }
 
