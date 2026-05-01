@@ -206,6 +206,21 @@ function isAnonymousInterfaceName(name: string): boolean {
   return name.startsWith("__anon_");
 }
 
+export function usesInlineNullSentinel(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  if (!isInlineHandleType(converter, type)) return false;
+  // Anonymous structural records can be transported as sibling return slots
+  // with a reference-typed representative value. They still need inline
+  // property dispatch, but their truthy/nullish checks must not assume an
+  // Int32 handle sentinel.
+  if (type instanceof InterfaceTypeSymbol && isAnonymousInterfaceName(type.name)) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * If `type.name` resolves to a registered alias different from `type`
  * itself, return the alias. Otherwise return `type` unchanged. Handles
@@ -938,7 +953,7 @@ export function createSoaSentinelValue(
   fieldType: TypeSymbol,
 ): TACOperand {
   if (isInlineHandleType(converter, fieldType)) {
-    return createConstant(0, PrimitiveTypes.int32);
+    return createConstant(-1, PrimitiveTypes.int32);
   }
   if (fieldType.udonType === UdonType.String) {
     return createConstant("", PrimitiveTypes.string);

@@ -12,6 +12,8 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { normalizeOperandToInt32 } from "./int32_normalization.js";
+import { isInlineHandleType, usesInlineNullSentinel } from "./inline.js";
 
 /** Udon extern signature for System.String.IsNullOrEmpty */
 const IS_NULL_OR_EMPTY_SIG =
@@ -82,8 +84,28 @@ export function coerceToBoolean(
   // rare in VRChat scripts, we accept this divergence for now.
   if (isNumericUdonType(udonType)) {
     const boolTemp = this.newTemp(PrimitiveTypes.boolean);
+    const falseValue = isInlineHandleType(this, type) ? -1 : 0;
     this.emit(
-      new BinaryOpInstruction(boolTemp, operand, "!=", createConstant(0, type)),
+      new BinaryOpInstruction(
+        boolTemp,
+        operand,
+        "!=",
+        createConstant(falseValue, type),
+      ),
+    );
+    return boolTemp;
+  }
+
+  if (usesInlineNullSentinel(this, type)) {
+    const handle = normalizeOperandToInt32(this, operand);
+    const boolTemp = this.newTemp(PrimitiveTypes.boolean);
+    this.emit(
+      new BinaryOpInstruction(
+        boolTemp,
+        handle,
+        "!=",
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
     );
     return boolTemp;
   }

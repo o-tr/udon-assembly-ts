@@ -95,6 +95,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
+  usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
@@ -1376,8 +1377,26 @@ export function visitNullCoalescingExpression(
   const endLabel = this.newLabel("null_end");
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
-  const nullConstant = createConstant(null, ObjectType);
-  this.emit(new BinaryOpInstruction(isNull, left, "==", nullConstant));
+  if (usesInlineNullSentinel(this, leftType)) {
+    const leftHandle = normalizeOperandToInt32(this, left);
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        leftHandle,
+        "==",
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
+    );
+  } else {
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        left,
+        "==",
+        createConstant(null, ObjectType),
+      ),
+    );
+  }
   this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
@@ -2747,44 +2766,21 @@ export function visitPropertyAccessExpression(
               untrackedPropType,
               { isLocal: true },
             );
-            if (dispInstances.length === 1) {
-              const [, info] = dispInstances[0];
-              const directGetter = tryInlineGetter(
-                this,
-                info.className,
-                info.prefix,
-                node.property,
-              );
-              if (directGetter !== undefined) {
-                this.emitCopyWithTracking(dispResult, directGetter);
-                return dispResult;
-              }
-              const directProperty = this.mapInlineProperty(
-                info.className,
-                info.prefix,
-                node.property,
-              ) ?? tryMapAliasInlineProperty(
-                this,
-                info.className,
-                info.prefix,
-                node.property,
-              );
-              if (directProperty) {
-                this.emitCopyWithTracking(dispResult, directProperty);
-                return dispResult;
-              }
-            }
             const hdlVar = normalizeOperandToInt32(this, object);
             const dispEnd = this.newLabel("uninst_prop_end");
             for (const [instId, info] of dispInstances) {
               const dispNext = this.newLabel("uninst_prop_next");
               const dispCond = this.newTemp(PrimitiveTypes.boolean);
+              const instanceHandle = createVariable(
+                `${info.prefix}__handle`,
+                PrimitiveTypes.int32,
+              );
               this.emit(
                 new BinaryOpInstruction(
                   dispCond,
                   hdlVar,
                   "==",
-                  createConstant(instId, PrimitiveTypes.int32),
+                  instanceHandle,
                 ),
               );
               this.emit(
