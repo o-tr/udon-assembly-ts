@@ -1714,6 +1714,73 @@ function resolveInlineOrAliasType(
   return converter.typeMapper.getAlias(inlineType.name) ?? inlineType;
 }
 
+function inlineInstanceDeclaresProperty(
+  converter: ASTToTACConverter,
+  className: string,
+  property: string,
+): boolean {
+  if (resolveClassProperty(converter, className, property)) return true;
+  const alias = converter.typeMapper.getAlias(className);
+  return alias instanceof InterfaceTypeSymbol
+    ? alias.properties.has(property)
+    : false;
+}
+
+function tryReadInlineFieldByHandle(
+  converter: ASTToTACConverter,
+  handle: TACOperand,
+  property: string,
+  propertyType: TypeSymbol,
+): TACOperand | null {
+  const candidates: Array<[number, string]> = [];
+  for (const [instanceId, info] of converter.allInlineInstances) {
+    if (inlineInstanceDeclaresProperty(converter, info.className, property)) {
+      candidates.push([instanceId, info.prefix]);
+    }
+  }
+  if (
+    candidates.length === 0 &&
+    knownStructuralFieldType(property) !== undefined
+  ) {
+    for (const [instanceId, info] of converter.allInlineInstances) {
+      candidates.push([instanceId, info.prefix]);
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  const result = converter.newTemp(propertyType);
+  converter.emit(
+    new AssignmentInstruction(
+      result,
+      createSoaSentinelValue(converter, propertyType),
+    ),
+  );
+  const endLabel = converter.newLabel("inline_field_handle_end");
+  for (const [instanceId, prefix] of candidates) {
+    const nextLabel = converter.newLabel("inline_field_handle_next");
+    const matches = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        matches,
+        handle,
+        "==",
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(matches, nextLabel));
+    converter.emit(
+      new CopyInstruction(
+        result,
+        createVariable(`${prefix}_${property}`, propertyType),
+      ),
+    );
+    converter.emit(new UnconditionalJumpInstruction(endLabel));
+    converter.emit(new LabelInstruction(nextLabel));
+  }
+  converter.emit(new LabelInstruction(endLabel));
+  return result;
+}
+
 export function visitArrayLiteralExpression(
   this: ASTToTACConverter,
   node: ArrayLiteralExpressionNode,
@@ -3457,6 +3524,22 @@ export function visitOptionalChainingExpression(
         `${sourceIdentifier}_${node.property}`,
         structuralPropertyType,
       );
+    } else if (structuralPropertyType) {
+      propResult =
+        tryReadInlineFieldByHandle(
+          this,
+          optBase,
+          node.property,
+          structuralPropertyType,
+        ) ??
+        this.visitPropertyAccessExpression({
+          kind: ASTNodeKind.PropertyAccessExpression,
+          object: {
+            kind: ASTNodeKind.Identifier,
+            name: optBaseName,
+          } as IdentifierNode,
+          property: node.property,
+        } as PropertyAccessExpressionNode);
     } else {
       propResult = this.visitPropertyAccessExpression({
         kind: ASTNodeKind.PropertyAccessExpression,
