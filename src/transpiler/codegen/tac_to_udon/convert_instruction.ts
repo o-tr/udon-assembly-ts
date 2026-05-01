@@ -22,6 +22,7 @@ import {
 import {
   type ConstantOperand,
   type LabelOperand,
+  type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
   type VariableOperand,
@@ -371,6 +372,26 @@ export function convertInstruction(
         | ConstantOperand
         | TemporaryOperand;
       const operandType = operandOp.type?.udonType ?? "Single";
+      const emitBooleanNot = (operand: TACOperand): void => {
+        const labelId = this.nextAddress++;
+        const falseLabel = `__bool_not_false_${labelId}`;
+        const endLabel = `__bool_not_end_${labelId}`;
+        const destAddr = this.getOperandAddress(unInst.dest);
+
+        this.pushOperand(operand);
+        this.instructions.push(new JumpIfFalseInstruction(falseLabel));
+
+        this.pushConstant(false, "Boolean");
+        this.instructions.push(new PushInstruction(destAddr));
+        this.instructions.push(new CopyInstruction());
+        this.instructions.push(new JumpInstruction(endLabel));
+
+        this.instructions.push(new LabelInstruction(falseLabel));
+        this.pushConstant(true, "Boolean");
+        this.instructions.push(new PushInstruction(destAddr));
+        this.instructions.push(new CopyInstruction());
+        this.instructions.push(new LabelInstruction(endLabel));
+      };
 
       if (unInst.operator === "!" && operandType === "String") {
         // String truthiness: !str <==> str.Length == 0
@@ -419,18 +440,13 @@ export function convertInstruction(
           this.instructions.push(new PushInstruction(coerceTmpName));
           this.instructions.push(new CopyInstruction());
 
-          // Negate the Boolean
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          const destAddr = this.getOperandAddress(unInst.dest);
-          this.instructions.push(new PushInstruction(destAddr));
-          const externSig = this.getExternForUnaryOp(
-            unInst.operator,
-            "Boolean",
-          );
-          this.externSignatures.add(externSig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(externSig), true),
-          );
+          // Boolean unary negation is not implemented by the Udon VM; lower
+          // `!b` to `b == false`.
+          emitBooleanNot({
+            kind: TACOperandKind.Variable,
+            name: coerceTmpName,
+            type: { name: "boolean", udonType: UdonType.Boolean },
+          } as VariableOperand);
         } else {
           // Need to coerce to Boolean first, then negate
           // Step 1: Convert to Boolean (needs intermediate temp)
@@ -448,19 +464,15 @@ export function convertInstruction(
             new ExternInstruction(this.getExternSymbol(coerceSig), true),
           );
 
-          // Step 2: Negate the Boolean
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          const destAddr = this.getOperandAddress(unInst.dest);
-          this.instructions.push(new PushInstruction(destAddr));
-          const externSig = this.getExternForUnaryOp(
-            unInst.operator,
-            "Boolean",
-          );
-          this.externSignatures.add(externSig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(externSig), true),
-          );
+          // Step 2: lower `!b` to `b == false`.
+          emitBooleanNot({
+            kind: TACOperandKind.Variable,
+            name: coerceTmpName,
+            type: { name: "boolean", udonType: UdonType.Boolean },
+          } as VariableOperand);
         }
+      } else if (unInst.operator === "!" && operandType === "Boolean") {
+        emitBooleanNot(unInst.operand);
       } else {
         // Simple unary op: push operand, push dest, EXTERN
         this.pushOperand(unInst.operand);

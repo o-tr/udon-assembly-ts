@@ -459,6 +459,80 @@ function coerceValueForParamSlot(
   return coerced;
 }
 
+function structuralInterfaceForType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): InterfaceTypeSymbol | null {
+  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
+    return type;
+  }
+  const alias = converter.typeMapper.getAlias(type.name);
+  if (alias instanceof InterfaceTypeSymbol && alias.properties.size > 0) {
+    return alias;
+  }
+  return null;
+}
+
+function resolvedStructuralPropertyType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): TypeSymbol {
+  return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
+}
+
+function emitStructuralParamFieldCopies(
+  converter: ASTToTACConverter,
+  paramName: string,
+  paramType: TypeSymbol,
+  arg: TACOperand,
+): void {
+  const targetInterface = structuralInterfaceForType(converter, paramType);
+  if (!targetInterface) return;
+
+  const sourceName = operandTrackingKey(arg);
+  if (!sourceName) return;
+
+  const sourceInfo = converter.resolveInlineInstance(sourceName);
+  const sourceHasStructuralSlots =
+    sourceInfo !== undefined ||
+    structuralInterfaceForType(converter, converter.getOperandType(arg)) !==
+      null ||
+    sourceName.startsWith("__inline_ret_") ||
+    sourceName.includes("_retVal");
+  if (!sourceHasStructuralSlots) return;
+
+  let copiedAny = false;
+  for (const [propertyName, rawPropertyType] of targetInterface.properties) {
+    const propertyType = resolvedStructuralPropertyType(
+      converter,
+      rawPropertyType,
+    );
+    const sourceProperty = sourceInfo
+      ? converter.mapInlineProperty(
+          sourceInfo.className,
+          sourceInfo.prefix,
+          propertyName,
+        )
+      : createVariable(`${sourceName}_${propertyName}`, propertyType);
+    if (!sourceProperty) continue;
+
+    const targetProperty = createVariable(
+      `${paramName}_${propertyName}`,
+      propertyType,
+      { isParameter: true },
+    );
+    converter.emitCopyWithTracking(targetProperty, sourceProperty);
+    copiedAny = true;
+  }
+
+  if (copiedAny) {
+    converter.inlineInstanceMap.set(paramName, {
+      prefix: paramName,
+      className: targetInterface.name,
+    });
+  }
+}
+
 export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
   params: Array<{ name: string; type: TypeSymbol; initializer?: ASTNode }>,
@@ -584,6 +658,12 @@ export function saveAndBindInlineParams(
           createVariable(param.name, effectiveParamType, { isParameter: true }),
           argToUse,
         ),
+      );
+      emitStructuralParamFieldCopies(
+        converter,
+        param.name,
+        param.type,
+        argToUse,
       );
       const argInfo = argInlineInfos[i];
       if (argInfo) {
@@ -3043,6 +3123,12 @@ function emitInlineRecursiveSelfCall(
           resolvedParamType,
         );
         converter.emitCopyWithTracking(paramVar, coerced);
+        emitStructuralParamFieldCopies(
+          converter,
+          param.name,
+          param.type,
+          coerced,
+        );
       } else if (param.initializer) {
         // arg omitted on a recursive self-call: emit the declared default so
         // the recursive iteration sees the same shape as a non-recursive

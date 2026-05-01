@@ -558,8 +558,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
       );
-      // Should use a length check (get_Length) for string truthiness
-      expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
+      // Should use a null-safe empty check for string truthiness.
+      expect(result.uasm).toContain(
+        "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean",
+      );
     });
 
     it("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
@@ -583,8 +585,10 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).not.toContain(
         "SystemConvert.__ToBoolean__SystemString__SystemBoolean",
       );
-      // Should use a length check for string truthiness
-      expect(result.uasm).toContain("SystemString.__get_Length__SystemInt32");
+      // Should use a null-safe empty check for string truthiness.
+      expect(result.uasm).toContain(
+        "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean",
+      );
     });
   });
 

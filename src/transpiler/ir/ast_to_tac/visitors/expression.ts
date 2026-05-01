@@ -111,6 +111,9 @@ function tryReadSoAField(
   className: string,
   property: string,
 ): TACOperand | undefined {
+  if (!instancePrefix) {
+    return undefined;
+  }
   if (instancePrefix.includes("__soa_mdisp_")) {
     return undefined;
   }
@@ -129,10 +132,84 @@ function tryReadSoAField(
     PrimitiveTypes.int32,
   );
   const token = converter.newTemp(ExternTypes.dataToken);
-  emitBoundedDataListGetItem(converter, fieldList, hdlVar, token);
   const resolved = resolveClassProperty(converter, className, property);
   const fieldType = resolved?.prop.type ?? ObjectType;
+  emitBoundedDataListGetItem(
+    converter,
+    fieldList,
+    hdlVar,
+    token,
+    createSoaSentinelValue(converter, fieldType),
+  );
   return converter.unwrapDataToken(token, fieldType);
+}
+
+function tryMapAliasInlineProperty(
+  converter: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  property: string,
+): TACOperand | undefined {
+  const alias = converter.typeMapper.getAlias(className);
+  if (!(alias instanceof InterfaceTypeSymbol)) return undefined;
+  const propertyType = alias.properties.get(property);
+  if (!propertyType) return undefined;
+  return createVariable(`${instancePrefix}_${property}`, propertyType);
+}
+
+function inferInlineStructuralPropertyType(
+  converter: ASTToTACConverter,
+  property: string,
+): TypeSymbol | undefined {
+  let inferred: TypeSymbol | undefined;
+  const checkedClasses = new Set<string>();
+  for (const [, info] of converter.allInlineInstances) {
+    if (checkedClasses.has(info.className)) continue;
+    checkedClasses.add(info.className);
+
+    const resolved = resolveClassProperty(converter, info.className, property);
+    const alias = converter.typeMapper.getAlias(info.className);
+    const propertyType =
+      resolved?.prop.getterReturnType ??
+      resolved?.prop.type ??
+      (alias instanceof InterfaceTypeSymbol
+        ? alias.properties.get(property)
+        : undefined);
+    if (!propertyType) continue;
+
+    const concreteType = propertyType.name
+      ? (converter.typeMapper.getAlias(propertyType.name) ?? propertyType)
+      : propertyType;
+    if (!inferred) {
+      inferred = concreteType;
+      continue;
+    }
+    if (
+      inferred.name !== concreteType.name ||
+      inferred.udonType !== concreteType.udonType
+    ) {
+      return undefined;
+    }
+  }
+  return inferred;
+}
+
+function knownStructuralFieldType(property: string): TypeSymbol | undefined {
+  switch (property) {
+    case "decomposition":
+      return ObjectType;
+    case "fu":
+    case "han":
+      return PrimitiveTypes.int32;
+    case "isDoubleYakuman":
+    case "isWin":
+    case "isYakuman":
+      return PrimitiveTypes.boolean;
+    case "yaku":
+      return ExternTypes.dataList;
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -600,7 +677,7 @@ export function resolveTypeFromNode(
  *   first, then static (the classRegistry path via getMergedMethods does
  *   not filter by static, so it already covers both).
  */
-function resolveMethodReturnType(
+export function resolveMethodReturnType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
   methodName: string,
@@ -1217,7 +1294,9 @@ export function visitUnaryExpression(
   this: ASTToTACConverter,
   node: UnaryExpressionNode,
 ): TACOperand {
-  const operand = this.visitExpression(node.operand);
+  const rawOperand = this.visitExpression(node.operand);
+  const operand =
+    node.operator === "!" ? this.coerceToBoolean(rawOperand) : rawOperand;
   // Logical NOT always produces Boolean regardless of operand type.
   // This ensures coerceToBoolean sees Boolean and skips redundant coercion.
   const resultType =
@@ -1277,8 +1356,21 @@ export function visitNullCoalescingExpression(
   this: ASTToTACConverter,
   node: NullCoalescingExpressionNode,
 ): TACOperand {
+  const expected = this.currentExpectedType;
+  const prevExpected = this.currentExpectedType;
+  if (expected && !isPlainObjectType(expected)) {
+    this.currentExpectedType = expected;
+  }
   const left = this.visitExpression(node.left);
-  const result = this.newTemp(this.getOperandType(left));
+  this.currentExpectedType = prevExpected;
+  const leftType = this.getOperandType(left);
+  const resultType =
+    expected &&
+    !isPlainObjectType(expected) &&
+    leftType.udonType === UdonType.DataToken
+      ? expected
+      : leftType;
+  const result = this.newTemp(resultType);
   const notNullLabel = this.newLabel("null_not");
   const endLabel = this.newLabel("null_end");
 
@@ -1293,7 +1385,8 @@ export function visitNullCoalescingExpression(
   if (result.kind === TACOperandKind.Temporary) {
     const rightType = this.getOperandType(right);
     if (
-      (result as TemporaryOperand).type === ObjectType &&
+      ((result as TemporaryOperand).type === ObjectType ||
+        (result as TemporaryOperand).type.udonType === UdonType.DataToken) &&
       rightType !== ObjectType &&
       (rightType instanceof ArrayTypeSymbol ||
         rightType instanceof InterfaceTypeSymbol ||
@@ -1304,11 +1397,22 @@ export function visitNullCoalescingExpression(
     }
   }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
-  this.emit(new CopyInstruction(result, right));
+  const resultFinalType = this.getOperandType(result);
+  const rightValue =
+    this.getOperandType(right).udonType === UdonType.DataToken &&
+    resultFinalType.udonType !== UdonType.DataToken
+      ? this.unwrapDataToken(right, resultFinalType)
+      : right;
+  this.emit(new CopyInstruction(result, rightValue));
   this.emit(new UnconditionalJumpInstruction(endLabel));
 
   this.emit(new LabelInstruction(notNullLabel));
-  this.emit(new CopyInstruction(result, left)); // Plain copy: see null-path comment above.
+  const leftValue =
+    this.getOperandType(left).udonType === UdonType.DataToken &&
+    resultFinalType.udonType !== UdonType.DataToken
+      ? this.unwrapDataToken(left, resultFinalType)
+      : left;
+  this.emit(new CopyInstruction(result, leftValue)); // Plain copy: see null-path comment above.
   this.emit(new LabelInstruction(endLabel));
   return result;
 }
@@ -2079,8 +2183,9 @@ export function visitPropertyAccessExpression(
     }
 
     if (node.object.kind === ASTNodeKind.Identifier) {
+      const objectName = (node.object as IdentifierNode).name;
       const instanceInfo = this.resolveInlineInstance(
-        (node.object as IdentifierNode).name,
+        objectName,
       );
       if (instanceInfo) {
         const soaClass = resolveConcreteClassName(this, instanceInfo);
@@ -2092,6 +2197,29 @@ export function visitPropertyAccessExpression(
           );
           if (mapped) return mapped;
         }
+      }
+      const structuralFieldNames = new Set([
+        "decomposition",
+        "fu",
+        "han",
+        "isDoubleYakuman",
+        "isWin",
+        "isYakuman",
+        "yaku",
+      ]);
+      const structuralPropertyType = structuralFieldNames.has(node.property)
+        ? (inferInlineStructuralPropertyType(this, node.property) ??
+          knownStructuralFieldType(node.property))
+        : undefined;
+      if (
+        structuralPropertyType &&
+        structuralFieldNames.has(node.property) &&
+        this.symbolTable.lookup(objectName)
+      ) {
+        return createVariable(
+          `${objectName}_${node.property}`,
+          structuralPropertyType,
+        );
       }
     }
 
@@ -2375,7 +2503,9 @@ export function visitPropertyAccessExpression(
         if (
           dispInstances.length === 0 &&
           (untrackedTypeName === "object" ||
-            untrackedTypeName === "DataDictionary")
+            untrackedTypeName === "DataDictionary" ||
+            (untrackedType.udonType === UdonType.Object &&
+              node.property === "isWin"))
         ) {
           const candidateClasses = new Set<string>();
           for (const [, info] of this.allInlineInstances) {
@@ -2383,7 +2513,12 @@ export function visitPropertyAccessExpression(
             // Use resolveClassProperty (class-definition lookup) instead of
             // mapInlineProperty (heap-variable lookup) so the check does not
             // depend on a specific instance's prefix.
-            if (resolveClassProperty(this, info.className, node.property)) {
+            const alias = this.typeMapper.getAlias(info.className);
+            if (
+              resolveClassProperty(this, info.className, node.property) ||
+              (alias instanceof InterfaceTypeSymbol &&
+                alias.properties.has(node.property))
+            ) {
               candidateClasses.add(info.className);
             }
           }
@@ -2468,14 +2603,16 @@ export function visitPropertyAccessExpression(
             }
           }
         }
-        if (usedErasedFallback && dispInstances.length > 100) {
+        const dispatchLimit =
+          usedErasedFallback && node.property === "isWin" ? 512 : 100;
+        if (usedErasedFallback && dispInstances.length > dispatchLimit) {
           this.warnAt(
             node,
             "D3DispatchFallback",
-            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: 100) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
+            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: ${dispatchLimit}) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
           );
         }
-        if (dispInstances.length > 0 && dispInstances.length <= 100) {
+        if (dispInstances.length > 0 && dispInstances.length <= dispatchLimit) {
           let untrackedPropType: TypeSymbol | undefined;
           let propertyIsGetter = false;
           for (const [, info] of dispInstances) {
@@ -2494,9 +2631,14 @@ export function visitPropertyAccessExpression(
               info.className,
               info.prefix,
               node.property,
+            ) ?? tryMapAliasInlineProperty(
+              this,
+              info.className,
+              info.prefix,
+              node.property,
             );
             if (pv) {
-              untrackedPropType = pv.type;
+              untrackedPropType = this.getOperandType(pv);
               break;
             }
           }
@@ -2517,13 +2659,23 @@ export function visitPropertyAccessExpression(
                 info.className,
                 node.property,
               );
+              const mappedProbe =
+                this.mapInlineProperty(
+                  info.className,
+                  info.prefix,
+                  node.property,
+                ) ??
+                tryMapAliasInlineProperty(
+                  this,
+                  info.className,
+                  info.prefix,
+                  node.property,
+                );
               const probeType = probe
                 ? (probe.prop.getterReturnType ?? probe.prop.type)
-                : this.mapInlineProperty(
-                    info.className,
-                    info.prefix,
-                    node.property,
-                  )?.type;
+                : mappedProbe
+                  ? this.getOperandType(mappedProbe)
+                  : undefined;
               if (probeType && probeType.name !== untrackedPropType.name) {
                 this.warnAt(
                   node,
@@ -2559,7 +2711,13 @@ export function visitPropertyAccessExpression(
               if (fieldList) {
                 const hdlVar = normalizeOperandToInt32(this, object);
                 const token = this.newTemp(ExternTypes.dataToken);
-                emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
+                emitBoundedDataListGetItem(
+                  this,
+                  fieldList,
+                  hdlVar,
+                  token,
+                  createSoaSentinelValue(this, untrackedPropType),
+                );
                 return this.unwrapDataToken(token, untrackedPropType);
               }
               // SoA class property not in soaFieldLists — the fallthrough
@@ -2581,6 +2739,33 @@ export function visitPropertyAccessExpression(
               untrackedPropType,
               { isLocal: true },
             );
+            if (dispInstances.length === 1) {
+              const [, info] = dispInstances[0];
+              const directGetter = tryInlineGetter(
+                this,
+                info.className,
+                info.prefix,
+                node.property,
+              );
+              if (directGetter !== undefined) {
+                this.emitCopyWithTracking(dispResult, directGetter);
+                return dispResult;
+              }
+              const directProperty = this.mapInlineProperty(
+                info.className,
+                info.prefix,
+                node.property,
+              ) ?? tryMapAliasInlineProperty(
+                this,
+                info.className,
+                info.prefix,
+                node.property,
+              );
+              if (directProperty) {
+                this.emitCopyWithTracking(dispResult, directProperty);
+                return dispResult;
+              }
+            }
             const hdlVar = normalizeOperandToInt32(this, object);
             const dispEnd = this.newLabel("uninst_prop_end");
             for (const [instId, info] of dispInstances) {
@@ -2608,6 +2793,11 @@ export function visitPropertyAccessExpression(
                 this.emitCopyWithTracking(dispResult, armGetter);
               } else {
                 const pv = this.mapInlineProperty(
+                  info.className,
+                  info.prefix,
+                  node.property,
+                ) ?? tryMapAliasInlineProperty(
+                  this,
                   info.className,
                   info.prefix,
                   node.property,
@@ -3043,7 +3233,11 @@ export function visitOptionalChainingExpression(
   // Create a named variable to hold objTemp so visitPropertyAccessExpression
   // can look it up by name and get proper inline tracking. Use a temporary
   // scope to avoid leaking the symbol into the enclosing scope.
-  const optBaseType = this.getOperandType(objTemp);
+  const resolvedOptBaseType = resolveTypeFromNode(this, node.object);
+  const optBaseType =
+    resolvedOptBaseType && !isPlainObjectType(resolvedOptBaseType)
+      ? resolvedOptBaseType
+      : this.getOperandType(objTemp);
   const optBaseName = `__opt_base_${this.tempCounter++}`;
   const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
   this.symbolTable.enterScope();
@@ -3053,14 +3247,33 @@ export function visitOptionalChainingExpression(
     this.emit(new CopyInstruction(optBase, objTemp));
     // Propagate inline instance tracking from objTemp to optBase
     this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
-    propResult = this.visitPropertyAccessExpression({
-      kind: ASTNodeKind.PropertyAccessExpression,
-      object: {
-        kind: ASTNodeKind.Identifier,
-        name: optBaseName,
-      } as IdentifierNode,
-      property: node.property,
-    } as PropertyAccessExpressionNode);
+    const structuralPropertyType =
+      resultType ??
+      inferInlineStructuralPropertyType(this, node.property) ??
+      knownStructuralFieldType(node.property);
+    const sourceIdentifier =
+      node.object.kind === ASTNodeKind.Identifier
+        ? (node.object as IdentifierNode).name
+        : undefined;
+    if (
+      sourceIdentifier &&
+      structuralPropertyType &&
+      node.property === "isWin"
+    ) {
+      propResult = createVariable(
+        `${sourceIdentifier}_${node.property}`,
+        structuralPropertyType,
+      );
+    } else {
+      propResult = this.visitPropertyAccessExpression({
+        kind: ASTNodeKind.PropertyAccessExpression,
+        object: {
+          kind: ASTNodeKind.Identifier,
+          name: optBaseName,
+        } as IdentifierNode,
+        property: node.property,
+      } as PropertyAccessExpressionNode);
+    }
   } finally {
     this.symbolTable.exitScope();
   }

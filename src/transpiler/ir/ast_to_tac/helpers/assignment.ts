@@ -653,9 +653,7 @@ export function wrapDataToken(
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.
   if (isInlineHandleType(this, valueType)) {
-    const handle = this.newTemp(PrimitiveTypes.int32);
-    this.emit(new CopyInstruction(handle, value));
-    value = handle;
+    value = normalizeOperandToInt32(this, value);
     valueType = PrimitiveTypes.int32;
   }
   // Arrays are DataLists at the Udon VM level. Wrap via DataList constructor
