@@ -13,8 +13,8 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { normalizeOperandToInt32 } from "./int32_normalization.js";
 import { isInlineHandleType, usesInlineNullSentinel } from "./inline.js";
+import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /** Udon extern signature for System.String.IsNullOrEmpty */
 const IS_NULL_OR_EMPTY_SIG =

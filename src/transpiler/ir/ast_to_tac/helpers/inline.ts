@@ -180,9 +180,9 @@ export function isInlineHandleType(
     return false;
   }
   return (
-    (type instanceof ClassTypeSymbol &&
-      converter.classMap.has(type.name) &&
-      !converter.udonBehaviourClasses.has(type.name))
+    type instanceof ClassTypeSymbol &&
+    converter.classMap.has(type.name) &&
+    !converter.udonBehaviourClasses.has(type.name)
   );
 }
 
@@ -215,7 +215,10 @@ export function usesInlineNullSentinel(
   // with a reference-typed representative value. They still need inline
   // property dispatch, but their truthy/nullish checks must not assume an
   // Int32 handle sentinel.
-  if (type instanceof InterfaceTypeSymbol && isAnonymousInterfaceName(type.name)) {
+  if (
+    type instanceof InterfaceTypeSymbol &&
+    isAnonymousInterfaceName(type.name)
+  ) {
     return false;
   }
   return true;
@@ -511,7 +514,7 @@ function resolvedStructuralPropertyType(
   return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
 }
 
-function emitStructuralFieldCopies(
+export function emitStructuralFieldCopies(
   converter: ASTToTACConverter,
   targetPrefix: string,
   targetType: TypeSymbol,

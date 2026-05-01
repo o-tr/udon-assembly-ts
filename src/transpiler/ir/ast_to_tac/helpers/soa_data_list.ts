@@ -1,8 +1,4 @@
-import {
-  ExternTypes,
-  ObjectType,
-  PrimitiveTypes,
-} from "../../../frontend/type_symbols.js";
+import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   BinaryOpInstruction,
   CallInstruction,

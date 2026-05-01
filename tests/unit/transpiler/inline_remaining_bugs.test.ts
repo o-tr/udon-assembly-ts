@@ -73,7 +73,9 @@ describe("inline remaining bugs", () => {
 
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    expect(result.uasm).not.toContain("SystemObject.__get_isWin__SystemBoolean");
+    expect(result.uasm).not.toContain(
+      "SystemObject.__get_isWin__SystemBoolean",
+    );
     expect(result.uasm).toContain("_isWin");
   });
 

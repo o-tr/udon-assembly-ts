@@ -53,10 +53,10 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
+  type ConstantOperand,
   createConstant,
   createLabel,
   createVariable,
-  type ConstantOperand,
   type TACOperand,
   TACOperandKind,
   type VariableOperand,
@@ -68,9 +68,9 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import {
-  createSoaSentinelValue,
   countSelfCalls,
   countTryCatchBlocks,
+  createSoaSentinelValue,
   MAX_RECURSION_STACK_DEPTH,
   operandTrackingKey,
 } from "../helpers/inline.js";
@@ -1565,7 +1565,10 @@ export function visitReturnStatement(
       returnInstancePrefix && nullReturnValue
         ? structuralInterfaceForType(this, inlineContext.returnVar.type)
         : undefined;
-    if (nullReturnValue && isNullableReturnSlotType(inlineContext.returnVar.type)) {
+    if (
+      nullReturnValue &&
+      isNullableReturnSlotType(inlineContext.returnVar.type)
+    ) {
       if (returnInstancePrefix && returnStructuralType) {
         emitStructuralPrefixDefaults(
           this,

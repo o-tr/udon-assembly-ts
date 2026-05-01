@@ -70,6 +70,7 @@ import {
   createSoaSentinelValue,
   emitDeferredInlineInitializers,
   emitParamPropertyAssignments,
+  emitStructuralFieldCopies,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
   isInlineHandleType,
@@ -397,7 +398,10 @@ function mergeStructuralReturnMapping(
     const propType = propTypeRaw.name
       ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
       : propTypeRaw;
-    const srcField = createVariable(`${branchMapping.prefix}_${propName}`, propType);
+    const srcField = createVariable(
+      `${branchMapping.prefix}_${propName}`,
+      propType,
+    );
     const dstField = createVariable(`${dispatchPrefix}_${propName}`, propType);
     converter.emit(new CopyInstruction(dstField, srcField));
   }
@@ -430,10 +434,10 @@ function emitDispatchResultDefaults(
       createSoaSentinelValue(converter, returnType ?? ObjectType),
     ),
   );
-  if (dispatchResult.kind !== TACOperandKind.Variable) return;
   const structuralType = structuralInterfaceForType(converter, returnType);
   if (!structuralType) return;
-  const prefix = (dispatchResult as VariableOperand).name;
+  const prefix = operandTrackingKey(dispatchResult);
+  if (!prefix) return;
   for (const [propName, propTypeRaw] of structuralType.properties) {
     const propType = propTypeRaw.name
       ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
@@ -1005,6 +1009,17 @@ function tryUntrackedInlineDispatch(
 
     if (dispatchResult) {
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
+      const dispatchResultPrefix = operandTrackingKey(dispatchResult);
+      if (dispatchResultPrefix) {
+        emitStructuralFieldCopies(
+          converter,
+          dispatchResultPrefix,
+          resolvedUntrackedReturnType,
+          inlineRes,
+          { isLocal: true },
+          true,
+        );
+      }
       resultInlineMapping = mergeStructuralReturnMapping(
         converter,
         dispatchResult,
@@ -1272,6 +1287,17 @@ function tryD3MethodDispatch(
 
     if (dispatchResult) {
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
+      const dispatchResultPrefix = operandTrackingKey(dispatchResult);
+      if (dispatchResultPrefix) {
+        emitStructuralFieldCopies(
+          converter,
+          dispatchResultPrefix,
+          resolvedRetType ?? ObjectType,
+          inlineRes,
+          { isLocal: true },
+          true,
+        );
+      }
       resultInlineMapping = mergeStructuralReturnMapping(
         converter,
         dispatchResult,
@@ -3759,6 +3785,17 @@ export function visitCallExpression(
       } as CallExpressionNode);
       if (propCallResult !== VOID_RETURN) {
         this.emitCopyWithTracking(callResult, propCallResult);
+        const callResultName = operandTrackingKey(callResult);
+        if (callResultName) {
+          emitStructuralFieldCopies(
+            this,
+            callResultName,
+            optionalCallResultType,
+            propCallResult,
+            { isLocal: true },
+            true,
+          );
+        }
       }
     } finally {
       this.symbolTable.exitScope();
