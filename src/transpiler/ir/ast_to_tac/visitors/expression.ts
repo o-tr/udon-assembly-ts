@@ -1269,6 +1269,55 @@ export function visitShortCircuitOr(
   this: ASTToTACConverter,
   node: BinaryExpressionNode,
 ): TACOperand {
+  const expectedType =
+    this.currentExpectedType &&
+    this.currentExpectedType.udonType !== UdonType.Boolean &&
+    this.currentExpectedType !== ObjectType
+      ? this.currentExpectedType
+      : undefined;
+  const inferredLeftType = resolveTypeFromNode(this, node.left);
+  const inferredRightType = resolveTypeFromNode(this, node.right);
+  const valueResultType =
+    expectedType ??
+    (inferredLeftType?.udonType !== UdonType.Boolean
+      ? inferredLeftType
+      : undefined) ??
+    (inferredRightType?.udonType !== UdonType.Boolean
+      ? inferredRightType
+      : undefined);
+
+  if (valueResultType && valueResultType.udonType !== UdonType.Boolean) {
+    const rightLabel = this.newLabel("or_right");
+    const endLabel = this.newLabel("or_end");
+
+    const left = this.visitExpression(node.left);
+    const result = this.newTemp(valueResultType);
+    const coercedLeft = this.coerceToBoolean(left);
+    this.emit(new ConditionalJumpInstruction(coercedLeft, rightLabel));
+
+    this.emitCopyWithTracking(
+      result,
+      coerceLogicalValue(this, left, valueResultType),
+    );
+    this.emit(new UnconditionalJumpInstruction(endLabel));
+
+    this.emit(new LabelInstruction(rightLabel));
+    const prevExpectedType = this.currentExpectedType;
+    this.currentExpectedType = valueResultType;
+    let right: TACOperand;
+    try {
+      right = this.visitExpression(node.right);
+    } finally {
+      this.currentExpectedType = prevExpectedType;
+    }
+    this.emitCopyWithTracking(
+      result,
+      coerceLogicalValue(this, right, valueResultType),
+    );
+    this.emit(new LabelInstruction(endLabel));
+    return result;
+  }
+
   const result = this.newTemp(PrimitiveTypes.boolean);
   const shortCircuitLabel = this.newLabel("or_short");
   const endLabel = this.newLabel("or_end");
@@ -1290,6 +1339,32 @@ export function visitShortCircuitOr(
   this.emitCopyWithTracking(result, this.coerceToBoolean(right));
   this.emit(new LabelInstruction(endLabel));
   return result;
+}
+
+function coerceLogicalValue(
+  converter: ASTToTACConverter,
+  value: TACOperand,
+  targetType: TypeSymbol,
+): TACOperand {
+  let coerced = value;
+  const valueType = converter.getOperandType(coerced);
+  if (
+    valueType.udonType === UdonType.DataToken &&
+    targetType.udonType !== UdonType.DataToken
+  ) {
+    coerced = converter.unwrapDataToken(coerced, targetType);
+  }
+  const coercedType = converter.getOperandType(coerced);
+  if (
+    coercedType.udonType !== targetType.udonType &&
+    NUMERIC_UDON_TYPES.has(coercedType.udonType) &&
+    NUMERIC_UDON_TYPES.has(targetType.udonType)
+  ) {
+    const cast = converter.newTemp(targetType);
+    converter.emit(new CastInstruction(cast, coerced));
+    return cast;
+  }
+  return coerced;
 }
 
 export function visitUnaryExpression(
