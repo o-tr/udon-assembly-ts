@@ -161,12 +161,28 @@ export function isInlineHandleType(
   converter: ASTToTACConverter,
   type: TypeSymbol,
 ): boolean {
+  if (type instanceof InterfaceTypeSymbol) {
+    if (converter.interfaceClassIdMap.has(type.name)) {
+      return true;
+    }
+    // Anonymous structural object literals are also represented by
+    // InterfaceTypeSymbol and visitObjectLiteralExpression stores them as
+    // Int32 handles. They do not get interfaceClassIdMap entries because they
+    // are not real polymorphic interfaces, so detect the allocated instance
+    // metadata directly.
+    if (isAnonymousInterfaceName(type.name)) {
+      for (const [, info] of converter.allInlineInstances) {
+        if (info.className === type.name) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
   return (
     (type instanceof ClassTypeSymbol &&
       converter.classMap.has(type.name) &&
-      !converter.udonBehaviourClasses.has(type.name)) ||
-    (type instanceof InterfaceTypeSymbol &&
-      converter.interfaceClassIdMap.has(type.name))
+      !converter.udonBehaviourClasses.has(type.name))
   );
 }
 

@@ -87,6 +87,7 @@ import {
   createSoaSentinelValue,
   evaluateInlineGetter,
   hasCompatibleUnionProperty,
+  isInlineHandleType,
   isSubclassOf,
   operandTrackingKey,
   resolveClassMethod,
@@ -2211,10 +2212,17 @@ export function visitPropertyAccessExpression(
         ? (inferInlineStructuralPropertyType(this, node.property) ??
           knownStructuralFieldType(node.property))
         : undefined;
+      const objectSymbol = this.symbolTable.lookup(objectName);
+      const isAnonymousInlineRecord =
+        objectSymbol?.type instanceof InterfaceTypeSymbol &&
+        objectSymbol.type.name.startsWith("__anon_") &&
+        !objectSymbol.type.name.startsWith("__anon_union_") &&
+        isInlineHandleType(this, objectSymbol.type);
       if (
         structuralPropertyType &&
         structuralFieldNames.has(node.property) &&
-        this.symbolTable.lookup(objectName)
+        objectSymbol &&
+        !isAnonymousInlineRecord
       ) {
         return createVariable(
           `${objectName}_${node.property}`,

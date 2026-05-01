@@ -113,6 +113,49 @@ describe("inline remaining bugs", () => {
     expect(result.uasm).toContain("_isValid");
   });
 
+  it("unwraps anonymous structural array elements as inline handles", () => {
+    const source = `
+      type IYaku = {
+        getDisplayName(): string;
+      };
+
+      class BaseYaku implements IYaku {
+        getDisplayName(): string {
+          return "Base";
+        }
+      }
+
+      class TanyaoYaku extends BaseYaku {
+        getDisplayName(): string {
+          return "Tanyao";
+        }
+      }
+
+      class Main {
+        Start(): void {
+          const yaku: IYaku = new TanyaoYaku();
+          const found: Array<{ yaku: IYaku; name: string; han: number }> = [];
+          found.push({ yaku, name: "Tanyao", han: 1 });
+          for (const item of found) {
+            Debug.Log(item.yaku.getDisplayName());
+            Debug.Log(item.name);
+            Debug.Log(item.han);
+          }
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toContain(
+      "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+    );
+    expect(result.uasm).not.toContain(
+      "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+    );
+    expect(result.uasm).not.toContain("SystemObject.__getDisplayName");
+  });
+
   // ---------------------------------------------------------------------------
   // Bug 1: Loop inline instance sharing
   // ---------------------------------------------------------------------------
