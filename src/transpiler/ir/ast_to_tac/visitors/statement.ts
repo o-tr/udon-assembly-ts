@@ -83,6 +83,27 @@ function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
   }
 }
 
+function structuralInterfaceForType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): InterfaceTypeSymbol | undefined {
+  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
+    return type;
+  }
+  const alias = converter.typeMapper.getAlias(type.name);
+  if (alias instanceof InterfaceTypeSymbol && alias.properties.size > 0) {
+    return alias;
+  }
+  return undefined;
+}
+
+function resolvedStructuralPropertyType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): TypeSymbol {
+  return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
+}
+
 function emitLoopExitEpiloguesSinceDepth(
   converter: ASTToTACConverter,
   depth: number,
@@ -342,25 +363,42 @@ export function visitVariableDeclaration(
     // is still valid (e.g. `const { hand } = context` inside an inlined method
     // body where `hand` inherits tracking from the enclosing inline expansion).
     this.maybeTrackInlineInstanceAssignment(dest, src, false);
-    const structuralType =
-      destType instanceof InterfaceTypeSymbol &&
-      destType.name.startsWith("__anon_") &&
-      destType.properties.size > 0
-        ? destType
-        : undefined;
+    const structuralType = structuralInterfaceForType(this, destType);
     const srcKey = operandTrackingKey(src);
     const destKey = operandTrackingKey(dest);
     if (structuralType && srcKey && destKey) {
       for (const [propName, propTypeRaw] of structuralType.properties) {
-        const propType = propTypeRaw.name
-          ? (this.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
-          : propTypeRaw;
+        const propType = resolvedStructuralPropertyType(this, propTypeRaw);
         this.emit(
           new CopyInstruction(
             createVariable(`${destKey}_${propName}`, propType),
             createVariable(`${srcKey}_${propName}`, propType),
           ),
         );
+        const nestedStructuralType = structuralInterfaceForType(this, propType);
+        if (nestedStructuralType) {
+          for (const [
+            nestedName,
+            nestedTypeRaw,
+          ] of nestedStructuralType.properties) {
+            const nestedType = resolvedStructuralPropertyType(
+              this,
+              nestedTypeRaw,
+            );
+            this.emit(
+              new CopyInstruction(
+                createVariable(
+                  `${destKey}_${propName}_${nestedName}`,
+                  nestedType,
+                ),
+                createVariable(
+                  `${srcKey}_${propName}_${nestedName}`,
+                  nestedType,
+                ),
+              ),
+            );
+          }
+        }
       }
       this.inlineInstanceMap.set(destKey, {
         prefix: destKey,

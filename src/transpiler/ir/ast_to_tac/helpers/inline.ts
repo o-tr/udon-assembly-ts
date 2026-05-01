@@ -511,13 +511,14 @@ function resolvedStructuralPropertyType(
   return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
 }
 
-function emitStructuralParamFieldCopies(
+function emitStructuralFieldCopies(
   converter: ASTToTACConverter,
-  paramName: string,
-  paramType: TypeSymbol,
+  targetPrefix: string,
+  targetType: TypeSymbol,
   arg: TACOperand,
+  targetOptions: { isParameter?: boolean; isLocal?: boolean } = {},
 ): void {
-  const targetInterface = structuralInterfaceForType(converter, paramType);
+  const targetInterface = structuralInterfaceForType(converter, targetType);
   if (!targetInterface) return;
 
   const sourceName = operandTrackingKey(arg);
@@ -548,20 +549,51 @@ function emitStructuralParamFieldCopies(
     if (!sourceProperty) continue;
 
     const targetProperty = createVariable(
-      `${paramName}_${propertyName}`,
+      `${targetPrefix}_${propertyName}`,
       propertyType,
-      { isParameter: true },
+      targetOptions,
     );
     converter.emitCopyWithTracking(targetProperty, sourceProperty);
+
+    const nestedInterface = structuralInterfaceForType(converter, propertyType);
+    const sourcePropertyName = operandTrackingKey(sourceProperty);
+    const targetPropertyName = operandTrackingKey(targetProperty);
+    if (nestedInterface && sourcePropertyName && targetPropertyName) {
+      for (const [nestedName, nestedTypeRaw] of nestedInterface.properties) {
+        const nestedType = resolvedStructuralPropertyType(
+          converter,
+          nestedTypeRaw,
+        );
+        converter.emitCopyWithTracking(
+          createVariable(
+            `${targetPropertyName}_${nestedName}`,
+            nestedType,
+            targetOptions,
+          ),
+          createVariable(`${sourcePropertyName}_${nestedName}`, nestedType),
+        );
+      }
+    }
     copiedAny = true;
   }
 
   if (copiedAny) {
-    converter.inlineInstanceMap.set(paramName, {
-      prefix: paramName,
+    converter.inlineInstanceMap.set(targetPrefix, {
+      prefix: targetPrefix,
       className: targetInterface.name,
     });
   }
+}
+
+function emitStructuralParamFieldCopies(
+  converter: ASTToTACConverter,
+  paramName: string,
+  paramType: TypeSymbol,
+  arg: TACOperand,
+): void {
+  emitStructuralFieldCopies(converter, paramName, paramType, arg, {
+    isParameter: true,
+  });
 }
 
 export function saveAndBindInlineParams(
@@ -3066,6 +3098,16 @@ function emitOutlinedCallSite(
         });
       }
       converter.emitCopyWithTracking(capturedResult, state.returnVar);
+      if (capturedResult.kind === TACOperandKind.Variable) {
+        const capturedVar = capturedResult as VariableOperand;
+        emitStructuralFieldCopies(
+          converter,
+          capturedVar.name,
+          state.method.returnType,
+          state.returnVar,
+          { isLocal: true },
+        );
+      }
       if (savedReturnVarInlineInstance === undefined) {
         converter.inlineInstanceMap.delete(state.returnVar.name);
       } else {
