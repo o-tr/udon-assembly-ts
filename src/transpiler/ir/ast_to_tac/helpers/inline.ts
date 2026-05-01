@@ -517,6 +517,7 @@ function emitStructuralFieldCopies(
   targetType: TypeSymbol,
   arg: TACOperand,
   targetOptions: { isParameter?: boolean; isLocal?: boolean } = {},
+  forceSourceStructuralSlots = false,
 ): void {
   const targetInterface = structuralInterfaceForType(converter, targetType);
   if (!targetInterface) return;
@@ -525,10 +526,17 @@ function emitStructuralFieldCopies(
   if (!sourceName) return;
 
   const sourceInfo = converter.resolveInlineInstance(sourceName);
+  const sourceHasNamedStructuralSlots = Array.from(
+    targetInterface.properties.keys(),
+  ).some((propertyName) =>
+    converter.symbolTable.lookup(`${sourceName}_${propertyName}`),
+  );
   const sourceHasStructuralSlots =
+    forceSourceStructuralSlots ||
     sourceInfo !== undefined ||
     structuralInterfaceForType(converter, converter.getOperandType(arg)) !==
       null ||
+    sourceHasNamedStructuralSlots ||
     sourceName.startsWith("__inline_ret_") ||
     sourceName.includes("_retVal");
   if (!sourceHasStructuralSlots) return;
@@ -614,6 +622,7 @@ export function saveAndBindInlineParams(
   // holding b's value) into slot `b`. By snapshotting first, each binding
   // reads from a temp that captured the pre-binding value.
   const paramNameSet = new Set(params.map((p) => p.name));
+  const paramsByName = new Map(params.map((p) => [p.name, p]));
   const snapshottedArgs = new Map<string, TACOperand>();
   for (const arg of args) {
     if (!arg || arg.kind !== TACOperandKind.Variable) continue;
@@ -621,6 +630,20 @@ export function saveAndBindInlineParams(
     if (!paramNameSet.has(argName) || snapshottedArgs.has(argName)) continue;
     const snap = converter.newTemp(converter.getOperandType(arg));
     converter.emit(new CopyInstruction(snap, arg));
+    const snapKey = operandTrackingKey(snap);
+    const paramForArg = paramsByName.get(argName);
+    if (snapKey) {
+      emitStructuralFieldCopies(
+        converter,
+        snapKey,
+        paramForArg?.type ?? converter.getOperandType(arg),
+        arg,
+        {
+          isLocal: true,
+        },
+        true,
+      );
+    }
     snapshottedArgs.set(argName, snap);
   }
 

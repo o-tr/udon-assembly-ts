@@ -1204,6 +1204,16 @@ export function visitBinaryExpression(
     return dataTokenNullishComparison;
   }
 
+  if (node.operator === "==" || node.operator === "!=") {
+    const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
+    if (isNullishOperand(right) && !isNullishOperand(left)) {
+      right = retargetNullishComparisonOperand(right, leftType);
+    } else if (isNullishOperand(left) && !isNullishOperand(right)) {
+      left = retargetNullishComparisonOperand(left, rightType);
+    }
+  }
+
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
@@ -1325,6 +1335,25 @@ function isNullishOperand(operand: TACOperand): boolean {
   return operand.kind === TACOperandKind.Constant
     ? (operand as ConstantOperand).value === null
     : false;
+}
+
+function isTypedNullableComparisonType(type: TypeSymbol): boolean {
+  return (
+    type.udonType === UdonType.Array ||
+    type.udonType === UdonType.DataDictionary ||
+    type.udonType === UdonType.DataList ||
+    type.udonType === UdonType.Object ||
+    type.udonType === UdonType.String
+  );
+}
+
+function retargetNullishComparisonOperand(
+  operand: TACOperand,
+  targetType: TypeSymbol,
+): TACOperand {
+  if (!isNullishOperand(operand)) return operand;
+  if (!isTypedNullableComparisonType(targetType)) return operand;
+  return createConstant(null, targetType);
 }
 
 export function visitShortCircuitAnd(
@@ -3001,6 +3030,12 @@ export function visitPropertyAccessExpression(
               untrackedPropType,
               { isLocal: true },
             );
+            this.emit(
+              new AssignmentInstruction(
+                dispResult,
+                createSoaSentinelValue(this, untrackedPropType),
+              ),
+            );
             const hdlVar = normalizeOperandToInt32(this, object);
             const dispEnd = this.newLabel("uninst_prop_end");
             for (const [instId, info] of dispInstances) {
@@ -3482,10 +3517,17 @@ export function visitOptionalChainingExpression(
   );
   const notNullLabel = this.newLabel("opt_notnull");
   const endLabel = this.newLabel("opt_end");
-  const result = this.newTemp(resultType ?? ObjectType);
+  const fallbackPropertyType =
+    inferInlineStructuralPropertyType(this, node.property) ??
+    knownStructuralFieldType(node.property);
+  const effectiveResultType = resultType ?? fallbackPropertyType;
+  const result = this.newTemp(effectiveResultType ?? ObjectType);
   this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
   this.emit(
-    new AssignmentInstruction(result, createConstant(null, ObjectType)),
+    new AssignmentInstruction(
+      result,
+      createSoaSentinelValue(this, effectiveResultType ?? ObjectType),
+    ),
   );
   this.emit(new UnconditionalJumpInstruction(endLabel));
 
@@ -3508,9 +3550,7 @@ export function visitOptionalChainingExpression(
     // Propagate inline instance tracking from objTemp to optBase
     this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
     const structuralPropertyType =
-      resultType ??
-      inferInlineStructuralPropertyType(this, node.property) ??
-      knownStructuralFieldType(node.property);
+      effectiveResultType ?? knownStructuralFieldType(node.property);
     const sourceIdentifier =
       node.object.kind === ASTNodeKind.Identifier
         ? (node.object as IdentifierNode).name

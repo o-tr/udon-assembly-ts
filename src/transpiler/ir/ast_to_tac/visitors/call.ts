@@ -404,6 +404,49 @@ function mergeStructuralReturnMapping(
   return stableMapping;
 }
 
+function structuralInterfaceForType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol | undefined,
+): InterfaceTypeSymbol | undefined {
+  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
+    return type;
+  }
+  if (!type?.name) return undefined;
+  const alias = converter.typeMapper.getAlias(type.name);
+  return alias instanceof InterfaceTypeSymbol && alias.properties.size > 0
+    ? alias
+    : undefined;
+}
+
+function emitDispatchResultDefaults(
+  converter: ASTToTACConverter,
+  dispatchResult: TACOperand | undefined,
+  returnType: TypeSymbol | undefined,
+): void {
+  if (!dispatchResult) return;
+  converter.emit(
+    new AssignmentInstruction(
+      dispatchResult,
+      createSoaSentinelValue(converter, returnType ?? ObjectType),
+    ),
+  );
+  if (dispatchResult.kind !== TACOperandKind.Variable) return;
+  const structuralType = structuralInterfaceForType(converter, returnType);
+  if (!structuralType) return;
+  const prefix = (dispatchResult as VariableOperand).name;
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = propTypeRaw.name
+      ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
+      : propTypeRaw;
+    converter.emit(
+      new AssignmentInstruction(
+        createVariable(`${prefix}_${propName}`, propType),
+        createSoaSentinelValue(converter, propType),
+      ),
+    );
+  }
+}
+
 /** Populate and return the implementor names cache for a type. */
 function getOrPopulateImplementorNames(
   converter: ASTToTACConverter,
@@ -914,6 +957,11 @@ function tryUntrackedInlineDispatch(
   const dispatchResult = isVoid
     ? undefined
     : converter.newTemp(resolvedUntrackedReturnType);
+  emitDispatchResultDefaults(
+    converter,
+    dispatchResult,
+    resolvedUntrackedReturnType,
+  );
   const handleVar = normalizeOperandToInt32(converter, object);
   const endLabel = converter.newLabel("untracked_call_end");
 
@@ -1175,6 +1223,7 @@ function tryD3MethodDispatch(
   const dispatchResult = isVoid
     ? undefined
     : converter.newTemp(resolvedRetType ?? ObjectType);
+  emitDispatchResultDefaults(converter, dispatchResult, resolvedRetType);
   const handleVar = normalizeOperandToInt32(converter, object);
   const objectAlias = objectTypeName
     ? converter.typeMapper.getAlias(objectTypeName)

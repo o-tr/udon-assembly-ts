@@ -3,6 +3,7 @@ import { isNumericUdonType, UdonType } from "../../../frontend/types.js";
 import {
   BinaryOpInstruction,
   CallInstruction,
+  CopyInstruction,
   UnaryOpInstruction,
 } from "../../tac_instruction.js";
 import {
@@ -124,12 +125,19 @@ export function coerceToBoolean(
     return createConstant(true, PrimitiveTypes.boolean);
   }
 
-  // Object / Class / other → value != null
+  // Object / Class / other → value != null.  Box through a SystemObject temp
+  // first: structural-union handles may be stored in typed reference slots
+  // (DataList/DataDictionary) even after their TAC type has been widened to
+  // Object.  Comparing that typed null directly to SystemObject null is not
+  // reliable in Udon VM, but copying the reference into an Object slot gives
+  // the null-comparison extern matching operands.
   const boolTemp = this.newTemp(PrimitiveTypes.boolean);
+  const comparisonOperand = this.newTemp(ObjectType);
+  this.emit(new CopyInstruction(comparisonOperand, operand));
   this.emit(
     new BinaryOpInstruction(
       boolTemp,
-      operand,
+      comparisonOperand,
       "!=",
       createConstant(null, ObjectType),
     ),

@@ -115,6 +115,16 @@ function isNullConstantOperand(
   );
 }
 
+function isNullableReturnSlotType(type: TypeSymbol): boolean {
+  return (
+    type.udonType === UdonType.Array ||
+    type.udonType === UdonType.DataDictionary ||
+    type.udonType === UdonType.DataList ||
+    type.udonType === UdonType.Object ||
+    type.udonType === UdonType.String
+  );
+}
+
 function emitStructuralPrefixDefaults(
   converter: ASTToTACConverter,
   prefix: string,
@@ -1344,8 +1354,9 @@ export function visitReturnStatement(
   const prevExpectedType = this.currentExpectedType;
   if (inlineContext && node.value) {
     const retType = inlineContext.returnVar.type;
-    if (retType instanceof InterfaceTypeSymbol) {
-      this.currentExpectedType = retType;
+    const retStructuralType = structuralInterfaceForType(this, retType);
+    if (retStructuralType) {
+      this.currentExpectedType = retStructuralType;
     } else if (
       node.value.kind === ASTNodeKind.ObjectLiteralExpression &&
       retType.name !== ObjectType.name
@@ -1549,18 +1560,25 @@ export function visitReturnStatement(
       }
     }
 
-    if (
-      returnInstancePrefix &&
-      isNullConstantOperand(value) &&
-      inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
-      inlineContext.returnVar.type.properties.size > 0
-    ) {
-      emitStructuralPrefixDefaults(
-        this,
-        returnInstancePrefix,
-        inlineContext.returnVar.type,
+    const nullReturnValue = isNullConstantOperand(value) ? value : undefined;
+    const returnStructuralType =
+      returnInstancePrefix && nullReturnValue
+        ? structuralInterfaceForType(this, inlineContext.returnVar.type)
+        : undefined;
+    if (nullReturnValue && isNullableReturnSlotType(inlineContext.returnVar.type)) {
+      if (returnInstancePrefix && returnStructuralType) {
+        emitStructuralPrefixDefaults(
+          this,
+          returnInstancePrefix,
+          returnStructuralType,
+        );
+      }
+      this.emit(
+        new CopyInstruction(
+          inlineContext.returnVar,
+          createConstant(null, inlineContext.returnVar.type),
+        ),
       );
-      this.emit(new CopyInstruction(inlineContext.returnVar, value));
       this.inlineInstanceMap.delete(inlineContext.returnVar.name);
       if (!inlineContext.returnTrackingInvalidated) {
         inlineContext.returnTrackingInvalidated = true;
@@ -1612,8 +1630,7 @@ export function visitReturnStatement(
           }
         } else if (
           inlineContext.returnInstancePrefix &&
-          inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
-          inlineContext.returnVar.type.properties.size > 0 &&
+          structuralInterfaceForType(this, inlineContext.returnVar.type) &&
           value.kind === TACOperandKind.Variable
         ) {
           // Stay neutral when the return value is a named variable
