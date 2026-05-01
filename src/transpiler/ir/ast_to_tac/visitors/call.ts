@@ -366,7 +366,7 @@ function mergeInlineMapping(
 
 function mergeStructuralReturnMapping(
   converter: ASTToTACConverter,
-  dispatchResult: VariableOperand,
+  dispatchResult: TACOperand,
   returnType: TypeSymbol,
   inlineRes: TACOperand,
   instanceMap: Map<string, { prefix: string; className: string }>,
@@ -381,8 +381,10 @@ function mergeStructuralReturnMapping(
   const resKey = operandTrackingKey(inlineRes);
   const branchMapping = resKey ? instanceMap.get(resKey) : undefined;
   if (!branchMapping?.prefix) return null;
+  const dispatchPrefix = operandTrackingKey(dispatchResult);
+  if (!dispatchPrefix) return null;
   const stableMapping = {
-    prefix: dispatchResult.name,
+    prefix: dispatchPrefix,
     className: returnType.name,
   };
   if (
@@ -396,7 +398,7 @@ function mergeStructuralReturnMapping(
       ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
       : propTypeRaw;
     const srcField = createVariable(`${branchMapping.prefix}_${propName}`, propType);
-    const dstField = createVariable(`${dispatchResult.name}_${propName}`, propType);
+    const dstField = createVariable(`${dispatchPrefix}_${propName}`, propType);
     converter.emit(new CopyInstruction(dstField, srcField));
   }
   return stableMapping;
@@ -957,7 +959,7 @@ function tryUntrackedInlineDispatch(
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
       resultInlineMapping = mergeStructuralReturnMapping(
         converter,
-        dispatchResult as VariableOperand,
+        dispatchResult,
         resolvedUntrackedReturnType,
         inlineRes,
         converter.inlineInstanceMap,
@@ -1218,7 +1220,7 @@ function tryD3MethodDispatch(
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
       resultInlineMapping = mergeStructuralReturnMapping(
         converter,
-        dispatchResult as VariableOperand,
+        dispatchResult,
         resolvedRetType ?? ObjectType,
         inlineRes,
         converter.inlineInstanceMap,

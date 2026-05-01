@@ -70,6 +70,7 @@ import {
   countSelfCalls,
   countTryCatchBlocks,
   MAX_RECURSION_STACK_DEPTH,
+  operandTrackingKey,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
@@ -341,6 +342,31 @@ export function visitVariableDeclaration(
     // is still valid (e.g. `const { hand } = context` inside an inlined method
     // body where `hand` inherits tracking from the enclosing inline expansion).
     this.maybeTrackInlineInstanceAssignment(dest, src, false);
+    const structuralType =
+      destType instanceof InterfaceTypeSymbol &&
+      destType.name.startsWith("__anon_") &&
+      destType.properties.size > 0
+        ? destType
+        : undefined;
+    const srcKey = operandTrackingKey(src);
+    const destKey = operandTrackingKey(dest);
+    if (structuralType && srcKey && destKey) {
+      for (const [propName, propTypeRaw] of structuralType.properties) {
+        const propType = propTypeRaw.name
+          ? (this.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
+          : propTypeRaw;
+        this.emit(
+          new CopyInstruction(
+            createVariable(`${destKey}_${propName}`, propType),
+            createVariable(`${srcKey}_${propName}`, propType),
+          ),
+        );
+      }
+      this.inlineInstanceMap.set(destKey, {
+        prefix: destKey,
+        className: structuralType.name,
+      });
+    }
   }
 }
 
