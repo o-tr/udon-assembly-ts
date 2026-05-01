@@ -54,11 +54,13 @@ import { emitDataListGetRangeLoop } from "./collections.js";
 import {
   createSoaSentinelValue,
   isInlineHandleType,
+  operandTrackingKey,
   resolveClassNode,
   resolveClassProperty,
   resolveInlineClassType,
 } from "./inline.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
+import { isAllInlineInterface } from "./udon_behaviour.js";
 
 /**
  * When an assignment target resolves to a class getter, emit a diagnostic
@@ -649,6 +651,26 @@ export function wrapDataToken(
   let valueType = this.getOperandType(value);
   if (valueType.name === ExternTypes.dataToken.name) {
     return value;
+  }
+  if (
+    valueType instanceof InterfaceTypeSymbol &&
+    valueType.name &&
+    isAllInlineInterface(this, valueType.name)
+  ) {
+    const valueKey = operandTrackingKey(value);
+    const info = valueKey ? this.resolveInlineInstance(valueKey) : undefined;
+    if (info) {
+      for (const [instId, candidate] of this.allInlineInstances) {
+        if (
+          candidate.prefix === info.prefix &&
+          candidate.className === info.className
+        ) {
+          value = createConstant(instId, PrimitiveTypes.int32);
+          valueType = PrimitiveTypes.int32;
+          break;
+        }
+      }
+    }
   }
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.

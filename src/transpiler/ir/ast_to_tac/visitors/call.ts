@@ -1176,6 +1176,12 @@ function tryD3MethodDispatch(
     ? undefined
     : converter.newTemp(resolvedRetType ?? ObjectType);
   const handleVar = normalizeOperandToInt32(converter, object);
+  const objectAlias = objectTypeName
+    ? converter.typeMapper.getAlias(objectTypeName)
+    : undefined;
+  const useInterfaceInstanceIdDispatch =
+    objectAlias instanceof InterfaceTypeSymbol &&
+    isAllInlineInterface(converter, objectAlias.name);
   const endLabel = converter.newLabel("d3_method_end");
 
   // Track inline return info across branches.
@@ -1184,15 +1190,14 @@ function tryD3MethodDispatch(
     | null
     | undefined;
 
-  for (const [, info] of dispInstances) {
+  for (const [instId, info] of dispInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("d3_method_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
-    const instanceHandle = createVariable(
-      `${info.prefix}__handle`,
-      PrimitiveTypes.int32,
-    );
+    const instanceHandle = useInterfaceInstanceIdDispatch
+      ? createConstant(instId, PrimitiveTypes.int32)
+      : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
     converter.emit(
       new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
     );
