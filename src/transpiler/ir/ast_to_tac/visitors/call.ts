@@ -4406,12 +4406,42 @@ function visitMapMethodCall(
         return result;
       }
       const valueToken = converter.newTemp(ExternTypes.dataToken);
+      const hasKey = converter.newTemp(PrimitiveTypes.boolean);
+      const missingLabel = converter.newLabel("map_get_missing");
+      const endLabel = converter.newLabel("map_get_end");
+      const resultType = isPlainObjectType(getResultType)
+        ? ExternTypes.dataToken
+        : getResultType;
+      const result = converter.newTemp(resultType);
+      converter.emit(
+        new MethodCallInstruction(hasKey, mapOperand, "ContainsKey", [
+          keyToken,
+        ]),
+      );
+      converter.emit(new ConditionalJumpInstruction(hasKey, missingLabel));
       converter.emit(
         new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
           keyToken,
         ]),
       );
-      return converter.unwrapDataToken(valueToken, getResultType);
+      if (isPlainObjectType(getResultType)) {
+        converter.emit(new CopyInstruction(result, valueToken));
+      } else {
+        const unwrapped = converter.unwrapDataToken(valueToken, getResultType);
+        converter.emit(new CopyInstruction(result, unwrapped));
+      }
+      converter.emit(new UnconditionalJumpInstruction(endLabel));
+      converter.emit(new LabelInstruction(missingLabel));
+      converter.emit(
+        new CopyInstruction(
+          result,
+          isPlainObjectType(getResultType)
+            ? converter.wrapDataToken(createConstant(null, ObjectType))
+            : createSoaSentinelValue(converter, getResultType),
+        ),
+      );
+      converter.emit(new LabelInstruction(endLabel));
+      return result;
     }
     case "has": {
       if (rawArgs.length !== 1) {

@@ -204,6 +204,7 @@ function knownStructuralFieldType(property: string): TypeSymbol | undefined {
     case "han":
       return PrimitiveTypes.int32;
     case "isDoubleYakuman":
+    case "isValid":
     case "isWin":
     case "isYakuman":
       return PrimitiveTypes.boolean;
@@ -514,6 +515,16 @@ function resolvePropertyTypeFromType(
   baseType: TypeSymbol,
   property: string,
 ): TypeSymbol | null {
+  const aliasedType = converter.typeMapper.getAlias(baseType.name);
+  if (aliasedType && aliasedType !== baseType) {
+    const aliasedProperty = resolvePropertyTypeFromType(
+      converter,
+      aliasedType,
+      property,
+    );
+    if (aliasedProperty) return aliasedProperty;
+  }
+
   if (baseType instanceof ArrayTypeSymbol && property === "length") {
     return PrimitiveTypes.int32;
   }
@@ -611,6 +622,12 @@ export function resolveTypeFromNode(
       if (!baseType) return null;
       return resolvePropertyTypeFromType(converter, baseType, access.property);
     }
+    case ASTNodeKind.OptionalChainingExpression: {
+      const access = node as OptionalChainingExpressionNode;
+      const baseType = resolveTypeFromNode(converter, access.object);
+      if (!baseType) return null;
+      return resolvePropertyTypeFromType(converter, baseType, access.property);
+    }
     case ASTNodeKind.ArrayAccessExpression: {
       const access = node as ArrayAccessExpressionNode;
       const arrayType = resolveTypeFromNode(converter, access.array);
@@ -662,6 +679,19 @@ export function resolveTypeFromNode(
           }
         }
       }
+      if (call.callee.kind === ASTNodeKind.OptionalChainingExpression) {
+        const opt = call.callee as OptionalChainingExpressionNode;
+        const baseType = resolveTypeFromNode(converter, opt.object);
+        if (baseType && baseType !== ObjectType) {
+          const ret = resolveMethodReturnType(
+            converter,
+            baseType,
+            opt.property,
+            false,
+          );
+          if (ret) return ret;
+        }
+      }
       return null;
     }
     default:
@@ -699,15 +729,21 @@ export function resolveMethodReturnType(
         methodName,
       );
       if (method) {
-        return resolveInlineClassType(converter, method.returnType);
+        return resolveInlineOrAliasType(converter, method.returnType);
       }
     }
     const ifaceMeta = converter.classRegistry.getInterface(typeName);
     if (ifaceMeta) {
       const method = ifaceMeta.methods.find((m) => m.name === methodName);
       if (method) {
-        return resolveInlineClassType(converter, method.returnType);
+        return resolveInlineOrAliasType(converter, method.returnType);
       }
+    }
+  }
+  if (baseType instanceof InterfaceTypeSymbol) {
+    const method = baseType.methods.get(methodName);
+    if (method) {
+      return resolveInlineOrAliasType(converter, method.returnType);
     }
   }
   // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
@@ -724,7 +760,7 @@ export function resolveMethodReturnType(
       staticFlag,
     );
     if (resolved) {
-      return resolveInlineClassType(converter, resolved.method.returnType);
+      return resolveInlineOrAliasType(converter, resolved.method.returnType);
     }
     return null;
   };
@@ -1158,6 +1194,16 @@ export function visitBinaryExpression(
   let left = this.visitExpression(node.left);
   let right = this.visitExpression(node.right);
 
+  const dataTokenNullishComparison = tryEmitDataTokenNullishComparison(
+    this,
+    left,
+    right,
+    node.operator,
+  );
+  if (dataTokenNullishComparison !== null) {
+    return dataTokenNullishComparison;
+  }
+
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
@@ -1240,6 +1286,45 @@ export function visitBinaryExpression(
 
   this.emit(new BinaryOpInstruction(result, left, node.operator, right));
   return result;
+}
+
+function tryEmitDataTokenNullishComparison(
+  converter: ASTToTACConverter,
+  left: TACOperand,
+  right: TACOperand,
+  operator: string,
+): TACOperand | null {
+  if (operator !== "==" && operator !== "!=") return null;
+
+  const leftType = converter.getOperandType(left);
+  const rightType = converter.getOperandType(right);
+  let token: TACOperand | null = null;
+
+  if (leftType.udonType === UdonType.DataToken && isNullishOperand(right)) {
+    token = left;
+  } else if (
+    rightType.udonType === UdonType.DataToken &&
+    isNullishOperand(left)
+  ) {
+    token = right;
+  }
+  if (token === null) return null;
+
+  const isNull = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new PropertyGetInstruction(isNull, token, "IsNull"));
+  if (operator === "==") {
+    return isNull;
+  }
+
+  const result = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new UnaryOpInstruction(result, "!", isNull));
+  return result;
+}
+
+function isNullishOperand(operand: TACOperand): boolean {
+  return operand.kind === TACOperandKind.Constant
+    ? (operand as ConstantOperand).value === null
+    : false;
 }
 
 export function visitShortCircuitAnd(
@@ -1619,6 +1704,14 @@ function resolveSpreadArrayType(
     }
   }
   return resolved instanceof ArrayTypeSymbol ? resolved : null;
+}
+
+function resolveInlineOrAliasType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): TypeSymbol {
+  const inlineType = resolveInlineClassType(converter, type);
+  return converter.typeMapper.getAlias(inlineType.name) ?? inlineType;
 }
 
 export function visitArrayLiteralExpression(

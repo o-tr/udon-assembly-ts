@@ -56,6 +56,7 @@ import {
   createConstant,
   createLabel,
   createVariable,
+  type ConstantOperand,
   type TACOperand,
   TACOperandKind,
   type VariableOperand,
@@ -67,6 +68,7 @@ import {
   isSetCollectionType,
 } from "../helpers/collections.js";
 import {
+  createSoaSentinelValue,
   countSelfCalls,
   countTryCatchBlocks,
   MAX_RECURSION_STACK_DEPTH,
@@ -102,6 +104,46 @@ function resolvedStructuralPropertyType(
   type: TypeSymbol,
 ): TypeSymbol {
   return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
+}
+
+function isNullConstantOperand(
+  value: TACOperand | undefined,
+): value is ConstantOperand {
+  return (
+    value?.kind === TACOperandKind.Constant &&
+    (value as ConstantOperand).value === null
+  );
+}
+
+function emitStructuralPrefixDefaults(
+  converter: ASTToTACConverter,
+  prefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen = new Set<string>(),
+): void {
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
+    const propVar = createVariable(`${prefix}_${propName}`, propType);
+    const defaultValue = createSoaSentinelValue(converter, propType);
+    converter.emit(new AssignmentInstruction(propVar, defaultValue));
+
+    const nestedStructuralType = structuralInterfaceForType(
+      converter,
+      propType,
+    );
+    if (nestedStructuralType) {
+      emitStructuralPrefixDefaults(
+        converter,
+        `${prefix}_${propName}`,
+        nestedStructuralType,
+        seen,
+      );
+    }
+  }
 }
 
 function emitLoopExitEpiloguesSinceDepth(
@@ -1505,6 +1547,26 @@ export function visitReturnStatement(
         this.emit(new UnconditionalJumpInstruction(inlineContext.returnLabel));
         return;
       }
+    }
+
+    if (
+      returnInstancePrefix &&
+      isNullConstantOperand(value) &&
+      inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
+      inlineContext.returnVar.type.properties.size > 0
+    ) {
+      emitStructuralPrefixDefaults(
+        this,
+        returnInstancePrefix,
+        inlineContext.returnVar.type,
+      );
+      this.emit(new CopyInstruction(inlineContext.returnVar, value));
+      this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+      if (!inlineContext.returnTrackingInvalidated) {
+        inlineContext.returnTrackingInvalidated = true;
+      }
+      this.emit(new UnconditionalJumpInstruction(inlineContext.returnLabel));
+      return;
     }
 
     if (value) {
