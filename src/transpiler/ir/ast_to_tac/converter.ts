@@ -228,6 +228,8 @@ export class ASTToTACConverter {
     | {
         declaringClassName: string;
         methodName: string;
+        prefix: string;
+        isStatic: boolean;
         locals: Array<{ name: string; type: TypeSymbol }>;
         depthVar: string;
         spVar: string;
@@ -242,6 +244,7 @@ export class ASTToTACConverter {
         returnsVoid: boolean;
       }
     | undefined;
+  inlineMethodSelfCallCount: Map<string, number> = new Map();
   /**
    * Shared return site registries keyed by "className.methodName".
    * Both callers (from Start) and the recursive method itself register here.
@@ -662,6 +665,7 @@ export class ASTToTACConverter {
     this.currentNativeArrayVarName = null;
     this.pass1EmitCount = 0;
     this.inlineStaticCallInfo = new Map();
+    this.inlineMethodSelfCallCount = new Map();
     // outlineCandidates intentionally NOT cleared — survives between passes
     this.outlinedMethods = new Map();
     this.pendingOutlineDispatches = [];
@@ -801,12 +805,14 @@ export class ASTToTACConverter {
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
     // resetState() already clears metadataOnlyMode, so no explicit reset here.
     const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
+    const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
     this.resetState();
     this.allInlineInstances = allInstancesFromPass1;
     this.outlineCandidates = outlineCandidatesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
     this.inlineStaticCallInfo = inlineStaticCallInfoFromPass1;
+    this.inlineMethodSelfCallCount = inlineMethodSelfCallCountFromPass1;
     const result = this.convertImpl(program);
     if (PROF) {
       countKinds(this, result);

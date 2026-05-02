@@ -560,6 +560,10 @@ export const VM_TEST_CASES: VmTestCase[] = [
     sourceFile: "recursion_branching_depth.ts",
   },
   {
+    name: "recursion_instance_branching",
+    sourceFile: "recursion_instance_branching.ts",
+  },
+  {
     name: "optional_chaining_method_call",
     sourceFile: "optional_chaining_method_call.ts",
     expectError: true,

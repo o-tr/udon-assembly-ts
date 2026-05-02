@@ -2141,6 +2141,8 @@ function emitInlineRecursiveStaticMethod(
     const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
       declaringClassName,
       methodName,
+      prefix,
+      isStatic: true,
       locals,
       depthVar,
       spVar,
@@ -3196,11 +3198,11 @@ function emitInlineRecursiveSelfCall(
       );
     }
     const method = classNode.methods.find(
-      (m) => m.name === ctx.methodName && m.isStatic,
+      (m) => m.name === ctx.methodName && m.isStatic === ctx.isStatic,
     );
     if (!method) {
       throw new Error(
-        `emitInlineRecursiveSelfCall: static method '${ctx.declaringClassName}.${ctx.methodName}' not found`,
+        `emitInlineRecursiveSelfCall: ${ctx.isStatic ? "static" : "instance"} method '${ctx.declaringClassName}.${ctx.methodName}' not found`,
       );
     }
     for (let i = 0; i < method.parameters.length; i++) {
@@ -3262,7 +3264,7 @@ function emitInlineRecursiveSelfCall(
       index: returnSiteIdx,
       labelName: returnLabel.name,
     });
-    const prefix = `__inlineRec_${ctx.declaringClassName}_${ctx.methodName}`;
+    const prefix = ctx.prefix;
     const returnSiteIdxVar = createVariable(
       `${prefix}_returnSiteIdx`,
       PrimitiveTypes.int32,
@@ -3322,6 +3324,346 @@ function emitInlineRecursiveSelfCall(
 }
 
 /**
+ * Inline-instance-method recursion emitter — mirrors emitInlineRecursiveStaticMethod
+ * but preserves currentInlineContext across body emission so this.field accesses
+ * resolve through the receiver's instancePrefix. Same-receiver self-calls only.
+ */
+function emitInlineRecursiveInstanceMethod(
+  converter: ASTToTACConverter,
+  methodName: string,
+  method: {
+    parameters: Array<{ name: string; type: TypeSymbol }>;
+    body: BlockStatementNode;
+    returnType: TypeSymbol;
+  },
+  returnType: TypeSymbol,
+  args: TACOperand[],
+  selfCallCount: number,
+  inlineKey: string,
+  declaringClassName: string,
+  instancePrefix: string,
+): TACOperand {
+  if (PROF) profEnter(converter, histKey(declaringClassName, methodName));
+  try {
+    const prefix = `__inlineRecInst_${declaringClassName}_${methodName}`;
+    const depthVar = `${prefix}_depth`;
+    const spVar = `${prefix}_sp`;
+    const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+    const { effectiveReturnType } = resolveInlineReturnType(returnType);
+
+    const locals = collectRecursiveLocals.call(converter, method);
+    locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
+    if (returnType.udonType !== UdonType.Void) {
+      for (let i = 0; i < selfCallCount; i++) {
+        locals.push({
+          name: `${prefix}_selfCallResult_${i}`,
+          type: effectiveReturnType,
+        });
+      }
+    }
+    const tryCatchCount = countTryCatchBlocks(method.body);
+    const startTryId = converter.tryCounter;
+    for (let i = 0; i < tryCatchCount; i++) {
+      const tryId = startTryId + i;
+      locals.push({
+        name: `__error_flag_${tryId}`,
+        type: PrimitiveTypes.boolean,
+      });
+      locals.push({ name: `__error_value_${tryId}`, type: ObjectType });
+    }
+
+    const stackVars = locals.map((local) => ({
+      name: `${prefix}_stack_${local.name}`,
+      type: ExternTypes.dataList as TypeSymbol,
+    }));
+
+    const result = createVariable(
+      `${prefix}_retVal_${converter.tempCounter++}`,
+      effectiveReturnType,
+      { isLocal: true, isInlineReturn: true },
+    );
+    const entryLabel = converter.newLabel("inline_rec_entry");
+    const dispatchLabel = converter.newLabel("inline_rec_dispatch");
+    const overflowLabel = converter.newLabel("inline_rec_overflow");
+    const doneLabel = converter.newLabel("inline_rec_done");
+
+    const savedInlineRecCtx = converter.currentInlineRecursiveContext;
+    const savedParamExportMap = converter.currentParamExportMap;
+    const savedParamExportReverseMap = converter.currentParamExportReverseMap;
+    const savedMethodLayout = converter.currentMethodLayout;
+    const savedInlineContext = converter.currentInlineContext;
+    const savedInlineCtorClass = converter.currentInlineConstructorClassName;
+    const savedThisOverride = converter.currentThisOverride;
+    const savedBaseClass = converter.currentInlineBaseClass;
+    const savedRecNativeIneligible = converter.nativeArrayIneligible;
+    const savedRecNativeVarName = converter.currentNativeArrayVarName;
+    const returnStackDepth = converter.inlineReturnStack.length;
+    const bodyStackDepth = converter.inlinedBodyStack.length;
+    let savedInitialParams: InlineParamSave | undefined;
+
+    const ctx: NonNullable<typeof converter.currentInlineRecursiveContext> = {
+      declaringClassName,
+      methodName,
+      prefix,
+      isStatic: false,
+      locals,
+      depthVar,
+      spVar,
+      stackVars,
+      returnSites: [],
+      nextReturnSiteIndex: 1,
+      nextSelfCallResultIndex: 0,
+      entryLabel,
+      dispatchLabel,
+      overflowLabel,
+      returnVar: result,
+      returnsVoid: returnType.udonType === UdonType.Void,
+    };
+
+    savedInitialParams = new Map();
+    let enteredScope = false;
+    let prologueComplete = false;
+    let addedInlineMethodKey = false;
+    try {
+      converter.symbolTable.enterScope();
+      enteredScope = true;
+      saveAndBindInlineParams(
+        converter,
+        method.parameters,
+        args,
+        savedInitialParams,
+      );
+      prologueComplete = true;
+      const returnSiteIdxVar = createVariable(
+        returnSiteIdxVarName,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
+      converter.emit(
+        new AssignmentInstruction(
+          returnSiteIdxVar,
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+
+      // Stack init guard
+      const stackInitFlagName = `${prefix}_stackInit`;
+      const stackInitFlag = createVariable(
+        stackInitFlagName,
+        PrimitiveTypes.boolean,
+      );
+      const notInitialized = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          notInitialized,
+          stackInitFlag,
+          "==",
+          createConstant(false, PrimitiveTypes.boolean),
+        ),
+      );
+      const skipAllocLabel = converter.newLabel("inline_rec_skip_alloc");
+      converter.emit(
+        new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
+      );
+      {
+        converter.emitCopyWithTracking(
+          stackInitFlag,
+          createConstant(true, PrimitiveTypes.boolean),
+        );
+        const defaultToken = converter.wrapDataToken(
+          createConstant(0, PrimitiveTypes.single),
+        );
+        for (const stackVarInfo of stackVars) {
+          const stackVar = createVariable(
+            stackVarInfo.name,
+            ExternTypes.dataList,
+          );
+          const externSig = converter.requireExternSignature(
+            "DataList",
+            "ctor",
+            "method",
+            [],
+            "DataList",
+          );
+          converter.emit(new CallInstruction(stackVar, externSig, []));
+          for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
+            converter.emit(
+              new MethodCallInstruction(undefined, stackVar, "Add", [
+                defaultToken,
+              ]),
+            );
+          }
+        }
+      }
+      converter.emit(new LabelInstruction(skipAllocLabel));
+
+      // Reset SP at top level (depth <= 0)
+      {
+        const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+        const depthAtTopLevel = converter.newTemp(PrimitiveTypes.boolean);
+        converter.emit(
+          new BinaryOpInstruction(
+            depthAtTopLevel,
+            depthVarOp,
+            "<=",
+            createConstant(0, PrimitiveTypes.int32),
+          ),
+        );
+        const skipSpResetLabel = converter.newLabel("inline_rec_skip_sp_reset");
+        converter.emit(
+          new ConditionalJumpInstruction(depthAtTopLevel, skipSpResetLabel),
+        );
+        const spVarOp = createVariable(spVar, PrimitiveTypes.int32);
+        converter.emitCopyWithTracking(
+          spVarOp,
+          createConstant(-1, PrimitiveTypes.int32),
+        );
+        converter.emitCopyWithTracking(
+          depthVarOp,
+          createConstant(0, PrimitiveTypes.int32),
+        );
+        converter.emit(new LabelInstruction(skipSpResetLabel));
+      }
+
+      // Overflow handler
+      {
+        const afterOverflowLabel = converter.newLabel(
+          "inline_rec_after_overflow",
+        );
+        converter.emit(new UnconditionalJumpInstruction(afterOverflowLabel));
+        converter.emit(new LabelInstruction(overflowLabel));
+        const logErrorExtern = converter.requireExternSignature(
+          "Debug",
+          "LogError",
+          "method",
+          ["object"],
+          "void",
+        );
+        const overflowMsg = createConstant(
+          `[udon-assembly-ts] Max recursion depth (${MAX_RECURSION_STACK_DEPTH}) exceeded in ${declaringClassName}.${methodName}.`,
+          PrimitiveTypes.string,
+        );
+        converter.emit(
+          new CallInstruction(undefined, logErrorExtern, [overflowMsg]),
+        );
+        converter.emitCopyWithTracking(
+          createVariable(depthVar, PrimitiveTypes.int32),
+          createConstant(0, PrimitiveTypes.int32),
+        );
+        converter.emitCopyWithTracking(
+          createVariable(spVar, PrimitiveTypes.int32),
+          createConstant(-1, PrimitiveTypes.int32),
+        );
+        converter.emit(new UnconditionalJumpInstruction(doneLabel));
+        converter.emit(new LabelInstruction(afterOverflowLabel));
+      }
+
+      // Entry label
+      converter.emit(new LabelInstruction(entryLabel));
+
+      converter.currentInlineRecursiveContext = ctx;
+
+      converter.currentParamExportMap = new Map();
+      converter.currentParamExportReverseMap = new Map();
+      converter.currentMethodLayout = null;
+      // Preserve receiver context across recursion so this.field resolves
+      // through the receiver's prefix on every iteration.
+      converter.currentInlineContext = {
+        className: declaringClassName,
+        instancePrefix,
+      };
+      converter.currentInlineConstructorClassName = undefined;
+      converter.currentThisOverride = null;
+      converter.currentInlineBaseClass = undefined;
+
+      converter.inlineMethodStack.add(inlineKey);
+      addedInlineMethodKey = true;
+      converter.inlineReturnStack.push({
+        returnVar: result,
+        returnLabel: dispatchLabel,
+        returnTrackingInvalidated: false,
+        loopDepth: converter.loopContextStack.length,
+        returnInstancePrefix: undefined,
+      });
+      converter.methodBodyConstructorIndex.set(method.body, 0);
+      converter.inlinedBodyStack.push(method.body);
+      converter.nativeArrayIneligible = analyzeNativeArrayIneligibility(
+        method.body.statements,
+      );
+      converter.currentNativeArrayVarName = null;
+      converter.visitBlockStatement(method.body);
+    } finally {
+      converter.nativeArrayIneligible = savedRecNativeIneligible;
+      converter.currentNativeArrayVarName = savedRecNativeVarName;
+      if (converter.inlinedBodyStack.length > bodyStackDepth)
+        converter.inlinedBodyStack.pop();
+      if (converter.inlineReturnStack.length > returnStackDepth)
+        converter.inlineReturnStack.pop();
+      if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
+      converter.currentParamExportMap = savedParamExportMap;
+      converter.currentParamExportReverseMap = savedParamExportReverseMap;
+      converter.currentMethodLayout = savedMethodLayout;
+      converter.currentInlineContext = savedInlineContext;
+      converter.currentInlineConstructorClassName = savedInlineCtorClass;
+      converter.currentThisOverride = savedThisOverride;
+      converter.currentInlineBaseClass = savedBaseClass;
+      if (prologueComplete && savedInitialParams)
+        restoreInlineParams(converter, savedInitialParams);
+      if (enteredScope) converter.symbolTable.exitScope();
+      converter.currentInlineRecursiveContext = savedInlineRecCtx;
+    }
+
+    // Fallthrough: decrement depth and jump to dispatch
+    {
+      const depthVarOp = createVariable(depthVar, PrimitiveTypes.int32);
+      const depthTmp = converter.newTemp(PrimitiveTypes.int32);
+      converter.emit(
+        new BinaryOpInstruction(
+          depthTmp,
+          depthVarOp,
+          "-",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emitCopyWithTracking(depthVarOp, depthTmp);
+      converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+    }
+
+    // Dispatch table
+    converter.emit(new LabelInstruction(dispatchLabel));
+    {
+      const returnSiteIdxVarOp = createVariable(
+        returnSiteIdxVarName,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
+      for (const site of ctx.returnSites) {
+        const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
+        converter.emit(
+          new BinaryOpInstruction(
+            cmpResult,
+            returnSiteIdxVarOp,
+            "!=",
+            createConstant(site.index, PrimitiveTypes.int32),
+          ),
+        );
+        const siteLabel = createLabel(site.labelName);
+        converter.emit(new ConditionalJumpInstruction(cmpResult, siteLabel));
+      }
+      converter.emit(new UnconditionalJumpInstruction(doneLabel));
+    }
+
+    converter.emit(new LabelInstruction(doneLabel));
+    if (ctx.returnsVoid) {
+      return VOID_INLINE_RESULT;
+    }
+    return result;
+  } finally {
+    if (PROF) profExit(converter);
+  }
+}
+
+/**
  * Shared implementation for instance method inlining.
  * When instancePrefix is provided, sets currentInlineContext;
  * otherwise clears it.
@@ -3336,6 +3678,33 @@ function inlineInstanceMethodCallCore(
   // Walk inheritance chain to find the method (may be on a base class).
   const resolved = resolveClassMethod(converter, className, methodName, false);
   if (!resolved) return null;
+
+  // Recursive entry: route to the JUMP-based emitter on first entry. Self-calls
+  // (subsequent entries) are detected inside inlineResolvedMethodBody and
+  // routed to emitInlineRecursiveSelfCall via the same-receiver gate.
+  const inlineKey = `${className}::${methodName}`;
+  if (instancePrefix !== undefined && !converter.inlineMethodStack.has(inlineKey)) {
+    const bodyKey = `${resolved.declaringClassName}::${methodName}`;
+    let selfCallCountHint = converter.inlineMethodSelfCallCount.get(bodyKey);
+    if (selfCallCountHint === undefined) {
+      selfCallCountHint = countSelfCalls(methodName, resolved.method.body);
+      converter.inlineMethodSelfCallCount.set(bodyKey, selfCallCountHint);
+    }
+    if (selfCallCountHint > 0) {
+      return emitInlineRecursiveInstanceMethod(
+        converter,
+        methodName,
+        resolved.method,
+        resolved.method.returnType,
+        args,
+        selfCallCountHint,
+        inlineKey,
+        resolved.declaringClassName,
+        instancePrefix,
+      );
+    }
+  }
+
   return inlineResolvedMethodBody(
     converter,
     className,
@@ -3584,7 +3953,22 @@ function inlineResolvedMethodBody(
 ): TACOperand | null {
   const inlineKey = `${className}::${methodName}`;
   if (converter.inlineMethodStack.has(inlineKey)) {
-    return null; // recursion detected → fallback
+    // Same-receiver instance self-call: dispatch to the JUMP-based emitter.
+    // Static self-calls reach this point via visitInlineStaticMethodCall's
+    // own guard at ~line 1779 first, so the !ctx.isStatic check is defensive.
+    const ctx = converter.currentInlineRecursiveContext;
+    const inlineCtx = converter.currentInlineContext;
+    if (
+      ctx &&
+      !ctx.isStatic &&
+      ctx.declaringClassName === declaringClassName &&
+      ctx.methodName === methodName &&
+      inlineCtx &&
+      inlineCtx.instancePrefix === instancePrefix
+    ) {
+      return emitInlineRecursiveSelfCall(converter, ctx, args);
+    }
+    return null; // cross-instance, getter recursion, or no matching context — diagnostic guard fires
   }
 
   if (canFastPathTrivialReturn(method)) {
@@ -3688,6 +4072,10 @@ function inlineResolvedMethodBody(
     info.callSites++;
     if (info.selfCallCount === undefined) {
       info.selfCallCount = countSelfCalls(methodName, method.body);
+      converter.inlineMethodSelfCallCount.set(
+        `${declaringClassName}::${methodName}`,
+        info.selfCallCount,
+      );
     }
     if (info.bodyInstr === undefined) {
       // Invariant: pass1EmitCount is monotonically increasing within a

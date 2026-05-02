@@ -655,6 +655,16 @@ function trySoAMethodDispatch(
     return null;
   }
 
+  // Recursive instance methods cannot use the SoA fast path: scratch is a
+  // field snapshot, so mutations during a recursive frame would not propagate
+  // back to SoA storage. Fall through to handle-based D3 dispatch.
+  const recCount = converter.inlineMethodSelfCallCount.get(
+    `${soaClassName}::${propAccess.property}`,
+  );
+  if ((recCount ?? 0) > 0) {
+    return null;
+  }
+
   const fieldLists = converter.soaFieldLists.get(soaClassName);
   if (!fieldLists) return null;
   const fieldsToLoad = collectSoAFieldReads(
