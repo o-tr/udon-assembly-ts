@@ -3,6 +3,7 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   ConditionalJumpInstruction,
+  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -35,12 +36,14 @@ export function emitBoundedDataListGetItem(
   sentinelValue: TACOperand = createConstant(null, ObjectType),
 ): void {
   if (listVar.kind === TACOperandKind.Variable) {
+    const boxedList = converter.newTemp(ObjectType);
+    converter.emit(new CopyInstruction(boxedList, listVar));
     const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
     const listReady = converter.newLabel("soa_list_ready");
     converter.emit(
       new BinaryOpInstruction(
         listIsNull,
-        listVar,
+        boxedList,
         "==",
         createConstant(null, ObjectType),
       ),
