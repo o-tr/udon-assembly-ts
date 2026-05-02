@@ -419,12 +419,19 @@ export function visitVariableDeclaration(
     const srcKey = operandTrackingKey(src);
     const destKey = operandTrackingKey(dest);
     if (structuralType && srcKey && destKey) {
+      // Resolve to the canonical inline-instance prefix when src is tracked,
+      // so per-field copies read from the underlying `__inst_*_<prop>` slots
+      // rather than `__inst_*__handle_<prop>` (a parallel name that codegen
+      // never writes), or from a local-var alias chain that would propagate
+      // a never-written value.
+      const srcMapping = this.resolveInlineInstance(srcKey);
+      const sourcePrefix = srcMapping?.prefix ?? srcKey;
       for (const [propName, propTypeRaw] of structuralType.properties) {
         const propType = resolvedStructuralPropertyType(this, propTypeRaw);
         this.emit(
           new CopyInstruction(
             createVariable(`${destKey}_${propName}`, propType),
-            createVariable(`${srcKey}_${propName}`, propType),
+            createVariable(`${sourcePrefix}_${propName}`, propType),
           ),
         );
         const nestedStructuralType = structuralInterfaceForType(this, propType);
@@ -444,7 +451,7 @@ export function visitVariableDeclaration(
                   nestedType,
                 ),
                 createVariable(
-                  `${srcKey}_${propName}_${nestedName}`,
+                  `${sourcePrefix}_${propName}_${nestedName}`,
                   nestedType,
                 ),
               ),
@@ -452,10 +459,19 @@ export function visitVariableDeclaration(
           }
         }
       }
-      this.inlineInstanceMap.set(destKey, {
-        prefix: destKey,
-        className: structuralType.name,
-      });
+      // Preserve a canonical inline-instance mapping when one was already set
+      // by maybeTrackInlineInstanceAssignment above. Replacing the canonical
+      // `__inst_*` prefix with the local var name would force downstream
+      // visitReturnStatement field-copies to source from the local-var alias
+      // (e.g. `__inline_ret_0_x = p1_x`) instead of the canonical instance
+      // slot, missing the unified-return-prefix population the tests expect.
+      const existing = this.inlineInstanceMap.get(destKey);
+      if (!existing || !existing.prefix.startsWith("__inst_")) {
+        this.inlineInstanceMap.set(destKey, {
+          prefix: destKey,
+          className: structuralType.name,
+        });
+      }
     }
   }
 }
