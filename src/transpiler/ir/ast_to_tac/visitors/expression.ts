@@ -1814,6 +1814,14 @@ function tryReadInlineFieldByHandle(
       createSoaSentinelValue(converter, propertyType),
     ),
   );
+  // Normalize the handle to Int32 before comparing against instance-id
+  // constants. When `handle` arrives as an Object slot (e.g. an `__opt_base_*`
+  // built from an erased optional-chain receiver), `==` with an Int32 constant
+  // would lower to `SystemObject.op_Equality` — a *reference* comparison
+  // between two distinct boxes — and never matches even when the boxed
+  // values are equal. Forcing the cast first routes through SystemInt32
+  // equality and matches the D-3 untracked-handle dispatch path.
+  const handleInt32 = normalizeOperandToInt32(converter, handle);
   const endLabel = converter.newLabel("inline_field_handle_end");
   for (const [instanceId, prefix] of candidates) {
     const nextLabel = converter.newLabel("inline_field_handle_next");
@@ -1821,7 +1829,7 @@ function tryReadInlineFieldByHandle(
     converter.emit(
       new BinaryOpInstruction(
         matches,
-        handle,
+        handleInt32,
         "==",
         createConstant(instanceId, PrimitiveTypes.int32),
       ),
