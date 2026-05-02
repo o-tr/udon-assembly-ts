@@ -197,37 +197,6 @@ function inferInlineStructuralPropertyType(
   return inferred;
 }
 
-function knownStructuralFieldType(property: string): TypeSymbol | undefined {
-  switch (property) {
-    case "decomposition":
-      return ObjectType;
-    case "fu":
-    case "han":
-      return PrimitiveTypes.int32;
-    case "isDoubleYakuman":
-    case "isValid":
-    case "isWin":
-    case "isYakuman":
-      return PrimitiveTypes.boolean;
-    case "yaku":
-      return ExternTypes.dataList;
-    default:
-      return undefined;
-  }
-}
-
-function knownInterfacePropertyType(
-  converter: ASTToTACConverter,
-  _interfaceName: string,
-  property: string,
-): TypeSymbol | undefined {
-  if (property === "hand") {
-    const alias = converter.typeMapper.getAlias("Hand");
-    return alias ?? new ClassTypeSymbol("Hand", UdonType.Object);
-  }
-  return undefined;
-}
-
 function inferIdentifierInitialPropertyClassName(
   converter: ASTToTACConverter,
   node: ASTNode,
@@ -1579,9 +1548,6 @@ export function visitNullCoalescingExpression(
 ): TACOperand {
   const expected = this.currentExpectedType;
   const prevExpected = this.currentExpectedType;
-  if (expected && !isPlainObjectType(expected)) {
-    this.currentExpectedType = expected;
-  }
   const left = this.visitExpression(node.left);
   this.currentExpectedType = prevExpected;
   const leftType = this.getOperandType(left);
@@ -1799,8 +1765,13 @@ function tryReadInlineFieldByHandle(
   }
   if (
     candidates.length === 0 &&
-    knownStructuralFieldType(property) !== undefined
+    converter.fieldTypeRegistry.getStructuralFieldType(property) !== undefined
   ) {
+    converter.warnAt(
+      undefined,
+      "D3DispatchFallback",
+      `Imprecise inline field read for property "${property}" — using all ${converter.allInlineInstances.size} inline instance(s) as dispatch candidates.`,
+    );
     for (const [instanceId, info] of converter.allInlineInstances) {
       candidates.push([instanceId, info.prefix]);
     }
@@ -2532,8 +2503,11 @@ export function visitPropertyAccessExpression(
         const propTypeRaw = objectSymbol.type.properties.get(node.property);
         if (propTypeRaw) {
           const propType =
-            knownInterfacePropertyType(
-              this,
+            this.fieldTypeRegistry.getInterfacePropertyType(
+              {
+                typeMapper: this.typeMapper,
+                classRegistry: this.classRegistry,
+              },
               objectSymbol.type.name,
               node.property,
             ) ??
@@ -2545,19 +2519,13 @@ export function visitPropertyAccessExpression(
           });
         }
       }
-      const structuralFieldNames = new Set([
-        "decomposition",
-        "fu",
-        "han",
-        "isDoubleYakuman",
-        "isWin",
-        "isYakuman",
-        "yaku",
-      ]);
-      const structuralPropertyType = structuralFieldNames.has(node.property)
-        ? (inferInlineStructuralPropertyType(this, node.property) ??
-          knownStructuralFieldType(node.property))
-        : undefined;
+      const registryStructuralField =
+        this.fieldTypeRegistry.getStructuralFieldType(node.property);
+      const structuralPropertyType =
+        registryStructuralField !== undefined
+          ? (inferInlineStructuralPropertyType(this, node.property) ??
+            registryStructuralField)
+          : undefined;
       const isAnonymousInlineRecord =
         objectSymbol?.type instanceof InterfaceTypeSymbol &&
         objectSymbol.type.name.startsWith("__anon_") &&
@@ -2565,7 +2533,7 @@ export function visitPropertyAccessExpression(
         isInlineHandleType(this, objectSymbol.type);
       if (
         structuralPropertyType &&
-        structuralFieldNames.has(node.property) &&
+        registryStructuralField !== undefined &&
         objectSymbol &&
         !isAnonymousInlineRecord
       ) {
@@ -2958,8 +2926,10 @@ export function visitPropertyAccessExpression(
             }
           }
         }
-        const dispatchLimit =
-          usedErasedFallback && node.property === "isWin" ? 512 : 100;
+        const dispatchLimit = this.dispatchLimitResolver.getLimit({
+          property: node.property,
+          usedErasedFallback,
+        });
         if (usedErasedFallback && dispInstances.length > dispatchLimit) {
           this.warnAt(
             node,
@@ -3598,7 +3568,7 @@ export function visitOptionalChainingExpression(
   const endLabel = this.newLabel("opt_end");
   const fallbackPropertyType =
     inferInlineStructuralPropertyType(this, node.property) ??
-    knownStructuralFieldType(node.property);
+    this.fieldTypeRegistry.getStructuralFieldType(node.property);
   const effectiveResultType = resultType ?? fallbackPropertyType;
   const result = this.newTemp(effectiveResultType ?? ObjectType);
   this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
@@ -3637,21 +3607,9 @@ export function visitOptionalChainingExpression(
       true,
     );
     const structuralPropertyType =
-      effectiveResultType ?? knownStructuralFieldType(node.property);
-    const sourceIdentifier =
-      node.object.kind === ASTNodeKind.Identifier
-        ? (node.object as IdentifierNode).name
-        : undefined;
-    if (
-      sourceIdentifier &&
-      structuralPropertyType &&
-      node.property === "isWin"
-    ) {
-      propResult = createVariable(
-        `${sourceIdentifier}_${node.property}`,
-        structuralPropertyType,
-      );
-    } else if (structuralPropertyType) {
+      effectiveResultType ??
+      this.fieldTypeRegistry.getStructuralFieldType(node.property);
+    if (structuralPropertyType) {
       propResult =
         tryReadInlineFieldByHandle(
           this,

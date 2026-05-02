@@ -110,6 +110,12 @@ import {
   isUdonBehaviourType,
   resolveFieldChangeCallback,
 } from "./helpers/udon_behaviour.js";
+import { createDefaultDispatchLimitResolver } from "./dispatch_limit_resolver.js";
+import type { DispatchLimitResolver } from "./dispatch_limit_resolver.js";
+import {
+  createDefaultFieldTypeRegistry,
+  type FieldTypeRegistry,
+} from "./field_type_registry.js";
 import { countKinds, printHistograms, resetProfiling } from "./profiling.js";
 import {
   getUdonTypeConverterTargetType,
@@ -276,6 +282,8 @@ export class ASTToTACConverter {
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;
   typeMapper: TypeMapper;
+  fieldTypeRegistry: FieldTypeRegistry;
+  dispatchLimitResolver: DispatchLimitResolver;
   enumRegistry: EnumRegistry;
   classMap: Map<string, ClassDeclarationNode> = new Map();
   entryPointClasses: Set<string> = new Set();
@@ -467,11 +475,17 @@ export class ASTToTACConverter {
       checkerContext?: TypeCheckerContext;
       checkerTypeResolver?: TypeCheckerTypeResolver;
       outlineBodyInstrThreshold?: number;
+      fieldTypeRegistry?: FieldTypeRegistry;
+      dispatchLimitResolver?: DispatchLimitResolver;
     },
   ) {
     this.symbolTable = symbolTable;
     this.enumRegistry = enumRegistry ?? new EnumRegistry();
     this.typeMapper = options?.typeMapper ?? new TypeMapper(this.enumRegistry);
+    this.fieldTypeRegistry =
+      options?.fieldTypeRegistry ?? createDefaultFieldTypeRegistry();
+    this.dispatchLimitResolver =
+      options?.dispatchLimitResolver ?? createDefaultDispatchLimitResolver();
     this.udonBehaviourClasses = udonBehaviourClasses ?? new Set();
     this.udonBehaviourLayouts = udonBehaviourLayouts ?? new Map();
     this.classRegistry = classRegistry ?? null;
