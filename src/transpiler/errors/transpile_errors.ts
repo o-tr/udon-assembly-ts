@@ -22,7 +22,8 @@ export type TranspileWarningCode =
   | "SetterBodyUnsupported"
   | "UntrackedStructuralUnionReturn"
   | "UnsupportedOperator"
-  | "OutlineDispatchInvariant";
+  | "OutlineDispatchInvariant"
+  | "InlineInstanceRecursionUnsupported";
 
 export interface TranspileErrorLocation {
   filePath: string;
