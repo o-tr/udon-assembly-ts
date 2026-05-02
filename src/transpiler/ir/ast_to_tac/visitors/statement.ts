@@ -125,6 +125,54 @@ function isNullableReturnSlotType(type: TypeSymbol): boolean {
   );
 }
 
+/**
+ * Cycle-guarded recursion that copies `${sourcePrefix}_<prop>` slot chains
+ * into `${targetPrefix}_<prop>` at arbitrary depth. Used by the structural
+ * field-copy block in visitVariableDeclaration; complements
+ * `emitStructuralPrefixDefaults` (default fill) and
+ * `emitNestedStructuralFieldCopies` (helpers/inline.ts variant — the latter
+ * uses `emitCopyWithTracking`, which here is intentionally swapped for plain
+ * `CopyInstruction` so visitVariableDeclaration's own canonical-mapping
+ * preservation guard at the call site remains in control of inlineInstanceMap).
+ */
+function emitVarDeclStructuralFieldCopies(
+  converter: ASTToTACConverter,
+  sourcePrefix: string,
+  targetPrefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen: Set<string>,
+  depth = 0,
+): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  const seenKey = `${targetPrefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
+    converter.emit(
+      new CopyInstruction(
+        createVariable(`${targetPrefix}_${propName}`, propType),
+        createVariable(`${sourcePrefix}_${propName}`, propType),
+      ),
+    );
+    const nestedStructuralType = structuralInterfaceForType(
+      converter,
+      propType,
+    );
+    if (nestedStructuralType) {
+      emitVarDeclStructuralFieldCopies(
+        converter,
+        `${sourcePrefix}_${propName}`,
+        `${targetPrefix}_${propName}`,
+        nestedStructuralType,
+        seen,
+        depth + 1,
+      );
+    }
+  }
+}
+
 function emitStructuralPrefixDefaults(
   converter: ASTToTACConverter,
   prefix: string,
@@ -445,39 +493,15 @@ export function visitVariableDeclaration(
       // Resolve to the canonical inline-instance prefix so per-field copies
       // read from the underlying `__inst_*_<prop>` slots rather than
       // `__inst_*__handle_<prop>` (a parallel name codegen never writes).
-      for (const [propName, propTypeRaw] of structuralType.properties) {
-        const propType = resolvedStructuralPropertyType(this, propTypeRaw);
-        this.emit(
-          new CopyInstruction(
-            createVariable(`${destKey}_${propName}`, propType),
-            createVariable(`${sourcePrefix}_${propName}`, propType),
-          ),
-        );
-        const nestedStructuralType = structuralInterfaceForType(this, propType);
-        if (nestedStructuralType) {
-          for (const [
-            nestedName,
-            nestedTypeRaw,
-          ] of nestedStructuralType.properties) {
-            const nestedType = resolvedStructuralPropertyType(
-              this,
-              nestedTypeRaw,
-            );
-            this.emit(
-              new CopyInstruction(
-                createVariable(
-                  `${destKey}_${propName}_${nestedName}`,
-                  nestedType,
-                ),
-                createVariable(
-                  `${sourcePrefix}_${propName}_${nestedName}`,
-                  nestedType,
-                ),
-              ),
-            );
-          }
-        }
-      }
+      // Cycle-guarded recursion handles arbitrary nesting depth — previously
+      // capped at two levels, leaving 3+-deep slots silently uncopied.
+      emitVarDeclStructuralFieldCopies(
+        this,
+        sourcePrefix,
+        destKey,
+        structuralType,
+        new Set<string>(),
+      );
       // Preserve a canonical inline-instance mapping when one was already set
       // by maybeTrackInlineInstanceAssignment above. Replacing the canonical
       // `__inst_*` prefix with the local var name would force downstream

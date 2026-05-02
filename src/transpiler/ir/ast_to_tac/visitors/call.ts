@@ -369,7 +369,7 @@ function mergeInlineMapping(
 }
 
 function mergeStructuralReturnMapping(
-  converter: ASTToTACConverter,
+  _converter: ASTToTACConverter,
   dispatchResult: TACOperand,
   returnType: TypeSymbol,
   inlineRes: TACOperand,
@@ -397,17 +397,12 @@ function mergeStructuralReturnMapping(
   ) {
     return null;
   }
-  for (const [propName, propTypeRaw] of returnType.properties.entries()) {
-    const propType = propTypeRaw.name
-      ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
-      : propTypeRaw;
-    const srcField = createVariable(
-      `${branchMapping.prefix}_${propName}`,
-      propType,
-    );
-    const dstField = createVariable(`${dispatchPrefix}_${propName}`, propType);
-    converter.emit(new CopyInstruction(dstField, srcField));
-  }
+  // The recursive `emitStructuralFieldCopies` call upstream already populated
+  // every level of `${dispatchPrefix}_<prop>...` slots from the same source.
+  // This function's role is now solely to compute the stable mapping that
+  // downstream property reads consult — the top-level copy loop here was
+  // redundant and only handled one level of nesting (incomplete for 2+-deep
+  // structural types where emitStructuralFieldCopies already filled all levels).
   return stableMapping;
 }
 
