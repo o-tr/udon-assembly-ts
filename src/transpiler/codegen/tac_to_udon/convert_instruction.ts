@@ -394,27 +394,10 @@ export function convertInstruction(
       };
 
       if (unInst.operator === "!" && operandType === "String") {
-        // String truthiness: !str <==> str.Length == 0
-        // (length == 0 directly gives !str result, no separate negation needed)
-
-        // Step 1: Get string length → Int32 temp
+        // `!str` ≡ String.IsNullOrEmpty(str): null-safe and matches JS falsy.
         this.pushOperand(unInst.operand);
-        const lenTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(lenTmpName, this.nextAddress++);
-        this.variableTypes.set(lenTmpName, "Int32");
-        this.instructions.push(new PushInstruction(lenTmpName));
-        const getLengthSig = "SystemString.__get_Length__SystemInt32";
-        this.externSignatures.add(getLengthSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(getLengthSig), true),
-        );
-
-        // Step 2: Compare length == 0 → dest (Boolean)
-        this.instructions.push(new PushInstruction(lenTmpName));
-        this.pushConstant(0, "Int32");
         const destAddr = this.getOperandAddress(unInst.dest);
         this.instructions.push(new PushInstruction(destAddr));
-        // The TAC dest inherits String type from the operand; override to Boolean
         if (unInst.dest.kind === TACOperandKind.Temporary) {
           this.tempTypes.set((unInst.dest as TemporaryOperand).id, "Boolean");
         } else if (unInst.dest.kind === TACOperandKind.Variable) {
@@ -423,10 +406,11 @@ export function convertInstruction(
           );
           this.variableTypes.set(varName, "Boolean");
         }
-        const eqSig = this.getExternForBinaryOp("==", "Int32");
-        this.externSignatures.add(eqSig);
+        const isNullOrEmptySig =
+          "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean";
+        this.externSignatures.add(isNullOrEmptySig);
         this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(eqSig), true),
+          new ExternInstruction(this.getExternSymbol(isNullOrEmptySig), true),
         );
       } else if (unInst.operator === "!" && operandType !== "Boolean") {
         if (operandType === UdonType.Object) {

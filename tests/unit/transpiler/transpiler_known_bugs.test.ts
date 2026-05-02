@@ -562,6 +562,7 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean",
       );
+      expect(result.uasm).not.toContain("__get_Length__");
     });
 
     it("string in if-condition with logical NOT should not use SystemConvert.ToBoolean", () => {
@@ -589,6 +590,7 @@ describe("known transpiler bugs", () => {
       expect(result.uasm).toContain(
         "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean",
       );
+      expect(result.uasm).not.toContain("__get_Length__");
     });
   });
 
