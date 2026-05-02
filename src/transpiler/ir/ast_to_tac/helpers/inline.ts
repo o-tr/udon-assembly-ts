@@ -3683,7 +3683,10 @@ function inlineInstanceMethodCallCore(
   // (subsequent entries) are detected inside inlineResolvedMethodBody and
   // routed to emitInlineRecursiveSelfCall via the same-receiver gate.
   const inlineKey = `${className}::${methodName}`;
-  if (instancePrefix !== undefined && !converter.inlineMethodStack.has(inlineKey)) {
+  if (
+    instancePrefix !== undefined &&
+    !converter.inlineMethodStack.has(inlineKey)
+  ) {
     const bodyKey = `${resolved.declaringClassName}::${methodName}`;
     let selfCallCountHint = converter.inlineMethodSelfCallCount.get(bodyKey);
     if (selfCallCountHint === undefined) {
