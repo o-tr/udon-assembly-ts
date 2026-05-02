@@ -82,6 +82,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
+  STRUCTURAL_RECURSION_DEPTH_CAP,
   usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
@@ -429,11 +430,9 @@ function structuralInterfaceForType(
  * nested structural interface properties. Mirrors `emitStructuralPrefixDefaults`
  * in statement.ts so the dispatch-result default path matches the
  * variable-decl initialisation path for 3+-deep nested types. The depth cap
- * matches `STRUCTURAL_RECURSION_DEPTH_CAP` in helpers/inline.ts and bounds
- * runtime on pathological self-referential interface types.
+ * is the shared `STRUCTURAL_RECURSION_DEPTH_CAP` re-used from
+ * helpers/inline.ts; see its definition for rationale.
  */
-const DISPATCH_DEFAULTS_DEPTH_CAP = 32;
-
 function emitDispatchResultPrefixDefaults(
   converter: ASTToTACConverter,
   prefix: string,
@@ -441,7 +440,7 @@ function emitDispatchResultPrefixDefaults(
   seen: Set<string>,
   depth = 0,
 ): void {
-  if (depth >= DISPATCH_DEFAULTS_DEPTH_CAP) return;
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
   const seenKey = `${prefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);

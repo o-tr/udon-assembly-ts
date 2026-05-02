@@ -521,9 +521,10 @@ function resolvedStructuralPropertyType(
  * producing distinct prefix strings indefinitely so the prefix-keyed `seen`
  * set never short-circuits. Typical TypeScript shapes nest 2-4 levels; 32 is
  * generous enough that legitimate types never hit the cap. Shared across
- * `emitNestedStructuralFieldCopies` and `emitStructuralPrefixDefaults`.
+ * `emitNestedStructuralFieldCopies` (this file), `emitStructuralPrefixDefaults`
+ * (statement.ts), and `emitDispatchResultPrefixDefaults` (call.ts).
  */
-const STRUCTURAL_RECURSION_DEPTH_CAP = 32;
+export const STRUCTURAL_RECURSION_DEPTH_CAP = 32;
 
 /**
  * Recurse one level deeper, copying nested-prefix-derived slots from

@@ -1573,10 +1573,19 @@ export function visitNullCoalescingExpression(
       ),
     );
   } else {
+    // Box typed-slot left operand into Object before the null compare so the
+    // BinaryOp lowers to SystemObject.op_Equality with matched operand types.
+    // Without this, a `DataList`/`Array`/interface-typed `left` produces a
+    // mismatched-operand compare that may not detect a null reference
+    // reliably across Udon runtime versions. Same pattern as
+    // visitOptionalChainingExpression and the optional-chain method-call
+    // null check in call.ts.
+    const nullCheckOperand = this.newTemp(ObjectType);
+    this.emit(new CopyInstruction(nullCheckOperand, left));
     this.emit(
       new BinaryOpInstruction(
         isNull,
-        left,
+        nullCheckOperand,
         "==",
         createConstant(null, ObjectType),
       ),

@@ -73,6 +73,7 @@ import {
   createSoaSentinelValue,
   MAX_RECURSION_STACK_DEPTH,
   operandTrackingKey,
+  STRUCTURAL_RECURSION_DEPTH_CAP,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
@@ -125,16 +126,6 @@ function isNullableReturnSlotType(type: TypeSymbol): boolean {
   );
 }
 
-/**
- * Hard depth cap for the recursive structural-prefix default-fill walk.
- * Bounds runtime on pathological self-referential interface types (e.g.
- * `interface Node { next: Node }`) where each recursion appends a new
- * property segment to the prefix — distinct prefix strings prevent the
- * `seen` set from short-circuiting. Mirror of the cap in helpers/inline.ts
- * and visitors/call.ts.
- */
-const STRUCTURAL_PREFIX_DEFAULTS_DEPTH_CAP = 32;
-
 function emitStructuralPrefixDefaults(
   converter: ASTToTACConverter,
   prefix: string,
@@ -142,7 +133,7 @@ function emitStructuralPrefixDefaults(
   seen = new Set<string>(),
   depth = 0,
 ): void {
-  if (depth >= STRUCTURAL_PREFIX_DEFAULTS_DEPTH_CAP) return;
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
   const seenKey = `${prefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
