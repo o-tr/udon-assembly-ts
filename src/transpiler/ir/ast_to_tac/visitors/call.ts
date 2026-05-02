@@ -3120,12 +3120,11 @@ export function visitCallExpression(
         }
         const fallbackType = resolvedSelfReturn ?? ObjectType;
         const fallbackResult = this.newTemp(fallbackType);
-        this.emit(
-          new AssignmentInstruction(
-            fallbackResult,
-            createSoaSentinelValue(this, fallbackType),
-          ),
-        );
+        // Initialise the result + any structural fields to safe defaults so
+        // downstream property reads (e.g. `result.waitTiles.length`) hit
+        // empty DataLists / zero scalars instead of nulls that would crash
+        // get_Count / op_LessThan at runtime.
+        emitDispatchResultDefaults(this, fallbackResult, fallbackType);
         return fallbackResult;
       }
     }
