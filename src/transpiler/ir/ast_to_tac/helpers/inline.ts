@@ -515,9 +515,21 @@ function resolvedStructuralPropertyType(
 }
 
 /**
+ * Hard depth cap for recursive structural-prefix walks. Bounds runtime on
+ * pathological self-referential interface types (e.g. `interface Node { next:
+ * Node }`) where each recursion appends a new property to the prefix —
+ * producing distinct prefix strings indefinitely so the prefix-keyed `seen`
+ * set never short-circuits. Typical TypeScript shapes nest 2-4 levels; 32 is
+ * generous enough that legitimate types never hit the cap. Shared across
+ * `emitNestedStructuralFieldCopies` and `emitStructuralPrefixDefaults`.
+ */
+const STRUCTURAL_RECURSION_DEPTH_CAP = 32;
+
+/**
  * Recurse one level deeper, copying nested-prefix-derived slots from
  * `${sourcePrefix}_<prop>` chains into `${targetPrefix}_<prop>` chains.
- * Cycle-guarded by `seen` to handle self-referential interface types.
+ * Cycle-guarded by `seen` for prefix-distinct re-entry plus a hard
+ * `STRUCTURAL_RECURSION_DEPTH_CAP` for self-referential types.
  */
 function emitNestedStructuralFieldCopies(
   converter: ASTToTACConverter,
@@ -526,7 +538,9 @@ function emitNestedStructuralFieldCopies(
   structuralType: InterfaceTypeSymbol,
   targetOptions: { isParameter?: boolean; isLocal?: boolean },
   seen: Set<string>,
+  depth = 0,
 ): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -553,6 +567,7 @@ function emitNestedStructuralFieldCopies(
         nestedInterface,
         targetOptions,
         seen,
+        depth + 1,
       );
     }
   }

@@ -82,6 +82,7 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
+  usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
@@ -427,14 +428,20 @@ function structuralInterfaceForType(
  * Cycle-guarded recursion that emits sentinel defaults at every depth of
  * nested structural interface properties. Mirrors `emitStructuralPrefixDefaults`
  * in statement.ts so the dispatch-result default path matches the
- * variable-decl initialisation path for 3+-deep nested types.
+ * variable-decl initialisation path for 3+-deep nested types. The depth cap
+ * matches `STRUCTURAL_RECURSION_DEPTH_CAP` in helpers/inline.ts and bounds
+ * runtime on pathological self-referential interface types.
  */
+const DISPATCH_DEFAULTS_DEPTH_CAP = 32;
+
 function emitDispatchResultPrefixDefaults(
   converter: ASTToTACConverter,
   prefix: string,
   structuralType: InterfaceTypeSymbol,
   seen: Set<string>,
+  depth = 0,
 ): void {
+  if (depth >= DISPATCH_DEFAULTS_DEPTH_CAP) return;
   const seenKey = `${prefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -459,6 +466,7 @@ function emitDispatchResultPrefixDefaults(
         `${prefix}_${propName}`,
         nestedStructuralType,
         seen,
+        depth + 1,
       );
     }
   }
@@ -3914,14 +3922,37 @@ export function visitCallExpression(
         : (resolvedReturnType ?? ObjectType);
 
     const isNotNull = this.newTemp(PrimitiveTypes.boolean);
-    this.emit(
-      new BinaryOpInstruction(
-        isNotNull,
-        objTemp,
-        "!=",
-        createConstant(null, ObjectType),
-      ),
-    );
+    const objTempType = this.getOperandType(objTemp);
+    if (usesInlineNullSentinel(this, objTempType)) {
+      // Inline-handle receivers store null as the sentinel `-1`, not a null
+      // object reference. Mirror the parallel fix in
+      // visitOptionalChainingExpression — boxing the Int32 into Object would
+      // give a non-null reference and the short-circuit arm would be dead.
+      const handleInt32 = normalizeOperandToInt32(this, objTemp);
+      this.emit(
+        new BinaryOpInstruction(
+          isNotNull,
+          handleInt32,
+          "!=",
+          createConstant(-1, PrimitiveTypes.int32),
+        ),
+      );
+    } else {
+      // Box typed slots (DataList / Array / interface) into Object before the
+      // null compare so the BinaryOp lowers to SystemObject.op_Inequality with
+      // matched operand types — same boxing pattern as `.includes()` and the
+      // SoA `emitBoundedDataListGetItem` fix.
+      const boxedObj = this.newTemp(ObjectType);
+      this.emit(new CopyInstruction(boxedObj, objTemp));
+      this.emit(
+        new BinaryOpInstruction(
+          isNotNull,
+          boxedObj,
+          "!=",
+          createConstant(null, ObjectType),
+        ),
+      );
+    }
     const nullLabel = this.newLabel("opt_call_null");
     const endLabel = this.newLabel("opt_call_end");
     const callResult = this.newTemp(ObjectType);
