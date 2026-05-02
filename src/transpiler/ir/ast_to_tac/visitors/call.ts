@@ -4671,15 +4671,16 @@ function visitMapMethodCall(
             keyToken,
           ]),
         );
+        // `valueToken` is a DataToken struct, not a reference — comparing
+        // against the null-Object constant boxes the struct into a non-null
+        // reference and the "stored explicit null" branch never fires.
+        // Use the DataToken.IsNull property accessor (matches the canonical
+        // pattern in unwrapDataToken at assignment.ts:798-816) to detect the
+        // user-stored null case the surrounding comment promises to preserve.
         const isNull = converter.newTemp(PrimitiveTypes.boolean);
         const nonNullLabel = converter.newLabel("map_get_inline_non_null");
         converter.emit(
-          new BinaryOpInstruction(
-            isNull,
-            valueToken,
-            "==",
-            createConstant(null, ObjectType),
-          ),
+          new PropertyGetInstruction(isNull, valueToken, "IsNull"),
         );
         converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
         converter.emit(
