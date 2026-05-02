@@ -3394,6 +3394,22 @@ function emitInlineRecursiveSelfCall(
  * Inline-instance-method recursion emitter — mirrors emitInlineRecursiveStaticMethod
  * but preserves currentInlineContext across body emission so this.field accesses
  * resolve through the receiver's instancePrefix. Same-receiver self-calls only.
+ *
+ * IMPORTANT — instance fields are NOT stacked across recursion frames. Local
+ * variables and method parameters are saved and restored via the per-frame
+ * stack (collectRecursiveLocals + emitInlineRecursivePush/Pop), but
+ * `this.<field>` reads/writes resolve to the shared `${instancePrefix}_<field>`
+ * heap slot — every recursion frame observes the same backing storage. A
+ * recursive call that mutates `this.someField` therefore overwrites the outer
+ * frame's value, and the outer frame will see the post-mutation value when
+ * control returns.
+ *
+ * The same restriction holds in `emitInlineRecursiveStaticMethod`. Algorithms
+ * that need save/restore semantics around a self-call must either:
+ *   (a) copy the field into a local at the start of the frame (locals ARE
+ *       stacked), or
+ *   (b) move the recursion onto a UdonBehaviour-decorated method annotated
+ *       with `@RecursiveMethod`, which gets full per-frame heap snapshotting.
  */
 function emitInlineRecursiveInstanceMethod(
   converter: ASTToTACConverter,

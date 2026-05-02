@@ -527,13 +527,23 @@ function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
   property: string,
+  visited: Set<string> = new Set(),
 ): TypeSymbol | null {
+  // Track visited alias names so a multi-step cycle (`A -> B -> A`) cannot
+  // recurse forever — the direct `aliasedType !== baseType` check below only
+  // catches single-step self-reference. Bound the recursion explicitly.
   const aliasedType = converter.typeMapper.getAlias(baseType.name);
-  if (aliasedType && aliasedType !== baseType) {
+  if (
+    aliasedType &&
+    aliasedType !== baseType &&
+    !visited.has(aliasedType.name)
+  ) {
+    visited.add(aliasedType.name);
     const aliasedProperty = resolvePropertyTypeFromType(
       converter,
       aliasedType,
       property,
+      visited,
     );
     if (aliasedProperty) return aliasedProperty;
   }
