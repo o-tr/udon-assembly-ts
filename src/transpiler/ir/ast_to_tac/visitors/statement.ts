@@ -418,14 +418,20 @@ export function visitVariableDeclaration(
     const structuralType = structuralInterfaceForType(this, destType);
     const srcKey = operandTrackingKey(src);
     const destKey = operandTrackingKey(dest);
-    if (structuralType && srcKey && destKey) {
-      // Resolve to the canonical inline-instance prefix when src is tracked,
-      // so per-field copies read from the underlying `__inst_*_<prop>` slots
-      // rather than `__inst_*__handle_<prop>` (a parallel name that codegen
-      // never writes), or from a local-var alias chain that would propagate
-      // a never-written value.
-      const srcMapping = this.resolveInlineInstance(srcKey);
-      const sourcePrefix = srcMapping?.prefix ?? srcKey;
+    // Only run structural field propagation when the source actually maps to
+    // an inline instance. For untracked sources (e.g. a temporary holding the
+    // result of `cond ? a : b` where each branch is a different concrete
+    // class), there are no `${srcKey}_<prop>` slots to copy from — emitting
+    // them would produce reads against never-written names like `__tmp2_value`
+    // and rob the downstream property-access path of its chance to fall
+    // through to D-3 untracked-handle dispatch.
+    const srcMapping =
+      structuralType && srcKey ? this.resolveInlineInstance(srcKey) : undefined;
+    if (structuralType && srcKey && destKey && srcMapping) {
+      // Resolve to the canonical inline-instance prefix so per-field copies
+      // read from the underlying `__inst_*_<prop>` slots rather than
+      // `__inst_*__handle_<prop>` (a parallel name codegen never writes).
+      const sourcePrefix = srcMapping.prefix;
       for (const [propName, propTypeRaw] of structuralType.properties) {
         const propType = resolvedStructuralPropertyType(this, propTypeRaw);
         this.emit(
