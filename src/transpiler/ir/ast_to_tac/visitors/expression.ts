@@ -3044,6 +3044,7 @@ export function visitPropertyAccessExpression(
                   hdlVar,
                   token,
                   createSoaSentinelValue(this, untrackedPropType),
+                  true,
                 );
                 return this.unwrapDataToken(token, untrackedPropType);
               }

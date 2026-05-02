@@ -735,6 +735,7 @@ function trySoAMethodDispatch(
         hdlVar,
         token,
         createSoaSentinelValue(converter, scratchVar.type),
+        true,
       );
       const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
       converter.emit(new CopyInstruction(scratchVar, unwrapped));

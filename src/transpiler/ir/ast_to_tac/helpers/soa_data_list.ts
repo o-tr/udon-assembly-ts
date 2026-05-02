@@ -24,9 +24,13 @@ import { normalizeOperandToInt32 } from "./int32_normalization.js";
  * OOB path: `0 < countTemp` → `ifFalse` → `get_Item(0)` using the sentinel row
  * (SoA init always `Add`s index 0, so `Count >= 1` before any SoA field read).
  *
- * D3/interface dispatch can probe a candidate SoA class before its constructor
- * has run. In that case, seed the list with the field-typed sentinel row first
- * so the following Count/get_Item externs never dereference a null DataList.
+ * `guardListNotNull` enables a runtime null-and-seed check before the
+ * Count/get_Item externs. Required when the caller may probe a candidate
+ * SoA class before its constructor has run (D3 dispatch and untracked-handle
+ * SoA method dispatch). Skip on direct property reads via tryReadSoAField,
+ * where the field list is guaranteed non-null because we already hold a
+ * concrete instance prefix — the guard would emit ~7 dead instructions
+ * (box / null-compare / branch / ctor / sentinel Add / label) per access.
  */
 export function emitBoundedDataListGetItem(
   converter: ASTToTACConverter,
@@ -34,8 +38,9 @@ export function emitBoundedDataListGetItem(
   indexVar: TACOperand,
   destToken: TACOperand,
   sentinelValue: TACOperand = createConstant(null, ObjectType),
+  guardListNotNull = false,
 ): void {
-  if (listVar.kind === TACOperandKind.Variable) {
+  if (guardListNotNull && listVar.kind === TACOperandKind.Variable) {
     const boxedList = converter.newTemp(ObjectType);
     converter.emit(new CopyInstruction(boxedList, listVar));
     const listIsNull = converter.newTemp(PrimitiveTypes.boolean);

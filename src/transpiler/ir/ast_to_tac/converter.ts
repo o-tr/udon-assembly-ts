@@ -47,6 +47,12 @@ import type {
   UdonBehaviourLayouts,
   UdonBehaviourMethodLayout,
 } from "../udon_behaviour_layout.js";
+import type { DispatchLimitResolver } from "./dispatch_limit_resolver.js";
+import { createDefaultDispatchLimitResolver } from "./dispatch_limit_resolver.js";
+import {
+  createDefaultFieldTypeRegistry,
+  type FieldTypeRegistry,
+} from "./field_type_registry.js";
 import {
   assignToTarget,
   coerceConstantToType,
@@ -110,12 +116,6 @@ import {
   isUdonBehaviourType,
   resolveFieldChangeCallback,
 } from "./helpers/udon_behaviour.js";
-import { createDefaultDispatchLimitResolver } from "./dispatch_limit_resolver.js";
-import type { DispatchLimitResolver } from "./dispatch_limit_resolver.js";
-import {
-  createDefaultFieldTypeRegistry,
-  type FieldTypeRegistry,
-} from "./field_type_registry.js";
 import { countKinds, printHistograms, resetProfiling } from "./profiling.js";
 import {
   getUdonTypeConverterTargetType,
