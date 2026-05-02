@@ -659,7 +659,14 @@ export function wrapDataToken(
   ) {
     const valueKey = operandTrackingKey(value);
     const info = valueKey ? this.resolveInlineInstance(valueKey) : undefined;
-    if (info) {
+    // Only collapse to a compile-time constant when the operand IS the
+    // canonical `__inst_*__handle` slot directly. For parameters or local
+    // copies (e.g. cross-module Map<K, IAlias>.set wrap where `item: IAlias`
+    // is a parameter), the tracked instance is the *current* binding —
+    // baking it in as a constant produces a stale handle for any other
+    // caller. Fall through to `normalizeOperandToInt32` below so a runtime
+    // SystemConvert.ToInt32 read is emitted against the live slot.
+    if (info && valueKey === `${info.prefix}__handle`) {
       for (const [instId, candidate] of this.allInlineInstances) {
         if (
           candidate.prefix === info.prefix &&
