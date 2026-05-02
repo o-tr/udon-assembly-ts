@@ -2512,6 +2512,12 @@ export function visitPropertyAccessExpression(
       }
       const objectSymbol = this.symbolTable.lookup(objectName);
       if (
+        // Only synthesise the per-field slot when the local actually has a
+        // backing inline-instance mapping (i.e. visitVariableDeclaration's
+        // structural-fix block emitted `${objectName}_${prop}` copies).
+        // Without `instanceInfo` the slot was never written — falling through
+        // to D-3 untracked-handle dispatch is the only way to read the value.
+        instanceInfo &&
         objectSymbol?.type instanceof InterfaceTypeSymbol &&
         objectSymbol.type.properties.has(node.property)
       ) {
