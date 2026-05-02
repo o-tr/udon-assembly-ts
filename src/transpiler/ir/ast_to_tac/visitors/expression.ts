@@ -2532,6 +2532,13 @@ export function visitPropertyAccessExpression(
         !objectSymbol.type.name.startsWith("__anon_union_") &&
         isInlineHandleType(this, objectSymbol.type);
       if (
+        // Same backing-slot requirement as the typed-interface branch above:
+        // the `${objectName}_${prop}` slot is only written by the structural
+        // field-copy block in visitVariableDeclaration when the source
+        // resolves to an inline instance. Without `instanceInfo`, the slot
+        // was never written and falling through to D-3 untracked-handle
+        // dispatch is the only way to read a real value.
+        instanceInfo &&
         structuralPropertyType &&
         registryStructuralField !== undefined &&
         objectSymbol &&
@@ -3555,16 +3562,34 @@ export function visitOptionalChainingExpression(
   }
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
-  const nullCheckOperand = this.newTemp(ObjectType);
-  this.emit(new CopyInstruction(nullCheckOperand, objTemp));
-  this.emit(
-    new BinaryOpInstruction(
-      isNull,
-      nullCheckOperand,
-      "==",
-      createConstant(null, ObjectType),
-    ),
-  );
+  const objTempType = this.getOperandType(objTemp);
+  if (usesInlineNullSentinel(this, objTempType)) {
+    // Inline-handle receivers store null as the sentinel `-1` rather than a
+    // null object reference. Boxing the Int32 into an Object slot and then
+    // comparing against null would always return false (the box exists), so
+    // `inlineHandle?.method()` would never short-circuit. Mirror the
+    // sentinel branch already in visitNullCoalescingExpression.
+    const handleInt32 = normalizeOperandToInt32(this, objTemp);
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        handleInt32,
+        "==",
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
+    );
+  } else {
+    const nullCheckOperand = this.newTemp(ObjectType);
+    this.emit(new CopyInstruction(nullCheckOperand, objTemp));
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        nullCheckOperand,
+        "==",
+        createConstant(null, ObjectType),
+      ),
+    );
+  }
   const notNullLabel = this.newLabel("opt_notnull");
   const endLabel = this.newLabel("opt_end");
   const fallbackPropertyType =
