@@ -514,6 +514,50 @@ function resolvedStructuralPropertyType(
   return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
 }
 
+/**
+ * Recurse one level deeper, copying nested-prefix-derived slots from
+ * `${sourcePrefix}_<prop>` chains into `${targetPrefix}_<prop>` chains.
+ * Cycle-guarded by `seen` to handle self-referential interface types.
+ */
+function emitNestedStructuralFieldCopies(
+  converter: ASTToTACConverter,
+  sourcePrefix: string,
+  targetPrefix: string,
+  structuralType: InterfaceTypeSymbol,
+  targetOptions: { isParameter?: boolean; isLocal?: boolean },
+  seen: Set<string>,
+): void {
+  const seenKey = `${targetPrefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propertyName, rawPropertyType] of structuralType.properties) {
+    const propertyType = resolvedStructuralPropertyType(
+      converter,
+      rawPropertyType,
+    );
+    converter.emitCopyWithTracking(
+      createVariable(
+        `${targetPrefix}_${propertyName}`,
+        propertyType,
+        targetOptions,
+      ),
+      createVariable(`${sourcePrefix}_${propertyName}`, propertyType),
+    );
+    const nestedInterface = structuralInterfaceForType(converter, propertyType);
+    if (nestedInterface) {
+      emitNestedStructuralFieldCopies(
+        converter,
+        `${sourcePrefix}_${propertyName}`,
+        `${targetPrefix}_${propertyName}`,
+        nestedInterface,
+        targetOptions,
+        seen,
+      );
+    }
+  }
+}
+
 export function emitStructuralFieldCopies(
   converter: ASTToTACConverter,
   targetPrefix: string,
@@ -534,6 +578,14 @@ export function emitStructuralFieldCopies(
   ).some((propertyName) =>
     converter.symbolTable.lookup(`${sourceName}_${propertyName}`),
   );
+  // Recursive-method return slots are named `${prefix}_retVal_${counter}` per
+  // emitInlineRecursive*Method, where `prefix` is `__inlineRec_*` (static) or
+  // `__inlineRecInst_*` (instance). Use a prefix-anchored regex so generated
+  // temps and user identifiers that merely contain "_retVal" don't trigger
+  // copies from never-written `<name>_retVal_<field>` slots.
+  const isRecursiveReturnSlot = /^__inlineRec(Inst)?_.+_retVal_\d+$/.test(
+    sourceName,
+  );
   const sourceHasStructuralSlots =
     forceSourceStructuralSlots ||
     sourceInfo !== undefined ||
@@ -541,9 +593,14 @@ export function emitStructuralFieldCopies(
       null ||
     sourceHasNamedStructuralSlots ||
     sourceName.startsWith("__inline_ret_") ||
-    sourceName.includes("_retVal");
+    isRecursiveReturnSlot;
   if (!sourceHasStructuralSlots) return;
 
+  // Cycle-guarded recursion across any depth of nested structural interfaces.
+  // The original implementation handled exactly two levels manually, leaving
+  // 3+-deep slots silently uncopied; this mirrors emitStructuralPrefixDefaults
+  // in statement.ts which already recurses with a `seen` cycle guard.
+  const seen = new Set<string>();
   let copiedAny = false;
   for (const [propertyName, rawPropertyType] of targetInterface.properties) {
     const propertyType = resolvedStructuralPropertyType(
@@ -570,20 +627,14 @@ export function emitStructuralFieldCopies(
     const sourcePropertyName = operandTrackingKey(sourceProperty);
     const targetPropertyName = operandTrackingKey(targetProperty);
     if (nestedInterface && sourcePropertyName && targetPropertyName) {
-      for (const [nestedName, nestedTypeRaw] of nestedInterface.properties) {
-        const nestedType = resolvedStructuralPropertyType(
-          converter,
-          nestedTypeRaw,
-        );
-        converter.emitCopyWithTracking(
-          createVariable(
-            `${targetPropertyName}_${nestedName}`,
-            nestedType,
-            targetOptions,
-          ),
-          createVariable(`${sourcePropertyName}_${nestedName}`, nestedType),
-        );
-      }
+      emitNestedStructuralFieldCopies(
+        converter,
+        sourcePropertyName,
+        targetPropertyName,
+        nestedInterface,
+        targetOptions,
+        seen,
+      );
     }
     copiedAny = true;
   }

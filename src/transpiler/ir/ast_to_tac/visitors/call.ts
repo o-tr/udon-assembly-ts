@@ -423,6 +423,47 @@ function structuralInterfaceForType(
     : undefined;
 }
 
+/**
+ * Cycle-guarded recursion that emits sentinel defaults at every depth of
+ * nested structural interface properties. Mirrors `emitStructuralPrefixDefaults`
+ * in statement.ts so the dispatch-result default path matches the
+ * variable-decl initialisation path for 3+-deep nested types.
+ */
+function emitDispatchResultPrefixDefaults(
+  converter: ASTToTACConverter,
+  prefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen: Set<string>,
+): void {
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = propTypeRaw.name
+      ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
+      : propTypeRaw;
+    converter.emit(
+      new AssignmentInstruction(
+        createVariable(`${prefix}_${propName}`, propType),
+        createSoaSentinelValue(converter, propType),
+      ),
+    );
+    const nestedStructuralType = structuralInterfaceForType(
+      converter,
+      propType,
+    );
+    if (nestedStructuralType) {
+      emitDispatchResultPrefixDefaults(
+        converter,
+        `${prefix}_${propName}`,
+        nestedStructuralType,
+        seen,
+      );
+    }
+  }
+}
+
 function emitDispatchResultDefaults(
   converter: ASTToTACConverter,
   dispatchResult: TACOperand | undefined,
@@ -439,17 +480,12 @@ function emitDispatchResultDefaults(
   if (!structuralType) return;
   const prefix = operandTrackingKey(dispatchResult);
   if (!prefix) return;
-  for (const [propName, propTypeRaw] of structuralType.properties) {
-    const propType = propTypeRaw.name
-      ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
-      : propTypeRaw;
-    converter.emit(
-      new AssignmentInstruction(
-        createVariable(`${prefix}_${propName}`, propType),
-        createSoaSentinelValue(converter, propType),
-      ),
-    );
-  }
+  emitDispatchResultPrefixDefaults(
+    converter,
+    prefix,
+    structuralType,
+    new Set<string>(),
+  );
 }
 
 /** Populate and return the implementor names cache for a type. */
@@ -2818,11 +2854,19 @@ export function visitCallExpression(
           );
           const loopStart = this.newLabel("includes_start");
           const loopEnd = this.newLabel("includes_end");
+          // Box the list operand into an Object slot before comparing against
+          // the null-Object constant. When `object`'s slot type is the typed
+          // DataList / ArrayTypeSymbol, the direct compare lowers to an
+          // op_Inequality with mismatched operand types and may not detect a
+          // null reference reliably across Udon runtime versions. Mirrors the
+          // SoA `emitBoundedDataListGetItem` boxing fix.
+          const boxedList = this.newTemp(ObjectType);
+          this.emit(new CopyInstruction(boxedList, object));
           const listNotNull = this.newTemp(PrimitiveTypes.boolean);
           this.emit(
             new BinaryOpInstruction(
               listNotNull,
-              object,
+              boxedList,
               "!=",
               createConstant(null, ObjectType),
             ),
