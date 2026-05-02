@@ -1131,6 +1131,16 @@ export function createSoaSentinelValue(
  * at runtime performs the initialisation (DataList construction, counter = 1,
  * sentinel entries at index 0). The __soa_<class>__inited flag ensures the
  * block runs at most once at runtime.
+ *
+ * TODO: reconcile if this is ever made null-aware. The companion
+ * `emitBoundedDataListGetItem` (helpers/soa_data_list.ts) seeds a placeholder
+ * DataList for D-3 dispatch probes that fire before any constructor has run.
+ * Today that seed is harmless because this function unconditionally re-creates
+ * the DataList from scratch on the first real constructor call. If this guard
+ * is ever changed to skip construction when the slot is already non-null, the
+ * seeded list would survive past the first ctor and its sentinel row would
+ * remain alongside real instance rows — corrupting SoA field reads. Update
+ * `soa_data_list.ts` (the partner comment block) at the same time.
  */
 function emitSoaInitGuard(
   converter: ASTToTACConverter,

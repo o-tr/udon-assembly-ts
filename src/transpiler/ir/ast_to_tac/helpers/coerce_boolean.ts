@@ -85,13 +85,24 @@ export function coerceToBoolean(
   // rare in VRChat scripts, we accept this divergence for now.
   if (isNumericUdonType(udonType)) {
     const boolTemp = this.newTemp(PrimitiveTypes.boolean);
-    const falseValue = isInlineHandleType(this, type) ? -1 : 0;
+    // Defensive: in practice `isInlineHandleType` returns true only for
+    // ClassTypeSymbol / InterfaceTypeSymbol, both of which carry
+    // `udonType = UdonType.Object` — they never reach this branch (they're
+    // routed to `usesInlineNullSentinel` below). The guard remains so that a
+    // future int-backed inline-class variant doesn't fall through to a
+    // numeric `0` sentinel that would alias a valid handle. Type the
+    // constant as Int32 explicitly (matching the sentinel branch below)
+    // rather than as the operand's class symbol, which would emit a
+    // codegen-typed constant and risk a slot-type mismatch.
+    const isInlineHandle = isInlineHandleType(this, type);
+    const falseValue = isInlineHandle ? -1 : 0;
+    const falseConstantType = isInlineHandle ? PrimitiveTypes.int32 : type;
     this.emit(
       new BinaryOpInstruction(
         boolTemp,
         operand,
         "!=",
-        createConstant(falseValue, type),
+        createConstant(falseValue, falseConstantType),
       ),
     );
     return boolTemp;

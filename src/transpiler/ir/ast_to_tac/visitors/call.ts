@@ -2870,6 +2870,14 @@ export function visitCallExpression(
               createConstant(null, ObjectType),
             ),
           );
+          // ConditionalJumpInstruction lowers to JumpIfFalse, so when
+          // `listNotNull` is false (the boxed list IS null) we jump straight
+          // to `loopEnd`. `loopEnd` is the not-found merge point — the
+          // null-list case shares it deliberately because `result` was
+          // pre-initialised to `false` above, which is the correct return
+          // for both "no match" and "null receiver". A separate early-exit
+          // label (analogous to the optional-chain `nullLabel` pattern)
+          // would be more self-documenting but emit identical TAC.
           this.emit(new ConditionalJumpInstruction(listNotNull, loopEnd));
           const lenVar = this.newTemp(PrimitiveTypes.int32);
           this.emit(new PropertyGetInstruction(lenVar, object, "Count"));
