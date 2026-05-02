@@ -2851,6 +2851,13 @@ export function visitPropertyAccessExpression(
         // that expose the accessed property. Fires for both ObjectType
         // (name "object") and ExternTypes.dataDictionary (name "DataDictionary",
         // because TypeMapper maps TS "object" to dataDictionary).
+        // TODO(field-type-registry): the `node.property === "isWin"` arm is
+        // the same mahjong-specific coupling already extracted into
+        // `LARGE_ERASED_DISPATCH_PROPERTIES` (dispatch_limit_resolver.ts) and
+        // `defaultStructuralFieldType` (field_type_registry.ts). Promote this
+        // arm into a registry predicate (e.g. `isLargeErasedFallbackProperty`)
+        // when widening the registry's surface — preserve behaviour by
+        // gating on the same property set the resolver uses today.
         if (
           dispInstances.length === 0 &&
           (untrackedTypeName === "object" ||
