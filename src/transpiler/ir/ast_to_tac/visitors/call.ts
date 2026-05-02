@@ -369,7 +369,6 @@ function mergeInlineMapping(
 }
 
 function mergeStructuralReturnMapping(
-  _converter: ASTToTACConverter,
   dispatchResult: TACOperand,
   returnType: TypeSymbol,
   inlineRes: TACOperand,
@@ -1071,7 +1070,6 @@ function tryUntrackedInlineDispatch(
         );
       }
       resultInlineMapping = mergeStructuralReturnMapping(
-        converter,
         dispatchResult,
         resolvedUntrackedReturnType,
         inlineRes,
@@ -1349,7 +1347,6 @@ function tryD3MethodDispatch(
         );
       }
       resultInlineMapping = mergeStructuralReturnMapping(
-        converter,
         dispatchResult,
         resolvedRetType ?? ObjectType,
         inlineRes,

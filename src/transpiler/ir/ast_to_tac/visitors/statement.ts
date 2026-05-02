@@ -130,10 +130,14 @@ function isNullableReturnSlotType(type: TypeSymbol): boolean {
  * into `${targetPrefix}_<prop>` at arbitrary depth. Used by the structural
  * field-copy block in visitVariableDeclaration; complements
  * `emitStructuralPrefixDefaults` (default fill) and
- * `emitNestedStructuralFieldCopies` (helpers/inline.ts variant — the latter
- * uses `emitCopyWithTracking`, which here is intentionally swapped for plain
- * `CopyInstruction` so visitVariableDeclaration's own canonical-mapping
- * preservation guard at the call site remains in control of inlineInstanceMap).
+ * `emitNestedStructuralFieldCopies` (helpers/inline.ts variant). Emits plain
+ * `CopyInstruction` rather than `emitCopyWithTracking` so nested slot keys
+ * (e.g. `${destKey}_outer_inner`) are NOT seeded into inlineInstanceMap —
+ * matching the behaviour of the prior 2-level inline loop this helper
+ * replaces. The call site's top-level mapping guard
+ * (`inlineInstanceMap.get(destKey)` for the canonical `__inst_*` prefix) is a
+ * separate, top-level-only concern that stays correct regardless of which
+ * copy instruction is used here.
  */
 function emitVarDeclStructuralFieldCopies(
   converter: ASTToTACConverter,
