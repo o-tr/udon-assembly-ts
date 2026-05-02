@@ -41,6 +41,15 @@ export function emitBoundedDataListGetItem(
   guardListNotNull = false,
 ): void {
   if (guardListNotNull && listVar.kind === TACOperandKind.Variable) {
+    // Note: this guard does NOT touch `__soa_${className}__inited`. The
+    // companion `emitSoaInitGuard` (helpers/inline.ts) tracks per-class
+    // initialisation through that flag and will recreate the DataList from
+    // scratch when the owning class's first instance is later constructed.
+    // The seeded list emitted below is therefore discarded by the next real
+    // ctor — harmless because no real instance has written to it yet. If
+    // `emitSoaInitGuard` is ever made null-aware (i.e. it skips the ctor
+    // when the slot is already non-null), the two mechanisms will need to
+    // be reconciled to avoid keeping the seeded list past first ctor.
     const boxedList = converter.newTemp(ObjectType);
     converter.emit(new CopyInstruction(boxedList, listVar));
     const listIsNull = converter.newTemp(PrimitiveTypes.boolean);

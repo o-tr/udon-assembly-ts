@@ -1221,9 +1221,18 @@ export function visitBinaryExpression(
     const leftType = this.getOperandType(left);
     const rightType = this.getOperandType(right);
     if (isNullishOperand(right) && !isNullishOperand(left)) {
-      right = retargetNullishComparisonOperand(right, leftType);
+      // For inline-handle leftType, normalise the LHS to its Int32 handle so
+      // both sides of the comparison are Int32 (matches the `-1` sentinel
+      // retargeted RHS).
+      if (usesInlineNullSentinel(this, leftType)) {
+        left = normalizeOperandToInt32(this, left);
+      }
+      right = retargetNullishComparisonOperand(this, right, leftType);
     } else if (isNullishOperand(left) && !isNullishOperand(right)) {
-      left = retargetNullishComparisonOperand(left, rightType);
+      if (usesInlineNullSentinel(this, rightType)) {
+        right = normalizeOperandToInt32(this, right);
+      }
+      left = retargetNullishComparisonOperand(this, left, rightType);
     }
   }
 
@@ -1361,10 +1370,19 @@ function isTypedNullableComparisonType(type: TypeSymbol): boolean {
 }
 
 function retargetNullishComparisonOperand(
+  converter: ASTToTACConverter,
   operand: TACOperand,
   targetType: TypeSymbol,
 ): TACOperand {
   if (!isNullishOperand(operand)) return operand;
+  // Inline-handle types store null as the sentinel `-1` Int32, not as an
+  // Object reference. Without this branch, `inlineHandle == null` lowers to
+  // op_Equality(Int32, Object) — mismatched operand types, comparison never
+  // matches the missing-instance case. Mirrors visitNullCoalescingExpression
+  // and visitOptionalChainingExpression's sentinel handling.
+  if (usesInlineNullSentinel(converter, targetType)) {
+    return createConstant(-1, PrimitiveTypes.int32);
+  }
   if (!isTypedNullableComparisonType(targetType)) return operand;
   return createConstant(null, targetType);
 }
@@ -1482,9 +1500,17 @@ function coerceLogicalValue(
     coerced = converter.unwrapDataToken(coerced, targetType);
   }
   const coercedType = converter.getOperandType(coerced);
+  // Numeric ↔ numeric and Boolean → numeric both need an explicit cast: a
+  // mixed-type expression like `someInt || someFlag` derives `targetType` from
+  // the int side but the right branch can still evaluate to Boolean. Without
+  // this cast the bool would be copied into the int-typed result slot,
+  // producing a type-mismatched TAC.
+  const sourceIsCoercibleToNumeric =
+    NUMERIC_UDON_TYPES.has(coercedType.udonType) ||
+    coercedType.udonType === UdonType.Boolean;
   if (
     coercedType.udonType !== targetType.udonType &&
-    NUMERIC_UDON_TYPES.has(coercedType.udonType) &&
+    sourceIsCoercibleToNumeric &&
     NUMERIC_UDON_TYPES.has(targetType.udonType)
   ) {
     const cast = converter.newTemp(targetType);
