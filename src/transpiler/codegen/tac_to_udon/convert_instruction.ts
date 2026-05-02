@@ -373,7 +373,10 @@ export function convertInstruction(
         | TemporaryOperand;
       const operandType = operandOp.type?.udonType ?? "Single";
       const emitBooleanNot = (operand: TACOperand): void => {
-        const labelId = this.nextAddress++;
+        // Use the dedicated label counter, NOT `nextAddress`: bumping
+        // `nextAddress` without registering a slot leaves a hole in the data
+        // section and shifts every later `__tcoerce_${nextAddress}` allocation.
+        const labelId = this.labelCounter++;
         const falseLabel = `__bool_not_false_${labelId}`;
         const endLabel = `__bool_not_end_${labelId}`;
         const destAddr = this.getOperandAddress(unInst.dest);

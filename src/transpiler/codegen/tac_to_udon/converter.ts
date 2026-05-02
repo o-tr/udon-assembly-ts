@@ -52,6 +52,11 @@ export class TACToUdonConverter {
   constantAddresses: Map<string, number> = new Map();
   constantTypes: Map<string, string> = new Map();
   nextAddress = 0;
+  // Dedicated counter for synthetic label uniqueness — NEVER reused as a
+  // variable address. Conflating with `nextAddress` (a strict variable-slot
+  // allocator) would consume slot IDs without registering them, leaving holes
+  // in the data section.
+  labelCounter = 0;
   externSignatures: Set<string> = new Set();
   externSymbolBySignature: Map<string, string> = new Map();
   externAddressBySignature: Map<string, number> = new Map();
@@ -80,6 +85,7 @@ export class TACToUdonConverter {
     this.externSymbolBySignature.clear();
     this.externAddressBySignature.clear();
     this.nextAddress = 0;
+    this.labelCounter = 0;
     this.nextExternId = 0;
     this.entryClassName = options?.entryClassName ?? null;
     this.inlineClassNames = options?.inlineClassNames ?? new Set();
