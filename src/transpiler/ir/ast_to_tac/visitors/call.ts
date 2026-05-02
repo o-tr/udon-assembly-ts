@@ -53,6 +53,7 @@ import {
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { UdonBehaviourMethodLayout } from "../../udon_behaviour_layout.js";
@@ -3818,6 +3819,7 @@ export function visitCallExpression(
           createSoaSentinelValue(this, fallbackReturnType),
         ),
       );
+      emitDispatchResultDefaults(this, fallbackResult, fallbackReturnType);
       return fallbackResult;
     }
 
@@ -3861,7 +3863,7 @@ export function visitCallExpression(
       opt.property,
       false,
     );
-    const optionalCallResultType =
+    const logicalReturnType =
       resolvedReturnType?.udonType === UdonType.Void
         ? ObjectType
         : (resolvedReturnType ?? ObjectType);
@@ -3877,7 +3879,7 @@ export function visitCallExpression(
     );
     const nullLabel = this.newLabel("opt_call_null");
     const endLabel = this.newLabel("opt_call_end");
-    const callResult = this.newTemp(optionalCallResultType);
+    const callResult = this.newTemp(ObjectType);
     // ConditionalJumpInstruction(condition, label) emits `ifFalse condition goto label`.
     // If `isNotNull` is false (object is null), jump to `nullLabel` to set the result to null.
     this.emit(new ConditionalJumpInstruction(isNotNull, nullLabel));
@@ -3909,7 +3911,7 @@ export function visitCallExpression(
           emitStructuralFieldCopies(
             this,
             callResultName,
-            optionalCallResultType,
+            logicalReturnType,
             propCallResult,
             { isLocal: true },
             true,
@@ -3926,6 +3928,22 @@ export function visitCallExpression(
       new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
     );
     this.emit(new LabelInstruction(endLabel));
+
+    if (!resolvedReturnType || resolvedReturnType.udonType === UdonType.Void) {
+      return callResult;
+    }
+    if (
+      resolvedReturnType.udonType === UdonType.Boolean ||
+      resolvedReturnType.udonType === UdonType.String ||
+      isNumericUdonType(resolvedReturnType.udonType)
+    ) {
+      const unboxed = this.newTemp(resolvedReturnType);
+      this.emit(new CopyInstruction(unboxed, callResult));
+      return unboxed;
+    }
+    if (callResult.kind === TACOperandKind.Temporary) {
+      (callResult as TemporaryOperand).type = resolvedReturnType;
+    }
     return callResult;
   }
 
