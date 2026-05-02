@@ -427,11 +427,21 @@ export function visitVariableDeclaration(
     // through to D-3 untracked-handle dispatch.
     const srcMapping =
       structuralType && srcKey ? this.resolveInlineInstance(srcKey) : undefined;
-    if (structuralType && srcKey && destKey && srcMapping) {
+    const sourcePrefixFromNamedSlots =
+      structuralType && srcKey
+        ? Array.from(structuralType.properties.keys()).some((propName) =>
+            this.symbolTable.lookup(`${srcKey}_${propName}`),
+          )
+        : false;
+    const sourcePrefix = srcMapping
+      ? srcMapping.prefix
+      : sourcePrefixFromNamedSlots
+        ? srcKey
+        : undefined;
+    if (structuralType && srcKey && destKey && sourcePrefix) {
       // Resolve to the canonical inline-instance prefix so per-field copies
       // read from the underlying `__inst_*_<prop>` slots rather than
       // `__inst_*__handle_<prop>` (a parallel name codegen never writes).
-      const sourcePrefix = srcMapping.prefix;
       for (const [propName, propTypeRaw] of structuralType.properties) {
         const propType = resolvedStructuralPropertyType(this, propTypeRaw);
         this.emit(
