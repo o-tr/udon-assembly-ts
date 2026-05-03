@@ -1853,7 +1853,7 @@ function tryReadInlineFieldByHandle(
   // equality and matches the D-3 untracked-handle dispatch path.
   const handleInt32 = normalizeOperandToInt32(converter, handle);
   const endLabel = converter.newLabel("inline_field_handle_end");
-  for (const [instanceId, prefix] of candidates) {
+  for (const [, prefix] of candidates) {
     const nextLabel = converter.newLabel("inline_field_handle_next");
     const matches = converter.newTemp(PrimitiveTypes.boolean);
     converter.emit(
@@ -1861,7 +1861,7 @@ function tryReadInlineFieldByHandle(
         matches,
         handleInt32,
         "==",
-        createConstant(instanceId, PrimitiveTypes.int32),
+        createVariable(`${prefix}__handle`, PrimitiveTypes.int32),
       ),
     );
     converter.emit(new ConditionalJumpInstruction(matches, nextLabel));

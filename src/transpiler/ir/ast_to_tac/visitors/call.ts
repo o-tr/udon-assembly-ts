@@ -4000,7 +4000,10 @@ export function visitCallExpression(
 
     this.emit(new LabelInstruction(nullLabel));
     this.emit(
-      new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
+      new AssignmentInstruction(
+        callResult,
+        createSoaSentinelValue(this, resolvedReturnType ?? ObjectType),
+      ),
     );
     this.emit(new LabelInstruction(endLabel));
 
