@@ -696,8 +696,17 @@ function trySoAMethodDispatch(
   // Recursive instance methods cannot use the SoA fast path: scratch is a
   // field snapshot, so mutations during a recursive frame would not propagate
   // back to SoA storage. Fall through to handle-based D3 dispatch.
+  // The recursion map is keyed by *declaring* class, not the concrete SoA
+  // class, so inherited recursive methods are detected correctly.
+  const resolvedMethod = resolveClassMethod(
+    converter,
+    soaClassName,
+    propAccess.property,
+    false,
+  );
+  const declaringClassName = resolvedMethod?.declaringClassName ?? soaClassName;
   const recCount = converter.inlineMethodSelfCallCount.get(
-    `${soaClassName}::${propAccess.property}`,
+    `${declaringClassName}::${propAccess.property}`,
   );
   if ((recCount ?? 0) > 0) {
     return null;

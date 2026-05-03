@@ -1,4 +1,4 @@
-import type { TypeSymbol } from "../../../frontend/type_symbols.js";
+import { isNullableUdonType, type TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
@@ -115,15 +115,7 @@ function isNullConstantOperand(
   );
 }
 
-function isNullableReturnSlotType(type: TypeSymbol): boolean {
-  return (
-    type.udonType === UdonType.Array ||
-    type.udonType === UdonType.DataDictionary ||
-    type.udonType === UdonType.DataList ||
-    type.udonType === UdonType.Object ||
-    type.udonType === UdonType.String
-  );
-}
+
 
 /**
  * Cycle-guarded recursion that copies `${sourcePrefix}_<prop>` slot chains
@@ -1630,7 +1622,7 @@ export function visitReturnStatement(
         : undefined;
     if (
       nullReturnValue &&
-      isNullableReturnSlotType(inlineContext.returnVar.type)
+      isNullableUdonType(inlineContext.returnVar.type)
     ) {
       if (returnInstancePrefix && returnStructuralType) {
         emitStructuralPrefixDefaults(

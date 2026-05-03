@@ -1,7 +1,7 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { TranspileError } from "../../../errors/transpile_errors.js";
 import type { TypeMapper } from "../../../frontend/type_mapper.js";
-import type { TypeSymbol } from "../../../frontend/type_symbols.js";
+import { isNullableUdonType, type TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
@@ -1369,15 +1369,7 @@ function isNullishOperand(operand: TACOperand): boolean {
     : false;
 }
 
-function isTypedNullableComparisonType(type: TypeSymbol): boolean {
-  return (
-    type.udonType === UdonType.Array ||
-    type.udonType === UdonType.DataDictionary ||
-    type.udonType === UdonType.DataList ||
-    type.udonType === UdonType.Object ||
-    type.udonType === UdonType.String
-  );
-}
+
 
 function retargetNullishComparisonOperand(
   converter: ASTToTACConverter,
@@ -1393,7 +1385,7 @@ function retargetNullishComparisonOperand(
   if (usesInlineNullSentinel(converter, targetType)) {
     return createConstant(-1, PrimitiveTypes.int32);
   }
-  if (!isTypedNullableComparisonType(targetType)) return operand;
+  if (!isNullableUdonType(targetType)) return operand;
   return createConstant(null, targetType);
 }
 

@@ -428,7 +428,7 @@ export function convertInstruction(
           this.instructions.push(new CopyInstruction());
 
           // Boolean unary negation is not implemented by the Udon VM; lower
-          // `!b` to `b == false`.
+          // `!b` to a branch: if b then false else true.
           emitBooleanNot({
             kind: TACOperandKind.Variable,
             name: coerceTmpName,
@@ -451,7 +451,7 @@ export function convertInstruction(
             new ExternInstruction(this.getExternSymbol(coerceSig), true),
           );
 
-          // Step 2: lower `!b` to `b == false`.
+          // Step 2: lower `!b` to a branch: if b then false else true.
           emitBooleanNot({
             kind: TACOperandKind.Variable,
             name: coerceTmpName,
