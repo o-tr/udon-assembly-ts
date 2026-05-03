@@ -3471,24 +3471,16 @@ export function visitObjectLiteralExpression(
         propType instanceof InterfaceTypeSymbol &&
         propType.properties.size > 0
       ) {
-        const valueKey = operandTrackingKey(value);
         const propKey = operandTrackingKey(propVar);
-        if (valueKey && propKey) {
-          for (const [nestedName, nestedTypeRaw] of propType.properties) {
-            const nestedType = nestedTypeRaw.name
-              ? (this.typeMapper.getAlias(nestedTypeRaw.name) ?? nestedTypeRaw)
-              : nestedTypeRaw;
-            this.emit(
-              new CopyInstruction(
-                createVariable(`${propKey}_${nestedName}`, nestedType),
-                createVariable(`${valueKey}_${nestedName}`, nestedType),
-              ),
-            );
-          }
-          this.inlineInstanceMap.set(propKey, {
-            prefix: propKey,
-            className: propType.name,
-          });
+        if (propKey) {
+          emitStructuralFieldCopies(
+            this,
+            propKey,
+            propType,
+            value,
+            {},
+            true,
+          );
         }
       }
     }
