@@ -5119,7 +5119,7 @@ function hasThisFieldMutation(method: { body: BlockStatementNode }): boolean {
             return true;
           }
         }
-        break;
+        return visitNode(updNode.operand);
       }
       case ASTNodeKind.CallExpression: {
         const callNode = node as CallExpressionNode;

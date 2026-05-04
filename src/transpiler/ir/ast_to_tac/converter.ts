@@ -483,6 +483,12 @@ export class ASTToTACConverter {
       checkerTypeResolver?: TypeCheckerTypeResolver;
       outlineBodyInstrThreshold?: number;
       fieldTypeRegistry?: FieldTypeRegistry;
+      /**
+       * Supply a custom resolver when your project has domain-specific
+       * wide-dispatch properties. The default resolver does not widen any
+       * property names, so projects that depended on hardcoded wide-path
+       * names must provide their own resolver explicitly.
+       */
       dispatchLimitResolver?: DispatchLimitResolver;
     },
   ) {
