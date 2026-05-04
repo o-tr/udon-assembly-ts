@@ -52,11 +52,16 @@ export function emitBoundedDataListGetItem(
     // (helpers/inline.ts).  Because this guard does not set the flag,
     // `emitSoaInitGuard` will see the slot as uninitialized and run the
     // real constructor on first entry, overwriting the placeholder DataList
-    // and sentinel row created below.  If `emitSoaInitGuard` is ever
-    // optimized to skip construction when the slot is already non-null
-    // (i.e. it becomes null-aware), the invariant that the seeded list is
-    // discarded depends on coordination with THIS function — stale sentinels
-    // would otherwise survive and corrupt SoA field reads.
+    // and sentinel row created below.
+    //
+    // INVARIANT: `emitSoaInitGuard` must remain "inited-flag-only" and must
+    // NOT add a null-aware skip (e.g. "skip ctor when listVar is non-null").
+    // If it ever does, the seeded list emitted here would survive past first
+    // real construction, causing the sentinel row at index 0 to coexist with
+    // real instance rows and corrupt all subsequent SoA field reads. Any
+    // future optimisation to skip construction must either (a) set the
+    // `__soa_${className}__inited` flag from this guard, or (b) explicitly
+    // overwrite / clear the pre-existing DataList before skipping.
     const boxedList = converter.newTemp(ObjectType);
     converter.emit(new CopyInstruction(boxedList, listVar));
     const listIsNull = converter.newTemp(PrimitiveTypes.boolean);

@@ -1038,6 +1038,11 @@ function tryUntrackedInlineDispatch(
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("untracked_call_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
+    // Compare against the live __handle variable rather than a compile-time
+    // constant so that cross-module and parameter-passing scenarios see the
+    // runtime value.  This is safe because nextInstanceId starts at 1
+    // (converter.ts), so an uninitialised slot (default 0) never aliases a
+    // valid instance ID.
     const instanceHandle = createVariable(
       `${info.prefix}__handle`,
       PrimitiveTypes.int32,

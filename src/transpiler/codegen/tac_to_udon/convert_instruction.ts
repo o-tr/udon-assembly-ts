@@ -1,4 +1,4 @@
-import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
+import { NativeArrayTypeSymbol, PrimitiveTypes } from "../../frontend/type_symbols.js";
 import { UdonType } from "../../frontend/types.js";
 import {
   type ArrayAccessInstruction as TACArrayAccessInstruction,
@@ -401,14 +401,22 @@ export function convertInstruction(
         // ensures ! only appears on Boolean operands for well-formed input.
         emitBooleanNot(unInst.operand);
       } else if (unInst.operator === "!") {
-        // Invariant: TAC-level coerceToBoolean must have produced a Boolean
-        // operand before the ! UnaryOpInstruction is emitted. A non-Boolean
-        // type here indicates a compiler bug (e.g. String bypassing the
-        // IsNullOrEmpty coercion path), not valid user code.
-        throw new Error(
-          `Codegen invariant violated: ! operator received non-Boolean operand type ${operandType}. ` +
-            "TAC-level coerceToBoolean should have ensured Boolean operands.",
-        );
+        // Defensive fallback for optimizer-produced !nonBoolean (e.g.
+        // boolean_simplification.ts folding `x == false` → `!x` where x may
+        // be a non-Boolean temp). We COPY into a Boolean slot (Udon VM treats
+        // null reference as false, any non-null reference as true) and then
+        // branch-negate, rather than throwing and aborting codegen.
+        this.pushOperand(unInst.operand);
+        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+        this.variableTypes.set(coerceTmpName, "Boolean");
+        this.instructions.push(new PushInstruction(coerceTmpName));
+        this.instructions.push(new CopyInstruction());
+        emitBooleanNot({
+          kind: TACOperandKind.Variable,
+          name: coerceTmpName,
+          type: PrimitiveTypes.boolean,
+        } as VariableOperand);
       } else {
         // Simple unary op: push operand, push dest, EXTERN
         this.pushOperand(unInst.operand);
