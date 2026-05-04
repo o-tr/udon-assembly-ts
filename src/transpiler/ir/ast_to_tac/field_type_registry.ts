@@ -7,14 +7,9 @@
 import type { ClassRegistry } from "../../frontend/class_registry.js";
 import type { TypeMapper } from "../../frontend/type_mapper.js";
 import {
-  ClassTypeSymbol,
-  ExternTypes,
   InterfaceTypeSymbol,
-  ObjectType,
-  PrimitiveTypes,
   type TypeSymbol,
 } from "../../frontend/type_symbols.js";
-import { UdonType } from "../../frontend/types.js";
 
 export interface FieldTypeRegistryContext {
   typeMapper: TypeMapper;
@@ -30,23 +25,8 @@ export interface FieldTypeRegistry {
   ): TypeSymbol | undefined;
 }
 
-function defaultStructuralFieldType(property: string): TypeSymbol | undefined {
-  switch (property) {
-    case "decomposition":
-      return ObjectType;
-    case "fu":
-    case "han":
-      return PrimitiveTypes.int32;
-    case "isDoubleYakuman":
-    case "isValid":
-    case "isWin":
-    case "isYakuman":
-      return PrimitiveTypes.boolean;
-    case "yaku":
-      return ExternTypes.dataList;
-    default:
-      return undefined;
-  }
+function defaultStructuralFieldType(_property: string): TypeSymbol | undefined {
+  return undefined;
 }
 
 class DefaultFieldTypeRegistry implements FieldTypeRegistry {
@@ -75,10 +55,6 @@ class DefaultFieldTypeRegistry implements FieldTypeRegistry {
       }
     }
 
-    if (property === "hand") {
-      const handAlias = ctx.typeMapper.getAlias("Hand");
-      return handAlias ?? new ClassTypeSymbol("Hand", UdonType.Object);
-    }
     return undefined;
   }
 }

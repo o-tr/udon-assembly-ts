@@ -1470,6 +1470,8 @@ export function visitShortCircuitOr(
       coerceLogicalValue(this, right, valueResultType),
     );
     this.emit(new LabelInstruction(endLabel));
+    const resultKey = operandTrackingKey(result);
+    if (resultKey) this.inlineInstanceMap.delete(resultKey);
     return result;
   }
 
@@ -1597,9 +1599,9 @@ export function visitNullCoalescingExpression(
   node: NullCoalescingExpressionNode,
 ): TACOperand {
   const expected = this.currentExpectedType;
-  const prevExpected = this.currentExpectedType;
+  const savedExpectedType = this.currentExpectedType;
   const left = this.visitExpression(node.left);
-  this.currentExpectedType = prevExpected;
+  this.currentExpectedType = savedExpectedType;
   const leftType = this.getOperandType(left);
   const resultType =
     expected &&

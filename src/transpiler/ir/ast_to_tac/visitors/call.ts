@@ -3886,17 +3886,21 @@ export function visitCallExpression(
       }
     }
     if (userMethodReceiverName) {
-      const fallbackReturnType =
-        resolvedReturnType ??
-        resolvedUserMethod?.method.returnType ??
-        undefined;
-      return emitInlineRecursionFallback(
-        this,
-        node,
-        userMethodReceiverName,
-        propAccess.property,
-        fallbackReturnType,
-      );
+      const recursionKey = `${userMethodReceiverName}::${propAccess.property}`;
+      if ((this.inlineMethodSelfCallCount.get(recursionKey) ?? 0) > 0) {
+        const fallbackReturnType =
+          resolvedReturnType ??
+          resolvedUserMethod?.method.returnType ??
+          undefined;
+        return emitInlineRecursionFallback(
+          this,
+          node,
+          userMethodReceiverName,
+          propAccess.property,
+          fallbackReturnType,
+        );
+      }
+      // Not in a recursive context; fall through to MethodCallInstruction below.
     }
 
     if (resolvedReturnType?.udonType === UdonType.Void) {
