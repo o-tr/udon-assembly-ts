@@ -396,70 +396,25 @@ export function convertInstruction(
         this.instructions.push(new LabelInstruction(endLabel));
       };
 
-      if (unInst.operator === "!" && operandType === "String") {
-        // `!str` ≡ String.IsNullOrEmpty(str): null-safe and matches JS falsy.
-        this.pushOperand(unInst.operand);
-        const destAddr = this.getOperandAddress(unInst.dest);
-        this.instructions.push(new PushInstruction(destAddr));
-        if (unInst.dest.kind === TACOperandKind.Temporary) {
-          this.tempTypes.set((unInst.dest as TemporaryOperand).id, "Boolean");
-        } else if (unInst.dest.kind === TACOperandKind.Variable) {
-          const varName = this.normalizeVariableName(
-            (unInst.dest as VariableOperand).name,
-          );
-          this.variableTypes.set(varName, "Boolean");
-        }
-        const isNullOrEmptySig =
-          "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean";
-        this.externSignatures.add(isNullOrEmptySig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(isNullOrEmptySig), true),
-        );
-      } else if (unInst.operator === "!" && operandType !== "Boolean") {
-        if (operandType === UdonType.Object) {
-          // Object → Boolean coercion: Udon VM uses simple COPY from Object
-          // slot to Boolean slot (non-null = true, null = false), then negate.
-          // Convert.ToBoolean(Object) does not exist in the VM.
-          this.pushOperand(unInst.operand);
-          const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-          this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-          this.variableTypes.set(coerceTmpName, "Boolean");
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          this.instructions.push(new CopyInstruction());
-
-          // Boolean unary negation is not implemented by the Udon VM; lower
-          // `!b` to a branch: if b then false else true.
-          emitBooleanNot({
-            kind: TACOperandKind.Variable,
-            name: coerceTmpName,
-            type: { name: "boolean", udonType: UdonType.Boolean },
-          } as VariableOperand);
-        } else {
-          // Need to coerce to Boolean first, then negate
-          // Step 1: Convert to Boolean (needs intermediate temp)
-          this.pushOperand(unInst.operand);
-          const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-          this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-          this.variableTypes.set(coerceTmpName, "Boolean");
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          const coerceSig = this.getConvertExternSignature(
-            operandType,
-            "Boolean",
-          );
-          this.externSignatures.add(coerceSig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(coerceSig), true),
-          );
-
-          // Step 2: lower `!b` to a branch: if b then false else true.
-          emitBooleanNot({
-            kind: TACOperandKind.Variable,
-            name: coerceTmpName,
-            type: { name: "boolean", udonType: UdonType.Boolean },
-          } as VariableOperand);
-        }
-      } else if (unInst.operator === "!" && operandType === "Boolean") {
+      if (unInst.operator === "!" && operandType === "Boolean") {
+        // TAC-level coerceToBoolean (expression.ts visitUnaryExpression)
+        // ensures ! only appears on Boolean operands for well-formed input.
         emitBooleanNot(unInst.operand);
+      } else if (unInst.operator === "!") {
+        // Defensive fallback: if a non-Boolean operand somehow reaches here
+        // (e.g. a path that bypassed TAC-level coercion), coerce via COPY
+        // to a Boolean slot before applying branch-based negation.
+        this.pushOperand(unInst.operand);
+        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+        this.variableTypes.set(coerceTmpName, "Boolean");
+        this.instructions.push(new PushInstruction(coerceTmpName));
+        this.instructions.push(new CopyInstruction());
+        emitBooleanNot({
+          kind: TACOperandKind.Variable,
+          name: coerceTmpName,
+          type: { name: "boolean", udonType: UdonType.Boolean },
+        } as VariableOperand);
       } else {
         // Simple unary op: push operand, push dest, EXTERN
         this.pushOperand(unInst.operand);

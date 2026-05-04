@@ -364,6 +364,11 @@ export class ASTToTACConverter {
    *  If incremental compilation ever calls register() during convertImpl(),
    *  this cache must be cleared. */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
+  /** Cache for inferInlineStructuralPropertyType to avoid O(instances) scans
+   *  on every erased structural property access. Keyed by property name;
+   *  reset per pass. */
+  inlineStructuralPropertyTypeCache: Map<string, TypeSymbol | undefined> =
+    new Map();
   udonBehaviourClasses: ReadonlySet<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
@@ -643,6 +648,7 @@ export class ASTToTACConverter {
     this.soaConstructionPrefixes = new Set();
     this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
+    this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();
     this.inlinedBodyStack = [];

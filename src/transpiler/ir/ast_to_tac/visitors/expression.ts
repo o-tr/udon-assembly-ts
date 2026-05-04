@@ -164,6 +164,10 @@ function inferInlineStructuralPropertyType(
   converter: ASTToTACConverter,
   property: string,
 ): TypeSymbol | undefined {
+  if (converter.inlineStructuralPropertyTypeCache.has(property)) {
+    return converter.inlineStructuralPropertyTypeCache.get(property);
+  }
+
   let inferred: TypeSymbol | undefined;
   const checkedClasses = new Set<string>();
   for (const [, info] of converter.allInlineInstances) {
@@ -191,9 +195,11 @@ function inferInlineStructuralPropertyType(
       inferred.name !== concreteType.name ||
       inferred.udonType !== concreteType.udonType
     ) {
+      converter.inlineStructuralPropertyTypeCache.set(property, undefined);
       return undefined;
     }
   }
+  converter.inlineStructuralPropertyTypeCache.set(property, inferred);
   return inferred;
 }
 
@@ -1385,7 +1391,11 @@ function retargetNullishComparisonOperand(
   if (usesInlineNullSentinel(converter, targetType)) {
     return createConstant(-1, PrimitiveTypes.int32);
   }
-  if (!isNullableUdonType(targetType)) return operand;
+  // Always type the null constant to the target type so the comparison
+  // operands match. For non-nullable types (e.g. Int32, Boolean) this path
+  // should normally be unreachable because the TS frontend rejects
+  // `primitive == null`, but if it does reach TAC we avoid a type-mismatch
+  // extern by using a typed constant instead of an untyped Object null.
   return createConstant(null, targetType);
 }
 
