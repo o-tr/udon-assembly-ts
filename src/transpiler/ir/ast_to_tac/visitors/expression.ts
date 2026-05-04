@@ -195,11 +195,12 @@ function inferInlineStructuralPropertyType(
       inferred.name !== concreteType.name ||
       inferred.udonType !== concreteType.udonType
     ) {
-      converter.inlineStructuralPropertyTypeCache.set(property, undefined);
       return undefined;
     }
   }
-  converter.inlineStructuralPropertyTypeCache.set(property, inferred);
+  if (inferred) {
+    converter.inlineStructuralPropertyTypeCache.set(property, inferred);
+  }
   return inferred;
 }
 
