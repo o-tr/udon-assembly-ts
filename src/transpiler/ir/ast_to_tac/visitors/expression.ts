@@ -138,8 +138,13 @@ function tryReadSoAField(
   const token = converter.newTemp(ExternTypes.dataToken);
   const resolved = resolveClassProperty(converter, className, property);
   const fieldType = resolved?.prop.type ?? ObjectType;
-  emitBoundedDataListGetItem(converter, fieldList, hdlVar, token, () =>
-    createSoaSentinelValue(converter, fieldType),
+  emitBoundedDataListGetItem(
+    converter,
+    fieldList,
+    hdlVar,
+    token,
+    () => createSoaSentinelValue(converter, fieldType),
+    true,
   );
   return converter.unwrapDataToken(token, fieldType);
 }

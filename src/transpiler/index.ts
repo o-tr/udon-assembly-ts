@@ -23,6 +23,7 @@ import {
   computeHeapUsage,
   UASM_HEAP_LIMIT,
 } from "./heap_limits.js";
+import type { DispatchLimitResolver } from "./ir/ast_to_tac/dispatch_limit_resolver.js";
 import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
 import { TACOptimizer } from "./ir/optimizer/index.js";
 import { pruneProgramByMethodUsage } from "./ir/optimizer/ipa.js";
@@ -36,6 +37,7 @@ export interface TranspilerOptions {
   reflect?: boolean;
   useStringBuilder?: boolean;
   sourceFilePath?: string;
+  dispatchLimitResolver?: DispatchLimitResolver;
   /**
    * When true, suppress the automatic `console.warn(formatWarnings(...))`
    * emission at the end of transpile(). Structured diagnostics are still
@@ -149,6 +151,7 @@ export class TypeScriptToUdonTranspiler {
         checkerContext: parser.checkerContext,
         checkerTypeResolver: parser.checkerTypeResolver,
         outlineBodyInstrThreshold: options.outlineBodyInstrThreshold,
+        dispatchLimitResolver: options.dispatchLimitResolver,
       },
     );
     let tacInstructions = tacConverter.convert(program);

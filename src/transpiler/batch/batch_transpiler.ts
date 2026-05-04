@@ -61,6 +61,7 @@ import {
   UASM_HEAP_LIMIT,
   UASM_RUNTIME_LIMIT,
 } from "../heap_limits.js";
+import type { DispatchLimitResolver } from "../ir/ast_to_tac/dispatch_limit_resolver.js";
 import { ASTToTACConverter } from "../ir/ast_to_tac/index.js";
 import type { EntryProfile } from "../ir/ast_to_tac/profiling.js";
 import { extractProfileData } from "../ir/ast_to_tac/profiling.js";
@@ -178,6 +179,7 @@ export interface BatchTranspilerOptions {
   includeExternalDependencies?: boolean;
   outputExtension?: string;
   heapLimit?: number;
+  dispatchLimitResolver?: DispatchLimitResolver;
   /**
    * Enables the assembled-output cache (.transpiler-optcache). Disable this
    * for intentionally cold one-shot runs to avoid TAC fingerprinting and
@@ -786,6 +788,7 @@ export class BatchTranspiler {
             errorCollector,
             checkerContext: parser.checkerContext,
             checkerTypeResolver: parser.checkerTypeResolver,
+            dispatchLimitResolver: options.dispatchLimitResolver,
           },
         );
         // Snapshot the shared collector so we can extract per-entry diagnostics
