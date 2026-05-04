@@ -18,16 +18,14 @@ export interface DispatchLimitResolver {
 }
 
 /**
- * Properties that need a larger erased-fallback dispatch table in the
- * default mahjong-scoring project configuration. A user-project property
- * literally named the same would silently inherit the larger limit; projects
- * with different needs should supply a custom DispatchLimitResolver via
- * ASTToTACConverter options to keep the default tight at 100.
+ * Default set of properties that receive the larger erased-fallback dispatch
+ * table limit. Kept empty intentionally — project-specific names (e.g.
+ * mahjong-scoring `isWin`) should be supplied via a custom
+ * DispatchLimitResolver passed to ASTToTACConverter options. This prevents
+ * unrelated user properties with the same name from silently inheriting the
+ * wider 512-candidate limit.
  */
-const LARGE_ERASED_DISPATCH_PROPERTIES: ReadonlySet<string> = new Set([
-  // mahjong scoring: many hand-result implementor classes share `isWin`.
-  "isWin",
-]);
+const LARGE_ERASED_DISPATCH_PROPERTIES: ReadonlySet<string> = new Set([]);
 
 const DEFAULT_DISPATCH_LIMIT = 100;
 const LARGE_ERASED_DISPATCH_LIMIT = 512;

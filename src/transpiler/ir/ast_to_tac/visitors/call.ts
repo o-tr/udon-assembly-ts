@@ -489,6 +489,46 @@ function emitDispatchResultDefaults(
   );
 }
 
+/**
+ * Emit a runtime diagnostic + type-appropriate default when an inline method
+ * call cannot be dispatched (e.g. recursion guard fired, or D3 dispatch
+ * missed). This centralises the LogError + sentinel fallback pattern so the
+ * inner this.method() guard and the outer general-property-access guard stay
+ * in sync.
+ */
+function emitInlineRecursionFallback(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+  className: string,
+  methodName: string,
+  returnType: TypeSymbol | undefined,
+): TACOperand | typeof VOID_RETURN {
+  const logExtern = converter.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const errMsg = createConstant(
+    `[udon-assembly-ts] Unsupported call to inline method ${className}.${methodName} (likely recursive instance method on an inline class — refactor to remove recursion or use @RecursiveMethod on a UdonBehaviour-decorated class).`,
+    PrimitiveTypes.string,
+  );
+  converter.emit(new CallInstruction(undefined, logExtern, [errMsg]));
+  converter.warnAt(
+    node,
+    "InlineInstanceRecursionUnsupported",
+    `Unsupported call to inline method ${className}.${methodName}: recursive instance methods on inline classes are not supported. The call site emits a Debug.LogError and a default return value at runtime.`,
+  );
+  if (returnType?.udonType === UdonType.Void) {
+    return VOID_RETURN;
+  }
+  const fallbackType = returnType ?? ObjectType;
+  const fallbackResult = converter.newTemp(fallbackType);
+  emitDispatchResultDefaults(converter, fallbackResult, fallbackType);
+  return fallbackResult;
+}
+
 /** Populate and return the implementor names cache for a type. */
 function getOrPopulateImplementorNames(
   converter: ASTToTACConverter,
@@ -3175,34 +3215,13 @@ export function visitCallExpression(
         const resolvedSelfReturn = methodReturn?.name
           ? (this.typeMapper.getAlias(methodReturn.name) ?? methodReturn)
           : methodReturn;
-        const logExtern = this.requireExternSignature(
-          "Debug",
-          "LogError",
-          "method",
-          ["object"],
-          "void",
-        );
-        const errMsg = createConstant(
-          `[udon-assembly-ts] Unsupported call to inline method ${inlineCtx.className}.${propAccess.property} (likely recursive instance method on an inline class — refactor to remove recursion or move the method onto a UdonBehaviour-decorated class with @RecursiveMethod).`,
-          PrimitiveTypes.string,
-        );
-        this.emit(new CallInstruction(undefined, logExtern, [errMsg]));
-        this.warnAt(
+        return emitInlineRecursionFallback(
+          this,
           node,
-          "InlineInstanceRecursionUnsupported",
-          `Unsupported call to inline method ${inlineCtx.className}.${propAccess.property}: recursive instance methods on inline classes are not supported. The call site emits a Debug.LogError and a default return value at runtime.`,
+          inlineCtx.className,
+          propAccess.property,
+          resolvedSelfReturn ?? undefined,
         );
-        if (resolvedSelfReturn?.udonType === UdonType.Void) {
-          return VOID_RETURN;
-        }
-        const fallbackType = resolvedSelfReturn ?? ObjectType;
-        const fallbackResult = this.newTemp(fallbackType);
-        // Initialise the result + any structural fields to safe defaults so
-        // downstream property reads (e.g. `result.waitTiles.length`) hit
-        // empty DataLists / zero scalars instead of nulls that would crash
-        // get_Count / op_LessThan at runtime.
-        emitDispatchResultDefaults(this, fallbackResult, fallbackType);
-        return fallbackResult;
       }
     }
     // Inline instance method call: object.method() where object is inline instance.
@@ -3846,9 +3865,11 @@ export function visitCallExpression(
       const tracked = this.resolveInlineInstance(receiverTrackingKey);
       if (tracked?.className) candidateReceiverNames.push(tracked.className);
     }
-    if (this.currentInlineContext?.className) {
-      candidateReceiverNames.push(this.currentInlineContext.className);
-    }
+    // Note: this.currentInlineContext.className is intentionally NOT added here.
+    // The this.method() case inside an inline body is already handled by the
+    // currentInlineContext branch (~line 3144). Adding it here would falsely
+    // intercept cross-class calls (e.g. b.reset() inside A's inlined body
+    // when A also defines reset), producing a wrong runtime result.
     let userMethodReceiverName: string | undefined;
     let resolvedUserMethod: ReturnType<typeof resolveClassMethod>;
     for (const candidate of candidateReceiverNames) {
@@ -3865,39 +3886,17 @@ export function visitCallExpression(
       }
     }
     if (userMethodReceiverName) {
-      const logExtern = this.requireExternSignature(
-        "Debug",
-        "LogError",
-        "method",
-        ["object"],
-        "void",
-      );
-      const errMsg = createConstant(
-        `[udon-assembly-ts] Unsupported call to inline method ${userMethodReceiverName}.${propAccess.property} (likely recursive instance method on an inline class — refactor to remove recursion or use @RecursiveMethod on a UdonBehaviour-decorated class).`,
-        PrimitiveTypes.string,
-      );
-      this.emit(new CallInstruction(undefined, logExtern, [errMsg]));
-      this.warnAt(
-        node,
-        "InlineInstanceRecursionUnsupported",
-        `Unsupported call to inline method ${userMethodReceiverName}.${propAccess.property}: recursive instance methods on inline classes are not supported. The call site emits a Debug.LogError and a default return value at runtime.`,
-      );
-      if (resolvedReturnType?.udonType === UdonType.Void) {
-        return VOID_RETURN;
-      }
       const fallbackReturnType =
         resolvedReturnType ??
         resolvedUserMethod?.method.returnType ??
-        ObjectType;
-      const fallbackResult = this.newTemp(fallbackReturnType);
-      this.emit(
-        new AssignmentInstruction(
-          fallbackResult,
-          createSoaSentinelValue(this, fallbackReturnType),
-        ),
+        undefined;
+      return emitInlineRecursionFallback(
+        this,
+        node,
+        userMethodReceiverName,
+        propAccess.property,
+        fallbackReturnType,
       );
-      emitDispatchResultDefaults(this, fallbackResult, fallbackReturnType);
-      return fallbackResult;
     }
 
     if (resolvedReturnType?.udonType === UdonType.Void) {
@@ -4024,7 +4023,11 @@ export function visitCallExpression(
     this.emit(new UnconditionalJumpInstruction(endLabel));
 
     this.emit(new LabelInstruction(nullLabel));
-    emitDispatchResultDefaults(this, callResult, resolvedReturnType ?? undefined);
+    emitDispatchResultDefaults(
+      this,
+      callResult,
+      resolvedReturnType ?? undefined,
+    );
     this.emit(new LabelInstruction(endLabel));
 
     if (!resolvedReturnType || resolvedReturnType.udonType === UdonType.Void) {
