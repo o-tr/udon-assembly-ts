@@ -3436,6 +3436,9 @@ export function visitObjectLiteralExpression(
       prefix: instancePrefix,
       className,
     });
+    if (className.startsWith("__anon_")) {
+      this.anonymousInlineClassNames.add(className);
+    }
     for (const prop of node.properties) {
       if (prop.kind !== "property") continue;
       const rawPropType = expected.properties.get(prop.key);

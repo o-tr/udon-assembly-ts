@@ -178,12 +178,11 @@ export function isInlineHandleType(
     // Int32 handles. They do not get interfaceClassIdMap entries because they
     // are not real polymorphic interfaces, so detect the allocated instance
     // metadata directly.
-    if (isAnonymousInterfaceName(type.name)) {
-      for (const [, info] of converter.allInlineInstances) {
-        if (info.className === type.name) {
-          return true;
-        }
-      }
+    if (
+      isAnonymousInterfaceName(type.name) &&
+      converter.anonymousInlineClassNames.has(type.name)
+    ) {
+      return true;
     }
     return false;
   }
