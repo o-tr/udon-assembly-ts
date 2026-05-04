@@ -401,20 +401,14 @@ export function convertInstruction(
         // ensures ! only appears on Boolean operands for well-formed input.
         emitBooleanNot(unInst.operand);
       } else if (unInst.operator === "!") {
-        // Defensive fallback: if a non-Boolean operand somehow reaches here
-        // (e.g. a path that bypassed TAC-level coercion), coerce via COPY
-        // to a Boolean slot before applying branch-based negation.
-        this.pushOperand(unInst.operand);
-        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-        this.variableTypes.set(coerceTmpName, "Boolean");
-        this.instructions.push(new PushInstruction(coerceTmpName));
-        this.instructions.push(new CopyInstruction());
-        emitBooleanNot({
-          kind: TACOperandKind.Variable,
-          name: coerceTmpName,
-          type: { name: "boolean", udonType: UdonType.Boolean },
-        } as VariableOperand);
+        // Invariant: TAC-level coerceToBoolean must have produced a Boolean
+        // operand before the ! UnaryOpInstruction is emitted. A non-Boolean
+        // type here indicates a compiler bug (e.g. String bypassing the
+        // IsNullOrEmpty coercion path), not valid user code.
+        throw new Error(
+          `Codegen invariant violated: ! operator received non-Boolean operand type ${operandType}. ` +
+            "TAC-level coerceToBoolean should have ensured Boolean operands.",
+        );
       } else {
         // Simple unary op: push operand, push dest, EXTERN
         this.pushOperand(unInst.operand);

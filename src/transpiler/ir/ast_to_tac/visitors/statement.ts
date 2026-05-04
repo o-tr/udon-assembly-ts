@@ -73,6 +73,7 @@ import {
   MAX_RECURSION_STACK_DEPTH,
   operandTrackingKey,
   STRUCTURAL_RECURSION_DEPTH_CAP,
+  usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
@@ -1631,12 +1632,16 @@ export function visitReturnStatement(
           returnStructuralType,
         );
       }
-      this.emit(
-        new CopyInstruction(
-          inlineContext.returnVar,
-          createConstant(null, inlineContext.returnVar.type),
-        ),
-      );
+      // Interface-typed inline handles use the -1 Int32 sentinel, not an
+      // Object null, so that callers comparing against `null` via
+      // retargetNullishComparisonOperand match the same value.
+      const nullValue = usesInlineNullSentinel(
+        this,
+        inlineContext.returnVar.type,
+      )
+        ? createConstant(-1, PrimitiveTypes.int32)
+        : createConstant(null, inlineContext.returnVar.type);
+      this.emit(new CopyInstruction(inlineContext.returnVar, nullValue));
       this.inlineInstanceMap.delete(inlineContext.returnVar.name);
       if (!inlineContext.returnTrackingInvalidated) {
         inlineContext.returnTrackingInvalidated = true;

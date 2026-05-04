@@ -40,7 +40,13 @@ export function emitBoundedDataListGetItem(
   sentinelValue: TACOperand = createConstant(null, ObjectType),
   guardListNotNull = false,
 ): void {
-  if (guardListNotNull && listVar.kind === TACOperandKind.Variable) {
+  if (guardListNotNull) {
+    if (listVar.kind !== TACOperandKind.Variable) {
+      throw new Error(
+        "emitBoundedDataListGetItem: guardListNotNull requires a Variable operand, " +
+          `got ${TACOperandKind[listVar.kind]}`,
+      );
+    }
     // Note: this guard does NOT touch `__soa_${className}__inited`.
     // That flag is owned by the companion `emitSoaInitGuard`
     // (helpers/inline.ts).  Because this guard does not set the flag,
