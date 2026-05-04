@@ -83,6 +83,8 @@ export function emitBoundedDataListGetItem(
       "DataList",
     );
     converter.emit(new CallInstruction(listVar, listCtorSig, []));
+    // listVar now holds the freshly-constructed DataList.
+    // wrapDataToken is safe here because it only reads sentinelValue, not listVar.
     const nullToken = converter.wrapDataToken(sentinelValue);
     converter.emit(
       new MethodCallInstruction(undefined, listVar, "Add", [nullToken]),

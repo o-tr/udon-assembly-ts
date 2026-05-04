@@ -156,6 +156,14 @@ function outlineMapKey(
  * Check if a type represents an inline class instance stored as an Int32 handle.
  * Inline class instances are NOT UdonBehaviour types and have entries in the
  * classMap or interfaceClassIdMap.
+ *
+ * NOTE: for anonymous structural interfaces (`__anon_*`), this returns `true`
+ * even though they are *not* stored as Int32 handles — they travel as sibling
+ * return slots with a reference-typed representative value. Callers that need
+ * to know whether the type uses an Int32 sentinel for null checks should also
+ * consult `usesInlineNullSentinel(type)`; `isInlineHandleType && !usesInlineNullSentinel`
+ * identifies anonymous structural records that need inline property dispatch
+ * but must not be passed to `normalizeOperandToInt32`.
  */
 export function isInlineHandleType(
   converter: ASTToTACConverter,

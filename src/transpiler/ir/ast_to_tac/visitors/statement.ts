@@ -1,14 +1,15 @@
-import { isNullableUdonType, type TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   getNativeArrayTypeName,
   InterfaceTypeSymbol,
+  isNullableUdonType,
   isPlainObjectType,
   NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
+  type TypeSymbol,
 } from "../../../frontend/type_symbols.js";
 import {
   type ASTNode,
@@ -115,8 +116,6 @@ function isNullConstantOperand(
     (value as ConstantOperand).value === null
   );
 }
-
-
 
 /**
  * Cycle-guarded recursion that copies `${sourcePrefix}_<prop>` slot chains
@@ -1621,10 +1620,7 @@ export function visitReturnStatement(
       returnInstancePrefix && nullReturnValue
         ? structuralInterfaceForType(this, inlineContext.returnVar.type)
         : undefined;
-    if (
-      nullReturnValue &&
-      isNullableUdonType(inlineContext.returnVar.type)
-    ) {
+    if (nullReturnValue && isNullableUdonType(inlineContext.returnVar.type)) {
       if (returnInstancePrefix && returnStructuralType) {
         emitStructuralPrefixDefaults(
           this,

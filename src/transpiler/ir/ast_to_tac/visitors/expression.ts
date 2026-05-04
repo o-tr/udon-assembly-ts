@@ -1,7 +1,6 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { TranspileError } from "../../../errors/transpile_errors.js";
 import type { TypeMapper } from "../../../frontend/type_mapper.js";
-import { isNullableUdonType, type TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
@@ -17,6 +16,7 @@ import {
   ObjectType,
   PrimitiveTypeSymbol,
   PrimitiveTypes,
+  type TypeSymbol,
   typeSymbolToCSharp,
 } from "../../../frontend/type_symbols.js";
 import type { SymbolInfo } from "../../../frontend/types.js";
@@ -1374,8 +1374,6 @@ function isNullishOperand(operand: TACOperand): boolean {
     ? (operand as ConstantOperand).value === null
     : false;
 }
-
-
 
 function retargetNullishComparisonOperand(
   converter: ASTToTACConverter,
@@ -3475,14 +3473,7 @@ export function visitObjectLiteralExpression(
       ) {
         const propKey = operandTrackingKey(propVar);
         if (propKey) {
-          emitStructuralFieldCopies(
-            this,
-            propKey,
-            propType,
-            value,
-            {},
-            true,
-          );
+          emitStructuralFieldCopies(this, propKey, propType, value, {}, true);
         }
       }
     }

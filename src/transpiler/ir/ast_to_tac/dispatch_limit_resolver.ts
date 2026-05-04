@@ -29,6 +29,10 @@ const LARGE_ERASED_DISPATCH_LIMIT = 512;
 export function createDefaultDispatchLimitResolver(): DispatchLimitResolver {
   return {
     getLimit({ property, usedErasedFallback }) {
+      // Only widen the limit when the erased fallback path is active; for
+      // statically-resolved dispatch the default 100 cap is always sufficient.
+      // Without this guard, properties such as "isWin" would incorrectly
+      // receive the 512 limit even on non-erased paths.
       if (
         usedErasedFallback &&
         LARGE_ERASED_DISPATCH_PROPERTIES.has(property)

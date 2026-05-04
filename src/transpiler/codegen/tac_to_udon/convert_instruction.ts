@@ -1,4 +1,7 @@
-import { NativeArrayTypeSymbol, PrimitiveTypes } from "../../frontend/type_symbols.js";
+import {
+  NativeArrayTypeSymbol,
+  PrimitiveTypes,
+} from "../../frontend/type_symbols.js";
 import { UdonType } from "../../frontend/types.js";
 import {
   type ArrayAccessInstruction as TACArrayAccessInstruction,
