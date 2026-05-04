@@ -216,12 +216,6 @@ function inferIdentifierInitialPropertyClassName(
     return undefined;
   }
   const access = initialValue as PropertyAccessExpressionNode;
-  // Resolve the receiver's declared type and ask the field-type registry what
-  // type its property has. This replaces the previous `property === "hand"`
-  // → `"Hand"` hard-coding: now any property mapped through the registry's
-  // `getInterfacePropertyType` can drive D-3 dispatch narrowing, and the
-  // residual `"hand"` fallback lives only in the default registry where it
-  // can be overridden by user projects.
   const receiverType = resolveTypeFromNode(converter, access.object);
   if (!receiverType?.name) return undefined;
   const propType = converter.fieldTypeRegistry.getInterfacePropertyType(

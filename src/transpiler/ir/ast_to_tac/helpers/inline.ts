@@ -1102,7 +1102,7 @@ export function createSoaSentinelValue(
   converter: ASTToTACConverter,
   fieldType: TypeSymbol,
 ): TACOperand {
-  if (isInlineHandleType(converter, fieldType)) {
+  if (isTrackedInlineHandleType(converter, fieldType)) {
     return createConstant(-1, PrimitiveTypes.int32);
   }
   if (fieldType.udonType === UdonType.String) {
