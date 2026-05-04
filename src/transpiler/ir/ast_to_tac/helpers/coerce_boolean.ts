@@ -13,7 +13,7 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { isInlineHandleType, usesInlineNullSentinel } from "./inline.js";
+import { isTrackedInlineHandleType, usesInlineNullSentinel } from "./inline.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /** Udon extern signature for System.String.IsNullOrEmpty */
@@ -94,7 +94,7 @@ export function coerceToBoolean(
     // constant as Int32 explicitly (matching the sentinel branch below)
     // rather than as the operand's class symbol, which would emit a
     // codegen-typed constant and risk a slot-type mismatch.
-    const isInlineHandle = isInlineHandleType(this, type);
+    const isInlineHandle = isTrackedInlineHandleType(this, type);
     const falseValue = isInlineHandle ? -1 : 0;
     const falseConstantType = isInlineHandle ? PrimitiveTypes.int32 : type;
     this.emit(

@@ -9,6 +9,12 @@ export interface DispatchLimitContext {
 
 export interface DispatchLimitResolver {
   getLimit(ctx: DispatchLimitContext): number;
+  /**
+   * Return `true` for property names that should trigger the wide erased
+   * fallback path (scanning all inline instances for the property) even
+   * when the operand type is a plain `object` or `DataDictionary`.
+   */
+  isLargeErasedFallbackProperty(property: string): boolean;
 }
 
 /**
@@ -40,6 +46,9 @@ export function createDefaultDispatchLimitResolver(): DispatchLimitResolver {
         return LARGE_ERASED_DISPATCH_LIMIT;
       }
       return DEFAULT_DISPATCH_LIMIT;
+    },
+    isLargeErasedFallbackProperty(property) {
+      return LARGE_ERASED_DISPATCH_PROPERTIES.has(property);
     },
   };
 }

@@ -233,6 +233,24 @@ export function usesInlineNullSentinel(
 }
 
 /**
+ * Safe combined predicate: returns `true` only for inline types that are
+ * actually stored as Int32 handles (i.e. `isInlineHandleType` is true AND
+ * `usesInlineNullSentinel` is true). Anonymous structural records pass
+ * `isInlineHandleType` but do NOT use Int32 handles, so they are excluded
+ * here. Call-sites that need to wrap/unwrap via DataToken.Int should prefer
+ * this predicate over `isInlineHandleType` alone.
+ */
+export function isTrackedInlineHandleType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  return (
+    isInlineHandleType(converter, type) &&
+    usesInlineNullSentinel(converter, type)
+  );
+}
+
+/**
  * If `type.name` resolves to a registered alias different from `type`
  * itself, return the alias. Otherwise return `type` unchanged. Handles
  * the edge case where a property type was captured before its alias was
@@ -1140,7 +1158,7 @@ export function createSoaSentinelValue(
  * sentinel entries at index 0). The __soa_<class>__inited flag ensures the
  * block runs at most once at runtime.
  *
- * TODO: reconcile if this is ever made null-aware. The companion
+ * INVARIANT: this must remain inited-flag-only (never null-aware). The companion
  * `emitBoundedDataListGetItem` (helpers/soa_data_list.ts) seeds a placeholder
  * DataList for D-3 dispatch probes that fire before any constructor has run.
  * Today that seed is harmless because this function unconditionally re-creates
@@ -1159,6 +1177,11 @@ function emitSoaInitGuard(
   const counterVar = converter.soaCounterVars.get(className);
   if (!fieldLists || !fieldTypes || !counterVar) return;
 
+  // INVARIANT: this guard must remain "inited-flag-only". Adding a null-aware
+  // skip (e.g. "skip ctor when listVar is non-null") would break the coupling
+  // with emitBoundedDataListGetItem (soa_data_list.ts), which seeds a
+  // placeholder DataList before the first real construction. See the detailed
+  // invariant comment in soa_data_list.ts for remediation strategies.
   const initedVar = createVariable(
     `__soa_${className}__inited`,
     PrimitiveTypes.int32,
@@ -3473,6 +3496,16 @@ function emitInlineRecursiveInstanceMethod(
       locals.push({ name: `__error_value_${tryId}`, type: ObjectType });
     }
 
+    if (hasThisFieldMutation(method)) {
+      converter.warnAt(
+        method.body,
+        "InlineInstanceRecursionUnsupported",
+        `Recursive inline instance method ${declaringClassName}.${methodName} mutates instance fields (this.*). ` +
+          "Instance fields are NOT stacked across recursion frames — the outer frame will see the mutated value. " +
+          "Copy the field into a local before the self-call, or move the recursion onto a @UdonBehaviour class with @RecursiveMethod.",
+      );
+    }
+
     const stackVars = locals.map((local) => ({
       name: `${prefix}_stack_${local.name}`,
       type: ExternTypes.dataList as TypeSymbol,
@@ -4997,6 +5030,175 @@ export function collectRecursiveLocals(
 
   visitNode(method.body);
   return Array.from(locals.entries()).map(([name, type]) => ({ name, type }));
+}
+
+/**
+ * Scan `method.body` for assignments or updates to `this.<field>`.
+ * Returns `true` if any such mutation is found. Used by
+ * `emitInlineRecursiveInstanceMethod` to emit a diagnostic, because
+ * instance fields are NOT stacked across recursion frames — a recursive
+ * write silently overwrites the outer frame's value.
+ */
+function hasThisFieldMutation(method: { body: BlockStatementNode }): boolean {
+  const visitNode = (node: ASTNode): boolean => {
+    switch (node.kind) {
+      case ASTNodeKind.BlockStatement: {
+        for (const stmt of (node as BlockStatementNode).statements) {
+          if (visitNode(stmt)) return true;
+        }
+        break;
+      }
+      case ASTNodeKind.ExpressionStatement: {
+        return visitNode((node as ExpressionStatementNode).expression);
+      }
+      case ASTNodeKind.IfStatement: {
+        const ifNode = node as IfStatementNode;
+        return (
+          visitNode(ifNode.condition) ||
+          visitNode(ifNode.thenBranch) ||
+          (ifNode.elseBranch ? visitNode(ifNode.elseBranch) : false)
+        );
+      }
+      case ASTNodeKind.WhileStatement: {
+        const whileNode = node as WhileStatementNode;
+        return visitNode(whileNode.condition) || visitNode(whileNode.body);
+      }
+      case ASTNodeKind.ForStatement: {
+        const forNode = node as ForStatementNode;
+        return (
+          (forNode.initializer ? visitNode(forNode.initializer) : false) ||
+          (forNode.condition ? visitNode(forNode.condition) : false) ||
+          (forNode.incrementor ? visitNode(forNode.incrementor) : false) ||
+          visitNode(forNode.body)
+        );
+      }
+      case ASTNodeKind.ForOfStatement: {
+        const forOfNode = node as ForOfStatementNode;
+        return visitNode(forOfNode.iterable) || visitNode(forOfNode.body);
+      }
+      case ASTNodeKind.DoWhileStatement: {
+        const doNode = node as DoWhileStatementNode;
+        return visitNode(doNode.body) || visitNode(doNode.condition);
+      }
+      case ASTNodeKind.SwitchStatement: {
+        const switchNode = node as SwitchStatementNode;
+        if (visitNode(switchNode.expression)) return true;
+        for (const clause of switchNode.cases) {
+          if (clause.expression && visitNode(clause.expression)) return true;
+          for (const stmt of clause.statements) {
+            if (visitNode(stmt)) return true;
+          }
+        }
+        break;
+      }
+      case ASTNodeKind.TryCatchStatement: {
+        const tryNode = node as TryCatchStatementNode;
+        return (
+          visitNode(tryNode.tryBody) ||
+          (tryNode.catchBody ? visitNode(tryNode.catchBody) : false) ||
+          (tryNode.finallyBody ? visitNode(tryNode.finallyBody) : false)
+        );
+      }
+      case ASTNodeKind.AssignmentExpression: {
+        const assignNode = node as AssignmentExpressionNode;
+        if (assignNode.target.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propNode = assignNode.target as PropertyAccessExpressionNode;
+          if (propNode.object.kind === ASTNodeKind.ThisExpression) {
+            return true;
+          }
+        }
+        return visitNode(assignNode.value);
+      }
+      case ASTNodeKind.UpdateExpression: {
+        const updNode = node as UpdateExpressionNode;
+        if (updNode.operand.kind === ASTNodeKind.PropertyAccessExpression) {
+          const propNode = updNode.operand as PropertyAccessExpressionNode;
+          if (propNode.object.kind === ASTNodeKind.ThisExpression) {
+            return true;
+          }
+        }
+        break;
+      }
+      case ASTNodeKind.CallExpression: {
+        const callNode = node as CallExpressionNode;
+        if (visitNode(callNode.callee)) return true;
+        for (const arg of callNode.arguments) {
+          if (visitNode(arg)) return true;
+        }
+        break;
+      }
+      case ASTNodeKind.ReturnStatement: {
+        const retNode = node as ReturnStatementNode;
+        return retNode.value ? visitNode(retNode.value) : false;
+      }
+      case ASTNodeKind.VariableDeclaration: {
+        const vd = node as VariableDeclarationNode;
+        return vd.initializer ? visitNode(vd.initializer) : false;
+      }
+      case ASTNodeKind.BinaryExpression: {
+        const binNode = node as BinaryExpressionNode;
+        return visitNode(binNode.left) || visitNode(binNode.right);
+      }
+      case ASTNodeKind.UnaryExpression: {
+        return visitNode((node as UnaryExpressionNode).operand);
+      }
+      case ASTNodeKind.ConditionalExpression: {
+        const condNode = node as ConditionalExpressionNode;
+        return (
+          visitNode(condNode.condition) ||
+          visitNode(condNode.whenTrue) ||
+          visitNode(condNode.whenFalse)
+        );
+      }
+      case ASTNodeKind.NullCoalescingExpression: {
+        const ncNode = node as NullCoalescingExpressionNode;
+        return visitNode(ncNode.left) || visitNode(ncNode.right);
+      }
+      case ASTNodeKind.PropertyAccessExpression: {
+        return visitNode((node as PropertyAccessExpressionNode).object);
+      }
+      case ASTNodeKind.ArrayAccessExpression: {
+        const aaNode = node as ArrayAccessExpressionNode;
+        return visitNode(aaNode.array) || visitNode(aaNode.index);
+      }
+      case ASTNodeKind.OptionalChainingExpression: {
+        return visitNode((node as OptionalChainingExpressionNode).object);
+      }
+      case ASTNodeKind.ObjectLiteralExpression: {
+        for (const prop of (node as ObjectLiteralExpressionNode).properties) {
+          if (visitNode(prop.value)) return true;
+        }
+        break;
+      }
+      case ASTNodeKind.ArrayLiteralExpression: {
+        for (const elem of (node as ArrayLiteralExpressionNode).elements) {
+          if (visitNode(elem.value)) return true;
+        }
+        break;
+      }
+      case ASTNodeKind.TemplateExpression: {
+        for (const part of (node as TemplateExpressionNode).parts) {
+          if (part.kind === "expression" && visitNode(part.expression))
+            return true;
+        }
+        break;
+      }
+      case ASTNodeKind.AsExpression: {
+        return visitNode((node as AsExpressionNode).expression);
+      }
+      case ASTNodeKind.DeleteExpression: {
+        return visitNode((node as DeleteExpressionNode).target);
+      }
+      case ASTNodeKind.ThrowStatement: {
+        return visitNode((node as ThrowStatementNode).expression);
+      }
+      default:
+        break;
+    }
+    return false;
+  };
+
+  return visitNode(method.body);
 }
 
 /**
