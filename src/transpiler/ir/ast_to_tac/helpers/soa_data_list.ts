@@ -37,7 +37,8 @@ export function emitBoundedDataListGetItem(
   listVar: TACOperand,
   indexVar: TACOperand,
   destToken: TACOperand,
-  sentinelValue: TACOperand = createConstant(null, ObjectType),
+  sentinelValue: TACOperand | (() => TACOperand) = () =>
+    createConstant(null, ObjectType),
   guardListNotNull = false,
 ): void {
   if (guardListNotNull) {
@@ -62,6 +63,8 @@ export function emitBoundedDataListGetItem(
     // future optimisation to skip construction must either (a) set the
     // `__soa_${className}__inited` flag from this guard, or (b) explicitly
     // overwrite / clear the pre-existing DataList before skipping.
+    const resolvedSentinelValue =
+      typeof sentinelValue === "function" ? sentinelValue() : sentinelValue;
     const boxedList = converter.newTemp(ObjectType);
     converter.emit(new CopyInstruction(boxedList, listVar));
     const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
@@ -85,7 +88,7 @@ export function emitBoundedDataListGetItem(
     converter.emit(new CallInstruction(listVar, listCtorSig, []));
     // listVar now holds the freshly-constructed DataList.
     // wrapDataToken is safe here because it only reads sentinelValue, not listVar.
-    const nullToken = converter.wrapDataToken(sentinelValue);
+    const nullToken = converter.wrapDataToken(resolvedSentinelValue);
     converter.emit(
       new MethodCallInstruction(undefined, listVar, "Add", [nullToken]),
     );

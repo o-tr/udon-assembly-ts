@@ -90,6 +90,7 @@ import {
   hasCompatibleUnionProperty,
   isInlineHandleType,
   isSubclassOf,
+  isTrackedInlineHandleType,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
@@ -142,7 +143,7 @@ function tryReadSoAField(
     fieldList,
     hdlVar,
     token,
-    createSoaSentinelValue(converter, fieldType),
+    () => createSoaSentinelValue(converter, fieldType),
   );
   return converter.unwrapDataToken(token, fieldType);
 }
@@ -1466,7 +1467,13 @@ export function visitShortCircuitOr(
     );
     this.emit(new LabelInstruction(endLabel));
     const resultKey = operandTrackingKey(result);
-    if (resultKey) this.inlineInstanceMap.delete(resultKey);
+    if (
+      resultKey &&
+      valueResultType &&
+      isTrackedInlineHandleType(this, valueResultType)
+    ) {
+      this.inlineInstanceMap.delete(resultKey);
+    }
     return result;
   }
 

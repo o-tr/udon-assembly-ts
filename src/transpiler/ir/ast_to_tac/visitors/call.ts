@@ -820,7 +820,7 @@ function trySoAMethodDispatch(
         listVar,
         hdlVar,
         token,
-        createSoaSentinelValue(converter, scratchVar.type),
+        () => createSoaSentinelValue(converter, scratchVar.type),
         true,
       );
       const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
