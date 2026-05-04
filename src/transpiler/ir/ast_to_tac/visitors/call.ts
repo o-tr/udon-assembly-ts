@@ -4024,7 +4024,7 @@ export function visitCallExpression(
     this.emit(new UnconditionalJumpInstruction(endLabel));
 
     this.emit(new LabelInstruction(nullLabel));
-    emitDispatchResultDefaults(this, callResult, resolvedReturnType);
+    emitDispatchResultDefaults(this, callResult, resolvedReturnType ?? undefined);
     this.emit(new LabelInstruction(endLabel));
 
     if (!resolvedReturnType || resolvedReturnType.udonType === UdonType.Void) {
