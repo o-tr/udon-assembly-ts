@@ -27,10 +27,10 @@ import { normalizeOperandToInt32 } from "./int32_normalization.js";
  * `guardListNotNull` enables a runtime null-and-seed check before the
  * Count/get_Item externs. Required when the caller may probe a candidate
  * SoA class before its constructor has run (D3 dispatch and untracked-handle
- * SoA method dispatch). Skip on direct property reads via tryReadSoAField,
- * where the field list is guaranteed non-null because we already hold a
- * concrete instance prefix — the guard would emit ~7 dead instructions
- * (box / null-compare / branch / ctor / sentinel Add / label) per access.
+ * SoA method dispatch). Also use it on direct property reads via
+ * `tryReadSoAField`, which can still see `-1` sentinel handles from erased
+ * dispatch and needs the lower-bound guard even though the field list itself
+ * is non-null.
  */
 export function emitBoundedDataListGetItem(
   converter: ASTToTACConverter,
