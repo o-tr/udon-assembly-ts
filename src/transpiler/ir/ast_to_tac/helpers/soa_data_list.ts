@@ -101,18 +101,20 @@ export function emitBoundedDataListGetItem(
   const oobLabel = converter.newLabel("soa_get_oob");
   const mergeLabel = converter.newLabel("soa_get_merge");
 
-  // Lower-bound guard: negative handles (null sentinel = -1) must not reach
-  // get_Item, which throws ArgumentOutOfRangeException for negative indices.
-  const okLower = converter.newTemp(PrimitiveTypes.boolean);
-  converter.emit(
-    new BinaryOpInstruction(
-      okLower,
-      intIndexVar,
-      ">=",
-      createConstant(0, PrimitiveTypes.int32),
-    ),
-  );
-  converter.emit(new ConditionalJumpInstruction(okLower, oobLabel));
+  if (guardListNotNull) {
+    // Lower-bound guard: negative handles (null sentinel = -1) must not reach
+    // get_Item, which throws ArgumentOutOfRangeException for negative indices.
+    const okLower = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        okLower,
+        intIndexVar,
+        ">=",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(okLower, oobLabel));
+  }
 
   // Upper-bound guard
   const okUpper = converter.newTemp(PrimitiveTypes.boolean);

@@ -656,6 +656,7 @@ export class ASTToTACConverter {
     this.soaConstructionPrefixes = new Set();
     this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
+    this.anonymousInlineClassNames = new Set();
     this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();
