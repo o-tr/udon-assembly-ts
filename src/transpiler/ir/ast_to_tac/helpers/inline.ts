@@ -1731,6 +1731,9 @@ export function visitInlineConstructor(
     prefix: instancePrefix,
     className,
   });
+  if (isAnonymousInterfaceName(className)) {
+    this.anonymousInlineClassNames.add(className);
+  }
 
   // Register classId for interfaces this class implements (including inherited).
   // ClassIds are assigned by visitation order (classIds.size at first encounter).

@@ -297,6 +297,8 @@ export class ASTToTACConverter {
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
+  /** Set of anonymous inline class names for O(1) isInlineHandleType checks */
+  anonymousInlineClassNames: Set<string> = new Set();
   /**
    * Classes whose constructor is invoked inside a loop body.
    * Detected in pass 1; pre-seeded into pass 2.

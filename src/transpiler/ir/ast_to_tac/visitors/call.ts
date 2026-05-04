@@ -3850,9 +3850,17 @@ export function visitCallExpression(
       candidateReceiverNames.push(this.currentInlineContext.className);
     }
     let userMethodReceiverName: string | undefined;
+    let resolvedUserMethod: ReturnType<typeof resolveClassMethod>;
     for (const candidate of candidateReceiverNames) {
-      if (resolveClassMethod(this, candidate, propAccess.property, false)) {
+      const method = resolveClassMethod(
+        this,
+        candidate,
+        propAccess.property,
+        false,
+      );
+      if (method) {
         userMethodReceiverName = candidate;
+        resolvedUserMethod = method;
         break;
       }
     }
@@ -3877,7 +3885,10 @@ export function visitCallExpression(
       if (resolvedReturnType?.udonType === UdonType.Void) {
         return VOID_RETURN;
       }
-      const fallbackReturnType = resolvedReturnType ?? ObjectType;
+      const fallbackReturnType =
+        resolvedReturnType ??
+        resolvedUserMethod?.method.returnType ??
+        ObjectType;
       const fallbackResult = this.newTemp(fallbackReturnType);
       this.emit(
         new AssignmentInstruction(
@@ -4013,12 +4024,7 @@ export function visitCallExpression(
     this.emit(new UnconditionalJumpInstruction(endLabel));
 
     this.emit(new LabelInstruction(nullLabel));
-    this.emit(
-      new AssignmentInstruction(
-        callResult,
-        createSoaSentinelValue(this, resolvedReturnType ?? ObjectType),
-      ),
-    );
+    emitDispatchResultDefaults(this, callResult, resolvedReturnType);
     this.emit(new LabelInstruction(endLabel));
 
     if (!resolvedReturnType || resolvedReturnType.udonType === UdonType.Void) {

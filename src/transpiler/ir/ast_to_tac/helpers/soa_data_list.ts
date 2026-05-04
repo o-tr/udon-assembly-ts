@@ -95,15 +95,34 @@ export function emitBoundedDataListGetItem(
   const intIndexVar = normalizeOperandToInt32(converter, indexVar);
   const countTemp = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(new PropertyGetInstruction(countTemp, listVar, "Count"));
-  const okTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.emit(new BinaryOpInstruction(okTemp, intIndexVar, "<", countTemp));
   const oobLabel = converter.newLabel("soa_get_oob");
   const mergeLabel = converter.newLabel("soa_get_merge");
-  converter.emit(new ConditionalJumpInstruction(okTemp, oobLabel));
+
+  // Lower-bound guard: negative handles (null sentinel = -1) must not reach
+  // get_Item, which throws ArgumentOutOfRangeException for negative indices.
+  const okLower = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(
+    new BinaryOpInstruction(
+      okLower,
+      intIndexVar,
+      ">=",
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  converter.emit(new ConditionalJumpInstruction(okLower, oobLabel));
+
+  // Upper-bound guard
+  const okUpper = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new BinaryOpInstruction(okUpper, intIndexVar, "<", countTemp));
+  converter.emit(new ConditionalJumpInstruction(okUpper, oobLabel));
+
+  // In-bounds path
   converter.emit(
     new MethodCallInstruction(destToken, listVar, "get_Item", [intIndexVar]),
   );
   converter.emit(new UnconditionalJumpInstruction(mergeLabel));
+
+  // OOB fallback: sentinel row at index 0 (valid because Count >= 1 after init)
   converter.emit(new LabelInstruction(oobLabel));
   const ok2 = converter.newTemp(PrimitiveTypes.boolean);
   const zero = createConstant(0, PrimitiveTypes.int32);
