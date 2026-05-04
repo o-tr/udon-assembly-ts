@@ -667,15 +667,10 @@ export function wrapDataToken(
     // caller. Fall through to `normalizeOperandToInt32` below so a runtime
     // SystemConvert.ToInt32 read is emitted against the live slot.
     if (info && valueKey === `${info.prefix}__handle`) {
-      for (const [instId, candidate] of this.allInlineInstances) {
-        if (
-          candidate.prefix === info.prefix &&
-          candidate.className === info.className
-        ) {
-          value = createConstant(instId, PrimitiveTypes.int32);
-          valueType = PrimitiveTypes.int32;
-          break;
-        }
+      const instId = this.allInlineInstanceIdsByPrefix.get(info.prefix);
+      if (instId !== undefined) {
+        value = createConstant(instId, PrimitiveTypes.int32);
+        valueType = PrimitiveTypes.int32;
       }
     }
   }

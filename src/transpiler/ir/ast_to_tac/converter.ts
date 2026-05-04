@@ -297,6 +297,8 @@ export class ASTToTACConverter {
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
+  /** Reverse lookup for `allInlineInstances`: prefix → instanceId. */
+  allInlineInstanceIdsByPrefix: Map<string, number> = new Map();
   /** Set of anonymous inline class names for O(1) isInlineHandleType checks */
   anonymousInlineClassNames: Set<string> = new Set();
   /**
@@ -648,6 +650,7 @@ export class ASTToTACConverter {
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
+    this.allInlineInstanceIdsByPrefix = new Map();
     this.soaClasses = new Set();
     this.soaFieldLists = new Map();
     this.soaFieldTypes = new Map();
@@ -699,6 +702,18 @@ export class ASTToTACConverter {
     this.outlinedMethods = new Map();
     this.pendingOutlineDispatches = [];
     this.outlineIneligibleCache = new WeakMap();
+  }
+
+  restoreInlineInstanceState(
+    allInlineInstances: Map<number, { prefix: string; className: string }>,
+  ): void {
+    this.allInlineInstances = allInlineInstances;
+    this.allInlineInstanceIdsByPrefix = new Map(
+      [...allInlineInstances.entries()].map(([instanceId, info]) => [
+        info.prefix,
+        instanceId,
+      ]),
+    );
   }
 
   /**
@@ -836,7 +851,7 @@ export class ASTToTACConverter {
     const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
     const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
     this.resetState();
-    this.allInlineInstances = allInstancesFromPass1;
+    this.restoreInlineInstanceState(allInstancesFromPass1);
     this.outlineCandidates = outlineCandidatesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;

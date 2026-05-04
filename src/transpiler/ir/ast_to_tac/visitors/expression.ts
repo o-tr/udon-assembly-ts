@@ -3441,6 +3441,7 @@ export function visitObjectLiteralExpression(
       prefix: instancePrefix,
       className,
     });
+    this.allInlineInstanceIdsByPrefix.set(instancePrefix, instanceId);
     if (className.startsWith("__anon_")) {
       this.anonymousInlineClassNames.add(className);
     }

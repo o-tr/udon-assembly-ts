@@ -845,7 +845,7 @@ function trySoAMethodDispatch(
     converter.tempCounter = savedTempCounter;
     converter.labelCounter = savedLabelCounter;
     converter.inlineInstanceMap = savedInlineInstanceMap;
-    converter.allInlineInstances = savedAllInlineInstances;
+    converter.restoreInlineInstanceState(savedAllInlineInstances);
     return null;
   }
 
@@ -1105,7 +1105,7 @@ function tryUntrackedInlineDispatch(
       converter.tempCounter = savedTempCounter;
       converter.labelCounter = savedLabelCounter;
       converter.inlineInstanceMap = savedInlineInstanceMap;
-      converter.allInlineInstances = savedAllInlineInstances;
+      converter.restoreInlineInstanceState(savedAllInlineInstances);
       dispatchFailed = true;
       break;
     }
@@ -1134,7 +1134,7 @@ function tryUntrackedInlineDispatch(
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
-    converter.allInlineInstances = branchAllInlineSnapshot;
+    converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
   if (dispatchFailed) return null;
@@ -1143,7 +1143,7 @@ function tryUntrackedInlineDispatch(
   // For erased owners, that would generate invalid EXTERN signatures
   // (e.g. SystemObject.__inc__) and fail VM load.
   converter.inlineInstanceMap = savedInlineInstanceMap;
-  converter.allInlineInstances = savedAllInlineInstances;
+  converter.restoreInlineInstanceState(savedAllInlineInstances);
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -1382,7 +1382,7 @@ function tryD3MethodDispatch(
       converter.tempCounter = savedTempCounter;
       converter.labelCounter = savedLabelCounter;
       converter.inlineInstanceMap = savedInlineInstanceMap;
-      converter.allInlineInstances = savedAllInlineInstances;
+      converter.restoreInlineInstanceState(savedAllInlineInstances);
       dispatchFailed = true;
       break;
     }
@@ -1411,7 +1411,7 @@ function tryD3MethodDispatch(
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
-    converter.allInlineInstances = branchAllInlineSnapshot;
+    converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
   if (dispatchFailed) return null;
@@ -1420,7 +1420,7 @@ function tryD3MethodDispatch(
   // produces a visible diagnostic instead of silently returning an
   // uninitialized zero/null result.
   converter.inlineInstanceMap = savedInlineInstanceMap;
-  converter.allInlineInstances = savedAllInlineInstances;
+  converter.restoreInlineInstanceState(savedAllInlineInstances);
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -3342,7 +3342,7 @@ export function visitCallExpression(
               this.tempCounter = savedTempCounter;
               this.labelCounter = savedLabelCounter;
               this.inlineInstanceMap = savedInlineInstanceMap;
-              this.allInlineInstances = savedAllInlineInstances;
+              this.restoreInlineInstanceState(savedAllInlineInstances);
               dispatchFailed = true;
               break;
             }
@@ -3482,7 +3482,7 @@ export function visitCallExpression(
             // from the pre-dispatch state. After the loop, resultInlineMapping
             // is re-inserted for result.name if all branches agreed.
             this.inlineInstanceMap = branchMapSnapshot;
-            this.allInlineInstances = branchAllInlineSnapshot;
+            this.restoreInlineInstanceState(branchAllInlineSnapshot);
           }
 
           if (!dispatchFailed) {

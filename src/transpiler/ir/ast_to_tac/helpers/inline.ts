@@ -1730,6 +1730,7 @@ export function visitInlineConstructor(
     prefix: instancePrefix,
     className,
   });
+  this.allInlineInstanceIdsByPrefix.set(instancePrefix, instanceId);
   if (isAnonymousInterfaceName(className)) {
     this.anonymousInlineClassNames.add(className);
   }
