@@ -54,11 +54,13 @@ import { emitDataListGetRangeLoop } from "./collections.js";
 import {
   createSoaSentinelValue,
   isInlineHandleType,
+  operandTrackingKey,
   resolveClassNode,
   resolveClassProperty,
   resolveInlineClassType,
 } from "./inline.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
+import { isAllInlineInterface } from "./udon_behaviour.js";
 
 /**
  * When an assignment target resolves to a class getter, emit a diagnostic
@@ -650,12 +652,32 @@ export function wrapDataToken(
   if (valueType.name === ExternTypes.dataToken.name) {
     return value;
   }
+  if (
+    valueType instanceof InterfaceTypeSymbol &&
+    valueType.name &&
+    isAllInlineInterface(this, valueType.name)
+  ) {
+    const valueKey = operandTrackingKey(value);
+    const info = valueKey ? this.resolveInlineInstance(valueKey) : undefined;
+    // Only collapse to a compile-time constant when the operand IS the
+    // canonical `__inst_*__handle` slot directly. For parameters or local
+    // copies (e.g. cross-module Map<K, IAlias>.set wrap where `item: IAlias`
+    // is a parameter), the tracked instance is the *current* binding —
+    // baking it in as a constant produces a stale handle for any other
+    // caller. Fall through to `normalizeOperandToInt32` below so a runtime
+    // SystemConvert.ToInt32 read is emitted against the live slot.
+    if (info && valueKey === `${info.prefix}__handle`) {
+      const instId = this.allInlineInstanceIdsByPrefix.get(info.prefix);
+      if (instId !== undefined) {
+        value = createConstant(instId, PrimitiveTypes.int32);
+        valueType = PrimitiveTypes.int32;
+      }
+    }
+  }
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.
   if (isInlineHandleType(this, valueType)) {
-    const handle = this.newTemp(PrimitiveTypes.int32);
-    this.emit(new CopyInstruction(handle, value));
-    value = handle;
+    value = normalizeOperandToInt32(this, value);
     valueType = PrimitiveTypes.int32;
   }
   // Arrays are DataLists at the Udon VM level. Wrap via DataList constructor

@@ -822,3 +822,129 @@ describe("inline recursive static method", () => {
     expect(result.tac).not.toContain("__inlineRec_Derived_factorial");
   });
 });
+
+describe("inline recursive instance method", () => {
+  beforeAll(() => {
+    buildExternRegistryFromFiles([]);
+  });
+
+  it("dispatches this.method() recursion via JUMP instead of MethodCallInstruction", () => {
+    const source = `
+      class Counter {
+        recurse(n: number): number {
+          if (n <= 0) return 0;
+          return this.recurse(n - 1) + 1;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const c: Counter = new Counter();
+          const r: number = c.recurse(5);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(result.tac).toContain("__inlineRecInst_Counter_recurse");
+    expect(result.tac).toContain(
+      "__inlineRecInst_Counter_recurse_selfCallResult_",
+    );
+    expect(result.tac).toMatch(/goto inline_rec_entry/);
+    expect(result.tac).not.toMatch(/Counter\.__recurse_/);
+  });
+
+  it("handles class-instance param across recursive frames", () => {
+    const source = `
+      class Box { x: number = 0; y: number = 0; }
+      class StructRec {
+        recurse(b: Box, n: number): number {
+          if (n <= 0) return b.x + b.y;
+          const next: Box = new Box();
+          next.x = b.x + 1;
+          next.y = b.y + 1;
+          return this.recurse(next, n - 1);
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const s: StructRec = new StructRec();
+          const start: Box = new Box();
+          const r: number = s.recurse(start, 3);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(result.tac).toContain("__inlineRecInst_StructRec_recurse");
+    expect(result.tac).toMatch(/goto inline_rec_entry/);
+    // No bogus extern lookup for the recursive call.
+    expect(result.tac).not.toMatch(/StructRec\.__recurse_/);
+  });
+
+  it("emits overflow handler naming the class and method", () => {
+    const source = `
+      class Loop {
+        recurse(n: number): number {
+          if (n <= 0) return 0;
+          return this.recurse(n - 1);
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const l: Loop = new Loop();
+          const r: number = l.recurse(3);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(result.tac).toMatch(
+      /Max recursion depth.*exceeded in Loop\.recurse/,
+    );
+  });
+
+  it("does not corrupt static recursion when both kinds coexist", () => {
+    const source = `
+      class StaticRec {
+        static factorial(n: number): number {
+          if (n <= 1) return 1;
+          return n * StaticRec.factorial(n - 1);
+        }
+      }
+      class InstRec {
+        recurse(n: number): number {
+          if (n <= 0) return 0;
+          return this.recurse(n - 1) + 1;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const a: number = StaticRec.factorial(5);
+          const r: InstRec = new InstRec();
+          const b: number = r.recurse(5);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    // Distinct prefixes prevent stack collision
+    expect(result.tac).toContain("__inlineRec_StaticRec_factorial");
+    expect(result.tac).toContain("__inlineRecInst_InstRec_recurse");
+  });
+});

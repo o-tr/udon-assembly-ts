@@ -47,6 +47,12 @@ import type {
   UdonBehaviourLayouts,
   UdonBehaviourMethodLayout,
 } from "../udon_behaviour_layout.js";
+import type { DispatchLimitResolver } from "./dispatch_limit_resolver.js";
+import { createDefaultDispatchLimitResolver } from "./dispatch_limit_resolver.js";
+import {
+  createDefaultFieldTypeRegistry,
+  type FieldTypeRegistry,
+} from "./field_type_registry.js";
 import {
   assignToTarget,
   coerceConstantToType,
@@ -228,6 +234,8 @@ export class ASTToTACConverter {
     | {
         declaringClassName: string;
         methodName: string;
+        prefix: string;
+        isStatic: boolean;
         locals: Array<{ name: string; type: TypeSymbol }>;
         depthVar: string;
         spVar: string;
@@ -242,6 +250,7 @@ export class ASTToTACConverter {
         returnsVoid: boolean;
       }
     | undefined;
+  inlineMethodSelfCallCount: Map<string, number> = new Map();
   /**
    * Shared return site registries keyed by "className.methodName".
    * Both callers (from Start) and the recursive method itself register here.
@@ -273,6 +282,8 @@ export class ASTToTACConverter {
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;
   typeMapper: TypeMapper;
+  fieldTypeRegistry: FieldTypeRegistry;
+  dispatchLimitResolver: DispatchLimitResolver;
   enumRegistry: EnumRegistry;
   classMap: Map<string, ClassDeclarationNode> = new Map();
   entryPointClasses: Set<string> = new Set();
@@ -286,6 +297,10 @@ export class ASTToTACConverter {
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
+  /** Reverse lookup for `allInlineInstances`: prefix → instanceId. */
+  allInlineInstanceIdsByPrefix: Map<string, number> = new Map();
+  /** Set of anonymous inline class names for O(1) isInlineHandleType checks */
+  anonymousInlineClassNames: Set<string> = new Set();
   /**
    * Classes whose constructor is invoked inside a loop body.
    * Detected in pass 1; pre-seeded into pass 2.
@@ -353,6 +368,11 @@ export class ASTToTACConverter {
    *  If incremental compilation ever calls register() during convertImpl(),
    *  this cache must be cleared. */
   allInlineInterfaceCache: Map<string, boolean> = new Map();
+  /** Cache for inferInlineStructuralPropertyType to avoid O(instances) scans
+   *  on every erased structural property access. Keyed by property name;
+   *  reset per pass. */
+  inlineStructuralPropertyTypeCache: Map<string, TypeSymbol | undefined> =
+    new Map();
   udonBehaviourClasses: ReadonlySet<string>;
   udonBehaviourLayouts: UdonBehaviourLayouts;
   classRegistry: ClassRegistry | null;
@@ -464,11 +484,23 @@ export class ASTToTACConverter {
       checkerContext?: TypeCheckerContext;
       checkerTypeResolver?: TypeCheckerTypeResolver;
       outlineBodyInstrThreshold?: number;
+      fieldTypeRegistry?: FieldTypeRegistry;
+      /**
+       * Supply a custom resolver when your project has domain-specific
+       * wide-dispatch properties. The default resolver does not widen any
+       * property names, so projects that depended on hardcoded wide-path
+       * names must provide their own resolver explicitly.
+       */
+      dispatchLimitResolver?: DispatchLimitResolver;
     },
   ) {
     this.symbolTable = symbolTable;
     this.enumRegistry = enumRegistry ?? new EnumRegistry();
     this.typeMapper = options?.typeMapper ?? new TypeMapper(this.enumRegistry);
+    this.fieldTypeRegistry =
+      options?.fieldTypeRegistry ?? createDefaultFieldTypeRegistry();
+    this.dispatchLimitResolver =
+      options?.dispatchLimitResolver ?? createDefaultDispatchLimitResolver();
     this.udonBehaviourClasses = udonBehaviourClasses ?? new Set();
     this.udonBehaviourLayouts = udonBehaviourLayouts ?? new Map();
     this.classRegistry = classRegistry ?? null;
@@ -618,6 +650,7 @@ export class ASTToTACConverter {
     this.inlineMethodStack = new Set();
     this.interfaceClassIdMap = new Map();
     this.allInlineInstances = new Map();
+    this.allInlineInstanceIdsByPrefix = new Map();
     this.soaClasses = new Set();
     this.soaFieldLists = new Map();
     this.soaFieldTypes = new Map();
@@ -626,6 +659,8 @@ export class ASTToTACConverter {
     this.soaConstructionPrefixes = new Set();
     this.implementorNamesCache = new Map();
     this.allInlineInterfaceCache = new Map();
+    this.anonymousInlineClassNames = new Set();
+    this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();
     this.inlinedBodyStack = [];
@@ -662,10 +697,23 @@ export class ASTToTACConverter {
     this.currentNativeArrayVarName = null;
     this.pass1EmitCount = 0;
     this.inlineStaticCallInfo = new Map();
+    this.inlineMethodSelfCallCount = new Map();
     // outlineCandidates intentionally NOT cleared — survives between passes
     this.outlinedMethods = new Map();
     this.pendingOutlineDispatches = [];
     this.outlineIneligibleCache = new WeakMap();
+  }
+
+  restoreInlineInstanceState(
+    allInlineInstances: Map<number, { prefix: string; className: string }>,
+  ): void {
+    this.allInlineInstances = allInlineInstances;
+    this.allInlineInstanceIdsByPrefix = new Map(
+      [...allInlineInstances.entries()].map(([instanceId, info]) => [
+        info.prefix,
+        instanceId,
+      ]),
+    );
   }
 
   /**
@@ -801,12 +849,14 @@ export class ASTToTACConverter {
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
     // resetState() already clears metadataOnlyMode, so no explicit reset here.
     const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
+    const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
     this.resetState();
-    this.allInlineInstances = allInstancesFromPass1;
+    this.restoreInlineInstanceState(allInstancesFromPass1);
     this.outlineCandidates = outlineCandidatesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
     this.inlineStaticCallInfo = inlineStaticCallInfoFromPass1;
+    this.inlineMethodSelfCallCount = inlineMethodSelfCallCountFromPass1;
     const result = this.convertImpl(program);
     if (PROF) {
       countKinds(this, result);

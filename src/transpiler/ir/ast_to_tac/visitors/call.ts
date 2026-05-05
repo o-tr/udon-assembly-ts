@@ -53,6 +53,7 @@ import {
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
+  type TemporaryOperand,
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { UdonBehaviourMethodLayout } from "../../udon_behaviour_layout.js";
@@ -70,6 +71,7 @@ import {
   createSoaSentinelValue,
   emitDeferredInlineInitializers,
   emitParamPropertyAssignments,
+  emitStructuralFieldCopies,
   getCurrentDeferredInitializerClassName,
   inlineSuperConstructorFromArgs,
   isInlineHandleType,
@@ -80,19 +82,21 @@ import {
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
+  STRUCTURAL_RECURSION_DEPTH_CAP,
+  usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { PROF, profEnter, profExit } from "../profiling.js";
-import { resolveTypeFromNode } from "./expression.js";
+import { resolveMethodReturnType, resolveTypeFromNode } from "./expression.js";
 
 const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // D3 method dispatch inlines full method bodies per instance, so use a
 // stricter limit than property dispatch to avoid excessive code bloat.
-const MAX_D3_METHOD_DISPATCH_CANDIDATES = 20;
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 100;
 
 /**
  * Build a fallback IPC method layout from interface metadata when the
@@ -364,6 +368,167 @@ function mergeInlineMapping(
   return current;
 }
 
+function mergeStructuralReturnMapping(
+  dispatchResult: TACOperand,
+  returnType: TypeSymbol,
+  inlineRes: TACOperand,
+  instanceMap: Map<string, { prefix: string; className: string }>,
+  current: { prefix: string; className: string } | null | undefined,
+): { prefix: string; className: string } | null {
+  if (
+    !(returnType instanceof InterfaceTypeSymbol) ||
+    returnType.properties.size === 0
+  ) {
+    return mergeInlineMapping(current, inlineRes, instanceMap);
+  }
+  const resKey = operandTrackingKey(inlineRes);
+  const branchMapping = resKey ? instanceMap.get(resKey) : undefined;
+  if (!branchMapping?.prefix) return null;
+  const dispatchPrefix = operandTrackingKey(dispatchResult);
+  if (!dispatchPrefix) return null;
+  const stableMapping = {
+    prefix: dispatchPrefix,
+    className: returnType.name,
+  };
+  if (
+    current !== undefined &&
+    (!current || current.className !== stableMapping.className)
+  ) {
+    return null;
+  }
+  // The recursive `emitStructuralFieldCopies` call upstream already populated
+  // every level of `${dispatchPrefix}_<prop>...` slots from the same source.
+  // This function's role is now solely to compute the stable mapping that
+  // downstream property reads consult — the top-level copy loop here was
+  // redundant and only handled one level of nesting (incomplete for 2+-deep
+  // structural types where emitStructuralFieldCopies already filled all levels).
+  return stableMapping;
+}
+
+function structuralInterfaceForType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol | undefined,
+): InterfaceTypeSymbol | undefined {
+  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
+    return type;
+  }
+  if (!type?.name) return undefined;
+  const alias = converter.typeMapper.getAlias(type.name);
+  return alias instanceof InterfaceTypeSymbol && alias.properties.size > 0
+    ? alias
+    : undefined;
+}
+
+/**
+ * Cycle-guarded recursion that emits sentinel defaults at every depth of
+ * nested structural interface properties. Mirrors `emitStructuralPrefixDefaults`
+ * in statement.ts so the dispatch-result default path matches the
+ * variable-decl initialisation path for 3+-deep nested types. The depth cap
+ * is the shared `STRUCTURAL_RECURSION_DEPTH_CAP` re-used from
+ * helpers/inline.ts; see its definition for rationale.
+ */
+function emitDispatchResultPrefixDefaults(
+  converter: ASTToTACConverter,
+  prefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen: Set<string>,
+  depth = 0,
+): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = propTypeRaw.name
+      ? (converter.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
+      : propTypeRaw;
+    converter.emit(
+      new AssignmentInstruction(
+        createVariable(`${prefix}_${propName}`, propType),
+        createSoaSentinelValue(converter, propType),
+      ),
+    );
+    const nestedStructuralType = structuralInterfaceForType(
+      converter,
+      propType,
+    );
+    if (nestedStructuralType) {
+      emitDispatchResultPrefixDefaults(
+        converter,
+        `${prefix}_${propName}`,
+        nestedStructuralType,
+        seen,
+        depth + 1,
+      );
+    }
+  }
+}
+
+function emitDispatchResultDefaults(
+  converter: ASTToTACConverter,
+  dispatchResult: TACOperand | undefined,
+  returnType: TypeSymbol | undefined,
+): void {
+  if (!dispatchResult) return;
+  converter.emit(
+    new AssignmentInstruction(
+      dispatchResult,
+      createSoaSentinelValue(converter, returnType ?? ObjectType),
+    ),
+  );
+  const structuralType = structuralInterfaceForType(converter, returnType);
+  if (!structuralType) return;
+  const prefix = operandTrackingKey(dispatchResult);
+  if (!prefix) return;
+  emitDispatchResultPrefixDefaults(
+    converter,
+    prefix,
+    structuralType,
+    new Set<string>(),
+  );
+}
+
+/**
+ * Emit a runtime diagnostic + type-appropriate default when an inline method
+ * call cannot be dispatched (e.g. recursion guard fired, or D3 dispatch
+ * missed). This centralises the LogError + sentinel fallback pattern so the
+ * inner this.method() guard and the outer general-property-access guard stay
+ * in sync.
+ */
+function emitInlineRecursionFallback(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+  className: string,
+  methodName: string,
+  returnType: TypeSymbol | undefined,
+): TACOperand | typeof VOID_RETURN {
+  const logExtern = converter.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const errMsg = createConstant(
+    `[udon-assembly-ts] Unsupported call to inline method ${className}.${methodName} (likely recursive instance method on an inline class — refactor to remove recursion or use @RecursiveMethod on a UdonBehaviour-decorated class).`,
+    PrimitiveTypes.string,
+  );
+  converter.emit(new CallInstruction(undefined, logExtern, [errMsg]));
+  converter.warnAt(
+    node,
+    "InlineInstanceRecursionUnsupported",
+    `Unsupported call to inline method ${className}.${methodName}: recursive instance methods on inline classes are not supported. The call site emits a Debug.LogError and a default return value at runtime.`,
+  );
+  if (returnType?.udonType === UdonType.Void) {
+    return VOID_RETURN;
+  }
+  const fallbackType = returnType ?? ObjectType;
+  const fallbackResult = converter.newTemp(fallbackType);
+  emitDispatchResultDefaults(converter, fallbackResult, fallbackType);
+  return fallbackResult;
+}
+
 /** Populate and return the implementor names cache for a type. */
 function getOrPopulateImplementorNames(
   converter: ASTToTACConverter,
@@ -522,6 +687,23 @@ function collectSoAFieldReads(
   return fieldReads;
 }
 
+const SOA_FIELD_MUTATING_METHODS = new Set([
+  "Add",
+  "Clear",
+  "Insert",
+  "Remove",
+  "RemoveAt",
+  "Reverse",
+  "SetValue",
+  "Sort",
+  "set_Item",
+]);
+
+function variableNameOfOperand(operand: TACOperand | undefined): string | null {
+  if (!operand || operand.kind !== TACOperandKind.Variable) return null;
+  return (operand as VariableOperand).name;
+}
+
 /**
  * SoA fast path for method dispatch: when ALL candidate instances belong to a
  * single SoA class, load fields from per-field DataLists using the runtime
@@ -548,6 +730,25 @@ function trySoAMethodDispatch(
     !converter.soaClasses.has(soaClassName) ||
     !converter.soaFieldLists.has(soaClassName)
   ) {
+    return null;
+  }
+
+  // Recursive instance methods cannot use the SoA fast path: scratch is a
+  // field snapshot, so mutations during a recursive frame would not propagate
+  // back to SoA storage. Fall through to handle-based D3 dispatch.
+  // The recursion map is keyed by *declaring* class, not the concrete SoA
+  // class, so inherited recursive methods are detected correctly.
+  const resolvedMethod = resolveClassMethod(
+    converter,
+    soaClassName,
+    propAccess.property,
+    false,
+  );
+  const declaringClassName = resolvedMethod?.declaringClassName ?? soaClassName;
+  const recCount = converter.inlineMethodSelfCallCount.get(
+    `${declaringClassName}::${propAccess.property}`,
+  );
+  if ((recCount ?? 0) > 0) {
     return null;
   }
 
@@ -614,7 +815,14 @@ function trySoAMethodDispatch(
     const scratchVar = fieldScratchVars.get(fieldName);
     if (scratchVar) {
       const token = converter.newTemp(ExternTypes.dataToken);
-      emitBoundedDataListGetItem(converter, listVar, hdlVar, token);
+      emitBoundedDataListGetItem(
+        converter,
+        listVar,
+        hdlVar,
+        token,
+        () => createSoaSentinelValue(converter, scratchVar.type),
+        true,
+      );
       const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
       converter.emit(new CopyInstruction(scratchVar, unwrapped));
     }
@@ -637,7 +845,7 @@ function trySoAMethodDispatch(
     converter.tempCounter = savedTempCounter;
     converter.labelCounter = savedLabelCounter;
     converter.inlineInstanceMap = savedInlineInstanceMap;
-    converter.allInlineInstances = savedAllInlineInstances;
+    converter.restoreInlineInstanceState(savedAllInlineInstances);
     return null;
   }
 
@@ -645,16 +853,36 @@ function trySoAMethodDispatch(
   // Read-only fields (preloaded but not written) are not written back —
   // their DataList slots still hold the correct value.
   const writtenFieldNames = new Set<string>();
+  const fieldAliases = new Map(scratchNameToField);
   for (let i = instrBeforeInline; i < converter.instructions.length; i++) {
     const inst = converter.instructions[i];
+    if (inst instanceof MethodCallInstruction) {
+      const objectName = variableNameOfOperand(inst.object);
+      const fieldName = objectName ? fieldAliases.get(objectName) : undefined;
+      if (fieldName && SOA_FIELD_MUTATING_METHODS.has(inst.method)) {
+        writtenFieldNames.add(fieldName);
+      }
+    }
+
     if ("dest" in inst) {
       const dest = (inst as { dest: TACOperand }).dest;
-      if (dest && dest.kind === TACOperandKind.Variable) {
-        const fieldName = scratchNameToField.get(
-          (dest as VariableOperand).name,
-        );
+      const destName = variableNameOfOperand(dest);
+      if (destName) {
+        const fieldName = scratchNameToField.get(destName);
         if (fieldName) {
           writtenFieldNames.add(fieldName);
+        }
+
+        if (inst instanceof CopyInstruction) {
+          const srcName = variableNameOfOperand(inst.src);
+          const sourceFieldName = srcName ? fieldAliases.get(srcName) : null;
+          if (sourceFieldName) {
+            fieldAliases.set(destName, sourceFieldName);
+          } else if (!scratchNameToField.has(destName)) {
+            fieldAliases.delete(destName);
+          }
+        } else if (!scratchNameToField.has(destName)) {
+          fieldAliases.delete(destName);
         }
       }
     }
@@ -831,6 +1059,11 @@ function tryUntrackedInlineDispatch(
   const dispatchResult = isVoid
     ? undefined
     : converter.newTemp(resolvedUntrackedReturnType);
+  emitDispatchResultDefaults(
+    converter,
+    dispatchResult,
+    resolvedUntrackedReturnType,
+  );
   const handleVar = normalizeOperandToInt32(converter, object);
   const endLabel = converter.newLabel("untracked_call_end");
 
@@ -840,18 +1073,22 @@ function tryUntrackedInlineDispatch(
     | null
     | undefined;
 
-  for (const [instanceId, info] of candidateInstances) {
+  for (const [, info] of candidateInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("untracked_call_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
+    // Compare against the live __handle variable rather than a compile-time
+    // constant so that cross-module and parameter-passing scenarios see the
+    // runtime value.  This is safe because nextInstanceId starts at 1
+    // (converter.ts), so an uninitialised slot (default 0) never aliases a
+    // valid instance ID.
+    const instanceHandle = createVariable(
+      `${info.prefix}__handle`,
+      PrimitiveTypes.int32,
+    );
     converter.emit(
-      new BinaryOpInstruction(
-        cond,
-        handleVar,
-        "==",
-        createConstant(instanceId, PrimitiveTypes.int32),
-      ),
+      new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
     );
     converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
@@ -868,23 +1105,36 @@ function tryUntrackedInlineDispatch(
       converter.tempCounter = savedTempCounter;
       converter.labelCounter = savedLabelCounter;
       converter.inlineInstanceMap = savedInlineInstanceMap;
-      converter.allInlineInstances = savedAllInlineInstances;
+      converter.restoreInlineInstanceState(savedAllInlineInstances);
       dispatchFailed = true;
       break;
     }
 
     if (dispatchResult) {
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
-      resultInlineMapping = mergeInlineMapping(
-        resultInlineMapping,
+      const dispatchResultPrefix = operandTrackingKey(dispatchResult);
+      if (dispatchResultPrefix) {
+        emitStructuralFieldCopies(
+          converter,
+          dispatchResultPrefix,
+          resolvedUntrackedReturnType,
+          inlineRes,
+          { isLocal: true },
+          true,
+        );
+      }
+      resultInlineMapping = mergeStructuralReturnMapping(
+        dispatchResult,
+        resolvedUntrackedReturnType,
         inlineRes,
         converter.inlineInstanceMap,
+        resultInlineMapping,
       );
     }
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
-    converter.allInlineInstances = branchAllInlineSnapshot;
+    converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
   if (dispatchFailed) return null;
@@ -893,7 +1143,7 @@ function tryUntrackedInlineDispatch(
   // For erased owners, that would generate invalid EXTERN signatures
   // (e.g. SystemObject.__inc__) and fail VM load.
   converter.inlineInstanceMap = savedInlineInstanceMap;
-  converter.allInlineInstances = savedAllInlineInstances;
+  converter.restoreInlineInstanceState(savedAllInlineInstances);
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -1090,7 +1340,14 @@ function tryD3MethodDispatch(
   const dispatchResult = isVoid
     ? undefined
     : converter.newTemp(resolvedRetType ?? ObjectType);
+  emitDispatchResultDefaults(converter, dispatchResult, resolvedRetType);
   const handleVar = normalizeOperandToInt32(converter, object);
+  const objectAlias = objectTypeName
+    ? converter.typeMapper.getAlias(objectTypeName)
+    : undefined;
+  const useInterfaceInstanceIdDispatch =
+    objectAlias instanceof InterfaceTypeSymbol &&
+    isAllInlineInterface(converter, objectAlias.name);
   const endLabel = converter.newLabel("d3_method_end");
 
   // Track inline return info across branches.
@@ -1099,18 +1356,16 @@ function tryD3MethodDispatch(
     | null
     | undefined;
 
-  for (const [instanceId, info] of dispInstances) {
+  for (const [instId, info] of dispInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("d3_method_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
+    const instanceHandle = useInterfaceInstanceIdDispatch
+      ? createConstant(instId, PrimitiveTypes.int32)
+      : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
     converter.emit(
-      new BinaryOpInstruction(
-        cond,
-        handleVar,
-        "==",
-        createConstant(instanceId, PrimitiveTypes.int32),
-      ),
+      new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
     );
     converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
@@ -1127,23 +1382,36 @@ function tryD3MethodDispatch(
       converter.tempCounter = savedTempCounter;
       converter.labelCounter = savedLabelCounter;
       converter.inlineInstanceMap = savedInlineInstanceMap;
-      converter.allInlineInstances = savedAllInlineInstances;
+      converter.restoreInlineInstanceState(savedAllInlineInstances);
       dispatchFailed = true;
       break;
     }
 
     if (dispatchResult) {
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
-      resultInlineMapping = mergeInlineMapping(
-        resultInlineMapping,
+      const dispatchResultPrefix = operandTrackingKey(dispatchResult);
+      if (dispatchResultPrefix) {
+        emitStructuralFieldCopies(
+          converter,
+          dispatchResultPrefix,
+          resolvedRetType ?? ObjectType,
+          inlineRes,
+          { isLocal: true },
+          true,
+        );
+      }
+      resultInlineMapping = mergeStructuralReturnMapping(
+        dispatchResult,
+        resolvedRetType ?? ObjectType,
         inlineRes,
         converter.inlineInstanceMap,
+        resultInlineMapping,
       );
     }
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
-    converter.allInlineInstances = branchAllInlineSnapshot;
+    converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
   if (dispatchFailed) return null;
@@ -1152,7 +1420,7 @@ function tryD3MethodDispatch(
   // produces a visible diagnostic instead of silently returning an
   // uninitialized zero/null result.
   converter.inlineInstanceMap = savedInlineInstanceMap;
-  converter.allInlineInstances = savedAllInlineInstances;
+  converter.restoreInlineInstanceState(savedAllInlineInstances);
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -2450,7 +2718,10 @@ export function visitCallExpression(
       }
       return result;
     }
-    if (objectType.udonType === UdonType.Array) {
+    if (
+      objectType.udonType === UdonType.Array ||
+      objectType.udonType === UdonType.DataList
+    ) {
       const arrayReturn =
         objectType instanceof ArrayTypeSymbol
           ? objectType
@@ -2634,10 +2905,36 @@ export function visitCallExpression(
               createConstant(0, PrimitiveTypes.int32),
             ),
           );
-          const lenVar = this.newTemp(PrimitiveTypes.int32);
-          this.emit(new PropertyGetInstruction(lenVar, object, "Count"));
           const loopStart = this.newLabel("includes_start");
           const loopEnd = this.newLabel("includes_end");
+          // Box the list operand into an Object slot before comparing against
+          // the null-Object constant. When `object`'s slot type is the typed
+          // DataList / ArrayTypeSymbol, the direct compare lowers to an
+          // op_Inequality with mismatched operand types and may not detect a
+          // null reference reliably across Udon runtime versions. Mirrors the
+          // SoA `emitBoundedDataListGetItem` boxing fix.
+          const boxedList = this.newTemp(ObjectType);
+          this.emit(new CopyInstruction(boxedList, object));
+          const listNotNull = this.newTemp(PrimitiveTypes.boolean);
+          this.emit(
+            new BinaryOpInstruction(
+              listNotNull,
+              boxedList,
+              "!=",
+              createConstant(null, ObjectType),
+            ),
+          );
+          // ConditionalJumpInstruction lowers to JumpIfFalse, so when
+          // `listNotNull` is false (the boxed list IS null) we jump straight
+          // to `loopEnd`. `loopEnd` is the not-found merge point — the
+          // null-list case shares it deliberately because `result` was
+          // pre-initialised to `false` above, which is the correct return
+          // for both "no match" and "null receiver". A separate early-exit
+          // label (analogous to the optional-chain `nullLabel` pattern)
+          // would be more self-documenting but emit identical TAC.
+          this.emit(new ConditionalJumpInstruction(listNotNull, loopEnd));
+          const lenVar = this.newTemp(PrimitiveTypes.int32);
+          this.emit(new PropertyGetInstruction(lenVar, object, "Count"));
           this.emit(new LabelInstruction(loopStart));
           // if !(i < len) goto end
           const condVar = this.newTemp(PrimitiveTypes.boolean);
@@ -2647,7 +2944,9 @@ export function visitCallExpression(
           const elemType =
             objectType instanceof ArrayTypeSymbol
               ? objectType.elementType
-              : ObjectType;
+              : objectType instanceof DataListTypeSymbol
+                ? objectType.elementType
+                : this.getOperandType(searchValue);
           const tokenTemp = this.newTemp(ExternTypes.dataToken);
           this.emit(
             new MethodCallInstruction(tokenTemp, object, "get_Item", [
@@ -2898,6 +3197,32 @@ export function visitCallExpression(
         ),
       );
       if (inlineResult != null) return inlineResult;
+      // Inlining declined (most often: recursion guard fired because the
+      // method is calling itself).  Falling through would emit a
+      // MethodCallInstruction whose codegen synthesizes a fake
+      // `<ThisType>.__methodName__...` extern signature that does not
+      // exist in the Udon VM, crashing at runtime with NotSupportedException.
+      // Emit a runtime diagnostic + type-appropriate default so transpilation
+      // continues and the failure mode is visible.
+      const inlineSelfMethod = resolveClassMethod(
+        this,
+        inlineCtx.className,
+        propAccess.property,
+        false,
+      );
+      if (inlineSelfMethod) {
+        const methodReturn = inlineSelfMethod.method.returnType;
+        const resolvedSelfReturn = methodReturn?.name
+          ? (this.typeMapper.getAlias(methodReturn.name) ?? methodReturn)
+          : methodReturn;
+        return emitInlineRecursionFallback(
+          this,
+          node,
+          inlineCtx.className,
+          propAccess.property,
+          resolvedSelfReturn ?? undefined,
+        );
+      }
     }
     // Inline instance method call: object.method() where object is inline instance.
     // operandTrackingKey handles both Variable and Temporary operands.
@@ -3017,7 +3342,7 @@ export function visitCallExpression(
               this.tempCounter = savedTempCounter;
               this.labelCounter = savedLabelCounter;
               this.inlineInstanceMap = savedInlineInstanceMap;
-              this.allInlineInstances = savedAllInlineInstances;
+              this.restoreInlineInstanceState(savedAllInlineInstances);
               dispatchFailed = true;
               break;
             }
@@ -3157,7 +3482,7 @@ export function visitCallExpression(
             // from the pre-dispatch state. After the loop, resultInlineMapping
             // is re-inserted for result.name if all branches agreed.
             this.inlineInstanceMap = branchMapSnapshot;
-            this.allInlineInstances = branchAllInlineSnapshot;
+            this.restoreInlineInstanceState(branchAllInlineSnapshot);
           }
 
           if (!dispatchFailed) {
@@ -3520,6 +3845,64 @@ export function visitCallExpression(
       if (d3MethodResult != null) return d3MethodResult;
     }
 
+    // Guard: when the receiver is a user-defined inline class with a known
+    // user method (e.g. recursive self-call inside an inlined body), do not
+    // fall through to MethodCallInstruction.  The codegen would otherwise
+    // synthesize a fake `<ThisType>.__methodName__...` extern signature that
+    // does not exist in the Udon VM, crashing at runtime with
+    // NotSupportedException.  Emit a Debug.LogError diagnostic and return a
+    // type-appropriate default so transpilation continues and the failure
+    // mode is visible at runtime.
+    //
+    // Resolve the receiver's class name through several fallbacks because the
+    // operand's TAC type may have been widened to ObjectType by the
+    // ThisExpression / SoA dispatch path even though the underlying receiver
+    // is a known inline class instance.
+    const candidateReceiverNames: string[] = [];
+    if (objectType.name) candidateReceiverNames.push(objectType.name);
+    const receiverTrackingKey = operandTrackingKey(object);
+    if (receiverTrackingKey) {
+      const tracked = this.resolveInlineInstance(receiverTrackingKey);
+      if (tracked?.className) candidateReceiverNames.push(tracked.className);
+    }
+    // Note: this.currentInlineContext.className is intentionally NOT added here.
+    // The this.method() case inside an inline body is already handled by the
+    // currentInlineContext branch (~line 3144). Adding it here would falsely
+    // intercept cross-class calls (e.g. b.reset() inside A's inlined body
+    // when A also defines reset), producing a wrong runtime result.
+    let userMethodReceiverName: string | undefined;
+    let resolvedUserMethod: ReturnType<typeof resolveClassMethod>;
+    for (const candidate of candidateReceiverNames) {
+      const method = resolveClassMethod(
+        this,
+        candidate,
+        propAccess.property,
+        false,
+      );
+      if (method) {
+        userMethodReceiverName = candidate;
+        resolvedUserMethod = method;
+        break;
+      }
+    }
+    if (userMethodReceiverName) {
+      const recursionKey = `${userMethodReceiverName}::${propAccess.property}`;
+      if ((this.inlineMethodSelfCallCount.get(recursionKey) ?? 0) > 0) {
+        const fallbackReturnType =
+          resolvedReturnType ??
+          resolvedUserMethod?.method.returnType ??
+          undefined;
+        return emitInlineRecursionFallback(
+          this,
+          node,
+          userMethodReceiverName,
+          propAccess.property,
+          fallbackReturnType,
+        );
+      }
+      // Not in a recursive context; fall through to MethodCallInstruction below.
+    }
+
     if (resolvedReturnType?.udonType === UdonType.Void) {
       this.emit(
         new MethodCallInstruction(
@@ -3546,20 +3929,57 @@ export function visitCallExpression(
 
   if (callee.kind === ASTNodeKind.OptionalChainingExpression) {
     const opt = callee as OptionalChainingExpressionNode;
-    const evaluatedArgs = getArgs();
     const object = this.visitExpression(opt.object);
     const objTemp = this.newTemp(this.getOperandType(object));
     this.emitCopyWithTracking(objTemp, object);
+    const resolvedOptBaseType = resolveTypeFromNode(this, opt.object);
+    const optBaseType =
+      resolvedOptBaseType && !isPlainObjectType(resolvedOptBaseType)
+        ? resolvedOptBaseType
+        : this.getOperandType(objTemp);
+    const resolvedReturnType = resolveMethodReturnType(
+      this,
+      optBaseType,
+      opt.property,
+      false,
+    );
+    const logicalReturnType =
+      resolvedReturnType?.udonType === UdonType.Void
+        ? ObjectType
+        : (resolvedReturnType ?? ObjectType);
 
     const isNotNull = this.newTemp(PrimitiveTypes.boolean);
-    this.emit(
-      new BinaryOpInstruction(
-        isNotNull,
-        objTemp,
-        "!=",
-        createConstant(null, ObjectType),
-      ),
-    );
+    const objTempType = this.getOperandType(objTemp);
+    if (usesInlineNullSentinel(this, objTempType)) {
+      // Inline-handle receivers store null as the sentinel `-1`, not a null
+      // object reference. Mirror the parallel fix in
+      // visitOptionalChainingExpression — boxing the Int32 into Object would
+      // give a non-null reference and the short-circuit arm would be dead.
+      const handleInt32 = normalizeOperandToInt32(this, objTemp);
+      this.emit(
+        new BinaryOpInstruction(
+          isNotNull,
+          handleInt32,
+          "!=",
+          createConstant(-1, PrimitiveTypes.int32),
+        ),
+      );
+    } else {
+      // Box typed slots (DataList / Array / interface) into Object before the
+      // null compare so the BinaryOp lowers to SystemObject.op_Inequality with
+      // matched operand types — same boxing pattern as `.includes()` and the
+      // SoA `emitBoundedDataListGetItem` fix.
+      const boxedObj = this.newTemp(ObjectType);
+      this.emit(new CopyInstruction(boxedObj, objTemp));
+      this.emit(
+        new BinaryOpInstruction(
+          isNotNull,
+          boxedObj,
+          "!=",
+          createConstant(null, ObjectType),
+        ),
+      );
+    }
     const nullLabel = this.newLabel("opt_call_null");
     const endLabel = this.newLabel("opt_call_end");
     const callResult = this.newTemp(ObjectType);
@@ -3567,21 +3987,68 @@ export function visitCallExpression(
     // If `isNotNull` is false (object is null), jump to `nullLabel` to set the result to null.
     this.emit(new ConditionalJumpInstruction(isNotNull, nullLabel));
 
-    this.emit(
-      new MethodCallInstruction(
-        callResult,
-        objTemp,
-        opt.property,
-        evaluatedArgs,
-      ),
-    );
+    const optBaseName = `__opt_call_base_${this.tempCounter++}`;
+    const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
+    this.symbolTable.enterScope();
+    try {
+      this.symbolTable.addSymbol(optBaseName, optBaseType);
+      this.emit(new CopyInstruction(optBase, objTemp));
+      this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
+      const propCallResult = this.visitCallExpression({
+        kind: ASTNodeKind.CallExpression,
+        callee: {
+          kind: ASTNodeKind.PropertyAccessExpression,
+          object: {
+            kind: ASTNodeKind.Identifier,
+            name: optBaseName,
+          } as IdentifierNode,
+          property: opt.property,
+        } as PropertyAccessExpressionNode,
+        arguments: rawArgs,
+        typeArguments: node.typeArguments,
+      } as CallExpressionNode);
+      if (propCallResult !== VOID_RETURN) {
+        this.emitCopyWithTracking(callResult, propCallResult);
+        const callResultName = operandTrackingKey(callResult);
+        if (callResultName) {
+          emitStructuralFieldCopies(
+            this,
+            callResultName,
+            logicalReturnType,
+            propCallResult,
+            { isLocal: true },
+            true,
+          );
+        }
+      }
+    } finally {
+      this.symbolTable.exitScope();
+    }
     this.emit(new UnconditionalJumpInstruction(endLabel));
 
     this.emit(new LabelInstruction(nullLabel));
-    this.emit(
-      new AssignmentInstruction(callResult, createConstant(null, ObjectType)),
+    emitDispatchResultDefaults(
+      this,
+      callResult,
+      resolvedReturnType ?? undefined,
     );
     this.emit(new LabelInstruction(endLabel));
+
+    if (!resolvedReturnType || resolvedReturnType.udonType === UdonType.Void) {
+      return callResult;
+    }
+    if (
+      resolvedReturnType.udonType === UdonType.Boolean ||
+      resolvedReturnType.udonType === UdonType.String ||
+      isNumericUdonType(resolvedReturnType.udonType)
+    ) {
+      const unboxed = this.newTemp(resolvedReturnType);
+      this.emit(new CopyInstruction(unboxed, callResult));
+      return unboxed;
+    }
+    if (callResult.kind === TACOperandKind.Temporary) {
+      (callResult as TemporaryOperand).type = resolvedReturnType;
+    }
     return callResult;
   }
 
@@ -4196,7 +4663,6 @@ function visitMapMethodCall(
       }
       const keyValue = converter.visitExpression(rawArgs[0]);
       const keyToken = converter.wrapDataToken(keyValue);
-      const valueToken = converter.newTemp(ExternTypes.dataToken);
       const getResultType = resolveMapGetResultType(converter, valueType);
       if (
         isDebugCounterEnabled() &&
@@ -4206,33 +4672,45 @@ function visitMapMethodCall(
         const key = `H8.map.get.unwrap:${mapType?.name ?? "null"}:${valueType.name}:${converter.currentExpectedType?.name ?? "null"}:${getResultType.name}`;
         bumpDebugCounter(key);
       }
-      converter.emit(
-        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
-          keyToken,
-        ]),
-      );
       if (isInlineHandleType(converter, getResultType)) {
         if (isDebugCounterEnabled()) {
           const key = `H10.map.get.deferInlineUnwrap:${getResultType.name}`;
           bumpDebugCounter(key);
         }
+        const hasKey = converter.newTemp(PrimitiveTypes.boolean);
+        const missingLabel = converter.newLabel("map_get_inline_missing");
+        const endLabel = converter.newLabel("map_get_inline_end");
+        converter.emit(
+          new MethodCallInstruction(hasKey, mapOperand, "ContainsKey", [
+            keyToken,
+          ]),
+        );
         // Preserve explicitly stored nulls for inline handles. Missing-key
-        // lookups still follow unwrapDataToken's default-value semantics.
+        // lookups must not read DataDictionary.get_Item/GetValue: VRChat
+        // returns an error token for absent keys, and DataToken.Int on that
+        // token halts the VM.
         const inlineResultType = resolveInlineClassType(
           converter,
           getResultType,
         );
-        const isNull = converter.newTemp(PrimitiveTypes.boolean);
         const result = converter.newTemp(inlineResultType);
-        const nonNullLabel = converter.newLabel("map_get_inline_non_null");
-        const endLabel = converter.newLabel("map_get_inline_end");
+        converter.emit(new ConditionalJumpInstruction(hasKey, missingLabel));
+        const valueToken = converter.newTemp(ExternTypes.dataToken);
         converter.emit(
-          new BinaryOpInstruction(
-            isNull,
-            valueToken,
-            "==",
-            createConstant(null, ObjectType),
-          ),
+          new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
+            keyToken,
+          ]),
+        );
+        // `valueToken` is a DataToken struct, not a reference — comparing
+        // against the null-Object constant boxes the struct into a non-null
+        // reference and the "stored explicit null" branch never fires.
+        // Use the DataToken.IsNull property accessor (matches the canonical
+        // pattern in unwrapDataToken at assignment.ts:798-816) to detect the
+        // user-stored null case the surrounding comment promises to preserve.
+        const isNull = converter.newTemp(PrimitiveTypes.boolean);
+        const nonNullLabel = converter.newLabel("map_get_inline_non_null");
+        converter.emit(
+          new PropertyGetInstruction(isNull, valueToken, "IsNull"),
         );
         converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
         converter.emit(
@@ -4245,10 +4723,54 @@ function visitMapMethodCall(
         converter.emit(new LabelInstruction(nonNullLabel));
         const unwrapped = converter.unwrapDataToken(valueToken, getResultType);
         converter.emit(new CopyInstruction(result, unwrapped));
+        converter.emit(new UnconditionalJumpInstruction(endLabel));
+        converter.emit(new LabelInstruction(missingLabel));
+        converter.emit(
+          new CopyInstruction(
+            result,
+            createSoaSentinelValue(converter, getResultType),
+          ),
+        );
         converter.emit(new LabelInstruction(endLabel));
         return result;
       }
-      return converter.unwrapDataToken(valueToken, getResultType);
+      const valueToken = converter.newTemp(ExternTypes.dataToken);
+      const hasKey = converter.newTemp(PrimitiveTypes.boolean);
+      const missingLabel = converter.newLabel("map_get_missing");
+      const endLabel = converter.newLabel("map_get_end");
+      const resultType = isPlainObjectType(getResultType)
+        ? ExternTypes.dataToken
+        : getResultType;
+      const result = converter.newTemp(resultType);
+      converter.emit(
+        new MethodCallInstruction(hasKey, mapOperand, "ContainsKey", [
+          keyToken,
+        ]),
+      );
+      converter.emit(new ConditionalJumpInstruction(hasKey, missingLabel));
+      converter.emit(
+        new MethodCallInstruction(valueToken, mapOperand, "GetValue", [
+          keyToken,
+        ]),
+      );
+      if (isPlainObjectType(getResultType)) {
+        converter.emit(new CopyInstruction(result, valueToken));
+      } else {
+        const unwrapped = converter.unwrapDataToken(valueToken, getResultType);
+        converter.emit(new CopyInstruction(result, unwrapped));
+      }
+      converter.emit(new UnconditionalJumpInstruction(endLabel));
+      converter.emit(new LabelInstruction(missingLabel));
+      converter.emit(
+        new CopyInstruction(
+          result,
+          isPlainObjectType(getResultType)
+            ? converter.wrapDataToken(createConstant(null, ObjectType))
+            : createSoaSentinelValue(converter, getResultType),
+        ),
+      );
+      converter.emit(new LabelInstruction(endLabel));
+      return result;
     }
     case "has": {
       if (rawArgs.length !== 1) {

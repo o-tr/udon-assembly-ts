@@ -1,14 +1,15 @@
-import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   getNativeArrayTypeName,
   InterfaceTypeSymbol,
+  isNullableUdonType,
   isPlainObjectType,
   NativeArrayTypeSymbol,
   ObjectType,
   PrimitiveTypes,
+  type TypeSymbol,
 } from "../../../frontend/type_symbols.js";
 import {
   type ASTNode,
@@ -53,6 +54,7 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
+  type ConstantOperand,
   createConstant,
   createLabel,
   createVariable,
@@ -68,8 +70,11 @@ import {
 import {
   countSelfCalls,
   countTryCatchBlocks,
+  createSoaSentinelValue,
   MAX_RECURSION_STACK_DEPTH,
   operandTrackingKey,
+  STRUCTURAL_RECURSION_DEPTH_CAP,
+  usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
@@ -79,6 +84,122 @@ import { resolveTypeFromNode } from "./expression.js";
 function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
   for (let i = converter.loopContextStack.length - 1; i >= 0; i -= 1) {
     converter.loopContextStack[i].emitExitEpilogue?.();
+  }
+}
+
+function structuralInterfaceForType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): InterfaceTypeSymbol | undefined {
+  if (type instanceof InterfaceTypeSymbol && type.properties.size > 0) {
+    return type;
+  }
+  const alias = converter.typeMapper.getAlias(type.name);
+  if (alias instanceof InterfaceTypeSymbol && alias.properties.size > 0) {
+    return alias;
+  }
+  return undefined;
+}
+
+function resolvedStructuralPropertyType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): TypeSymbol {
+  return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
+}
+
+function isNullConstantOperand(
+  value: TACOperand | undefined,
+): value is ConstantOperand {
+  return (
+    value?.kind === TACOperandKind.Constant &&
+    (value as ConstantOperand).value === null
+  );
+}
+
+/**
+ * Cycle-guarded recursion that copies `${sourcePrefix}_<prop>` slot chains
+ * into `${targetPrefix}_<prop>` at arbitrary depth. Used by the structural
+ * field-copy block in visitVariableDeclaration; complements
+ * `emitStructuralPrefixDefaults` (default fill) and
+ * `emitNestedStructuralFieldCopies` (helpers/inline.ts variant). Emits plain
+ * `CopyInstruction` rather than `emitCopyWithTracking` so nested slot keys
+ * (e.g. `${destKey}_outer_inner`) are NOT seeded into inlineInstanceMap —
+ * matching the behaviour of the prior 2-level inline loop this helper
+ * replaces. The call site's top-level mapping guard
+ * (`inlineInstanceMap.get(destKey)` for the canonical `__inst_*` prefix) is a
+ * separate, top-level-only concern that stays correct regardless of which
+ * copy instruction is used here.
+ */
+function emitVarDeclStructuralFieldCopies(
+  converter: ASTToTACConverter,
+  sourcePrefix: string,
+  targetPrefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen: Set<string>,
+  depth = 0,
+): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  const seenKey = `${targetPrefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
+    converter.emit(
+      new CopyInstruction(
+        createVariable(`${targetPrefix}_${propName}`, propType),
+        createVariable(`${sourcePrefix}_${propName}`, propType),
+      ),
+    );
+    const nestedStructuralType = structuralInterfaceForType(
+      converter,
+      propType,
+    );
+    if (nestedStructuralType) {
+      emitVarDeclStructuralFieldCopies(
+        converter,
+        `${sourcePrefix}_${propName}`,
+        `${targetPrefix}_${propName}`,
+        nestedStructuralType,
+        seen,
+        depth + 1,
+      );
+    }
+  }
+}
+
+function emitStructuralPrefixDefaults(
+  converter: ASTToTACConverter,
+  prefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen = new Set<string>(),
+  depth = 0,
+): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+
+  for (const [propName, propTypeRaw] of structuralType.properties) {
+    const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
+    const propVar = createVariable(`${prefix}_${propName}`, propType);
+    const defaultValue = createSoaSentinelValue(converter, propType);
+    converter.emit(new AssignmentInstruction(propVar, defaultValue));
+
+    const nestedStructuralType = structuralInterfaceForType(
+      converter,
+      propType,
+    );
+    if (nestedStructuralType) {
+      emitStructuralPrefixDefaults(
+        converter,
+        `${prefix}_${propName}`,
+        nestedStructuralType,
+        seen,
+        depth + 1,
+      );
+    }
   }
 }
 
@@ -341,6 +462,56 @@ export function visitVariableDeclaration(
     // is still valid (e.g. `const { hand } = context` inside an inlined method
     // body where `hand` inherits tracking from the enclosing inline expansion).
     this.maybeTrackInlineInstanceAssignment(dest, src, false);
+    const structuralType = structuralInterfaceForType(this, destType);
+    const srcKey = operandTrackingKey(src);
+    const destKey = operandTrackingKey(dest);
+    // Only run structural field propagation when the source actually maps to
+    // an inline instance. For untracked sources (e.g. a temporary holding the
+    // result of `cond ? a : b` where each branch is a different concrete
+    // class), there are no `${srcKey}_<prop>` slots to copy from — emitting
+    // them would produce reads against never-written names like `__tmp2_value`
+    // and rob the downstream property-access path of its chance to fall
+    // through to D-3 untracked-handle dispatch.
+    const srcMapping =
+      structuralType && srcKey ? this.resolveInlineInstance(srcKey) : undefined;
+    const sourcePrefixFromNamedSlots =
+      structuralType && srcKey
+        ? Array.from(structuralType.properties.keys()).some((propName) =>
+            this.symbolTable.lookup(`${srcKey}_${propName}`),
+          )
+        : false;
+    const sourcePrefix = srcMapping
+      ? srcMapping.prefix
+      : sourcePrefixFromNamedSlots
+        ? srcKey
+        : undefined;
+    if (structuralType && srcKey && destKey && sourcePrefix) {
+      // Resolve to the canonical inline-instance prefix so per-field copies
+      // read from the underlying `__inst_*_<prop>` slots rather than
+      // `__inst_*__handle_<prop>` (a parallel name codegen never writes).
+      // Cycle-guarded recursion handles arbitrary nesting depth — previously
+      // capped at two levels, leaving 3+-deep slots silently uncopied.
+      emitVarDeclStructuralFieldCopies(
+        this,
+        sourcePrefix,
+        destKey,
+        structuralType,
+        new Set<string>(),
+      );
+      // Preserve a canonical inline-instance mapping when one was already set
+      // by maybeTrackInlineInstanceAssignment above. Replacing the canonical
+      // `__inst_*` prefix with the local var name would force downstream
+      // visitReturnStatement field-copies to source from the local-var alias
+      // (e.g. `__inline_ret_0_x = p1_x`) instead of the canonical instance
+      // slot, missing the unified-return-prefix population the tests expect.
+      const existing = this.inlineInstanceMap.get(destKey);
+      if (!existing || !existing.prefix.startsWith("__inst_")) {
+        this.inlineInstanceMap.set(destKey, {
+          prefix: destKey,
+          className: structuralType.name,
+        });
+      }
+    }
   }
 }
 
@@ -1238,8 +1409,9 @@ export function visitReturnStatement(
   const prevExpectedType = this.currentExpectedType;
   if (inlineContext && node.value) {
     const retType = inlineContext.returnVar.type;
-    if (retType instanceof InterfaceTypeSymbol) {
-      this.currentExpectedType = retType;
+    const retStructuralType = structuralInterfaceForType(this, retType);
+    if (retStructuralType) {
+      this.currentExpectedType = retStructuralType;
     } else if (
       node.value.kind === ASTNodeKind.ObjectLiteralExpression &&
       retType.name !== ObjectType.name
@@ -1443,6 +1615,37 @@ export function visitReturnStatement(
       }
     }
 
+    const nullReturnValue = isNullConstantOperand(value) ? value : undefined;
+    const returnStructuralType =
+      returnInstancePrefix && nullReturnValue
+        ? structuralInterfaceForType(this, inlineContext.returnVar.type)
+        : undefined;
+    if (nullReturnValue && isNullableUdonType(inlineContext.returnVar.type)) {
+      if (returnInstancePrefix && returnStructuralType) {
+        emitStructuralPrefixDefaults(
+          this,
+          returnInstancePrefix,
+          returnStructuralType,
+        );
+      }
+      // Interface-typed inline handles use the -1 Int32 sentinel, not an
+      // Object null, so that callers comparing against `null` via
+      // retargetNullishComparisonOperand match the same value.
+      const nullValue = usesInlineNullSentinel(
+        this,
+        inlineContext.returnVar.type,
+      )
+        ? createConstant(-1, PrimitiveTypes.int32)
+        : createConstant(null, inlineContext.returnVar.type);
+      this.emit(new CopyInstruction(inlineContext.returnVar, nullValue));
+      this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+      if (!inlineContext.returnTrackingInvalidated) {
+        inlineContext.returnTrackingInvalidated = true;
+      }
+      this.emit(new UnconditionalJumpInstruction(inlineContext.returnLabel));
+      return;
+    }
+
     if (value) {
       // When the return slot was promoted to DataToken (erased return type),
       // wrap the value so it is always a DataToken, enabling the caller's
@@ -1486,8 +1689,7 @@ export function visitReturnStatement(
           }
         } else if (
           inlineContext.returnInstancePrefix &&
-          inlineContext.returnVar.type instanceof InterfaceTypeSymbol &&
-          inlineContext.returnVar.type.properties.size > 0 &&
+          structuralInterfaceForType(this, inlineContext.returnVar.type) &&
           value.kind === TACOperandKind.Variable
         ) {
           // Stay neutral when the return value is a named variable

@@ -1,4 +1,7 @@
-import { NativeArrayTypeSymbol } from "../../frontend/type_symbols.js";
+import {
+  NativeArrayTypeSymbol,
+  PrimitiveTypes,
+} from "../../frontend/type_symbols.js";
 import { UdonType } from "../../frontend/types.js";
 import {
   type ArrayAccessInstruction as TACArrayAccessInstruction,
@@ -22,6 +25,7 @@ import {
 import {
   type ConstantOperand,
   type LabelOperand,
+  type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
   type VariableOperand,
@@ -371,96 +375,51 @@ export function convertInstruction(
         | ConstantOperand
         | TemporaryOperand;
       const operandType = operandOp.type?.udonType ?? "Single";
-
-      if (unInst.operator === "!" && operandType === "String") {
-        // String truthiness: !str <==> str.Length == 0
-        // (length == 0 directly gives !str result, no separate negation needed)
-
-        // Step 1: Get string length → Int32 temp
-        this.pushOperand(unInst.operand);
-        const lenTmpName = `__tcoerce_${this.nextAddress}`;
-        this.variableAddresses.set(lenTmpName, this.nextAddress++);
-        this.variableTypes.set(lenTmpName, "Int32");
-        this.instructions.push(new PushInstruction(lenTmpName));
-        const getLengthSig = "SystemString.__get_Length__SystemInt32";
-        this.externSignatures.add(getLengthSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(getLengthSig), true),
-        );
-
-        // Step 2: Compare length == 0 → dest (Boolean)
-        this.instructions.push(new PushInstruction(lenTmpName));
-        this.pushConstant(0, "Int32");
+      const emitBooleanNot = (operand: TACOperand): void => {
+        // Use the dedicated label counter, NOT `nextAddress`: bumping
+        // `nextAddress` without registering a slot leaves a hole in the data
+        // section and shifts every later `__tcoerce_${nextAddress}` allocation.
+        const labelId = this.labelCounter++;
+        const falseLabel = `__bool_not_false_${labelId}`;
+        const endLabel = `__bool_not_end_${labelId}`;
         const destAddr = this.getOperandAddress(unInst.dest);
+
+        this.pushOperand(operand);
+        this.instructions.push(new JumpIfFalseInstruction(falseLabel));
+
+        this.pushConstant(false, "Boolean");
         this.instructions.push(new PushInstruction(destAddr));
-        // The TAC dest inherits String type from the operand; override to Boolean
-        if (unInst.dest.kind === TACOperandKind.Temporary) {
-          this.tempTypes.set((unInst.dest as TemporaryOperand).id, "Boolean");
-        } else if (unInst.dest.kind === TACOperandKind.Variable) {
-          const varName = this.normalizeVariableName(
-            (unInst.dest as VariableOperand).name,
-          );
-          this.variableTypes.set(varName, "Boolean");
-        }
-        const eqSig = this.getExternForBinaryOp("==", "Int32");
-        this.externSignatures.add(eqSig);
-        this.instructions.push(
-          new ExternInstruction(this.getExternSymbol(eqSig), true),
-        );
-      } else if (unInst.operator === "!" && operandType !== "Boolean") {
-        if (operandType === UdonType.Object) {
-          // Object → Boolean coercion: Udon VM uses simple COPY from Object
-          // slot to Boolean slot (non-null = true, null = false), then negate.
-          // Convert.ToBoolean(Object) does not exist in the VM.
-          this.pushOperand(unInst.operand);
-          const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-          this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-          this.variableTypes.set(coerceTmpName, "Boolean");
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          this.instructions.push(new CopyInstruction());
+        this.instructions.push(new CopyInstruction());
+        this.instructions.push(new JumpInstruction(endLabel));
 
-          // Negate the Boolean
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          const destAddr = this.getOperandAddress(unInst.dest);
-          this.instructions.push(new PushInstruction(destAddr));
-          const externSig = this.getExternForUnaryOp(
-            unInst.operator,
-            "Boolean",
-          );
-          this.externSignatures.add(externSig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(externSig), true),
-          );
-        } else {
-          // Need to coerce to Boolean first, then negate
-          // Step 1: Convert to Boolean (needs intermediate temp)
-          this.pushOperand(unInst.operand);
-          const coerceTmpName = `__tcoerce_${this.nextAddress}`;
-          this.variableAddresses.set(coerceTmpName, this.nextAddress++);
-          this.variableTypes.set(coerceTmpName, "Boolean");
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          const coerceSig = this.getConvertExternSignature(
-            operandType,
-            "Boolean",
-          );
-          this.externSignatures.add(coerceSig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(coerceSig), true),
-          );
+        this.instructions.push(new LabelInstruction(falseLabel));
+        this.pushConstant(true, "Boolean");
+        this.instructions.push(new PushInstruction(destAddr));
+        this.instructions.push(new CopyInstruction());
+        this.instructions.push(new LabelInstruction(endLabel));
+      };
 
-          // Step 2: Negate the Boolean
-          this.instructions.push(new PushInstruction(coerceTmpName));
-          const destAddr = this.getOperandAddress(unInst.dest);
-          this.instructions.push(new PushInstruction(destAddr));
-          const externSig = this.getExternForUnaryOp(
-            unInst.operator,
-            "Boolean",
-          );
-          this.externSignatures.add(externSig);
-          this.instructions.push(
-            new ExternInstruction(this.getExternSymbol(externSig), true),
-          );
-        }
+      if (unInst.operator === "!" && operandType === "Boolean") {
+        // TAC-level coerceToBoolean (expression.ts visitUnaryExpression)
+        // ensures ! only appears on Boolean operands for well-formed input.
+        emitBooleanNot(unInst.operand);
+      } else if (unInst.operator === "!") {
+        // Defensive fallback for optimizer-produced !nonBoolean (e.g.
+        // boolean_simplification.ts folding `x == false` → `!x` where x may
+        // be a non-Boolean temp). We COPY into a Boolean slot (Udon VM treats
+        // null reference as false, any non-null reference as true) and then
+        // branch-negate, rather than throwing and aborting codegen.
+        this.pushOperand(unInst.operand);
+        const coerceTmpName = `__tcoerce_${this.nextAddress}`;
+        this.variableAddresses.set(coerceTmpName, this.nextAddress++);
+        this.variableTypes.set(coerceTmpName, "Boolean");
+        this.instructions.push(new PushInstruction(coerceTmpName));
+        this.instructions.push(new CopyInstruction());
+        emitBooleanNot({
+          kind: TACOperandKind.Variable,
+          name: coerceTmpName,
+          type: PrimitiveTypes.boolean,
+        } as VariableOperand);
       } else {
         // Simple unary op: push operand, push dest, EXTERN
         this.pushOperand(unInst.operand);

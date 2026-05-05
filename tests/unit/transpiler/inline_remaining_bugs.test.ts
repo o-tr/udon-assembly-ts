@@ -24,6 +24,140 @@ describe("inline remaining bugs", () => {
     buildExternRegistryFromFiles([]);
   });
 
+  it("coerces reference operands before logical not", () => {
+    const source = `
+      class Main {
+        Start(): void {
+          const values: number[] = [];
+          if (!values) {
+            Debug.Log("empty");
+          } else {
+            Debug.Log("present");
+          }
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toContain(
+      "SystemObject.__op_Inequality__SystemObject_SystemObject__SystemBoolean",
+    );
+    expect(result.uasm).not.toMatch(
+      /PUSH, values\n\s+PUSH, __tcoerce_\d+\n\s+COPY/,
+    );
+  });
+
+  it("preserves structural union type through optional property access", () => {
+    const source = `
+      type Win = { isWin: true; yaku: string[] };
+      type Lose = { isWin: false };
+      type Result = Win | Lose;
+
+      class Analyzer {
+        check(): Result | null {
+          return { isWin: true, yaku: [] };
+        }
+      }
+
+      class Main {
+        Start(): void {
+          const analyzer = new Analyzer();
+          const result = analyzer.check();
+          if (result?.isWin) {
+            Debug.Log("WIN");
+          }
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toContain(
+      "SystemObject.__get_isWin__SystemBoolean",
+    );
+    expect(result.uasm).toContain("_isWin");
+  });
+
+  it("routes optional interface method calls through inline dispatch", () => {
+    const source = `
+      type CheckContext = { value: number };
+      type CheckResult = { isValid: boolean };
+      type Checker = {
+        check(context: CheckContext): CheckResult;
+      };
+
+      class AlwaysValid {
+        check(_context: CheckContext): CheckResult {
+          return { isValid: true };
+        }
+      }
+
+      class Registry {
+        get(_name: string): Checker | null {
+          return new AlwaysValid();
+        }
+      }
+
+      class Main {
+        Start(): void {
+          const registry = new Registry();
+          const checker = registry.get("x");
+          const ok = checker?.check({ value: 1 }).isValid;
+          if (ok) Debug.Log("OK");
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toContain("SystemObject.__check__SystemObject");
+    expect(result.uasm).toContain("_isValid");
+  });
+
+  it("unwraps anonymous structural array elements as inline handles", () => {
+    const source = `
+      type IYaku = {
+        getDisplayName(): string;
+      };
+
+      class BaseYaku implements IYaku {
+        getDisplayName(): string {
+          return "Base";
+        }
+      }
+
+      class TanyaoYaku extends BaseYaku {
+        getDisplayName(): string {
+          return "Tanyao";
+        }
+      }
+
+      class Main {
+        Start(): void {
+          const yaku: IYaku = new TanyaoYaku();
+          const found: Array<{ yaku: IYaku; name: string; han: number }> = [];
+          found.push({ yaku, name: "Tanyao", han: 1 });
+          for (const item of found) {
+            Debug.Log(item.yaku.getDisplayName());
+            Debug.Log(item.name);
+            Debug.Log(item.han);
+          }
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toContain(
+      "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+    );
+    expect(result.uasm).not.toContain(
+      "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+    );
+    expect(result.uasm).not.toContain("SystemObject.__getDisplayName");
+  });
+
   // ---------------------------------------------------------------------------
   // Bug 1: Loop inline instance sharing
   // ---------------------------------------------------------------------------
@@ -494,6 +628,131 @@ describe("inline remaining bugs", () => {
         (l) => l.includes("__soa_Registry_data") && l.includes("get_Item"),
       );
       expect(soaFieldRead.length).toBeGreaterThan(0);
+    });
+
+    it("writes back a mutable Map field after SoA method dispatch mutates it", () => {
+      const source = `
+        interface IThing {
+          name: string;
+        }
+        class Thing implements IThing {
+          public name: string = "A";
+        }
+        class Registry {
+          public data: Map<string, IThing>;
+          constructor() {
+            this.data = new Map<string, IThing>();
+          }
+          add(value: IThing): void {
+            this.data.set(value.name, value);
+          }
+          get(name: string): IThing | null {
+            return this.data.get(name) ?? null;
+          }
+        }
+        class Main {
+          Start(): void {
+            const registries: Registry[] = [];
+            for (let i: number = 0; i < 1; i++) {
+              registries.push(new Registry());
+            }
+            const registry = registries[0];
+            registry.add(new Thing());
+            const result = registry.get("A");
+            if (result) {
+              Debug.Log(result.name);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.uasm).toContain("__soa_Registry_data:");
+
+      const lines = result.tac.split("\n");
+      const mutationIndex = lines.findIndex((line) =>
+        /call __soa_mdisp_Registry_\d+_data\.SetValue\(/.test(line),
+      );
+      expect(mutationIndex).toBeGreaterThanOrEqual(0);
+
+      const writeBackIndex = lines.findIndex(
+        (line, index) =>
+          index > mutationIndex &&
+          line.includes("call __soa_Registry_data.set_Item("),
+      );
+      expect(writeBackIndex).toBeGreaterThan(mutationIndex);
+    });
+
+    it("guards inline-handle Map.get with ContainsKey before unwrapping Int", () => {
+      const source = `
+        interface IThing {
+          name: string;
+        }
+        class Thing implements IThing {
+          public name: string = "A";
+        }
+        class Registry {
+          public data: Map<string, IThing> = new Map<string, IThing>();
+          get(name: string): IThing | null {
+            return this.data.get(name) ?? null;
+          }
+        }
+        class Main {
+          Start(): void {
+            const registry = new Registry();
+            const thing = new Thing();
+            const result = registry.get("missing");
+            if (result !== null) {
+              Debug.Log(result.name);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const lines = result.tac.split("\n");
+      const containsKeyIndex = lines.findIndex((line) =>
+        line.includes(".ContainsKey("),
+      );
+      const getValueIndex = lines.findIndex((line) =>
+        line.includes(".GetValue("),
+      );
+      expect(containsKeyIndex).toBeGreaterThanOrEqual(0);
+      expect(getValueIndex).toBeGreaterThan(containsKeyIndex);
+    });
+
+    it("unwraps Map.get DataToken to DataList inside nullish coalescing", () => {
+      const source = `
+        class Registry {
+          public byCategory: Map<string, number[]> = new Map<string, number[]>();
+          getByCategory(category: string): number[] {
+            return this.byCategory.get(category) ?? [];
+          }
+        }
+        class Main {
+          Start(): void {
+            const registry = new Registry();
+            const values = registry.getByCategory("missing");
+            Debug.Log(values.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.uasm).toContain("VRCSDK3DataDataToken.__get_DataList");
+      expect(result.tac).not.toMatch(/__inline_ret_\d+ = __t\d+$/m);
+    });
+
+    it("uses the fallback DataList type for Map.get nullish coalescing without contextual return type", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const byCategory: Map<string, number[]> = new Map<string, number[]>();
+            const values = byCategory.get("missing") ?? [];
+            Debug.Log(values.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      expect(result.tac).toContain(".DataList");
+      expect(result.tac).not.toMatch(/ = __t\d+$/m);
     });
   });
 });

@@ -34,11 +34,19 @@ export function emitTryInstructionsWithChecks(
     const checkType = this.getOperandType(checkOperand);
     if (!this.isNullableType(checkType)) continue;
 
+    // Box the typed `checkOperand` into Object before the null compare.
+    // For typed-slot operands (DataList / Array / interface), comparing
+    // directly against the null-Object constant lowers to a mismatched-
+    // operand-types op_Equality and may not detect a null reference reliably.
+    // Same boxing pattern as visitNullCoalescingExpression and the SoA
+    // emitBoundedDataListGetItem fix.
+    const boxedOperand = this.newTemp(ObjectType);
+    this.emit(new CopyInstruction(boxedOperand, checkOperand));
     const isNullTemp = this.newTemp(PrimitiveTypes.boolean);
     this.emit(
       new BinaryOpInstruction(
         isNullTemp,
-        checkOperand,
+        boxedOperand,
         "==",
         createConstant(null, ObjectType),
       ),

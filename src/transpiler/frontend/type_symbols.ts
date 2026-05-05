@@ -641,3 +641,19 @@ export function typeSymbolToCSharp(symbol: TypeSymbol): string {
   }
   return UDON_TYPE_TO_CSHARP_FQN[symbol.udonType] ?? symbol.name;
 }
+
+/**
+ * Return true for Udon types that store `null` as a first-class value in a
+ * typed heap slot (reference-like nullable types). Used by nullable-comparison
+ * and return-slot lowering to decide whether a `null` constant should be typed
+ * to the destination slot or left as an untyped Object null.
+ */
+export function isNullableUdonType(type: TypeSymbol): boolean {
+  return (
+    type.udonType === UdonType.Array ||
+    type.udonType === UdonType.DataDictionary ||
+    type.udonType === UdonType.DataList ||
+    type.udonType === UdonType.Object ||
+    type.udonType === UdonType.String
+  );
+}

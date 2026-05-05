@@ -1,13 +1,19 @@
-import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
+import { ObjectType, PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import {
   BinaryOpInstruction,
+  CallInstruction,
   ConditionalJumpInstruction,
+  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
-import { createConstant, type TACOperand } from "../../tac_operand.js";
+import {
+  createConstant,
+  type TACOperand,
+  TACOperandKind,
+} from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
@@ -18,28 +24,110 @@ import { normalizeOperandToInt32 } from "./int32_normalization.js";
  * OOB path: `0 < countTemp` → `ifFalse` → `get_Item(0)` using the sentinel row
  * (SoA init always `Add`s index 0, so `Count >= 1` before any SoA field read).
  *
- * If `Count == 0`, `ifFalse ok2 goto merge` skips `get_Item(0)` and `destToken` is
- * never written — unreachable for SoA field lists after `emitSoaInitGuard`, which
- * reserves index 0 and leaves `Count >= 1`.
+ * `guardListNotNull` enables a runtime null-and-seed check before the
+ * Count/get_Item externs. Required when the caller may probe a candidate
+ * SoA class before its constructor has run (D3 dispatch and untracked-handle
+ * SoA method dispatch). Also use it on direct property reads via
+ * `tryReadSoAField`, which can still see `-1` sentinel handles from erased
+ * dispatch and needs the lower-bound guard even though the field list itself
+ * is non-null.
  */
 export function emitBoundedDataListGetItem(
   converter: ASTToTACConverter,
   listVar: TACOperand,
   indexVar: TACOperand,
   destToken: TACOperand,
+  sentinelValue: TACOperand | (() => TACOperand) = () =>
+    createConstant(null, ObjectType),
+  guardListNotNull = false,
 ): void {
+  if (guardListNotNull) {
+    if (listVar.kind !== TACOperandKind.Variable) {
+      throw new Error(
+        "emitBoundedDataListGetItem: guardListNotNull requires a Variable operand, " +
+          `got ${TACOperandKind[listVar.kind]}`,
+      );
+    }
+    // Note: this guard does NOT touch `__soa_${className}__inited`.
+    // That flag is owned by the companion `emitSoaInitGuard`
+    // (helpers/inline.ts).  Because this guard does not set the flag,
+    // `emitSoaInitGuard` will see the slot as uninitialized and run the
+    // real constructor on first entry, overwriting the placeholder DataList
+    // and sentinel row created below.
+    //
+    // INVARIANT: `emitSoaInitGuard` must remain "inited-flag-only" and must
+    // NOT add a null-aware skip (e.g. "skip ctor when listVar is non-null").
+    // If it ever does, the seeded list emitted here would survive past first
+    // real construction, causing the sentinel row at index 0 to coexist with
+    // real instance rows and corrupt all subsequent SoA field reads. Any
+    // future optimisation to skip construction must either (a) set the
+    // `__soa_${className}__inited` flag from this guard, or (b) explicitly
+    // overwrite / clear the pre-existing DataList before skipping.
+    const resolvedSentinelValue =
+      typeof sentinelValue === "function" ? sentinelValue() : sentinelValue;
+    const boxedList = converter.newTemp(ObjectType);
+    converter.emit(new CopyInstruction(boxedList, listVar));
+    const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
+    const listReady = converter.newLabel("soa_list_ready");
+    converter.emit(
+      new BinaryOpInstruction(
+        listIsNull,
+        boxedList,
+        "==",
+        createConstant(null, ObjectType),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(listIsNull, listReady));
+    const listCtorSig = converter.requireExternSignature(
+      "DataList",
+      "ctor",
+      "method",
+      [],
+      "DataList",
+    );
+    converter.emit(new CallInstruction(listVar, listCtorSig, []));
+    // listVar now holds the freshly-constructed DataList.
+    // wrapDataToken is safe here because it only reads sentinelValue, not listVar.
+    const nullToken = converter.wrapDataToken(resolvedSentinelValue);
+    converter.emit(
+      new MethodCallInstruction(undefined, listVar, "Add", [nullToken]),
+    );
+    converter.emit(new LabelInstruction(listReady));
+  }
+
   const intIndexVar = normalizeOperandToInt32(converter, indexVar);
   const countTemp = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(new PropertyGetInstruction(countTemp, listVar, "Count"));
-  const okTemp = converter.newTemp(PrimitiveTypes.boolean);
-  converter.emit(new BinaryOpInstruction(okTemp, intIndexVar, "<", countTemp));
   const oobLabel = converter.newLabel("soa_get_oob");
   const mergeLabel = converter.newLabel("soa_get_merge");
-  converter.emit(new ConditionalJumpInstruction(okTemp, oobLabel));
+
+  if (guardListNotNull) {
+    // Lower-bound guard: negative handles (null sentinel = -1) must not reach
+    // get_Item, which throws ArgumentOutOfRangeException for negative indices.
+    const okLower = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        okLower,
+        intIndexVar,
+        ">=",
+        createConstant(0, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(okLower, oobLabel));
+  }
+
+  // Upper-bound guard
+  const okUpper = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new BinaryOpInstruction(okUpper, intIndexVar, "<", countTemp));
+  converter.emit(new ConditionalJumpInstruction(okUpper, oobLabel));
+
+  // In-bounds path
   converter.emit(
     new MethodCallInstruction(destToken, listVar, "get_Item", [intIndexVar]),
   );
   converter.emit(new UnconditionalJumpInstruction(mergeLabel));
+
+  // OOB fallback: sentinel row at index 0 (valid because Count >= 1 after init)
   converter.emit(new LabelInstruction(oobLabel));
   const ok2 = converter.newTemp(PrimitiveTypes.boolean);
   const zero = createConstant(0, PrimitiveTypes.int32);

@@ -3,6 +3,7 @@ import { isNumericUdonType, UdonType } from "../../../frontend/types.js";
 import {
   BinaryOpInstruction,
   CallInstruction,
+  CopyInstruction,
   UnaryOpInstruction,
 } from "../../tac_instruction.js";
 import {
@@ -12,6 +13,8 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { isTrackedInlineHandleType, usesInlineNullSentinel } from "./inline.js";
+import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /** Udon extern signature for System.String.IsNullOrEmpty */
 const IS_NULL_OR_EMPTY_SIG =
@@ -82,8 +85,39 @@ export function coerceToBoolean(
   // rare in VRChat scripts, we accept this divergence for now.
   if (isNumericUdonType(udonType)) {
     const boolTemp = this.newTemp(PrimitiveTypes.boolean);
+    // Defensive: in practice `isInlineHandleType` returns true only for
+    // ClassTypeSymbol / InterfaceTypeSymbol, both of which carry
+    // `udonType = UdonType.Object` — they never reach this branch (they're
+    // routed to `usesInlineNullSentinel` below). The guard remains so that a
+    // future int-backed inline-class variant doesn't fall through to a
+    // numeric `0` sentinel that would alias a valid handle. Type the
+    // constant as Int32 explicitly (matching the sentinel branch below)
+    // rather than as the operand's class symbol, which would emit a
+    // codegen-typed constant and risk a slot-type mismatch.
+    const isInlineHandle = isTrackedInlineHandleType(this, type);
+    const falseValue = isInlineHandle ? -1 : 0;
+    const falseConstantType = isInlineHandle ? PrimitiveTypes.int32 : type;
     this.emit(
-      new BinaryOpInstruction(boolTemp, operand, "!=", createConstant(0, type)),
+      new BinaryOpInstruction(
+        boolTemp,
+        operand,
+        "!=",
+        createConstant(falseValue, falseConstantType),
+      ),
+    );
+    return boolTemp;
+  }
+
+  if (usesInlineNullSentinel(this, type)) {
+    const handle = normalizeOperandToInt32(this, operand);
+    const boolTemp = this.newTemp(PrimitiveTypes.boolean);
+    this.emit(
+      new BinaryOpInstruction(
+        boolTemp,
+        handle,
+        "!=",
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
     );
     return boolTemp;
   }
@@ -102,12 +136,19 @@ export function coerceToBoolean(
     return createConstant(true, PrimitiveTypes.boolean);
   }
 
-  // Object / Class / other → value != null
+  // Object / Class / other → value != null.  Box through a SystemObject temp
+  // first: structural-union handles may be stored in typed reference slots
+  // (DataList/DataDictionary) even after their TAC type has been widened to
+  // Object.  Comparing that typed null directly to SystemObject null is not
+  // reliable in Udon VM, but copying the reference into an Object slot gives
+  // the null-comparison extern matching operands.
   const boolTemp = this.newTemp(PrimitiveTypes.boolean);
+  const comparisonOperand = this.newTemp(ObjectType);
+  this.emit(new CopyInstruction(comparisonOperand, operand));
   this.emit(
     new BinaryOpInstruction(
       boolTemp,
-      operand,
+      comparisonOperand,
       "!=",
       createConstant(null, ObjectType),
     ),

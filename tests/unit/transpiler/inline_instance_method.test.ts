@@ -196,9 +196,14 @@ describe("inline instance method calls", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     const startSection = getStartSection(result.tac);
 
-    // The first call is inlined, but the recursive call inside
-    // falls back to a method call
-    expect(startSection).toMatch(/\.recurse\(/);
+    // The outer call is inlined, but the recursive self-call inside the
+    // body cannot be inlined (recursion guard).  Falling through to a
+    // generic method call would emit a malformed `<Type>.__methodName__...`
+    // EXTERN that does not exist in the Udon VM.  Instead the call site is
+    // replaced with a Debug.LogError diagnostic and a default return value.
+    expect(startSection).not.toMatch(/\.recurse\(/);
+    expect(startSection).toContain("LogError");
+    expect(startSection).toContain("Recursive.recurse");
   });
 
   it("inlines multiple instances of the same class", () => {

@@ -205,6 +205,35 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
         expect(anyIsInt32).toBe(true);
       });
 
+      it(`WRITE site converts erased interface handles before Int32 token construction`, () => {
+        const convertDecl = lines.find((l) =>
+          l.includes("SystemConvert.__ToInt32__SystemObject__SystemInt32"),
+        );
+        expect(convertDecl).toBeDefined();
+        if (!convertDecl) return;
+        const convertAlias = convertDecl.trim().split(":")[0].trim();
+
+        const externDecl = lines.find((l) =>
+          l.includes("DataToken.__ctor__SystemInt32__VRCSDK3DataDataToken"),
+        );
+        expect(externDecl).toBeDefined();
+        if (!externDecl) return;
+        const externAlias = externDecl.trim().split(":")[0].trim();
+
+        const callIdx = lines.findIndex(
+          (l) =>
+            l.includes("EXTERN,") && l.trim().split(/,\s*/)[1] === externAlias,
+        );
+        expect(callIdx).toBeGreaterThan(-1);
+
+        const windowStart = Math.max(0, callIdx - 16);
+        const window = lines.slice(windowStart, callIdx).join("\n");
+        expect(window).toContain(`EXTERN, ${convertAlias}`);
+        expect(window).not.toMatch(
+          /PUSH,\s+item\s*\n\s*PUSH,\s+__t\d+\s*\n\s*COPY/,
+        );
+      });
+
       it(`negative control: Map<string, IOther>.set still uses ctor(Object)`, () => {
         // IOther has no inline implementor, so it is NOT in
         // interfaceClassIdMap; its wrap site must remain a SystemObject ctor.

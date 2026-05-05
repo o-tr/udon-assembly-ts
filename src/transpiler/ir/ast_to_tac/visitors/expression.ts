@@ -1,7 +1,6 @@
 import { typeMetadataRegistry } from "../../../codegen/type_metadata_registry.js";
 import { TranspileError } from "../../../errors/transpile_errors.js";
 import type { TypeMapper } from "../../../frontend/type_mapper.js";
-import type { TypeSymbol } from "../../../frontend/type_symbols.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
@@ -17,6 +16,7 @@ import {
   ObjectType,
   PrimitiveTypeSymbol,
   PrimitiveTypes,
+  type TypeSymbol,
   typeSymbolToCSharp,
 } from "../../../frontend/type_symbols.js";
 import type { SymbolInfo } from "../../../frontend/types.js";
@@ -85,15 +85,19 @@ import {
 import { resolveExternReturnType } from "../helpers/extern.js";
 import {
   createSoaSentinelValue,
+  emitStructuralFieldCopies,
   evaluateInlineGetter,
   hasCompatibleUnionProperty,
+  isInlineHandleType,
   isSubclassOf,
+  isTrackedInlineHandleType,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
   resolveClassProperty,
   resolveConcreteClassName,
   resolveInlineClassType,
+  usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
@@ -111,6 +115,9 @@ function tryReadSoAField(
   className: string,
   property: string,
 ): TACOperand | undefined {
+  if (!instancePrefix) {
+    return undefined;
+  }
   if (instancePrefix.includes("__soa_mdisp_")) {
     return undefined;
   }
@@ -129,10 +136,99 @@ function tryReadSoAField(
     PrimitiveTypes.int32,
   );
   const token = converter.newTemp(ExternTypes.dataToken);
-  emitBoundedDataListGetItem(converter, fieldList, hdlVar, token);
   const resolved = resolveClassProperty(converter, className, property);
   const fieldType = resolved?.prop.type ?? ObjectType;
+  emitBoundedDataListGetItem(
+    converter,
+    fieldList,
+    hdlVar,
+    token,
+    () => createSoaSentinelValue(converter, fieldType),
+    true,
+  );
   return converter.unwrapDataToken(token, fieldType);
+}
+
+function tryMapAliasInlineProperty(
+  converter: ASTToTACConverter,
+  className: string,
+  instancePrefix: string,
+  property: string,
+): TACOperand | undefined {
+  const alias = converter.typeMapper.getAlias(className);
+  if (!(alias instanceof InterfaceTypeSymbol)) return undefined;
+  const propertyType = alias.properties.get(property);
+  if (!propertyType) return undefined;
+  return createVariable(`${instancePrefix}_${property}`, propertyType);
+}
+
+function inferInlineStructuralPropertyType(
+  converter: ASTToTACConverter,
+  property: string,
+): TypeSymbol | undefined {
+  if (converter.inlineStructuralPropertyTypeCache.has(property)) {
+    return converter.inlineStructuralPropertyTypeCache.get(property);
+  }
+
+  let inferred: TypeSymbol | undefined;
+  const checkedClasses = new Set<string>();
+  for (const [, info] of converter.allInlineInstances) {
+    if (checkedClasses.has(info.className)) continue;
+    checkedClasses.add(info.className);
+
+    const resolved = resolveClassProperty(converter, info.className, property);
+    const alias = converter.typeMapper.getAlias(info.className);
+    const propertyType =
+      resolved?.prop.getterReturnType ??
+      resolved?.prop.type ??
+      (alias instanceof InterfaceTypeSymbol
+        ? alias.properties.get(property)
+        : undefined);
+    if (!propertyType) continue;
+
+    const concreteType = propertyType.name
+      ? (converter.typeMapper.getAlias(propertyType.name) ?? propertyType)
+      : propertyType;
+    if (!inferred) {
+      inferred = concreteType;
+      continue;
+    }
+    if (
+      inferred.name !== concreteType.name ||
+      inferred.udonType !== concreteType.udonType
+    ) {
+      return undefined;
+    }
+  }
+  if (inferred) {
+    converter.inlineStructuralPropertyTypeCache.set(property, inferred);
+  }
+  return inferred;
+}
+
+function inferIdentifierInitialPropertyClassName(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): string | undefined {
+  if (node.kind !== ASTNodeKind.Identifier) return undefined;
+  const name = (node as IdentifierNode).name;
+  const symbol = converter.symbolTable.lookup(name);
+  const initialValue = symbol?.initialValue as ASTNode | undefined;
+  if (initialValue?.kind !== ASTNodeKind.PropertyAccessExpression) {
+    return undefined;
+  }
+  const access = initialValue as PropertyAccessExpressionNode;
+  const receiverType = resolveTypeFromNode(converter, access.object);
+  if (!receiverType?.name) return undefined;
+  const propType = converter.fieldTypeRegistry.getInterfacePropertyType(
+    {
+      typeMapper: converter.typeMapper,
+      classRegistry: converter.classRegistry,
+    },
+    receiverType.name,
+    access.property,
+  );
+  return propType?.name;
 }
 
 /**
@@ -434,7 +530,27 @@ function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
   property: string,
+  visited: Set<string> = new Set(),
 ): TypeSymbol | null {
+  // Track visited alias names so a multi-step cycle (`A -> B -> A`) cannot
+  // recurse forever — the direct `aliasedType !== baseType` check below only
+  // catches single-step self-reference. Bound the recursion explicitly.
+  const aliasedType = converter.typeMapper.getAlias(baseType.name);
+  if (
+    aliasedType &&
+    aliasedType !== baseType &&
+    !visited.has(aliasedType.name)
+  ) {
+    visited.add(aliasedType.name);
+    const aliasedProperty = resolvePropertyTypeFromType(
+      converter,
+      aliasedType,
+      property,
+      visited,
+    );
+    if (aliasedProperty) return aliasedProperty;
+  }
+
   if (baseType instanceof ArrayTypeSymbol && property === "length") {
     return PrimitiveTypes.int32;
   }
@@ -532,6 +648,12 @@ export function resolveTypeFromNode(
       if (!baseType) return null;
       return resolvePropertyTypeFromType(converter, baseType, access.property);
     }
+    case ASTNodeKind.OptionalChainingExpression: {
+      const access = node as OptionalChainingExpressionNode;
+      const baseType = resolveTypeFromNode(converter, access.object);
+      if (!baseType) return null;
+      return resolvePropertyTypeFromType(converter, baseType, access.property);
+    }
     case ASTNodeKind.ArrayAccessExpression: {
       const access = node as ArrayAccessExpressionNode;
       const arrayType = resolveTypeFromNode(converter, access.array);
@@ -583,6 +705,19 @@ export function resolveTypeFromNode(
           }
         }
       }
+      if (call.callee.kind === ASTNodeKind.OptionalChainingExpression) {
+        const opt = call.callee as OptionalChainingExpressionNode;
+        const baseType = resolveTypeFromNode(converter, opt.object);
+        if (baseType && baseType !== ObjectType) {
+          const ret = resolveMethodReturnType(
+            converter,
+            baseType,
+            opt.property,
+            false,
+          );
+          if (ret) return ret;
+        }
+      }
       return null;
     }
     default:
@@ -600,7 +735,7 @@ export function resolveTypeFromNode(
  *   first, then static (the classRegistry path via getMergedMethods does
  *   not filter by static, so it already covers both).
  */
-function resolveMethodReturnType(
+export function resolveMethodReturnType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
   methodName: string,
@@ -620,15 +755,21 @@ function resolveMethodReturnType(
         methodName,
       );
       if (method) {
-        return resolveInlineClassType(converter, method.returnType);
+        return resolveInlineOrAliasType(converter, method.returnType);
       }
     }
     const ifaceMeta = converter.classRegistry.getInterface(typeName);
     if (ifaceMeta) {
       const method = ifaceMeta.methods.find((m) => m.name === methodName);
       if (method) {
-        return resolveInlineClassType(converter, method.returnType);
+        return resolveInlineOrAliasType(converter, method.returnType);
       }
+    }
+  }
+  if (baseType instanceof InterfaceTypeSymbol) {
+    const method = baseType.methods.get(methodName);
+    if (method) {
+      return resolveInlineOrAliasType(converter, method.returnType);
     }
   }
   // Check class map (AST nodes) — walk inheritance chain via resolveClassMethod
@@ -645,7 +786,7 @@ function resolveMethodReturnType(
       staticFlag,
     );
     if (resolved) {
-      return resolveInlineClassType(converter, resolved.method.returnType);
+      return resolveInlineOrAliasType(converter, resolved.method.returnType);
     }
     return null;
   };
@@ -1079,6 +1220,35 @@ export function visitBinaryExpression(
   let left = this.visitExpression(node.left);
   let right = this.visitExpression(node.right);
 
+  const dataTokenNullishComparison = tryEmitDataTokenNullishComparison(
+    this,
+    left,
+    right,
+    node.operator,
+  );
+  if (dataTokenNullishComparison !== null) {
+    return dataTokenNullishComparison;
+  }
+
+  if (node.operator === "==" || node.operator === "!=") {
+    const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
+    if (isNullishOperand(right) && !isNullishOperand(left)) {
+      // For inline-handle leftType, normalise the LHS to its Int32 handle so
+      // both sides of the comparison are Int32 (matches the `-1` sentinel
+      // retargeted RHS).
+      if (usesInlineNullSentinel(this, leftType)) {
+        left = normalizeOperandToInt32(this, left);
+      }
+      right = retargetNullishComparisonOperand(this, right, leftType);
+    } else if (isNullishOperand(left) && !isNullishOperand(right)) {
+      if (usesInlineNullSentinel(this, rightType)) {
+        right = normalizeOperandToInt32(this, right);
+      }
+      left = retargetNullishComparisonOperand(this, left, rightType);
+    }
+  }
+
   // Determine result type - comparison operators return Boolean
   const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
     node.operator,
@@ -1163,6 +1333,67 @@ export function visitBinaryExpression(
   return result;
 }
 
+function tryEmitDataTokenNullishComparison(
+  converter: ASTToTACConverter,
+  left: TACOperand,
+  right: TACOperand,
+  operator: string,
+): TACOperand | null {
+  if (operator !== "==" && operator !== "!=") return null;
+
+  const leftType = converter.getOperandType(left);
+  const rightType = converter.getOperandType(right);
+  let token: TACOperand | null = null;
+
+  if (leftType.udonType === UdonType.DataToken && isNullishOperand(right)) {
+    token = left;
+  } else if (
+    rightType.udonType === UdonType.DataToken &&
+    isNullishOperand(left)
+  ) {
+    token = right;
+  }
+  if (token === null) return null;
+
+  const isNull = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new PropertyGetInstruction(isNull, token, "IsNull"));
+  if (operator === "==") {
+    return isNull;
+  }
+
+  const result = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new UnaryOpInstruction(result, "!", isNull));
+  return result;
+}
+
+function isNullishOperand(operand: TACOperand): boolean {
+  return operand.kind === TACOperandKind.Constant
+    ? (operand as ConstantOperand).value === null
+    : false;
+}
+
+function retargetNullishComparisonOperand(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+  targetType: TypeSymbol,
+): TACOperand {
+  if (!isNullishOperand(operand)) return operand;
+  // Inline-handle types store null as the sentinel `-1` Int32, not as an
+  // Object reference. Without this branch, `inlineHandle == null` lowers to
+  // op_Equality(Int32, Object) — mismatched operand types, comparison never
+  // matches the missing-instance case. Mirrors visitNullCoalescingExpression
+  // and visitOptionalChainingExpression's sentinel handling.
+  if (usesInlineNullSentinel(converter, targetType)) {
+    return createConstant(-1, PrimitiveTypes.int32);
+  }
+  // Always type the null constant to the target type so the comparison
+  // operands match. For non-nullable types (e.g. Int32, Boolean) this path
+  // should normally be unreachable because the TS frontend rejects
+  // `primitive == null`, but if it does reach TAC we avoid a type-mismatch
+  // extern by using a typed constant instead of an untyped Object null.
+  return createConstant(null, targetType);
+}
+
 export function visitShortCircuitAnd(
   this: ASTToTACConverter,
   node: BinaryExpressionNode,
@@ -1190,6 +1421,63 @@ export function visitShortCircuitOr(
   this: ASTToTACConverter,
   node: BinaryExpressionNode,
 ): TACOperand {
+  const expectedType =
+    this.currentExpectedType &&
+    this.currentExpectedType.udonType !== UdonType.Boolean &&
+    this.currentExpectedType !== ObjectType
+      ? this.currentExpectedType
+      : undefined;
+  const inferredLeftType = resolveTypeFromNode(this, node.left);
+  const inferredRightType = resolveTypeFromNode(this, node.right);
+  const valueResultType =
+    expectedType ??
+    (inferredLeftType?.udonType !== UdonType.Boolean
+      ? inferredLeftType
+      : undefined) ??
+    (inferredRightType?.udonType !== UdonType.Boolean
+      ? inferredRightType
+      : undefined);
+
+  if (valueResultType && valueResultType.udonType !== UdonType.Boolean) {
+    const rightLabel = this.newLabel("or_right");
+    const endLabel = this.newLabel("or_end");
+
+    const left = this.visitExpression(node.left);
+    const result = this.newTemp(valueResultType);
+    const coercedLeft = this.coerceToBoolean(left);
+    this.emit(new ConditionalJumpInstruction(coercedLeft, rightLabel));
+
+    this.emitCopyWithTracking(
+      result,
+      coerceLogicalValue(this, left, valueResultType),
+    );
+    this.emit(new UnconditionalJumpInstruction(endLabel));
+
+    this.emit(new LabelInstruction(rightLabel));
+    const prevExpectedType = this.currentExpectedType;
+    this.currentExpectedType = valueResultType;
+    let right: TACOperand;
+    try {
+      right = this.visitExpression(node.right);
+    } finally {
+      this.currentExpectedType = prevExpectedType;
+    }
+    this.emitCopyWithTracking(
+      result,
+      coerceLogicalValue(this, right, valueResultType),
+    );
+    this.emit(new LabelInstruction(endLabel));
+    const resultKey = operandTrackingKey(result);
+    if (
+      resultKey &&
+      valueResultType &&
+      isTrackedInlineHandleType(this, valueResultType)
+    ) {
+      this.inlineInstanceMap.delete(resultKey);
+    }
+    return result;
+  }
+
   const result = this.newTemp(PrimitiveTypes.boolean);
   const shortCircuitLabel = this.newLabel("or_short");
   const endLabel = this.newLabel("or_end");
@@ -1213,11 +1501,47 @@ export function visitShortCircuitOr(
   return result;
 }
 
+function coerceLogicalValue(
+  converter: ASTToTACConverter,
+  value: TACOperand,
+  targetType: TypeSymbol,
+): TACOperand {
+  let coerced = value;
+  const valueType = converter.getOperandType(coerced);
+  if (
+    valueType.udonType === UdonType.DataToken &&
+    targetType.udonType !== UdonType.DataToken
+  ) {
+    coerced = converter.unwrapDataToken(coerced, targetType);
+  }
+  const coercedType = converter.getOperandType(coerced);
+  // Numeric ↔ numeric and Boolean → numeric both need an explicit cast: a
+  // mixed-type expression like `someInt || someFlag` derives `targetType` from
+  // the int side but the right branch can still evaluate to Boolean. Without
+  // this cast the bool would be copied into the int-typed result slot,
+  // producing a type-mismatched TAC.
+  const sourceIsCoercibleToNumeric =
+    NUMERIC_UDON_TYPES.has(coercedType.udonType) ||
+    coercedType.udonType === UdonType.Boolean;
+  if (
+    coercedType.udonType !== targetType.udonType &&
+    sourceIsCoercibleToNumeric &&
+    NUMERIC_UDON_TYPES.has(targetType.udonType)
+  ) {
+    const cast = converter.newTemp(targetType);
+    converter.emit(new CastInstruction(cast, coerced));
+    return cast;
+  }
+  return coerced;
+}
+
 export function visitUnaryExpression(
   this: ASTToTACConverter,
   node: UnaryExpressionNode,
 ): TACOperand {
-  const operand = this.visitExpression(node.operand);
+  const rawOperand = this.visitExpression(node.operand);
+  const operand =
+    node.operator === "!" ? this.coerceToBoolean(rawOperand) : rawOperand;
   // Logical NOT always produces Boolean regardless of operand type.
   // This ensures coerceToBoolean sees Boolean and skips redundant coercion.
   const resultType =
@@ -1277,14 +1601,51 @@ export function visitNullCoalescingExpression(
   this: ASTToTACConverter,
   node: NullCoalescingExpressionNode,
 ): TACOperand {
+  const expected = this.currentExpectedType;
+  const savedExpectedType = this.currentExpectedType;
   const left = this.visitExpression(node.left);
-  const result = this.newTemp(this.getOperandType(left));
+  this.currentExpectedType = savedExpectedType;
+  const leftType = this.getOperandType(left);
+  const resultType =
+    expected &&
+    !isPlainObjectType(expected) &&
+    leftType.udonType === UdonType.DataToken
+      ? expected
+      : leftType;
+  const result = this.newTemp(resultType);
   const notNullLabel = this.newLabel("null_not");
   const endLabel = this.newLabel("null_end");
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
-  const nullConstant = createConstant(null, ObjectType);
-  this.emit(new BinaryOpInstruction(isNull, left, "==", nullConstant));
+  if (usesInlineNullSentinel(this, leftType)) {
+    const leftHandle = normalizeOperandToInt32(this, left);
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        leftHandle,
+        "==",
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
+    );
+  } else {
+    // Box typed-slot left operand into Object before the null compare so the
+    // BinaryOp lowers to SystemObject.op_Equality with matched operand types.
+    // Without this, a `DataList`/`Array`/interface-typed `left` produces a
+    // mismatched-operand compare that may not detect a null reference
+    // reliably across Udon runtime versions. Same pattern as
+    // visitOptionalChainingExpression and the optional-chain method-call
+    // null check in call.ts.
+    const nullCheckOperand = this.newTemp(ObjectType);
+    this.emit(new CopyInstruction(nullCheckOperand, left));
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        nullCheckOperand,
+        "==",
+        createConstant(null, ObjectType),
+      ),
+    );
+  }
   this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
 
   const right = this.visitExpression(node.right);
@@ -1293,7 +1654,8 @@ export function visitNullCoalescingExpression(
   if (result.kind === TACOperandKind.Temporary) {
     const rightType = this.getOperandType(right);
     if (
-      (result as TemporaryOperand).type === ObjectType &&
+      ((result as TemporaryOperand).type === ObjectType ||
+        (result as TemporaryOperand).type.udonType === UdonType.DataToken) &&
       rightType !== ObjectType &&
       (rightType instanceof ArrayTypeSymbol ||
         rightType instanceof InterfaceTypeSymbol ||
@@ -1304,11 +1666,22 @@ export function visitNullCoalescingExpression(
     }
   }
   // Plain copy: same shared-result reasoning as visitConditionalExpression.
-  this.emit(new CopyInstruction(result, right));
+  const resultFinalType = this.getOperandType(result);
+  const rightValue =
+    this.getOperandType(right).udonType === UdonType.DataToken &&
+    resultFinalType.udonType !== UdonType.DataToken
+      ? this.unwrapDataToken(right, resultFinalType)
+      : right;
+  this.emit(new CopyInstruction(result, rightValue));
   this.emit(new UnconditionalJumpInstruction(endLabel));
 
   this.emit(new LabelInstruction(notNullLabel));
-  this.emit(new CopyInstruction(result, left)); // Plain copy: see null-path comment above.
+  const leftValue =
+    this.getOperandType(left).udonType === UdonType.DataToken &&
+    resultFinalType.udonType !== UdonType.DataToken
+      ? this.unwrapDataToken(left, resultFinalType)
+      : left;
+  this.emit(new CopyInstruction(result, leftValue)); // Plain copy: see null-path comment above.
   this.emit(new LabelInstruction(endLabel));
   return result;
 }
@@ -1420,6 +1793,94 @@ function resolveSpreadArrayType(
     }
   }
   return resolved instanceof ArrayTypeSymbol ? resolved : null;
+}
+
+function resolveInlineOrAliasType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): TypeSymbol {
+  const inlineType = resolveInlineClassType(converter, type);
+  return converter.typeMapper.getAlias(inlineType.name) ?? inlineType;
+}
+
+function inlineInstanceDeclaresProperty(
+  converter: ASTToTACConverter,
+  className: string,
+  property: string,
+): boolean {
+  if (resolveClassProperty(converter, className, property)) return true;
+  const alias = converter.typeMapper.getAlias(className);
+  return alias instanceof InterfaceTypeSymbol
+    ? alias.properties.has(property)
+    : false;
+}
+
+function tryReadInlineFieldByHandle(
+  converter: ASTToTACConverter,
+  handle: TACOperand,
+  property: string,
+  propertyType: TypeSymbol,
+): TACOperand | null {
+  const candidates: Array<[number, string]> = [];
+  for (const [instanceId, info] of converter.allInlineInstances) {
+    if (inlineInstanceDeclaresProperty(converter, info.className, property)) {
+      candidates.push([instanceId, info.prefix]);
+    }
+  }
+  if (
+    candidates.length === 0 &&
+    converter.fieldTypeRegistry.getStructuralFieldType(property) !== undefined
+  ) {
+    converter.warnAt(
+      undefined,
+      "D3DispatchFallback",
+      `Imprecise inline field read for property "${property}" — using all ${converter.allInlineInstances.size} inline instance(s) as dispatch candidates.`,
+    );
+    for (const [instanceId, info] of converter.allInlineInstances) {
+      candidates.push([instanceId, info.prefix]);
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  const result = converter.newTemp(propertyType);
+  converter.emit(
+    new AssignmentInstruction(
+      result,
+      createSoaSentinelValue(converter, propertyType),
+    ),
+  );
+  // Normalize the handle to Int32 before comparing against instance-id
+  // constants. When `handle` arrives as an Object slot (e.g. an `__opt_base_*`
+  // built from an erased optional-chain receiver), `==` with an Int32 constant
+  // would lower to `SystemObject.op_Equality` — a *reference* comparison
+  // between two distinct boxes — and never matches even when the boxed
+  // values are equal. Forcing the cast first routes through SystemInt32
+  // equality and matches the D-3 untracked-handle dispatch path.
+  const handleInt32 = normalizeOperandToInt32(converter, handle);
+  const endLabel = converter.newLabel("inline_field_handle_end");
+  for (const [, prefix] of candidates) {
+    const nextLabel = converter.newLabel("inline_field_handle_next");
+    const matches = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        matches,
+        handleInt32,
+        "==",
+        createVariable(`${prefix}__handle`, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(matches, nextLabel));
+    converter.emit(
+      new CopyInstruction(
+        result,
+        createVariable(`${prefix}_${property}`, propertyType),
+      ),
+    );
+    converter.emit(new UnconditionalJumpInstruction(endLabel));
+    converter.emit(new LabelInstruction(nextLabel));
+  }
+  converter.emit(new LabelInstruction(endLabel));
+  return result;
 }
 
 export function visitArrayLiteralExpression(
@@ -2079,9 +2540,8 @@ export function visitPropertyAccessExpression(
     }
 
     if (node.object.kind === ASTNodeKind.Identifier) {
-      const instanceInfo = this.resolveInlineInstance(
-        (node.object as IdentifierNode).name,
-      );
+      const objectName = (node.object as IdentifierNode).name;
+      const instanceInfo = this.resolveInlineInstance(objectName);
       if (instanceInfo) {
         const soaClass = resolveConcreteClassName(this, instanceInfo);
         if (!this.soaClasses.has(soaClass)) {
@@ -2092,6 +2552,66 @@ export function visitPropertyAccessExpression(
           );
           if (mapped) return mapped;
         }
+      }
+      const objectSymbol = this.symbolTable.lookup(objectName);
+      if (
+        // Only synthesise the per-field slot when the local actually has a
+        // backing inline-instance mapping (i.e. visitVariableDeclaration's
+        // structural-fix block emitted `${objectName}_${prop}` copies).
+        // Without `instanceInfo` the slot was never written — falling through
+        // to D-3 untracked-handle dispatch is the only way to read the value.
+        instanceInfo &&
+        objectSymbol?.type instanceof InterfaceTypeSymbol &&
+        objectSymbol.type.properties.has(node.property)
+      ) {
+        const propTypeRaw = objectSymbol.type.properties.get(node.property);
+        if (propTypeRaw) {
+          const propType =
+            this.fieldTypeRegistry.getInterfacePropertyType(
+              {
+                typeMapper: this.typeMapper,
+                classRegistry: this.classRegistry,
+              },
+              objectSymbol.type.name,
+              node.property,
+            ) ??
+            (propTypeRaw.name
+              ? (this.typeMapper.getAlias(propTypeRaw.name) ?? propTypeRaw)
+              : propTypeRaw);
+          return createVariable(`${objectName}_${node.property}`, propType, {
+            isLocal: true,
+          });
+        }
+      }
+      const registryStructuralField =
+        this.fieldTypeRegistry.getStructuralFieldType(node.property);
+      const structuralPropertyType =
+        registryStructuralField !== undefined
+          ? (inferInlineStructuralPropertyType(this, node.property) ??
+            registryStructuralField)
+          : undefined;
+      const isAnonymousInlineRecord =
+        objectSymbol?.type instanceof InterfaceTypeSymbol &&
+        objectSymbol.type.name.startsWith("__anon_") &&
+        !objectSymbol.type.name.startsWith("__anon_union_") &&
+        isInlineHandleType(this, objectSymbol.type);
+      if (
+        // Same backing-slot requirement as the typed-interface branch above:
+        // the `${objectName}_${prop}` slot is only written by the structural
+        // field-copy block in visitVariableDeclaration when the source
+        // resolves to an inline instance. Without `instanceInfo`, the slot
+        // was never written and falling through to D-3 untracked-handle
+        // dispatch is the only way to read a real value.
+        instanceInfo &&
+        structuralPropertyType &&
+        registryStructuralField !== undefined &&
+        objectSymbol &&
+        !isAnonymousInlineRecord
+      ) {
+        return createVariable(
+          `${objectName}_${node.property}`,
+          structuralPropertyType,
+        );
       }
     }
 
@@ -2375,7 +2895,11 @@ export function visitPropertyAccessExpression(
         if (
           dispInstances.length === 0 &&
           (untrackedTypeName === "object" ||
-            untrackedTypeName === "DataDictionary")
+            untrackedTypeName === "DataDictionary" ||
+            (untrackedType.udonType === UdonType.Object &&
+              this.dispatchLimitResolver.isLargeErasedFallbackProperty(
+                node.property,
+              )))
         ) {
           const candidateClasses = new Set<string>();
           for (const [, info] of this.allInlineInstances) {
@@ -2383,7 +2907,12 @@ export function visitPropertyAccessExpression(
             // Use resolveClassProperty (class-definition lookup) instead of
             // mapInlineProperty (heap-variable lookup) so the check does not
             // depend on a specific instance's prefix.
-            if (resolveClassProperty(this, info.className, node.property)) {
+            const alias = this.typeMapper.getAlias(info.className);
+            if (
+              resolveClassProperty(this, info.className, node.property) ||
+              (alias instanceof InterfaceTypeSymbol &&
+                alias.properties.has(node.property))
+            ) {
               candidateClasses.add(info.className);
             }
           }
@@ -2400,7 +2929,9 @@ export function visitPropertyAccessExpression(
             // the AST type of the object node (e.g. the declared element type
             // of a for-of loop variable, or an interface implementor).
             const astType = resolveTypeFromNode(this, node.object);
-            const astName = astType?.name;
+            const astName =
+              astType?.name ??
+              inferIdentifierInitialPropertyClassName(this, node.object);
             let narrowedClass: string | undefined;
             // Implementors of the declared interface that appear in
             // candidateClasses.  Populated only when astName is an interface;
@@ -2468,14 +2999,18 @@ export function visitPropertyAccessExpression(
             }
           }
         }
-        if (usedErasedFallback && dispInstances.length > 100) {
+        const dispatchLimit = this.dispatchLimitResolver.getLimit({
+          property: node.property,
+          usedErasedFallback,
+        });
+        if (usedErasedFallback && dispInstances.length > dispatchLimit) {
           this.warnAt(
             node,
             "D3DispatchFallback",
-            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: 100) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
+            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: ${dispatchLimit}) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
           );
         }
-        if (dispInstances.length > 0 && dispInstances.length <= 100) {
+        if (dispInstances.length > 0 && dispInstances.length <= dispatchLimit) {
           let untrackedPropType: TypeSymbol | undefined;
           let propertyIsGetter = false;
           for (const [, info] of dispInstances) {
@@ -2490,13 +3025,20 @@ export function visitPropertyAccessExpression(
               propertyIsGetter = true;
               break;
             }
-            const pv = this.mapInlineProperty(
-              info.className,
-              info.prefix,
-              node.property,
-            );
+            const pv =
+              this.mapInlineProperty(
+                info.className,
+                info.prefix,
+                node.property,
+              ) ??
+              tryMapAliasInlineProperty(
+                this,
+                info.className,
+                info.prefix,
+                node.property,
+              );
             if (pv) {
-              untrackedPropType = pv.type;
+              untrackedPropType = this.getOperandType(pv);
               break;
             }
           }
@@ -2517,13 +3059,23 @@ export function visitPropertyAccessExpression(
                 info.className,
                 node.property,
               );
+              const mappedProbe =
+                this.mapInlineProperty(
+                  info.className,
+                  info.prefix,
+                  node.property,
+                ) ??
+                tryMapAliasInlineProperty(
+                  this,
+                  info.className,
+                  info.prefix,
+                  node.property,
+                );
               const probeType = probe
                 ? (probe.prop.getterReturnType ?? probe.prop.type)
-                : this.mapInlineProperty(
-                    info.className,
-                    info.prefix,
-                    node.property,
-                  )?.type;
+                : mappedProbe
+                  ? this.getOperandType(mappedProbe)
+                  : undefined;
               if (probeType && probeType.name !== untrackedPropType.name) {
                 this.warnAt(
                   node,
@@ -2559,7 +3111,14 @@ export function visitPropertyAccessExpression(
               if (fieldList) {
                 const hdlVar = normalizeOperandToInt32(this, object);
                 const token = this.newTemp(ExternTypes.dataToken);
-                emitBoundedDataListGetItem(this, fieldList, hdlVar, token);
+                emitBoundedDataListGetItem(
+                  this,
+                  fieldList,
+                  hdlVar,
+                  token,
+                  createSoaSentinelValue(this, untrackedPropType),
+                  true,
+                );
                 return this.unwrapDataToken(token, untrackedPropType);
               }
               // SoA class property not in soaFieldLists — the fallthrough
@@ -2581,18 +3140,23 @@ export function visitPropertyAccessExpression(
               untrackedPropType,
               { isLocal: true },
             );
+            this.emit(
+              new AssignmentInstruction(
+                dispResult,
+                createSoaSentinelValue(this, untrackedPropType),
+              ),
+            );
             const hdlVar = normalizeOperandToInt32(this, object);
             const dispEnd = this.newLabel("uninst_prop_end");
             for (const [instId, info] of dispInstances) {
               const dispNext = this.newLabel("uninst_prop_next");
               const dispCond = this.newTemp(PrimitiveTypes.boolean);
+              const instanceHandle = createVariable(
+                `${info.prefix}__handle`,
+                PrimitiveTypes.int32,
+              );
               this.emit(
-                new BinaryOpInstruction(
-                  dispCond,
-                  hdlVar,
-                  "==",
-                  createConstant(instId, PrimitiveTypes.int32),
-                ),
+                new BinaryOpInstruction(dispCond, hdlVar, "==", instanceHandle),
               );
               this.emit(
                 // Jump to dispNext when handle does NOT match (JUMP_IF_FALSE semantics)
@@ -2607,11 +3171,18 @@ export function visitPropertyAccessExpression(
               if (armGetter !== undefined) {
                 this.emitCopyWithTracking(dispResult, armGetter);
               } else {
-                const pv = this.mapInlineProperty(
-                  info.className,
-                  info.prefix,
-                  node.property,
-                );
+                const pv =
+                  this.mapInlineProperty(
+                    info.className,
+                    info.prefix,
+                    node.property,
+                  ) ??
+                  tryMapAliasInlineProperty(
+                    this,
+                    info.className,
+                    info.prefix,
+                    node.property,
+                  );
                 if (pv) {
                   this.emitCopyWithTracking(dispResult, pv);
                 } else if (propertyIsGetter) {
@@ -2870,6 +3441,10 @@ export function visitObjectLiteralExpression(
       prefix: instancePrefix,
       className,
     });
+    this.allInlineInstanceIdsByPrefix.set(instancePrefix, instanceId);
+    if (className.startsWith("__anon_")) {
+      this.anonymousInlineClassNames.add(className);
+    }
     for (const prop of node.properties) {
       if (prop.kind !== "property") continue;
       const rawPropType = expected.properties.get(prop.key);
@@ -2896,6 +3471,15 @@ export function visitObjectLiteralExpression(
       this.currentExpectedType = prev;
       this.emit(new AssignmentInstruction(propVar, value));
       this.maybeTrackInlineInstanceAssignment(propVar, value);
+      if (
+        propType instanceof InterfaceTypeSymbol &&
+        propType.properties.size > 0
+      ) {
+        const propKey = operandTrackingKey(propVar);
+        if (propKey) {
+          emitStructuralFieldCopies(this, propKey, propType, value, {}, true);
+        }
+      }
     }
     return instanceHandle;
   }
@@ -2990,6 +3574,17 @@ export function visitOptionalChainingExpression(
   const obj = this.visitExpression(node.object);
   const objTemp = this.newTemp(this.getOperandType(obj));
   this.emitCopyWithTracking(objTemp, obj);
+  const objTempName = operandTrackingKey(objTemp);
+  if (objTempName) {
+    emitStructuralFieldCopies(
+      this,
+      objTempName,
+      this.getOperandType(objTemp),
+      obj,
+      { isLocal: true },
+      true,
+    );
+  }
 
   let resultType: TypeSymbol | undefined;
   if (
@@ -3022,20 +3617,47 @@ export function visitOptionalChainingExpression(
   }
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
-  this.emit(
-    new BinaryOpInstruction(
-      isNull,
-      objTemp,
-      "==",
-      createConstant(null, ObjectType),
-    ),
-  );
+  const objTempType = this.getOperandType(objTemp);
+  if (usesInlineNullSentinel(this, objTempType)) {
+    // Inline-handle receivers store null as the sentinel `-1` rather than a
+    // null object reference. Boxing the Int32 into an Object slot and then
+    // comparing against null would always return false (the box exists), so
+    // `inlineHandle?.method()` would never short-circuit. Mirror the
+    // sentinel branch already in visitNullCoalescingExpression.
+    const handleInt32 = normalizeOperandToInt32(this, objTemp);
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        handleInt32,
+        "==",
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
+    );
+  } else {
+    const nullCheckOperand = this.newTemp(ObjectType);
+    this.emit(new CopyInstruction(nullCheckOperand, objTemp));
+    this.emit(
+      new BinaryOpInstruction(
+        isNull,
+        nullCheckOperand,
+        "==",
+        createConstant(null, ObjectType),
+      ),
+    );
+  }
   const notNullLabel = this.newLabel("opt_notnull");
   const endLabel = this.newLabel("opt_end");
-  const result = this.newTemp(resultType ?? ObjectType);
+  const fallbackPropertyType =
+    inferInlineStructuralPropertyType(this, node.property) ??
+    this.fieldTypeRegistry.getStructuralFieldType(node.property);
+  const effectiveResultType = resultType ?? fallbackPropertyType;
+  const result = this.newTemp(effectiveResultType ?? ObjectType);
   this.emit(new ConditionalJumpInstruction(isNull, notNullLabel));
   this.emit(
-    new AssignmentInstruction(result, createConstant(null, ObjectType)),
+    new AssignmentInstruction(
+      result,
+      createSoaSentinelValue(this, effectiveResultType ?? ObjectType),
+    ),
   );
   this.emit(new UnconditionalJumpInstruction(endLabel));
 
@@ -3043,7 +3665,11 @@ export function visitOptionalChainingExpression(
   // Create a named variable to hold objTemp so visitPropertyAccessExpression
   // can look it up by name and get proper inline tracking. Use a temporary
   // scope to avoid leaking the symbol into the enclosing scope.
-  const optBaseType = this.getOperandType(objTemp);
+  const resolvedOptBaseType = resolveTypeFromNode(this, node.object);
+  const optBaseType =
+    resolvedOptBaseType && !isPlainObjectType(resolvedOptBaseType)
+      ? resolvedOptBaseType
+      : this.getOperandType(objTemp);
   const optBaseName = `__opt_base_${this.tempCounter++}`;
   const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
   this.symbolTable.enterScope();
@@ -3053,14 +3679,43 @@ export function visitOptionalChainingExpression(
     this.emit(new CopyInstruction(optBase, objTemp));
     // Propagate inline instance tracking from objTemp to optBase
     this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
-    propResult = this.visitPropertyAccessExpression({
-      kind: ASTNodeKind.PropertyAccessExpression,
-      object: {
-        kind: ASTNodeKind.Identifier,
-        name: optBaseName,
-      } as IdentifierNode,
-      property: node.property,
-    } as PropertyAccessExpressionNode);
+    emitStructuralFieldCopies(
+      this,
+      optBaseName,
+      optBaseType,
+      objTemp,
+      { isLocal: true },
+      true,
+    );
+    const structuralPropertyType =
+      effectiveResultType ??
+      this.fieldTypeRegistry.getStructuralFieldType(node.property);
+    if (structuralPropertyType) {
+      propResult =
+        tryReadInlineFieldByHandle(
+          this,
+          optBase,
+          node.property,
+          structuralPropertyType,
+        ) ??
+        this.visitPropertyAccessExpression({
+          kind: ASTNodeKind.PropertyAccessExpression,
+          object: {
+            kind: ASTNodeKind.Identifier,
+            name: optBaseName,
+          } as IdentifierNode,
+          property: node.property,
+        } as PropertyAccessExpressionNode);
+    } else {
+      propResult = this.visitPropertyAccessExpression({
+        kind: ASTNodeKind.PropertyAccessExpression,
+        object: {
+          kind: ASTNodeKind.Identifier,
+          name: optBaseName,
+        } as IdentifierNode,
+        property: node.property,
+      } as PropertyAccessExpressionNode);
+    }
   } finally {
     this.symbolTable.exitScope();
   }
