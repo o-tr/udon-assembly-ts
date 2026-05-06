@@ -5,12 +5,7 @@
  * コンパイル用スタブ。
  */
 import { UdonExtern, UdonStub } from "./UdonDecorators.js";
-import type {
-  UdonDouble,
-  UdonFloat,
-  UdonInt,
-  UdonLong,
-} from "./UdonTypes.js";
+import type { UdonDouble, UdonFloat, UdonInt, UdonLong } from "./UdonTypes.js";
 
 @UdonStub("VRC.SDK3.Data.DataList")
 export class DataList {

@@ -629,8 +629,11 @@ export class TypeCheckerTypeResolver {
       const mapped = UDON_BRANDED_TYPE_MAP.get(text);
       if (mapped) return mapped;
     }
+    // `intersectionText === brandName` already short-circuited via
+    // `directMapped` above; only the prefix form (e.g. `UdonInt & {…}`)
+    // is left to handle here.
     for (const [brandName, mapped] of UDON_BRANDED_TYPE_MAP) {
-      if (intersectionText === brandName || intersectionText.startsWith(`${brandName} &`)) {
+      if (intersectionText.startsWith(`${brandName} &`)) {
         return mapped;
       }
     }

@@ -155,4 +155,36 @@ describe("Convert method overload resolution", () => {
     // Out-of-range value should NOT be folded; fall back to CastInstruction
     expect(result.uasm).toContain("SystemConvert");
   });
+
+  it("Math dispatch coerces mixed-width args to the chosen extern's parameter width", () => {
+    // Math.max(udonFloat, udonNumber) must NOT push a 4-byte Single slot
+    // into a SystemMath.__Max__SystemDouble_SystemDouble Double parameter
+    // address. The transpiler should emit a SystemConvert.ToDouble cast on
+    // the Single arg before the Double-overloaded extern is invoked.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonFloat } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const f: UdonFloat = 1.5 as UdonFloat;
+          const d: number = 2.5;
+          const m = Math.max(f, d);
+          Debug.Log(m);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).toContain(
+      "SystemMath.__Max__SystemDouble_SystemDouble__SystemDouble",
+    );
+    // The Single operand must be coerced to Double before the call.
+    expect(result.uasm).toContain(
+      "SystemConvert.__ToDouble__SystemSingle__SystemDouble",
+    );
+    expect(result.uasm).not.toContain(
+      "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle",
+    );
+  });
 });

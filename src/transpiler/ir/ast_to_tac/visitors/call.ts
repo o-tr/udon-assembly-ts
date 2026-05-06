@@ -1407,12 +1407,13 @@ function tryD3MethodDispatch(
         converter.inlineInstanceMap,
         resultInlineMapping,
       );
-      if (resultInlineMapping) {
-        const resultKey = operandTrackingKey(dispatchResult);
-        if (resultKey) {
-          converter.inlineInstanceMap.set(resultKey, resultInlineMapping);
-        }
-      }
+      // Per-branch tracking propagation is intentionally NOT done here:
+      // `inlineInstanceMap` is replaced with `branchMapSnapshot` at the end
+      // of each iteration (and with `savedInlineInstanceMap` after the
+      // loop), so any `set` against the live map within the branch body
+      // would be overwritten before the next branch / the post-loop code
+      // can read it. The merged mapping is instead committed once after
+      // the loop (search for `Propagate inline tracking`).
     }
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
@@ -5112,9 +5113,24 @@ export function visitMathStaticCall(
   const tryDouble = args.some(
     (a) => this.getOperandType(a).udonType === UdonType.Double,
   );
+  // Coerce every operand to the chosen extern's parameter width so a
+  // mixed-width call (e.g. Math.max(udonFloat, udonNumber)) cannot push
+  // a 4-byte Single slot into a Double parameter address (or vice versa).
+  // The CAST lowers to SystemConvert.ToDouble / ToSingle at codegen.
+  const targetParamType = tryDouble
+    ? PrimitiveTypes.double
+    : PrimitiveTypes.single;
+  const coerceArg = (arg: TACOperand): TACOperand => {
+    const argType = this.getOperandType(arg);
+    if (argType.udonType === targetParamType.udonType) return arg;
+    const coerced = this.newTemp(targetParamType);
+    this.emit(new CastInstruction(coerced, arg));
+    return coerced;
+  };
+  const coercedArgs = args.map(coerceArg);
+  const paramTypeName = tryDouble ? "double" : "float";
   const resolveExtern = (): string | null => {
     if (tryDouble) {
-      const paramTypes = args.map(() => "double");
       // SystemMath stub does not declare Floor/Ceil/Abs/etc. (only Truncate),
       // so metadata lookup misses. Use resolveExternSignature directly with
       // both paramTypes and returnType so the manual signature generator
@@ -5123,37 +5139,36 @@ export function visitMathStaticCall(
         "System.Math",
         mapped,
         "method",
-        paramTypes,
-        "double",
+        coercedArgs.map(() => paramTypeName),
+        paramTypeName,
       );
       if (sig) return sig;
     }
     return this.resolveStaticExtern("Mathf", mapped, "method");
   };
-  const resultType = tryDouble
-    ? PrimitiveTypes.double
-    : PrimitiveTypes.single;
 
   if (methodName === "max" || methodName === "min") {
-    if (args.length < 2) return null;
-    let current = args[0];
-    for (let i = 1; i < args.length; i += 1) {
-      const stepResult = this.newTemp(resultType);
+    if (coercedArgs.length < 2) return null;
+    let current = coercedArgs[0];
+    for (let i = 1; i < coercedArgs.length; i += 1) {
+      const stepResult = this.newTemp(targetParamType);
       const externSig = resolveExtern();
       if (!externSig) return null;
-      this.emit(new CallInstruction(stepResult, externSig, [current, args[i]]));
+      this.emit(
+        new CallInstruction(stepResult, externSig, [current, coercedArgs[i]]),
+      );
       current = stepResult;
     }
     return current;
   }
 
-  if (args.length !== 1 && methodName !== "pow") return null;
-  if (methodName === "pow" && args.length !== 2) return null;
+  if (coercedArgs.length !== 1 && methodName !== "pow") return null;
+  if (methodName === "pow" && coercedArgs.length !== 2) return null;
 
-  const result = this.newTemp(resultType);
+  const result = this.newTemp(targetParamType);
   const externSig = resolveExtern();
   if (!externSig) return null;
-  this.emit(new CallInstruction(result, externSig, args));
+  this.emit(new CallInstruction(result, externSig, coercedArgs));
   return result;
 }
 
