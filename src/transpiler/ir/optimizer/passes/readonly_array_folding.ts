@@ -233,7 +233,7 @@ export const readonlyArrayFolding = (
       continue;
     }
 
-    // Jump/Return: transition init -> post-init
+    // Jump/Return: transition init -> post-init, then invalidate if operand used
     if (
       inst.kind === TACInstructionKind.UnconditionalJump ||
       inst.kind === TACInstructionKind.ConditionalJump ||
@@ -243,12 +243,9 @@ export const readonlyArrayFolding = (
         if (c.phase === "init") c.phase = "post-init";
       }
 
-      // Return may carry the candidate operand
-      if (inst.kind === TACInstructionKind.Return) {
-        for (const c of [...candidates.values()]) {
-          if (instructionUsesCandidate(inst, c)) {
-            invalidate(candidates, c);
-          }
+      for (const c of [...candidates.values()]) {
+        if (instructionUsesCandidate(inst, c)) {
+          invalidate(candidates, c);
         }
       }
       continue;
@@ -297,6 +294,7 @@ export const readonlyArrayFolding = (
 
   // Compute the valid fold range for each candidate:
   // from startIndex to the next exposedLabel (or end of stream)
+  // Keyed by startIndex (unique per candidate) instead of tempId (may collide)
   const candidateEndIndex = new Map<number, number>();
   for (const c of allValidCandidates) {
     let end = instructions.length;
@@ -306,48 +304,57 @@ export const readonlyArrayFolding = (
         break;
       }
     }
-    candidateEndIndex.set(c.tempId, end);
+    candidateEndIndex.set(c.startIndex, end);
   }
 
   // Build lookup structures for Pass 2
-  const tempIdToCandidateMap = new Map<number, ArrayCandidate>();
+  // Both maps use arrays to handle tempId/alias collisions across method segments
+  const tempIdToCandidates = new Map<number, ArrayCandidate[]>();
   const aliasToCandidates = new Map<string, ArrayCandidate[]>();
   for (const c of allValidCandidates) {
-    tempIdToCandidateMap.set(c.tempId, c);
+    let tempArr = tempIdToCandidates.get(c.tempId);
+    if (!tempArr) {
+      tempArr = [];
+      tempIdToCandidates.set(c.tempId, tempArr);
+    }
+    tempArr.push(c);
     if (c.aliasName !== null) {
-      let arr = aliasToCandidates.get(c.aliasName);
-      if (!arr) {
-        arr = [];
-        aliasToCandidates.set(c.aliasName, arr);
+      let aliasArr = aliasToCandidates.get(c.aliasName);
+      if (!aliasArr) {
+        aliasArr = [];
+        aliasToCandidates.set(c.aliasName, aliasArr);
       }
-      arr.push(c);
+      aliasArr.push(c);
     }
   }
+
+  const findCandidateInRange = (
+    arr: ArrayCandidate[] | undefined,
+    index: number,
+  ): ArrayCandidate | null => {
+    if (!arr) return null;
+    for (const c of arr) {
+      const end = candidateEndIndex.get(c.startIndex) ?? instructions.length;
+      if (index >= c.startIndex && index < end) return c;
+    }
+    return null;
+  };
 
   const findValidCandidateAt = (
     operand: TACOperand,
     index: number,
   ): ArrayCandidate | null => {
     if (operand.kind === TACOperandKind.Temporary) {
-      const c = tempIdToCandidateMap.get((operand as TemporaryOperand).id);
-      if (
-        c &&
-        index >= c.startIndex &&
-        index < (candidateEndIndex.get(c.tempId) ?? instructions.length)
-      ) {
-        return c;
-      }
-      return null;
+      return findCandidateInRange(
+        tempIdToCandidates.get((operand as TemporaryOperand).id),
+        index,
+      );
     }
     if (operand.kind === TACOperandKind.Variable) {
-      const name = (operand as VariableOperand).name;
-      const arr = aliasToCandidates.get(name);
-      if (arr) {
-        for (const c of arr) {
-          const end = candidateEndIndex.get(c.tempId) ?? instructions.length;
-          if (index >= c.startIndex && index < end) return c;
-        }
-      }
+      return findCandidateInRange(
+        aliasToCandidates.get((operand as VariableOperand).name),
+        index,
+      );
     }
     return null;
   };
@@ -380,18 +387,24 @@ export const readonlyArrayFolding = (
     return { instructions, changed: false };
   }
 
-  // Check residual uses for each candidate
+  // Check residual uses for each candidate (keyed by startIndex to avoid
+  // tempId collisions across method segments)
   const residualUses = new Map<number, number>();
   for (const c of allValidCandidates) {
-    residualUses.set(c.tempId, 0);
+    residualUses.set(c.startIndex, 0);
   }
 
   for (let i = 0; i < result.length; i++) {
     const inst = result[i];
     for (const c of allValidCandidates) {
       if (c.initInstructionIndices.has(i)) continue;
+      const end = candidateEndIndex.get(c.startIndex) ?? instructions.length;
+      if (i < c.startIndex || i >= end) continue;
       if (instructionUsesCandidate(inst, c)) {
-        residualUses.set(c.tempId, (residualUses.get(c.tempId) ?? 0) + 1);
+        residualUses.set(
+          c.startIndex,
+          (residualUses.get(c.startIndex) ?? 0) + 1,
+        );
       }
     }
   }
@@ -399,7 +412,7 @@ export const readonlyArrayFolding = (
   // Remove init instructions for candidates with zero residual uses
   const indicesToRemove = new Set<number>();
   for (const c of allValidCandidates) {
-    if ((residualUses.get(c.tempId) ?? 0) === 0) {
+    if ((residualUses.get(c.startIndex) ?? 0) === 0) {
       for (const idx of c.initInstructionIndices) {
         indicesToRemove.add(idx);
       }
@@ -407,7 +420,7 @@ export const readonlyArrayFolding = (
   }
 
   if (indicesToRemove.size === 0) {
-    return { instructions: result, changed, structurallyChanged: true };
+    return { instructions: result, changed };
   }
 
   const finalResult: TACInstruction[] = [];

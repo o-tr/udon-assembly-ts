@@ -354,6 +354,74 @@ describe("readonlyArrayFolding", () => {
     expect(result.instructions).toBe(instructions);
   });
 
+  it("folds both segments when tempId collides across exposed labels", () => {
+    // Both methods reuse tempId=0 for their array constructor
+    const arr1 = tArr(0);
+    const alias1 = vArr("data");
+    const arr2 = tArr(0);
+    const alias2 = vArr("data");
+    const dest1 = t(1);
+    const dest2 = t(2);
+    const exposedLabels = new Set(["method_B"]);
+    const instructions = [
+      new CallInstruction(arr1, "__ctor_SystemInt32Array", [c(1)]),
+      new ArrayAssignmentInstruction(arr1, c(0), c(10)),
+      new AssignmentInstruction(alias1, arr1),
+      new ArrayAccessInstruction(dest1, alias1, c(0)),
+      new ReturnInstruction(dest1),
+      label("method_B"),
+      new CallInstruction(arr2, "__ctor_SystemInt32Array", [c(1)]),
+      new ArrayAssignmentInstruction(arr2, c(0), c(99)),
+      new AssignmentInstruction(alias2, arr2),
+      new ArrayAccessInstruction(dest2, alias2, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions, exposedLabels);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 10");
+    expect(text).toContain("t2 = 99");
+    expect(text).not.toContain("__ctor_SystemInt32Array");
+  });
+
+  it("invalidates when ConditionalJump condition uses candidate temp", () => {
+    const arr = tArr(0);
+    const alias = vArr("scores");
+    const dest = t(1);
+    const lbl = createLabel("skip");
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(1)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(10)),
+      new ConditionalJumpInstruction(arr, lbl),
+      new AssignmentInstruction(alias, arr),
+      new ArrayAccessInstruction(dest, alias, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
+  it("does not set structurallyChanged when only accesses are replaced", () => {
+    const arr = tArr(0);
+    const alias = vArr("scores");
+    const dest1 = t(1);
+    const dest2 = t(2);
+    const idx = v("i");
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(2)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(10)),
+      new ArrayAssignmentInstruction(arr, c(1), c(20)),
+      new AssignmentInstruction(alias, arr),
+      new ArrayAccessInstruction(dest1, alias, c(0)),
+      new ArrayAccessInstruction(dest2, alias, idx),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    // Init code preserved because of non-constant index access residual use
+    expect(result.structurallyChanged).toBeUndefined();
+  });
+
   it("invalidates on init-phase catch-all (BinaryOp using temp)", () => {
     const arr = tArr(0);
     const alias = vArr("scores");
