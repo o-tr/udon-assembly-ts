@@ -5129,17 +5129,21 @@ export function visitMathStaticCall(
   };
   const coercedArgs = args.map(coerceArg);
   const paramTypeName = tryDouble ? "double" : "float";
-  const resolveExtern = (): string | null => {
+  const resolveExtern = (
+    overrideParamTypes?: [string, string],
+  ): string | null => {
     if (tryDouble) {
       // SystemMath stub does not declare Floor/Ceil/Abs/etc. (only Truncate),
       // so metadata lookup misses. Use resolveExternSignature directly with
       // both paramTypes and returnType so the manual signature generator
       // produces the well-known SystemMath.__<Op>__SystemDouble__SystemDouble.
+      const paramTypes =
+        overrideParamTypes ?? coercedArgs.map(() => paramTypeName);
       const sig = resolveExternSignature(
         "System.Math",
         mapped,
         "method",
-        coercedArgs.map(() => paramTypeName),
+        paramTypes,
         paramTypeName,
       );
       // resolveExternSignature always produces a signature when both
@@ -5159,10 +5163,11 @@ export function visitMathStaticCall(
 
   if (methodName === "max" || methodName === "min") {
     if (coercedArgs.length < 2) return null;
+    const twoParams = [paramTypeName, paramTypeName] as [string, string];
     let current = coercedArgs[0];
     for (let i = 1; i < coercedArgs.length; i += 1) {
       const stepResult = this.newTemp(targetParamType);
-      const externSig = resolveExtern();
+      const externSig = resolveExtern(twoParams);
       if (!externSig) return null;
       this.emit(
         new CallInstruction(stepResult, externSig, [current, coercedArgs[i]]),
