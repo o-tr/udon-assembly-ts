@@ -3,6 +3,7 @@ import {
   NativeArrayTypeSymbol,
   PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols";
+import { readonlyArrayFolding } from "../../../src/transpiler/ir/optimizer/passes/readonly_array_folding";
 import {
   ArrayAccessInstruction,
   ArrayAssignmentInstruction,
@@ -10,23 +11,17 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   ConditionalJumpInstruction,
-  CopyInstruction,
   LabelInstruction,
-  MethodCallInstruction,
   PropertyGetInstruction,
   PropertySetInstruction,
   ReturnInstruction,
-  TACInstructionKind,
-  UnconditionalJumpInstruction,
 } from "../../../src/transpiler/ir/tac_instruction";
 import {
   createConstant,
   createLabel,
   createTemporary,
   createVariable,
-  TACOperandKind,
 } from "../../../src/transpiler/ir/tac_operand";
-import { readonlyArrayFolding } from "../../../src/transpiler/ir/optimizer/passes/readonly_array_folding";
 
 const int32ArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.int32);
 const singleArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.single);

@@ -1,5 +1,5 @@
 import {
-  ArrayAccessInstruction,
+  type ArrayAccessInstruction,
   type ArrayAssignmentInstruction,
   AssignmentInstruction,
   type CallInstruction,
@@ -430,5 +430,9 @@ export const readonlyArrayFolding = (
     }
   }
 
-  return { instructions: finalResult, changed: true, structurallyChanged: true };
+  return {
+    instructions: finalResult,
+    changed: true,
+    structurallyChanged: true,
+  };
 };
