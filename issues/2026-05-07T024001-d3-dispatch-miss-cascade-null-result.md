@@ -22,7 +22,7 @@ inside `DataToken.__op_Implicit__SystemDouble__VRCSDK3DataDataToken`.
 
 mahjong-t2 VM tests, ~19 of the 26 remaining failures show:
 
-```
+```text
 [Error] [udon-assembly-ts] D3 method dispatch miss: check on untracked instance
 ...
 Inner: UdonVMException: An exception occurred during EXTERN to

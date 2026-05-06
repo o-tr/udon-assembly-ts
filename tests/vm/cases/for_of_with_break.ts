@@ -10,7 +10,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class ForOfWithBreak extends UdonSharpBehaviour {
   Start(): void {
     const list: DataList = new DataList();
-    list.Add(new DataToken(1)); // Float-typed token: number maps to SystemSingle
+    list.Add(new DataToken(1)); // Double-typed token: number maps to System.Double
     list.Add(new DataToken(2));
     list.Add(new DataToken(3));
     list.Add(new DataToken(4));
@@ -29,7 +29,7 @@ export class ForOfWithBreak extends UdonSharpBehaviour {
     // Continue to skip value == 2
     for (const item of list) {
       const val: number = item.Double;
-      // 2 is exactly representable in IEEE 754 single precision
+      // 2 is exactly representable in IEEE 754 double precision
       if (val === 2.0) {
         continue;
       }

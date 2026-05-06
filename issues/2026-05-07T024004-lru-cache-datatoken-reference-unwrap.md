@@ -21,7 +21,7 @@ boxing (e.g., `TokenType.Int`/`TokenType.String`) rather than a reference.
 
 mahjong-t2 VM suite, `lru_cache` test:
 
-```
+```text
 Inner: UdonVMException: An exception occurred during EXTERN to
   'VRCSDK3DataDataToken.__get_Reference__SystemObject'.
 PC: 0x00000ECC

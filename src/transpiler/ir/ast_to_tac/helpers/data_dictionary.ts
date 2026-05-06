@@ -188,8 +188,12 @@ export function emitDictionaryFromProperties(
     if (valueExpectedType) {
       this.currentExpectedType = valueExpectedType;
     }
-    const value = this.visitExpression(prop.value);
-    this.currentExpectedType = prev;
+    let value: TACOperand;
+    try {
+      value = this.visitExpression(prop.value);
+    } finally {
+      this.currentExpectedType = prev;
+    }
     const valueToken = this.wrapDataToken(value);
     this.emit(
       new MethodCallInstruction(undefined, dictResult, "SetValue", [

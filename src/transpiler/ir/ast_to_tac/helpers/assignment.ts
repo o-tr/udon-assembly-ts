@@ -506,6 +506,11 @@ export function coerceConstantToType(
       if (Number.isNaN(num)) return null;
       return createConstant(num, PrimitiveTypes.single);
     }
+    case UdonType.Double: {
+      const num = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isNaN(num)) return null;
+      return createConstant(num, PrimitiveTypes.double);
+    }
     default:
       return null;
   }
