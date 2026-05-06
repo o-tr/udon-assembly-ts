@@ -5142,7 +5142,17 @@ export function visitMathStaticCall(
         coercedArgs.map(() => paramTypeName),
         paramTypeName,
       );
-      if (sig) return sig;
+      // resolveExternSignature always produces a signature when both
+      // paramTypes and returnType are supplied, so sig is non-null here.
+      // Guard explicitly: falling through to Mathf (4-byte Single) with
+      // Double-coerced args would cause a width mismatch at runtime.
+      if (!sig) {
+        throw new Error(
+          `[math-double] Failed to resolve System.Math extern for ${mapped}(${paramTypeName}). ` +
+            "This is a bug — resolveExternSignature should always produce a signature when paramTypes and returnType are both provided.",
+        );
+      }
+      return sig;
     }
     return this.resolveStaticExtern("Mathf", mapped, "method");
   };
