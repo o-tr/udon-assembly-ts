@@ -2419,6 +2419,16 @@ export function visitArrayAccessExpression(
     );
     if (arrayType instanceof DataListTypeSymbol) {
       const unwrapped = this.unwrapDataToken(tokenResult, elementType);
+      // When unwrapDataToken bails out for an erased target (Object / generic
+      // / DataToken), it returns the token unchanged. COPY-ing that DataToken
+      // into a fresh `%SystemObject` slot rewrites the dest slot's
+      // `StrongBox<T>` to `StrongBox<DataToken>` (per `UdonHeap.CopyHeapVariable`'s
+      // type-mismatch fallback). A subsequent read of the dest as the
+      // declared type then throws `HeapTypeMismatchException`. Skip the
+      // tracking copy when the unwrap was a no-op.
+      if (unwrapped === tokenResult) {
+        return tokenResult;
+      }
       const resultType = resolveInlineClassType(this, elementType);
       const result = this.newTemp(resultType);
       this.emitCopyWithTracking(result, unwrapped);
@@ -2462,6 +2472,12 @@ export function visitArrayAccessExpression(
     resolvedElementType,
   );
   const unwrapped = this.unwrapDataToken(tokenResult, resolvedElementType);
+  // See note above: skip the tracking copy when unwrap is a no-op so we
+  // don't COPY a DataToken into a wider non-DataToken slot and rewrite the
+  // dest's StrongBox type.
+  if (unwrapped === tokenResult) {
+    return tokenResult;
+  }
   const resultType = resolveInlineClassType(this, resolvedElementType);
   const result = this.newTemp(resultType);
   this.emitCopyWithTracking(result, unwrapped);
