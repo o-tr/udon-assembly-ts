@@ -114,17 +114,22 @@ describe("Convert method overload resolution", () => {
   });
 
   it("does not fold Single-to-Double cast (float precision mismatch)", () => {
-    // JS number is f64; folding Single→Double would skip the f32 round-trip,
-    // producing 3.7 instead of 3.700000047683716... as C# Convert.ToDouble would.
+    // f32 → f64 expansion must NOT be folded: f32 representation drops
+    // precision relative to JS's f64 literal, so the round-trip needs a
+    // runtime SystemConvert.ToDouble call. After number=Double remap, only
+    // an explicit UdonFloat brand triggers Single, and UdonTypeConverters
+    // provides the runtime widening to UdonDouble.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-      import type { UdonDouble } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import type { UdonDouble, UdonFloat } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
       import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
       @UdonBehaviour()
       export class T extends UdonSharpBehaviour {
         Start(): void {
-          const a: UdonDouble = 3.7 as UdonDouble;
+          const f: UdonFloat = 3.7 as UdonFloat;
+          const a: UdonDouble = UdonTypeConverters.toUdonDouble(f);
           Debug.Log(a);
         }
       }`;

@@ -1076,7 +1076,7 @@ export class ASTToTACConverter {
   /**
    * Generate a new temporary variable
    */
-  newTemp(type: TypeSymbol = PrimitiveTypes.single): TACOperand {
+  newTemp(type: TypeSymbol = PrimitiveTypes.double): TACOperand {
     return createTemporary(this.tempCounter++, type);
   }
 

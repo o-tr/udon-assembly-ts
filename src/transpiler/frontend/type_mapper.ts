@@ -39,7 +39,7 @@ const BUILTIN_NAME_MAP: ReadonlyMap<string, TypeSymbol> = new Map<
   TypeSymbol
 >([
   ...UDON_BRANDED_TYPE_MAP,
-  ["number", PrimitiveTypes.single],
+  ["number", PrimitiveTypes.double],
   ["float", PrimitiveTypes.single],
   ["boolean", PrimitiveTypes.boolean],
   ["bool", PrimitiveTypes.boolean],
@@ -277,6 +277,6 @@ export class TypeMapper {
     if (typeof value === "bigint") {
       return PrimitiveTypes.int64;
     }
-    return PrimitiveTypes.single;
+    return PrimitiveTypes.double;
   }
 }

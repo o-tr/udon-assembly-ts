@@ -1,5 +1,6 @@
 import { resolveExternSignature } from "../../../codegen/extern_signatures.js";
 import {
+  CollectionTypeSymbol,
   ExternTypes,
   ObjectType,
   PrimitiveTypes,
@@ -172,12 +173,23 @@ export function emitDictionaryFromProperties(
   );
   this.emit(new CallInstruction(dictResult, dictCtorSig, []));
 
+  const expected = this.currentExpectedType;
+  const valueExpectedType =
+    expected instanceof CollectionTypeSymbol && expected.valueType
+      ? expected.valueType
+      : undefined;
+
   for (const prop of properties) {
     if (prop.kind !== "property") continue;
     const keyToken = this.wrapDataToken(
       createConstant(prop.key, PrimitiveTypes.string),
     );
+    const prev = this.currentExpectedType;
+    if (valueExpectedType) {
+      this.currentExpectedType = valueExpectedType;
+    }
     const value = this.visitExpression(prop.value);
+    this.currentExpectedType = prev;
     const valueToken = this.wrapDataToken(value);
     this.emit(
       new MethodCallInstruction(undefined, dictResult, "SetValue", [

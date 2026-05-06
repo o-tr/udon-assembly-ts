@@ -428,7 +428,7 @@ export function inferType(
 
   switch (node.kind) {
     case ts.SyntaxKind.NumericLiteral:
-      return PrimitiveTypes.single;
+      return PrimitiveTypes.double;
     case ts.SyntaxKind.StringLiteral:
       return PrimitiveTypes.string;
     case ts.SyntaxKind.TrueKeyword:
@@ -564,7 +564,7 @@ export function inferType(
       if (pue.operator === ts.SyntaxKind.ExclamationToken) {
         return PrimitiveTypes.boolean;
       }
-      return PrimitiveTypes.single;
+      return PrimitiveTypes.double;
     }
     case ts.SyntaxKind.ArrayLiteralExpression: {
       const arr = node as ts.ArrayLiteralExpression;

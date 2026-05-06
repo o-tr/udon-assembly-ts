@@ -2323,7 +2323,7 @@ function emitInlineRecursiveStaticMethod(
           createConstant(true, PrimitiveTypes.boolean),
         );
         const defaultToken = converter.wrapDataToken(
-          createConstant(0, PrimitiveTypes.single),
+          createConstant(0, PrimitiveTypes.double),
         );
         for (const stackVarInfo of stackVars) {
           const stackVar = createVariable(
@@ -3608,7 +3608,7 @@ function emitInlineRecursiveInstanceMethod(
           createConstant(true, PrimitiveTypes.boolean),
         );
         const defaultToken = converter.wrapDataToken(
-          createConstant(0, PrimitiveTypes.single),
+          createConstant(0, PrimitiveTypes.double),
         );
         for (const stackVarInfo of stackVars) {
           const stackVar = createVariable(

@@ -10,7 +10,7 @@ export function udonTypeToCSharp(udonType: string): string {
 }
 
 const TS_PRIMITIVE_ALIASES = new Map<string, string>([
-  ["number", "System.Single"],
+  ["number", "System.Double"],
   ["boolean", "System.Boolean"],
   ["string", "System.String"],
   ["object", "System.Object"],

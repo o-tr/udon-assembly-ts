@@ -1407,6 +1407,12 @@ function tryD3MethodDispatch(
         converter.inlineInstanceMap,
         resultInlineMapping,
       );
+      if (resultInlineMapping) {
+        const resultKey = operandTrackingKey(dispatchResult);
+        if (resultKey) {
+          converter.inlineInstanceMap.set(resultKey, resultInlineMapping);
+        }
+      }
     }
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
@@ -5098,12 +5104,42 @@ export function visitMathStaticCall(
   const mapped = methodMap[methodName];
   if (!mapped) return null;
 
+  // Pick Mathf (Single) vs SystemMath (Double) based on argument width.
+  // After number=Double remap most callers pass Double; calling
+  // Mathf.Floor(Single) with a Double slot pushes 8 bytes where 4 are
+  // expected and the EXTERN reads garbage. SystemMath has Double overloads
+  // for the common ops; fall back to Mathf when SystemMath lacks the op.
+  const tryDouble = args.some(
+    (a) => this.getOperandType(a).udonType === UdonType.Double,
+  );
+  const resolveExtern = (): string | null => {
+    if (tryDouble) {
+      const paramTypes = args.map(() => "double");
+      // SystemMath stub does not declare Floor/Ceil/Abs/etc. (only Truncate),
+      // so metadata lookup misses. Use resolveExternSignature directly with
+      // both paramTypes and returnType so the manual signature generator
+      // produces the well-known SystemMath.__<Op>__SystemDouble__SystemDouble.
+      const sig = resolveExternSignature(
+        "System.Math",
+        mapped,
+        "method",
+        paramTypes,
+        "double",
+      );
+      if (sig) return sig;
+    }
+    return this.resolveStaticExtern("Mathf", mapped, "method");
+  };
+  const resultType = tryDouble
+    ? PrimitiveTypes.double
+    : PrimitiveTypes.single;
+
   if (methodName === "max" || methodName === "min") {
     if (args.length < 2) return null;
     let current = args[0];
     for (let i = 1; i < args.length; i += 1) {
-      const stepResult = this.newTemp(PrimitiveTypes.single);
-      const externSig = this.resolveStaticExtern("Mathf", mapped, "method");
+      const stepResult = this.newTemp(resultType);
+      const externSig = resolveExtern();
       if (!externSig) return null;
       this.emit(new CallInstruction(stepResult, externSig, [current, args[i]]));
       current = stepResult;
@@ -5114,8 +5150,8 @@ export function visitMathStaticCall(
   if (args.length !== 1 && methodName !== "pow") return null;
   if (methodName === "pow" && args.length !== 2) return null;
 
-  const result = this.newTemp(PrimitiveTypes.single);
-  const externSig = this.resolveStaticExtern("Mathf", mapped, "method");
+  const result = this.newTemp(resultType);
+  const externSig = resolveExtern();
   if (!externSig) return null;
   this.emit(new CallInstruction(result, externSig, args));
   return result;

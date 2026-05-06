@@ -36,9 +36,9 @@ describe("TypeScript to Udon Transpiler Integration", () => {
     const result = transpiler.transpile(source);
 
     // Check for variable declarations in data section
-    expect(result.uasm).toContain("x: %SystemSingle");
-    expect(result.uasm).toContain("y: %SystemSingle");
-    expect(result.uasm).toContain("z: %SystemSingle");
+    expect(result.uasm).toContain("x: %SystemDouble");
+    expect(result.uasm).toContain("y: %SystemDouble");
+    expect(result.uasm).toContain("z: %SystemDouble");
 
     // Check for EXTERN instruction with proper signature
     expect(result.uasm).toContain("EXTERN");

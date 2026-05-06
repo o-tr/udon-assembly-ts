@@ -69,7 +69,7 @@ describe("compound assignment and update operators", () => {
     expect(result.tac).toContain("x - 1");
   });
 
-  it("uses matching type for ++ delta on Single variable", () => {
+  it("uses matching type for ++ delta on Double variable", () => {
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -79,8 +79,8 @@ describe("compound assignment and update operators", () => {
         Start(): void { let x: number = 5; x++; Debug.Log(x); }
       }`;
     const result = transpiler.transpile(source);
-    // The ++ operation on Single should use Single addition, not Int32
-    expect(result.uasm).toContain("op_Addition__SystemSingle_SystemSingle");
+    // The ++ operation on Double should use Double addition, not Int32
+    expect(result.uasm).toContain("op_Addition__SystemDouble_SystemDouble");
     expect(result.uasm).not.toContain(
       "op_Addition__SystemInt32_SystemInt32__SystemInt32",
     );

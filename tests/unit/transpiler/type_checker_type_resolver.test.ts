@@ -78,7 +78,7 @@ describe("TypeCheckerTypeResolver", () => {
       ts.isVariableDeclaration,
     );
     const resolved = resolver.resolveFromTsNode(declaration.name);
-    expect(resolved).toBe(PrimitiveTypes.single);
+    expect(resolved).toBe(PrimitiveTypes.double);
   });
 
   it("resolves inferred array element types from ts.Node", () => {
@@ -94,7 +94,7 @@ describe("TypeCheckerTypeResolver", () => {
     const resolved = resolver.resolveFromTsNode(declaration.name);
     expect(resolved).toBeInstanceOf(ArrayTypeSymbol);
     expect((resolved as ArrayTypeSymbol).elementType).toBe(
-      PrimitiveTypes.single,
+      PrimitiveTypes.double,
     );
   });
 
@@ -319,7 +319,7 @@ describe("TypeCheckerTypeResolver", () => {
       expect(resolved).toBeInstanceOf(InterfaceTypeSymbol);
       const iface = resolved as InterfaceTypeSymbol;
       expect(iface.name).toBe("Iterator");
-      expect(iface.properties.get("next")).toBe(PrimitiveTypes.single);
+      expect(iface.properties.get("next")).toBe(PrimitiveTypes.double);
     });
 
     it("returns distinct InterfaceTypeSymbols for different generic instantiations of a user interface", () => {
@@ -352,7 +352,7 @@ describe("TypeCheckerTypeResolver", () => {
       const aHead = (a as InterfaceTypeSymbol).properties.get("head");
       const bHead = (b as InterfaceTypeSymbol).properties.get("head");
       expect(aHead).toBe(PrimitiveTypes.string);
-      expect(bHead).toBe(PrimitiveTypes.single);
+      expect(bHead).toBe(PrimitiveTypes.double);
     });
 
     it("widens user-augmented lib interfaces too (some-based gate, by design)", () => {

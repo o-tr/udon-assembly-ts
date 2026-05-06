@@ -153,7 +153,7 @@ describe("string / for-of / null-check regressions", () => {
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
       expect(result.uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
     });
 

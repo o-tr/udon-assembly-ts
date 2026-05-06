@@ -77,7 +77,7 @@ export function createUnsupportedExpressionPlaceholder(
   const result: LiteralNode = {
     kind: ASTNodeKind.Literal,
     value: 0,
-    type: PrimitiveTypes.single,
+    type: PrimitiveTypes.double,
   };
   return tsNode ? this.attachLoc(tsNode, result) : result;
 }

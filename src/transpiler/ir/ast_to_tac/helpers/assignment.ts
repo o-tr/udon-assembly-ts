@@ -692,9 +692,23 @@ export function wrapDataToken(
     );
   }
   const token = this.newTemp(ExternTypes.dataToken);
+  // VRChat's `DataToken.__ctor__SystemSingle__VRCSDK3DataDataToken` extern
+  // throws at runtime even though the signature is registered (the dispatch
+  // backing it is broken in the SDK). The implicit operator is the path
+  // UdonSharp's `DataToken _f = 5.3f` actually exercises, so it works.
+  // Storage is still TokenType.Float either way, so the unwrap side
+  // (DataToken.Float getter) does not need a matching change.
+  // Apply the same workaround to Double as a fail-safe — Single ctor was
+  // registered yet broken, so until we verify Double ctor on real hardware
+  // the implicit operator stays the safer path.
+  const ctorMember =
+    valueType.udonType === UdonType.Single ||
+    valueType.udonType === UdonType.Double
+      ? "op_Implicit"
+      : "ctor";
   const externSig = this.requireExternSignature(
     "DataToken",
-    "ctor",
+    ctorMember,
     "method",
     [valueType.name],
     "DataToken",

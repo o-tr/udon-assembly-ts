@@ -26,7 +26,7 @@ describe("TypeScript Parser", () => {
     const varDecl = ast.statements[0] as VariableDeclarationNode;
     expect(varDecl.kind).toBe(ASTNodeKind.VariableDeclaration);
     expect(varDecl.name).toBe("x");
-    expect(varDecl.type).toBe(PrimitiveTypes.single);
+    expect(varDecl.type).toBe(PrimitiveTypes.double);
     expect(varDecl.isConst).toBe(false);
     expect(varDecl.initializer).toBeDefined();
   });
@@ -99,7 +99,7 @@ describe("TypeScript Parser", () => {
     const xSymbol = symbolTable.lookup("x");
     expect(xSymbol).toBeDefined();
     expect(xSymbol?.name).toBe("x");
-    expect(xSymbol?.type).toBe(PrimitiveTypes.single);
+    expect(xSymbol?.type).toBe(PrimitiveTypes.double);
 
     const ySymbol = symbolTable.lookup("y");
     expect(ySymbol).toBeDefined();
@@ -160,6 +160,6 @@ describe("TypeScript Parser", () => {
     expect(vectorDecl.type.name).toBe("Vector3");
 
     const arrayDecl = ast.statements[2] as VariableDeclarationNode;
-    expect(arrayDecl.type.name).toBe("float[]");
+    expect(arrayDecl.type.name).toBe("double[]");
   });
 });

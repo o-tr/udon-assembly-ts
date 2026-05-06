@@ -1421,10 +1421,14 @@ export function visitShortCircuitOr(
   this: ASTToTACConverter,
   node: BinaryExpressionNode,
 ): TACOperand {
+  // Reject Boolean and any Object-shaped expectedType (incl. ClassTypeSymbol
+  // with udonType=Object that leaks in via inline expansion). Without this
+  // check the bool result of comparisons would be copied into an %SystemObject
+  // slot — a width/shape mismatch that corrupts downstream reads.
   const expectedType =
     this.currentExpectedType &&
     this.currentExpectedType.udonType !== UdonType.Boolean &&
-    this.currentExpectedType !== ObjectType
+    this.currentExpectedType.udonType !== UdonType.Object
       ? this.currentExpectedType
       : undefined;
   const inferredLeftType = resolveTypeFromNode(this, node.left);
@@ -2189,7 +2193,41 @@ export function visitLiteral(
   this: ASTToTACConverter,
   node: LiteralNode,
 ): TACOperand {
+  const expected = this.currentExpectedType;
+  // Phase B-1: demote a `number` literal to the integer expected type only
+  // when (a) the value is integral and (b) it fits the target's representable
+  // range. This bypasses the implicit Double→Int32 SystemConvert when the
+  // literal is provably safe. bigint values stay on the Int64 path; out-of-
+  // range / non-integer numbers fall through to the regular Cast pipeline.
+  if (
+    typeof node.value === "number" &&
+    expected &&
+    Number.isInteger(node.value) &&
+    valueFitsInIntegerType(node.value, expected.udonType)
+  ) {
+    return createConstant(node.value, expected);
+  }
   return createConstant(node.value, node.type);
+}
+
+function valueFitsInIntegerType(value: number, t: UdonType): boolean {
+  switch (t) {
+    case UdonType.Byte:
+      return value >= 0 && value <= 255;
+    case UdonType.SByte:
+      return value >= -128 && value <= 127;
+    case UdonType.Int16:
+      return value >= -32_768 && value <= 32_767;
+    case UdonType.UInt16: // also Char
+      return value >= 0 && value <= 65_535;
+    case UdonType.Int32:
+      return value >= -2_147_483_648 && value <= 2_147_483_647;
+    case UdonType.UInt32:
+      return value >= 0 && value <= 4_294_967_295;
+    default:
+      // Single/Double/Object/Int64/UInt64/etc. — no demote
+      return false;
+  }
 }
 
 export function visitIdentifier(
@@ -2350,7 +2388,7 @@ export function visitArrayAccessExpression(
 
   if (arrayType instanceof CollectionTypeSymbol) {
     const elementType =
-      arrayType.valueType ?? arrayType.elementType ?? PrimitiveTypes.single;
+      arrayType.valueType ?? arrayType.elementType ?? PrimitiveTypes.double;
     const result = this.newTemp(elementType);
     this.emit(new MethodCallInstruction(result, array, "get_Item", [index]));
     return result;
@@ -2380,7 +2418,11 @@ export function visitArrayAccessExpression(
       elementType,
     );
     if (arrayType instanceof DataListTypeSymbol) {
-      return this.unwrapDataToken(tokenResult, elementType);
+      const unwrapped = this.unwrapDataToken(tokenResult, elementType);
+      const resultType = resolveInlineClassType(this, elementType);
+      const result = this.newTemp(resultType);
+      this.emitCopyWithTracking(result, unwrapped);
+      return result;
     }
     return tokenResult;
   }
@@ -2419,7 +2461,11 @@ export function visitArrayAccessExpression(
     node.index,
     resolvedElementType,
   );
-  return this.unwrapDataToken(tokenResult, resolvedElementType);
+  const unwrapped = this.unwrapDataToken(tokenResult, resolvedElementType);
+  const resultType = resolveInlineClassType(this, resolvedElementType);
+  const result = this.newTemp(resultType);
+  this.emitCopyWithTracking(result, unwrapped);
+  return result;
 }
 
 export function visitPropertyAccessExpression(

@@ -402,7 +402,9 @@ export function visitVariableDeclaration(
     if (
       isObjectTypeSymbol(destType) ||
       (destType.name === PrimitiveTypes.single.name &&
-        destType.udonType === PrimitiveTypes.single.udonType)
+        destType.udonType === PrimitiveTypes.single.udonType) ||
+      (destType.name === PrimitiveTypes.double.name &&
+        destType.udonType === PrimitiveTypes.double.udonType)
     ) {
       const inferredType = this.getOperandType(src);
       if (!isObjectTypeSymbol(inferredType)) {

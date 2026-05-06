@@ -3,7 +3,7 @@
  *
  * Arrays with known compile-time length (literal initializers, or new Array<T>(N))
  * that don't use dynamic operations are lowered to native Udon typed arrays
- * (e.g. SystemSingleArray) instead of DataList, reducing instruction count.
+ * (e.g. SystemDoubleArray) instead of DataList, reducing instruction count.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -19,7 +19,7 @@ describe("native array optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  describe("array literal → SystemSingleArray (number[])", () => {
+  describe("array literal → SystemDoubleArray (number[])", () => {
     it("emits native ctor and no DataToken on array literal", () => {
       const { uasm } = transpile(`
         class Demo {
@@ -30,11 +30,11 @@ describe("native array optimization", () => {
       `);
       // Native ctor must be present
       expect(uasm).toContain(
-        "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
+        "SystemDoubleArray.__ctor__SystemInt32__SystemDoubleArray",
       );
       // Native set must be present for each element
       expect(uasm).toContain(
-        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
       );
       // No DataList or DataToken externs should appear for this array
       expect(uasm).not.toContain("VRCSDK3DataDataToken.__ctor__");
@@ -51,7 +51,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
       // No DataToken unwrap
       expect(uasm).not.toContain("DataToken");
@@ -67,7 +67,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
       );
       expect(uasm).not.toContain("DataToken");
     });
@@ -82,10 +82,10 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
       expect(uasm).toContain(
-        "SystemSingleArray.__Set__SystemInt32_SystemSingle__SystemVoid",
+        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
       );
     });
 
@@ -98,7 +98,7 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(uasm).toContain("SystemSingleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
       // No DataList Count
       expect(uasm).not.toContain("__get_Count__");
     });
@@ -115,9 +115,9 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(uasm).toContain("SystemSingleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
       expect(uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
       // No DataList get_Item
       expect(uasm).not.toContain("__get_Item__");
@@ -141,9 +141,9 @@ describe("native array optimization", () => {
         }
       `);
       // Must use native externs (not DataList get_Item)
-      expect(uasm).toContain("SystemSingleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
       expect(uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
       expect(uasm).not.toContain("__get_Item__");
       // The forof_native_continue label must appear in the assembled output
@@ -163,10 +163,10 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemSingleArray.__ctor__SystemInt32__SystemSingleArray",
+        "SystemDoubleArray.__ctor__SystemInt32__SystemDoubleArray",
       );
       expect(uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
       // No per-element Set calls (ctor zero-initializes)
       expect(uasm).not.toContain("VRCSDK3DataDataList");
@@ -183,7 +183,7 @@ describe("native array optimization", () => {
       `);
       // Zero-length native arrays are not useful; stay as DataList
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
 
     it("new Array<number>(N) falls back to DataList for runtime N", () => {
@@ -197,7 +197,7 @@ describe("native array optimization", () => {
       `);
       // Runtime-length array cannot be statically sized → DataList
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
   });
 
@@ -249,7 +249,7 @@ describe("native array optimization", () => {
       `);
       // Must use DataList (not native) because push is called
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
 
     it("falls back to DataList when array is passed to a function", () => {
@@ -263,7 +263,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
 
     it("falls back to DataList for empty array []", () => {
@@ -279,7 +279,7 @@ describe("native array optimization", () => {
         false,
       );
       // No native ctor in UASM
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
 
     it("falls back to DataList for custom class array", () => {
@@ -309,7 +309,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
   });
 
@@ -329,7 +329,7 @@ describe("native array optimization", () => {
       `);
       // Native externs from 'fixed'
       expect(uasm).toContain(
-        "SystemSingleArray.__Get__SystemInt32__SystemSingle",
+        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
       );
       // DataList externs from 'dynamic'
       expect(uasm).toContain("VRCSDK3DataDataList");
@@ -350,7 +350,7 @@ describe("native array optimization", () => {
       // Both arr and b share the same object; b.push makes b ineligible.
       // The alias (const b = arr) must also make arr ineligible.
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
 
     it("alias passed to function falls back to DataList for both variables", () => {
@@ -365,7 +365,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain("VRCSDK3DataDataList");
-      expect(uasm).not.toContain("SystemSingleArray.__ctor__");
+      expect(uasm).not.toContain("SystemDoubleArray.__ctor__");
     });
   });
 

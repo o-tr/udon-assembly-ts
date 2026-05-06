@@ -11,7 +11,7 @@ describe("TypeMapper", () => {
     it("maps primitive type names to TypeSymbols", () => {
       const mapper = new TypeMapper();
       expect(mapper.lookupBuiltinByName("string")).toBe(PrimitiveTypes.string);
-      expect(mapper.lookupBuiltinByName("number")).toBe(PrimitiveTypes.single);
+      expect(mapper.lookupBuiltinByName("number")).toBe(PrimitiveTypes.double);
       expect(mapper.lookupBuiltinByName("boolean")).toBe(
         PrimitiveTypes.boolean,
       );
