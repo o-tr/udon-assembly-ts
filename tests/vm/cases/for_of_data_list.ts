@@ -15,7 +15,7 @@ export class ForOfDataList extends UdonSharpBehaviour {
     list.Add(new DataToken(30.0));
     let sum: number = 0;
     for (const item of list) {
-      const val: number = item.Float;
+      const val: number = item.Double;
       Debug.Log(val);
       sum = sum + val;
     }

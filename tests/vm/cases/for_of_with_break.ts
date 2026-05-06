@@ -18,7 +18,7 @@ export class ForOfWithBreak extends UdonSharpBehaviour {
 
     // Break when value > 3
     for (const item of list) {
-      const val: number = item.Float;
+      const val: number = item.Double;
       if (val > 3) {
         break;
       }
@@ -28,7 +28,7 @@ export class ForOfWithBreak extends UdonSharpBehaviour {
 
     // Continue to skip value == 2
     for (const item of list) {
-      const val: number = item.Float;
+      const val: number = item.Double;
       // 2 is exactly representable in IEEE 754 single precision
       if (val === 2.0) {
         continue;

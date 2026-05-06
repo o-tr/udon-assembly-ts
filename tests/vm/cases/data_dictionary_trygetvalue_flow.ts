@@ -12,7 +12,7 @@ export class DataDictionaryTrygetvalueFlow extends UdonSharpBehaviour {
     const dict = new DataDictionary();
     dict.SetValue(new DataToken("hp"), new DataToken(120.0));
     const hasHp = dict.ContainsKey(new DataToken("hp"));
-    const hpValue = hasHp ? dict.GetValue(new DataToken("hp")).Float : 0.0;
+    const hpValue = hasHp ? dict.GetValue(new DataToken("hp")).Double : 0.0;
     const hasMp = dict.ContainsKey(new DataToken("mp"));
 
     Debug.Log(hasHp);

@@ -17,7 +17,7 @@ export class ObjectLiteralBasic extends UdonSharpBehaviour {
     const nameVal: DataToken = obj.GetValue(new DataToken("name"));
     Debug.Log(nameVal.String);
     const ageVal: DataToken = obj.GetValue(new DataToken("age"));
-    Debug.Log(ageVal.Float);
+    Debug.Log(ageVal.Double);
     Debug.Log(obj.ContainsKey(new DataToken("name")));
   }
 }

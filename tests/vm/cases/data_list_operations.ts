@@ -16,11 +16,11 @@ export class DataListOperations extends UdonSharpBehaviour {
     list.Add(new DataToken(30.0));
     Debug.Log(list.Count);
     const second: DataToken = list.get_Item(1 as UdonInt);
-    Debug.Log(second.Float);
+    Debug.Log(second.Double);
     const removed: boolean = list.Remove(new DataToken(20.0));
     Debug.Log(removed);
     Debug.Log(list.Count);
     const first: DataToken = list.get_Item(0 as UdonInt);
-    Debug.Log(first.Float);
+    Debug.Log(first.Double);
   }
 }

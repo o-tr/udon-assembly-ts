@@ -18,7 +18,7 @@ export class ObjectLiteralSpread extends UdonSharpBehaviour {
     const nameVal: DataToken = extended.GetValue(new DataToken("name"));
     Debug.Log(nameVal.String);
     const ageVal: DataToken = extended.GetValue(new DataToken("age"));
-    Debug.Log(ageVal.Float);
+    Debug.Log(ageVal.Double);
     const cityVal: DataToken = extended.GetValue(new DataToken("city"));
     Debug.Log(cityVal.String);
     Debug.Log(extended.Count);
