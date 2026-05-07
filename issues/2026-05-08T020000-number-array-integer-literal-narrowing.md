@@ -1,10 +1,10 @@
 ---
 created: 2026-05-08T02:00:00+09:00
-updated: 2026-05-08T02:00:00+09:00
-status: open
+updated: 2026-05-08T12:00:00+09:00
+status: closed
 severity: low
 component: transpiler / IR array literal narrowing
-related_tests: tests/unit/transpiler/optimizer_regression.test.ts (KNOWN FAIL × 2)
+related_tests: tests/unit/transpiler/optimizer_regression.test.ts
 ---
 
 # `number[]` with integer literals uses SystemDoubleArray; should narrow to SystemInt32Array

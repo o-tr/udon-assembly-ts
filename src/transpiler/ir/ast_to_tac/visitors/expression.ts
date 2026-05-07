@@ -2098,7 +2098,27 @@ export function visitArrayLiteralExpression(
     node.elements.every((e) => e.kind === "element") &&
     getNativeArrayTypeName(elementType.udonType) !== null
   ) {
-    const nativeType = new NativeArrayTypeSymbol(elementType);
+    // Integer-literal narrowing: when the declared element type is Double
+    // (TypeScript `number[]`) and every literal in the initialiser is an
+    // integral value that fits in Int32, use Int32Array instead.  This avoids
+    // the Double ↔ Int32 round-trip conversions on every subsequent read/write.
+    let resolvedElementType: TypeSymbol = elementType;
+    if (
+      elementType.udonType === UdonType.Double &&
+      node.elements.every(
+        (e) =>
+          e.value.kind === ASTNodeKind.Literal &&
+          typeof (e.value as LiteralNode).value === "number" &&
+          Number.isInteger((e.value as LiteralNode).value as number) &&
+          valueFitsInIntegerType(
+            (e.value as LiteralNode).value as number,
+            UdonType.Int32,
+          ),
+      )
+    ) {
+      resolvedElementType = PrimitiveTypes.int32;
+    }
+    const nativeType = new NativeArrayTypeSymbol(resolvedElementType);
     const arrayResult = this.newTemp(nativeType);
     const ctorSig = this.requireExternSignature(
       nativeType.nativeUdonTypeName,
@@ -2113,7 +2133,10 @@ export function visitArrayLiteralExpression(
     );
     this.emit(new CallInstruction(arrayResult, ctorSig, [lengthConst]));
     for (let i = 0; i < node.elements.length; i++) {
+      const prevExpected = this.currentExpectedType;
+      this.currentExpectedType = resolvedElementType;
       const value = this.visitExpression(node.elements[i].value);
+      this.currentExpectedType = prevExpected;
       const idxConst = createConstant(i, PrimitiveTypes.int32);
       this.emit(new ArrayAssignmentInstruction(arrayResult, idxConst, value));
     }

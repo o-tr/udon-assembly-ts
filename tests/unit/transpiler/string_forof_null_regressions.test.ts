@@ -152,8 +152,9 @@ describe("string / for-of / null-check regressions", () => {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+      // Integer-literal narrowing: inferred number[] with integer init → Int32Array
       expect(result.uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
     });
 

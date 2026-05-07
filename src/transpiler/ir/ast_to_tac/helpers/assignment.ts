@@ -126,8 +126,29 @@ export function assignToTarget(
         this.emit(new CastInstruction(intIndex, index));
         nativeIndex = intIndex;
       }
-      this.emit(new ArrayAssignmentInstruction(array, nativeIndex, value));
-      return value;
+      // Coerce constant values to the native array's element type when the
+      // symbol table's declared element type (e.g. Double for number[]) differs
+      // from the narrowed array's actual element type (e.g. Int32 after
+      // integer-literal narrowing).  Without this, `arr[i] = 5` would push a
+      // SystemDouble constant into a SystemInt32Array.__Set__ extern that
+      // expects SystemInt32, causing a Udon VM heap-type mismatch.
+      let nativeValue = value;
+      const valueType = this.getOperandType(value);
+      if (
+        value.kind === TACOperandKind.Constant &&
+        valueType.udonType !== arrayType.elementType.udonType
+      ) {
+        const coerced = coerceConstantToType.call(
+          this,
+          value as ConstantOperand,
+          arrayType.elementType,
+        );
+        if (coerced) nativeValue = coerced;
+      }
+      this.emit(
+        new ArrayAssignmentInstruction(array, nativeIndex, nativeValue),
+      );
+      return nativeValue;
     }
     // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)

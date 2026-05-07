@@ -19,7 +19,7 @@ describe("native array optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  describe("array literal → SystemDoubleArray (number[])", () => {
+  describe("array literal → SystemInt32Array (number[] with integer literals)", () => {
     it("emits native ctor and no DataToken on array literal", () => {
       const { uasm } = transpile(`
         class Demo {
@@ -28,13 +28,13 @@ describe("native array optimization", () => {
           }
         }
       `);
-      // Native ctor must be present
+      // Integer-literal narrowing: number[] with all-integer init → Int32Array
       expect(uasm).toContain(
-        "SystemDoubleArray.__ctor__SystemInt32__SystemDoubleArray",
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );
       // Native set must be present for each element
       expect(uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
       // No DataList or DataToken externs should appear for this array
       expect(uasm).not.toContain("VRCSDK3DataDataToken.__ctor__");
@@ -51,7 +51,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       // No DataToken unwrap
       expect(uasm).not.toContain("DataToken");
@@ -67,7 +67,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
       expect(uasm).not.toContain("DataToken");
     });
@@ -82,10 +82,10 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       expect(uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
     });
 
@@ -98,7 +98,7 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemInt32Array.__get_Length__SystemInt32");
       // No DataList Count
       expect(uasm).not.toContain("__get_Count__");
     });
@@ -115,9 +115,9 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemInt32Array.__get_Length__SystemInt32");
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       // No DataList get_Item
       expect(uasm).not.toContain("__get_Item__");
@@ -141,9 +141,9 @@ describe("native array optimization", () => {
         }
       `);
       // Must use native externs (not DataList get_Item)
-      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemInt32Array.__get_Length__SystemInt32");
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       expect(uasm).not.toContain("__get_Item__");
       // The forof_native_continue label must appear in the assembled output
@@ -327,9 +327,9 @@ describe("native array optimization", () => {
           }
         }
       `);
-      // Native externs from 'fixed'
+      // Native externs from 'fixed' (integer-literal narrowing → Int32Array)
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       // DataList externs from 'dynamic'
       expect(uasm).toContain("VRCSDK3DataDataList");
