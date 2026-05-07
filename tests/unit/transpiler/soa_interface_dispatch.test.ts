@@ -116,27 +116,30 @@ describe("SoA interface dispatch", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
     // The D3 dispatch miss fallback is always emitted in the TAC as the last
-    // branch (it's unreachable when all instances match).  The real regression
-    // check is that dispatch branches compare against __handle *variables*
-    // (dynamic SoA counter values), not against raw integer constants.
-    // With the bug, SoA dispatch would emit  "t = x == 4"  (constant instId).
-    // With the fix, it emits               "t = x == __inst_Circle_4__handle".
-    // Dispatch comparison lines: "tN = tM == __inst_ClassName_K__handle"
-    const d3BranchLines = result.tac
-      .split("\n")
-      .filter((l) => l.includes("== __inst_") && l.includes("__handle"));
-
-    // There must be at least two dispatch comparison branches (Circle + Square)
-    expect(d3BranchLines.length).toBeGreaterThanOrEqual(2);
-
-    // No D3 dispatch branch should compare against a bare integer constant.
-    // Broken form: "tN = tM == 4" (constant instId). Fixed form uses __handle.
-    // Filter to D3 dispatch comparison lines only (contain "== __inst_" or are
-    // adjacent to d3_method labels) to avoid catching unrelated constant
-    // comparisons from inlined pick(which === 0) bodies.
-    const badD3Comparisons = d3BranchLines.filter((l) =>
-      /== \d+$/.test(l.trim()),
+    // branch (unreachable when all instances match).  The regression check is
+    // that dispatch branches compare against __handle *variables* (dynamic SoA
+    // counter values), not raw integer constants.
+    //   Bug form: "tN = tM == 4"                       (constant instId)
+    //   Fix form: "tN = tM == __inst_Circle_4__handle" (runtime variable)
+    //
+    // Identify D3 dispatch comparisons structurally: each is the line that
+    // immediately precedes an "ifFalse tN goto d3_method_next*" instruction.
+    // This is form-independent — it catches the broken (constant) form as well
+    // as the fixed (variable) form, and avoids collateral matches from
+    // unrelated comparisons inside inlined pick(which === 0) bodies.
+    const tacLines = result.tac.split("\n");
+    const d3ComparisonLines = tacLines.filter((_, i) =>
+      /ifFalse \S+ goto d3_method_next/.test(tacLines[i + 1]?.trim() ?? ""),
     );
-    expect(badD3Comparisons).toHaveLength(0);
+
+    // There must be at least two D3 dispatch branches (Circle + Square)
+    expect(d3ComparisonLines.length).toBeGreaterThanOrEqual(2);
+
+    // Every D3 comparison must reference an __handle variable on the RHS.
+    // A bare integer ("== 4") means the constant-instId bug is present.
+    for (const line of d3ComparisonLines) {
+      expect(line).toContain("__handle");
+      expect(line).not.toMatch(/== \d+$/);
+    }
   });
 });
