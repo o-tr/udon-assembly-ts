@@ -1,4 +1,9 @@
 import {
+  NativeArrayTypeSymbol,
+  type TypeSymbol,
+} from "../../../frontend/type_symbols.js";
+import { UdonType } from "../../../frontend/types.js";
+import {
   type ArrayAccessInstruction,
   type ArrayAssignmentInstruction,
   AssignmentInstruction,
@@ -8,21 +13,16 @@ import {
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
+  createConstant,
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
   type TemporaryOperand,
   type VariableOperand,
-  createConstant,
 } from "../../tac_operand.js";
 import type { PassResult } from "../pass_types.js";
 import { forEachUsedOperand } from "../utils/instructions.js";
 import { getOperandType, isNumericUdonType } from "./constant_folding.js";
-import {
-  NativeArrayTypeSymbol,
-  type TypeSymbol,
-} from "../../../frontend/type_symbols.js";
-import { UdonType } from "../../../frontend/types.js";
 
 interface ArrayCandidate {
   tempId: number;
@@ -397,8 +397,8 @@ export const readonlyArrayFolding = (
       if (c) {
         const idx = getConstantInt(acc.index);
         if (idx !== null) {
-          if (c.contents.has(idx)) {
-            const constVal = c.contents.get(idx)!;
+          const constVal = c.contents.get(idx);
+          if (constVal !== undefined) {
             if (constVal !== null) {
               result.push(new AssignmentInstruction(acc.dest, constVal));
               changed = true;
