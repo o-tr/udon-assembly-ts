@@ -5089,7 +5089,8 @@ export function visitMathStaticCall(
     return result;
   }
 
-  const methodMap: Record<string, string> = {
+  // Mathf (Single) uses "Ceil"; System.Math (Double) uses "Ceiling".
+  const mathfMethodMap: Record<string, string> = {
     floor: "Floor",
     ceil: "Ceil",
     round: "Round",
@@ -5102,14 +5103,16 @@ export function visitMathStaticCall(
     tan: "Tan",
     pow: "Pow",
   };
-  const mapped = methodMap[methodName];
+  const systemMathNameOverrides: Record<string, string> = { Ceil: "Ceiling" };
+  const mapped = mathfMethodMap[methodName];
   if (!mapped) return null;
 
   // Pick Mathf (Single) vs SystemMath (Double) based on argument width.
   // After number=Double remap most callers pass Double; calling
   // Mathf.Floor(Single) with a Double slot pushes 8 bytes where 4 are
   // expected and the EXTERN reads garbage. SystemMath has Double overloads
-  // for the common ops; fall back to Mathf when SystemMath lacks the op.
+  // for the common ops; if resolution fails the throw guard below catches
+  // it rather than silently falling back to the wrong width.
   const tryDouble = args.some(
     (a) => this.getOperandType(a).udonType === UdonType.Double,
   );
@@ -5139,9 +5142,10 @@ export function visitMathStaticCall(
       // produces the well-known SystemMath.__<Op>__SystemDouble__SystemDouble.
       const paramTypes =
         overrideParamTypes ?? coercedArgs.map(() => paramTypeName);
+      const mathName = systemMathNameOverrides[mapped] ?? mapped;
       const sig = resolveExternSignature(
         "System.Math",
-        mapped,
+        mathName,
         "method",
         paramTypes,
         paramTypeName,
@@ -5152,7 +5156,7 @@ export function visitMathStaticCall(
       // Double-coerced args would cause a width mismatch at runtime.
       if (!sig) {
         throw new Error(
-          `[math-double] Failed to resolve System.Math extern for ${mapped}(${paramTypeName}). ` +
+          `[math-double] Failed to resolve System.Math extern for ${mathName}(${paramTypeName}). ` +
             "This is a bug — resolveExternSignature should always produce a signature when paramTypes and returnType are both provided.",
         );
       }

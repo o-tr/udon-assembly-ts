@@ -187,4 +187,24 @@ describe("Convert method overload resolution", () => {
       "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle",
     );
   });
+
+  it("Math.ceil routes to System.Math.Ceiling (not Ceil) for Double args", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const d: number = 2.3;
+          const c = Math.ceil(d);
+          Debug.Log(c);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).toContain(
+      "SystemMath.__Ceiling__SystemDouble__SystemDouble",
+    );
+    expect(result.uasm).not.toContain("__Ceil__");
+  });
 });
