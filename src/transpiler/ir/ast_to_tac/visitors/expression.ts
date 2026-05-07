@@ -2368,7 +2368,14 @@ export function visitArrayAccessExpression(
   node: ArrayAccessExpressionNode,
 ): TACOperand {
   const array = this.visitExpression(node.array);
-  const index = this.visitExpression(node.index);
+  const prevExpectedType = this.currentExpectedType;
+  this.currentExpectedType = PrimitiveTypes.int32;
+  let index: TACOperand;
+  try {
+    index = this.visitExpression(node.index);
+  } finally {
+    this.currentExpectedType = prevExpectedType;
+  }
   const arrayType = this.getOperandType(array);
 
   // Native array path: emit ArrayAccessInstruction (no DataToken unwrap needed).
@@ -3598,7 +3605,14 @@ export function visitDeleteExpression(
   if (node.target.kind === ASTNodeKind.ArrayAccessExpression) {
     const arrayAccess = node.target as ArrayAccessExpressionNode;
     const array = this.visitExpression(arrayAccess.array);
-    const index = this.visitExpression(arrayAccess.index);
+    const prevExpectedType = this.currentExpectedType;
+    this.currentExpectedType = PrimitiveTypes.int32;
+    let index: TACOperand;
+    try {
+      index = this.visitExpression(arrayAccess.index);
+    } finally {
+      this.currentExpectedType = prevExpectedType;
+    }
     const objectType = this.getOperandType(array);
     if (objectType.name === ExternTypes.dataDictionary.name) {
       const keyToken = this.wrapDataToken(index);

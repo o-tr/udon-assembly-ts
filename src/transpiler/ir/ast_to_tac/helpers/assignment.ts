@@ -101,7 +101,14 @@ export function assignToTarget(
   if (target.kind === ASTNodeKind.ArrayAccessExpression) {
     const arrayAccess = target as ArrayAccessExpressionNode;
     const array = this.visitExpression(arrayAccess.array);
-    const index = this.visitExpression(arrayAccess.index);
+    const prevExpectedType = this.currentExpectedType;
+    this.currentExpectedType = PrimitiveTypes.int32;
+    let index: TACOperand;
+    try {
+      index = this.visitExpression(arrayAccess.index);
+    } finally {
+      this.currentExpectedType = prevExpectedType;
+    }
     const arrayType = this.getOperandType(array);
     if (arrayType instanceof CollectionTypeSymbol) {
       this.emit(
