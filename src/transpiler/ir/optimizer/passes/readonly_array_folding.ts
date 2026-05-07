@@ -203,7 +203,11 @@ export const readonlyArrayFolding = (
             // dest is being reassigned to this candidate's array; remove it from any
             // other candidate's aliasNames to prevent stale transitive alias matches
             for (const c of candidates.values()) {
-              if (c !== cBySrc && c.aliasNames.has(destVar.name) && c.phase === "post-init") {
+              if (
+                c !== cBySrc &&
+                c.aliasNames.has(destVar.name) &&
+                c.phase === "post-init"
+              ) {
                 invalidate(candidates, c);
                 break;
               }
