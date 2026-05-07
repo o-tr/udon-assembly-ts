@@ -789,6 +789,87 @@ describe("readonlyDataCollectionFolding", () => {
     expect(result.changed).toBe(false);
   });
 
+  it("ContainsKey folds to true when SetValue value was a DataList (arg escape, key still tracked)", () => {
+    const dd = tDD(0);
+    const dl = tDL(1);
+    const kTok = tDT(2);
+    const hasDest = tBool(3);
+
+    const instructions = [
+      new CallInstruction(dd, "DataDictionary.__ctor__", []),
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(kTok, DT_STR_SIG, [cStr("items")]),
+      // dl escapes into dd as a value arg → dl invalidated, dd records null value
+      new MethodCallInstruction(undefined, dd, "SetValue", [kTok, dl]),
+      // ContainsKey should still fold to true — the key is tracked regardless of value
+      new MethodCallInstruction(hasDest, dd, "ContainsKey", [kTok]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("true");
+    expect(text).not.toContain("ContainsKey");
+  });
+
+  it("invalidates DataDictionary via transitive alias mutation", () => {
+    const dd = tDD(0);
+    const alias1 = createVariable("d1", ddType);
+    const alias2 = createVariable("d2", ddType);
+    const kTok = tDT(1);
+    const vTok = tDT(2);
+    const dest = tDT(3);
+
+    const instructions = [
+      new CallInstruction(dd, "DataDictionary.__ctor__", []),
+      new AssignmentInstruction(alias1, dd),
+      new CallInstruction(kTok, DT_STR_SIG, [cStr("k")]),
+      new CallInstruction(vTok, DT_STR_SIG, [cStr("v")]),
+      new MethodCallInstruction(undefined, alias1, "SetValue", [kTok, vTok]),
+      // Transitive alias: alias2 = alias1 (Variable→Variable)
+      new AssignmentInstruction(alias2, alias1),
+      // Mutation via transitive alias — must invalidate
+      new MethodCallInstruction(undefined, alias2, "SetValue", [kTok, vTok]),
+      new MethodCallInstruction(dest, alias1, "GetValue", [kTok]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
+  it("sets structurallyChanged when only a dead intermediate DataToken ctor is removed (init preserved)", () => {
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const dtResult = tDT(2);
+    const strResult = tStr(3);
+    const alias = vDL("list");
+    const count = tInt(4);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("hello")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(alias, dl),
+      // get_Item + PropertyGet fold: creates a dead intermediate DataToken ctor in result
+      new MethodCallInstruction(dtResult, alias, "get_Item", [cInt(0)]),
+      new PropertyGetInstruction(strResult, dtResult, "String"),
+      // Residual Count use preserves init (no indicesToRemove), but dead ctor is removed
+      new PropertyGetInstruction(count, alias, "Count"),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(true);
+    // Dead intermediate ctor removed → structurally changed even though init is kept
+    expect(result.structurallyChanged).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain('t3 = "hello"');
+    expect(text).not.toContain("get_Item");
+    expect(text).not.toContain(".String");
+    // Init preserved due to Count residual use
+    expect(text).toContain("DataList.__ctor__");
+    expect(text).toContain(".Count");
+  });
+
   it("safe post-init reads (GetKeys, ShallowClone) do not invalidate", () => {
     const dl = tDL(0);
     const tok = tDT(1);
