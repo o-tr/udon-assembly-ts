@@ -1323,12 +1323,13 @@ export function visitBinaryExpression(
     // is absent). Narrow any Int64/UInt64 operand to a 32-bit type and emit a
     // warning so the caller knows about the implicit demotion.
     //
-    // narrowTarget is chosen so that after narrowing, both operands share the
-    // same 32-bit type — widenNumericOperands would otherwise re-promote a
-    // mixed int32/uint32 pair back to Int64, defeating the narrowing:
-    //   • If both are Long: uint32 when both are UInt64, int32 otherwise.
-    //   • If only one is Long: match the signedness of the already-32-bit side
-    //     so the pair stays compatible after narrowing.
+    // narrowTarget is chosen to avoid a same-rank-3 mixed-sign (int32+uint32)
+    // pair, which is the only case where widenNumericOperands re-promotes to
+    // Int64, defeating the narrowing:
+    //   • Both Long: uint32 when both are UInt64, int32 otherwise (mixed
+    //     Int64/UInt64 uses int32, mirroring C#'s int+uint→long precedent).
+    //   • One Long: uint32 when the non-Long side is UInt32 (avoids the
+    //     int32+uint32 pair); int32 in all other cases.
     const leftType = this.getOperandType(left);
     const rightType = this.getOperandType(right);
     const leftIsLong =
