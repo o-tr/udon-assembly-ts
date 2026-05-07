@@ -58,6 +58,7 @@ import { narrowTypes } from "./passes/narrow_type.js";
 import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
 import { performPRE } from "./passes/pre.js";
 import { readonlyArrayFolding } from "./passes/readonly_array_folding.js";
+import { readonlyDataCollectionFolding } from "./passes/readonly_data_collection_folding.js";
 import { reassociate } from "./passes/reassociation.js";
 import { sccpAndPrune } from "./passes/sccp.js";
 import { buildSSA, deconstructSSA } from "./passes/ssa.js";
@@ -470,6 +471,12 @@ export class TACOptimizer {
       run(
         timed("readonlyArrayFolding", () =>
           readonlyArrayFolding(next, exposedLabels),
+        ),
+      );
+      // Fold readonly DataList/DataDictionary into constants
+      run(
+        timed("readonlyDataCollectionFolding", () =>
+          readonlyDataCollectionFolding(next, exposedLabels),
         ),
       );
       // Apply boolean simplifications
