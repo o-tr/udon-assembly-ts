@@ -745,6 +745,50 @@ describe("readonlyDataCollectionFolding", () => {
     expect(text).not.toContain(DT_STR_SIG);
   });
 
+  it("invalidates when DataList appears as value in PropertySet (escape through field)", () => {
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const dest = tDT(2);
+    const receiver = vDL("container");
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("x")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(vDL("alias"), dl),
+      // DataList appears as the VALUE of a PropertySet — escapes through field
+      new PropertySetInstruction(receiver, "Items", vDL("alias")),
+      new MethodCallInstruction(dest, vDL("alias"), "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
+  it("invalidates second candidate when it appears as arg in MethodCall whose receiver is a different candidate", () => {
+    const dl1 = tDL(0);
+    const dl2 = tDL(1);
+    const tok1 = tDT(2);
+    const tok2 = tDT(3);
+    const dest = tDT(4);
+
+    const instructions = [
+      new CallInstruction(dl1, "DataList.__ctor__", []),
+      new CallInstruction(tok1, DT_STR_SIG, [cStr("a")]),
+      new MethodCallInstruction(undefined, dl1, "Add", [tok1]),
+      new CallInstruction(dl2, "DataList.__ctor__", []),
+      new CallInstruction(tok2, DT_STR_SIG, [cStr("b")]),
+      new MethodCallInstruction(undefined, dl2, "Add", [tok2]),
+      // dl1 is receiver (candidate), dl2 is arg — dl2 must be invalidated
+      new MethodCallInstruction(undefined, dl1, "AddRange", [dl2]),
+      // get_Item on dl2 must NOT be folded (dl2 was invalidated)
+      new MethodCallInstruction(dest, dl2, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
   it("safe post-init reads (GetKeys, ShallowClone) do not invalidate", () => {
     const dl = tDL(0);
     const tok = tDT(1);

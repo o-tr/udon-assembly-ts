@@ -271,7 +271,18 @@ export const readonlyDataCollectionFolding = (
       const mc = inst as unknown as MethodCallInstruction;
       const c = findCandidateByTempOrAlias(candidates, mc.object);
 
-      if (c) {
+      // Front-load: invalidate any candidate appearing as an argument regardless of
+      // whether the receiver is a candidate. A collection reference in any method
+      // arg escapes into the callee, which could store or mutate it.
+      for (const arg of mc.args) {
+        for (const cArg of [...candidates.values()]) {
+          if (matchesCandidate(arg, cArg)) {
+            invalidate(candidates, cArg);
+          }
+        }
+      }
+
+      if (c?.valid) {
         if (c.phase === "init") {
           if (
             c.kind === "DataList" &&
@@ -340,14 +351,8 @@ export const readonlyDataCollectionFolding = (
         }
 
         // post-init: safe reads don't invalidate
+        // (c-in-args already handled by the front-loaded invalidation above)
         if (SAFE_POST_INIT_METHODS.has(mc.method)) {
-          // Check if the candidate also appears as an arg (unusual but conservative)
-          for (const arg of mc.args) {
-            if (matchesCandidate(arg, c)) {
-              invalidate(candidates, c);
-              break;
-            }
-          }
           continue;
         }
 
@@ -356,12 +361,8 @@ export const readonlyDataCollectionFolding = (
         continue;
       }
 
-      // Candidate is not the receiver; check if it is used as an arg
-      for (const c2 of [...candidates.values()]) {
-        if (instructionUsesCandidate(inst, c2)) {
-          invalidate(candidates, c2);
-        }
-      }
+      // Receiver was null or was already invalidated by appearing in its own args.
+      // Arg candidates already invalidated by the front-loaded loop above.
       continue;
     }
 
@@ -477,11 +478,11 @@ export const readonlyDataCollectionFolding = (
       continue;
     }
 
-    // PropertySet: invalidate if object matches
+    // PropertySet: invalidate if object or value matches (collection as value escapes)
     if (inst.kind === TACInstructionKind.PropertySet) {
-      const ps = inst as unknown as { object: TACOperand };
+      const ps = inst as unknown as { object: TACOperand; value: TACOperand };
       for (const c of [...candidates.values()]) {
-        if (matchesCandidate(ps.object, c)) {
+        if (matchesCandidate(ps.object, c) || matchesCandidate(ps.value, c)) {
           invalidate(candidates, c);
         }
       }
