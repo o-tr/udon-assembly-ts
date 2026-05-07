@@ -301,6 +301,15 @@ export class ASTToTACConverter {
   allInlineInstanceIdsByPrefix: Map<string, number> = new Map();
   /** Set of anonymous inline class names for O(1) isInlineHandleType checks */
   anonymousInlineClassNames: Set<string> = new Set();
+  /**
+   * Variables/temporaries known to hold an untracked structural handle — i.e.
+   * they were assigned from a named operand that had no inlineInstanceMap entry
+   * (not from a null constant). When such a variable is returned through the
+   * UntrackedStructuralUnionReturn path, returnTrackingInvalidated is set so
+   * the caller falls back to D-3 dispatch rather than using a stale direct-slot
+   * prefix from a sibling tracked return.
+   */
+  untrackedStructuralHandleVars: Set<string> = new Set();
   /** Dispatch success tracking per dispatch result temp key.
    *  Key: operand tracking key (e.g., "__tmpN") → boolean (true=matched, false=miss).
    *  Used by wrapDataToken to short-circuit on undispatched results and prevent
@@ -666,6 +675,7 @@ export class ASTToTACConverter {
     this.dispatchResultFlags = new Map();
     this.allInlineInterfaceCache = new Map();
     this.anonymousInlineClassNames = new Set();
+    this.untrackedStructuralHandleVars = new Set();
     this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();

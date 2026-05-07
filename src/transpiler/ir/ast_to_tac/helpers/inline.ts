@@ -858,7 +858,20 @@ export function saveAndBindInlineParams(
         const isHeapPrefix = HEAP_INSTANCE_PREFIXES.some((p) =>
           argVar.name.startsWith(p),
         );
-        if (!isHeapPrefix) continue;
+        if (!isHeapPrefix) {
+          // Propagate untracked-handle status: if the arg is a known untracked
+          // structural handle (set in visitVariableDeclaration when a named
+          // operand with no inlineInstanceMap is assigned to a local), the
+          // parameter inherits that status. This ensures `return p` inside the
+          // callee also triggers returnTrackingInvalidated rather than silently
+          // relying on a sibling-populated prefix that may never be written on
+          // this execution path.
+          const argKey = operandTrackingKey(argVar);
+          if (argKey && converter.untrackedStructuralHandleVars.has(argKey)) {
+            converter.untrackedStructuralHandleVars.add(param.name);
+          }
+          continue;
+        }
 
         const argType = converter.getOperandType(argVar);
         const isTypeAlias =

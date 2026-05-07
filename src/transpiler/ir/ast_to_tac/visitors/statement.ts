@@ -62,6 +62,7 @@ import {
   createVariable,
   type TACOperand,
   TACOperandKind,
+  type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
 import {
@@ -527,6 +528,16 @@ export function visitVariableDeclaration(
           className: structuralType.name,
         });
       }
+    } else if (structuralType && srcKey && destKey && !sourcePrefix) {
+      // The source is a named operand (not a null constant — those produce
+      // srcKey=undefined) but has no inlineInstanceMap entry. This means
+      // the source holds an untracked handle (e.g. the returnVar of an
+      // inline method whose return tracking was invalidated). Mark destKey
+      // so that if it is later returned through UntrackedStructuralUnionReturn,
+      // returnTrackingInvalidated is set and the caller falls back to D-3
+      // dispatch rather than reading a sibling-populated prefix that was
+      // never written on this execution path.
+      this.untrackedStructuralHandleVars.add(destKey);
     }
   }
 }
@@ -1733,12 +1744,21 @@ export function visitReturnStatement(
           );
           // Defensively clear any sibling-populated mapping so the state
           // does not linger if this happens to be the last return path
-          // visited at TAC generation. Leaving
-          // `returnTrackingInvalidated=false` still allows subsequent
-          // tracked returns to re-set the mapping — so sibling
-          // field-copies emitted after this return continue to drive
-          // direct-slot access at the caller.
+          // visited at TAC generation.
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
+          // When the variable is a known untracked handle (assigned from a
+          // named operand with no inlineInstanceMap entry — not a null
+          // constant), this path may be reachable at runtime even though
+          // the value is non-null. Invalidate so the caller falls back to
+          // D-3 dispatch rather than reading a sibling-populated prefix
+          // that was never written on this execution path.
+          if (
+            this.untrackedStructuralHandleVars.has(
+              (value as VariableOperand).name,
+            )
+          ) {
+            inlineContext.returnTrackingInvalidated = true;
+          }
         } else {
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;

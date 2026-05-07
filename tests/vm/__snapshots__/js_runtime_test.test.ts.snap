@@ -709,6 +709,15 @@ exports[`JS Runtime Equivalence Tests > JS: inline_state_read_after_write 1`] = 
 ]
 `;
 
+exports[`JS Runtime Equivalence Tests > JS: inline_structural_untracked_return 1`] = `
+[
+  "True",
+  "99",
+  "True",
+  "200",
+]
+`;
+
 exports[`JS Runtime Equivalence Tests > JS: inline_type_alias_arg 1`] = `
 [
   "99",
