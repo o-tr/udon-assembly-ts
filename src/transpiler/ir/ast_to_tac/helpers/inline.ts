@@ -4440,7 +4440,22 @@ function inlineResolvedMethodBodyImpl(
       converter.nativeArrayIneligible = savedInstNativeIneligible;
       converter.currentNativeArrayVarName = savedInstNativeVarName;
       if (pushedInlineBody) converter.inlinedBodyStack.pop();
-      if (pushedInlineReturn) converter.inlineReturnStack.pop();
+      if (pushedInlineReturn) {
+        const innerCtx =
+          converter.inlineReturnStack[converter.inlineReturnStack.length - 1];
+        // Mirror the static-method propagation: if the inner expansion's return
+        // tracking was invalidated for a structural (interface) return type, the
+        // result variable holds an untracked structural handle. Adding it to the
+        // set ensures that any enclosing `return obj.method(…)` or
+        // `const x = obj.method(…)` also triggers returnTrackingInvalidated.
+        if (
+          innerCtx.returnTrackingInvalidated &&
+          innerCtx.returnInstancePrefix !== undefined
+        ) {
+          converter.untrackedStructuralHandleVars.add(result.name);
+        }
+        converter.inlineReturnStack.pop();
+      }
       if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
       converter.currentParamExportMap = savedParamExportMap;
       converter.currentParamExportReverseMap = savedParamExportReverseMap;
