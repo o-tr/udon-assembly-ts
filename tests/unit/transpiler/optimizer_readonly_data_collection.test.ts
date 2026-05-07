@@ -671,6 +671,80 @@ describe("readonlyDataCollectionFolding", () => {
     expect(result.changed).toBe(false);
   });
 
+  it("invalidates on transitive alias mutation (alias2 = alias1; alias2.Add() must invalidate)", () => {
+    const dl = tDL(0);
+    const alias1 = vDL("a");
+    const alias2 = vDL("b");
+    const tok = tDT(1);
+    const dest = tDT(2);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new AssignmentInstruction(alias1, dl),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("x")]),
+      new MethodCallInstruction(undefined, alias1, "Add", [tok]),
+      // Transitive alias: alias2 = alias1 (Variable-to-Variable)
+      new AssignmentInstruction(alias2, alias1),
+      // Mutation via transitive alias — must invalidate
+      new MethodCallInstruction(undefined, alias2, "Add", [tok]),
+      new MethodCallInstruction(dest, alias1, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
+  it("folds get_Item + PropertyGet without leaving a dead DataToken ctor", () => {
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const dtResult = tDT(2);
+    const strResult = tStr(3);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("world")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new MethodCallInstruction(dtResult, dl, "get_Item", [cInt(0)]),
+      new PropertyGetInstruction(strResult, dtResult, "String"),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    // Fully folded: only the direct assignment remains
+    expect(text).toContain('t3 = "world"');
+    // Dead DataToken ctor (DataList init path) and the intermediate ctor must be gone
+    expect(text).not.toContain("DataList.__ctor__");
+    expect(text).not.toContain("Add");
+    expect(text).not.toContain(DT_STR_SIG);
+  });
+
+  it("DCEs DataToken ctor instructions consumed by a fully folded DataDictionary", () => {
+    const dd = tDD(0);
+    const kTok = tDT(1);
+    const vTok = tDT(2);
+    const dtResult = tDT(3);
+    const strResult = tStr(4);
+
+    const instructions = [
+      new CallInstruction(dd, "DataDictionary.__ctor__", []),
+      new CallInstruction(kTok, DT_STR_SIG, [cStr("k")]),
+      new CallInstruction(vTok, DT_STR_SIG, [cStr("v")]),
+      new MethodCallInstruction(undefined, dd, "SetValue", [kTok, vTok]),
+      new MethodCallInstruction(dtResult, dd, "GetValue", [kTok]),
+      new PropertyGetInstruction(strResult, dtResult, "String"),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain('t4 = "v"');
+    // All init (ctor, DataToken ctors, SetValue) must be gone
+    expect(text).not.toContain("DataDictionary.__ctor__");
+    expect(text).not.toContain("SetValue");
+    expect(text).not.toContain(DT_STR_SIG);
+  });
+
   it("safe post-init reads (GetKeys, ShallowClone) do not invalidate", () => {
     const dl = tDL(0);
     const tok = tDT(1);

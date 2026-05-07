@@ -53,11 +53,12 @@ interface DataTokenInfo {
 interface DataCollectionCandidate {
   kind: "DataList" | "DataDictionary";
   tempId: number;
-  aliasName: string | null;
+  aliasNames: Set<string>;
   contents: Map<number | string, DataTokenInfo | null>;
   phase: "init" | "post-init";
   valid: boolean;
   initInstructionIndices: Set<number>;
+  initDataTokenCtorIndices: Set<number>;
   startIndex: number;
   nextIndex: number;
 }
@@ -73,9 +74,9 @@ function matchesCandidate(
     return true;
   }
   if (
-    candidate.aliasName !== null &&
+    candidate.aliasNames.size > 0 &&
     operand.kind === TACOperandKind.Variable &&
-    (operand as VariableOperand).name === candidate.aliasName
+    candidate.aliasNames.has((operand as VariableOperand).name)
   ) {
     return true;
   }
@@ -112,7 +113,7 @@ function findCandidateByTempOrAlias(
   if (operand.kind === TACOperandKind.Variable) {
     const name = (operand as VariableOperand).name;
     for (const c of candidates.values()) {
-      if (c.aliasName === name) return c;
+      if (c.aliasNames.has(name)) return c;
     }
   }
   return null;
@@ -162,6 +163,8 @@ export const readonlyDataCollectionFolding = (
   const allValidCandidates: DataCollectionCandidate[] = [];
   const exposedLabelIndices: number[] = [];
   const dataTokenDefs = new Map<number, DataTokenInfo>();
+  // Maps DataToken ctor temp IDs to their instruction index, for DCE of consumed ctors.
+  const dataTokenCtorIndexByTemp = new Map<number, number>();
 
   // Pass 1: collect candidates and validate
   for (let i = 0; i < instructions.length; i++) {
@@ -176,6 +179,7 @@ export const readonlyDataCollectionFolding = (
         }
         candidates.clear();
         dataTokenDefs.clear();
+        dataTokenCtorIndexByTemp.clear();
         continue;
       }
       for (const c of candidates.values()) {
@@ -195,10 +199,12 @@ export const readonlyDataCollectionFolding = (
         call.args.length === 1 &&
         call.args[0].kind === TACOperandKind.Constant
       ) {
-        dataTokenDefs.set((call.dest as TemporaryOperand).id, {
+        const dtTempId = (call.dest as TemporaryOperand).id;
+        dataTokenDefs.set(dtTempId, {
           externSig: call.func,
           value: call.args[0] as ConstantOperand,
         });
+        dataTokenCtorIndexByTemp.set(dtTempId, i);
       }
 
       // DataList ctor
@@ -212,11 +218,12 @@ export const readonlyDataCollectionFolding = (
         candidates.set(tempId, {
           kind: "DataList",
           tempId,
-          aliasName: null,
+          aliasNames: new Set(),
           contents: new Map(),
           phase: "init",
           valid: true,
           initInstructionIndices: new Set([i]),
+          initDataTokenCtorIndices: new Set(),
           startIndex: i,
           nextIndex: 0,
         });
@@ -234,11 +241,12 @@ export const readonlyDataCollectionFolding = (
         candidates.set(tempId, {
           kind: "DataDictionary",
           tempId,
-          aliasName: null,
+          aliasNames: new Set(),
           contents: new Map(),
           phase: "init",
           valid: true,
           initInstructionIndices: new Set([i]),
+          initDataTokenCtorIndices: new Set(),
           startIndex: i,
           nextIndex: 0,
         });
@@ -271,13 +279,22 @@ export const readonlyDataCollectionFolding = (
             mc.args.length === 1
           ) {
             const tokenArg = mc.args[0];
-            const info =
+            const tokenTempId =
               tokenArg.kind === TACOperandKind.Temporary
-                ? (dataTokenDefs.get((tokenArg as TemporaryOperand).id) ?? null)
+                ? (tokenArg as TemporaryOperand).id
+                : -1;
+            const info =
+              tokenTempId >= 0
+                ? (dataTokenDefs.get(tokenTempId) ?? null)
                 : null;
             c.contents.set(c.nextIndex, info);
             c.nextIndex++;
             c.initInstructionIndices.add(i);
+            if (tokenTempId >= 0) {
+              const ctorIdx = dataTokenCtorIndexByTemp.get(tokenTempId);
+              if (ctorIdx !== undefined)
+                c.initDataTokenCtorIndices.add(ctorIdx);
+            }
             continue;
           }
 
@@ -293,12 +310,28 @@ export const readonlyDataCollectionFolding = (
               invalidate(candidates, c);
               continue;
             }
-            const valInfo =
+            const valTempId =
               valArg.kind === TACOperandKind.Temporary
-                ? (dataTokenDefs.get((valArg as TemporaryOperand).id) ?? null)
-                : null;
+                ? (valArg as TemporaryOperand).id
+                : -1;
+            const valInfo =
+              valTempId >= 0 ? (dataTokenDefs.get(valTempId) ?? null) : null;
             c.contents.set(keyString, valInfo);
             c.initInstructionIndices.add(i);
+            const keyTempId =
+              keyArg.kind === TACOperandKind.Temporary
+                ? (keyArg as TemporaryOperand).id
+                : -1;
+            if (keyTempId >= 0) {
+              const ctorIdx = dataTokenCtorIndexByTemp.get(keyTempId);
+              if (ctorIdx !== undefined)
+                c.initDataTokenCtorIndices.add(ctorIdx);
+            }
+            if (valTempId >= 0) {
+              const ctorIdx = dataTokenCtorIndexByTemp.get(valTempId);
+              if (ctorIdx !== undefined)
+                c.initDataTokenCtorIndices.add(ctorIdx);
+            }
             continue;
           }
 
@@ -346,7 +379,19 @@ export const readonlyDataCollectionFolding = (
           if (destVar.isExported) {
             invalidate(candidates, cBySrc);
           } else {
-            cBySrc.aliasName = destVar.name;
+            // dest is being reassigned to this candidate; remove it from any
+            // other candidate's aliasNames to prevent stale transitive alias matches
+            for (const c of candidates.values()) {
+              if (
+                c !== cBySrc &&
+                c.aliasNames.has(destVar.name) &&
+                c.phase === "post-init"
+              ) {
+                invalidate(candidates, c);
+                break;
+              }
+            }
+            cBySrc.aliasNames.add(destVar.name);
             cBySrc.initInstructionIndices.add(i);
             // If init operations have already started, the alias signals end of
             // init; subsequent mutations via alias must not be treated as init.
@@ -362,13 +407,48 @@ export const readonlyDataCollectionFolding = (
         continue;
       }
 
+      // (A) Reassignment check — invalidate only if src is NOT the same collection
       if (assign.dest.kind === TACOperandKind.Variable) {
         const destName = (assign.dest as VariableOperand).name;
         for (const c of candidates.values()) {
-          // Invalidate on alias reassignment regardless of phase.
-          if (c.aliasName === destName) {
-            invalidate(candidates, c);
+          if (c.aliasNames.has(destName) && c.phase === "post-init") {
+            const srcIsSameCollection =
+              (assign.src.kind === TACOperandKind.Temporary &&
+                (assign.src as TemporaryOperand).id === c.tempId) ||
+              (assign.src.kind === TACOperandKind.Variable &&
+                c.aliasNames.has((assign.src as VariableOperand).name));
+            if (!srcIsSameCollection) invalidate(candidates, c);
             break;
+          }
+        }
+      }
+
+      // (B) Transitive alias: src is a known alias → add dest as alias too.
+      // The alias-before-adds pattern (tempId as src, init phase) is handled by
+      // the "cBySrc.phase === init" branch above. Variable-to-variable transitive
+      // aliases may appear in both init and post-init. When seen in init after
+      // adds have already occurred (nextIndex > 0 || contents.size > 0), the
+      // init window is closed and we transition to post-init so that further
+      // Add/SetValue via any alias is treated as a mutation.
+      if (
+        assign.src.kind === TACOperandKind.Variable &&
+        assign.dest.kind === TACOperandKind.Variable
+      ) {
+        const srcName = (assign.src as VariableOperand).name;
+        const destVar = assign.dest as VariableOperand;
+        if (!destVar.isExported) {
+          for (const c of candidates.values()) {
+            if (c.aliasNames.has(srcName)) {
+              c.aliasNames.add(destVar.name);
+              c.initInstructionIndices.add(i);
+              if (
+                c.phase === "init" &&
+                (c.nextIndex > 0 || c.contents.size > 0)
+              ) {
+                c.phase = "post-init";
+              }
+              break;
+            }
           }
         }
       }
@@ -448,11 +528,11 @@ export const readonlyDataCollectionFolding = (
       tempIdToCandidates.set(c.tempId, tempArr);
     }
     tempArr.push(c);
-    if (c.aliasName !== null) {
-      let aliasArr = aliasToCandidates.get(c.aliasName);
+    for (const name of c.aliasNames) {
+      let aliasArr = aliasToCandidates.get(name);
       if (!aliasArr) {
         aliasArr = [];
-        aliasToCandidates.set(c.aliasName, aliasArr);
+        aliasToCandidates.set(name, aliasArr);
       }
       aliasArr.push(c);
     }
@@ -489,8 +569,16 @@ export const readonlyDataCollectionFolding = (
     return null;
   };
 
+  // When PropertyGet is immediately folded after a get_Item/GetValue replacement,
+  // the DataToken ctor CallInstruction pushed to result becomes dead. Track these
+  // so Pass 3 can remove them alongside the init instructions.
+  const deadResultInstructions = new Set<TACInstruction>();
+
   // Fold a get_Item/GetValue replacement with optional immediate PropertyGet folding.
-  // Returns the number of additional instructions consumed (0 or 1).
+  // The DataToken ctor CallInstruction is always pushed to result to preserve the
+  // result/instructions index correspondence. If PropertyGet is also folded, the
+  // ctor is added to deadResultInstructions for removal in Pass 3.
+  // Returns true if the following PropertyGet was consumed (caller should skip it).
   const foldWithPropertyGet = (
     result: TACInstruction[],
     entry: DataTokenInfo,
@@ -511,6 +599,7 @@ export const readonlyDataCollectionFolding = (
           pg.property === expectedProp
         ) {
           result.push(newCall);
+          deadResultInstructions.add(newCall);
           result.push(new AssignmentInstruction(pg.dest, entry.value));
           return true;
         }
@@ -660,13 +749,46 @@ export const readonlyDataCollectionFolding = (
     }
   }
 
-  if (indicesToRemove.size === 0) {
+  // Also remove DataToken ctor instructions that were consumed exclusively by
+  // init instructions now being DCE'd. Shared ctors (used elsewhere) are kept.
+  const possibleCtorRemovals = new Set<number>();
+  for (const c of allValidCandidates) {
+    if ((residualUses.get(c.startIndex) ?? 0) === 0) {
+      for (const idx of c.initDataTokenCtorIndices) {
+        possibleCtorRemovals.add(idx);
+      }
+    }
+  }
+  for (const ctorIdx of possibleCtorRemovals) {
+    const ctorInst = result[ctorIdx] as unknown as CallInstruction;
+    if (!ctorInst.dest || ctorInst.dest.kind !== TACOperandKind.Temporary)
+      continue;
+    const ctorTempId = (ctorInst.dest as TemporaryOperand).id;
+    let stillUsed = false;
+    for (let i = 0; i < result.length; i++) {
+      if (indicesToRemove.has(i) || possibleCtorRemovals.has(i)) continue;
+      if (deadResultInstructions.has(result[i])) continue;
+      forEachUsedOperand(result[i], (op) => {
+        if (
+          !stillUsed &&
+          op.kind === TACOperandKind.Temporary &&
+          (op as TemporaryOperand).id === ctorTempId
+        ) {
+          stillUsed = true;
+        }
+      });
+      if (stillUsed) break;
+    }
+    if (!stillUsed) indicesToRemove.add(ctorIdx);
+  }
+
+  if (indicesToRemove.size === 0 && deadResultInstructions.size === 0) {
     return { instructions: result, changed };
   }
 
   const finalResult: TACInstruction[] = [];
   for (let i = 0; i < result.length; i++) {
-    if (!indicesToRemove.has(i)) {
+    if (!indicesToRemove.has(i) && !deadResultInstructions.has(result[i])) {
       finalResult.push(result[i]);
     }
   }
