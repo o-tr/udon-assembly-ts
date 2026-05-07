@@ -122,13 +122,19 @@ class Tile {
   }
 
   static nextDoraKind(kind: UdonInt): UdonInt {
-    if (kind < 27n) {
-      return (kind % 9n === 8n ? kind - 8n : kind + 1n) as UdonInt;
+    if (kind < (27n as UdonInt)) {
+      return (
+        kind % (9n as UdonInt) === (8n as UdonInt)
+          ? kind - (8n as UdonInt)
+          : kind + (1n as UdonInt)
+      ) as UdonInt;
     }
-    if (kind <= 30n) {
-      return (((kind - 27n + 1n) % 4n) + 27n) as UdonInt;
+    if (kind <= (30n as UdonInt)) {
+      return (((kind - (27n as UdonInt) + (1n as UdonInt)) % (4n as UdonInt)) +
+        (27n as UdonInt)) as UdonInt;
     }
-    return (((kind - 31n + 1n) % 3n) + 31n) as UdonInt;
+    return (((kind - (31n as UdonInt) + (1n as UdonInt)) % (3n as UdonInt)) +
+      (31n as UdonInt)) as UdonInt;
   }
 
   isDoraIndicatorFor(tile: Tile): boolean {
