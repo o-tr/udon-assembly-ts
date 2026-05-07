@@ -446,6 +446,80 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.tac).toContain("untracked_call_next");
   });
 
+  it("dispatches erased method receiver across all matching inline classes", () => {
+    const source = `
+      class BasicCheck {
+        value: number = 1;
+        check(): number { return this.value; }
+      }
+      class BonusCheck {
+        value: number = 2;
+        check(): number { return this.value; }
+      }
+      class Helper {
+        static read(c: object): number {
+          return (c as any).check();
+        }
+      }
+      class Main {
+        private basic: BasicCheck = new BasicCheck();
+        private bonus: BonusCheck = new BonusCheck();
+        private flag: boolean = true;
+        Start(): void {
+          const selected: object = this.flag ? this.basic : this.bonus;
+          const v = Helper.read(selected);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__check__/);
+    expect(result.tac).toMatch(/__inst_BasicCheck_\d+__handle/);
+    expect(result.tac).toMatch(/__inst_BonusCheck_\d+__handle/);
+    expect(result.tac).toContain("d3_method_next");
+  });
+
+  it("skips D3 dispatch when candidate methods have divergent return types", () => {
+    // Ternary makes the receiver genuinely ambiguous (transpiler cannot trace
+    // it to a single concrete class), so D3 dispatch is attempted.
+    const source = `
+      class NumCheck {
+        getValue(): number { return 1; }
+      }
+      class StrCheck {
+        getValue(): string { return "x"; }
+      }
+      class Helper {
+        static read(c: object): number {
+          return (c as any).getValue() as number;
+        }
+      }
+      class Main {
+        private nc: NumCheck = new NumCheck();
+        private sc: StrCheck = new StrCheck();
+        private flag: boolean = true;
+        Start(): void {
+          const selected: object = this.flag ? this.nc : this.sc;
+          const v = Helper.read(selected);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    // D3 dispatch must be skipped — divergent return types (number vs string).
+    // The absence of d3_method labels proves no dispatch table was emitted.
+    expect(result.tac).not.toContain("d3_method_next");
+    expect(result.tac).not.toContain("d3_method_end");
+    // The diagnostic warning confirms the intended code path was taken.
+    expect(
+      result.diagnostics?.some(
+        (d) => d.code === "D3DispatchReturnTypeMismatch",
+      ),
+    ).toBe(true);
+  });
+
   it("re-lowers object literal args with interface parameter types in untracked dispatch", () => {
     const source = `
       interface I {

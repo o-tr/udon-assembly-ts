@@ -553,6 +553,27 @@ function getOrPopulateImplementorNames(
   return converter.implementorNamesCache.get(typeName) ?? null;
 }
 
+function addD3MethodInstancesForType(
+  converter: ASTToTACConverter,
+  typeName: string | undefined,
+  instances: Array<[number, { prefix: string; className: string }]>,
+  seenInstanceIds: Set<number>,
+): void {
+  if (!typeName) return;
+  const implementorNames = getOrPopulateImplementorNames(converter, typeName);
+  for (const [instId, info] of converter.allInlineInstances) {
+    if (seenInstanceIds.has(instId)) continue;
+    if (
+      info.className === typeName ||
+      implementorNames?.has(info.className) ||
+      isSubclassOf(converter, info.className, typeName)
+    ) {
+      instances.push([instId, info]);
+      seenInstanceIds.add(instId);
+    }
+  }
+}
+
 function isASTNode(value: unknown): value is ASTNode {
   return (
     value !== null &&
@@ -1209,37 +1230,27 @@ function tryD3MethodDispatch(
   // method-name fallback for erased types.
   const dispInstances: Array<[number, { prefix: string; className: string }]> =
     [];
+  const seenInstanceIds = new Set<number>();
 
-  // Direct type match + interface implementor match
-  const implementorNames = getOrPopulateImplementorNames(
+  // Direct type match + interface implementor/subclass match.
+  addD3MethodInstancesForType(
     converter,
     objectTypeName,
+    dispInstances,
+    seenInstanceIds,
   );
-  for (const [instId, info] of converter.allInlineInstances) {
-    if (
-      info.className === objectTypeName ||
-      implementorNames?.has(info.className) ||
-      isSubclassOf(converter, info.className, objectTypeName)
-    ) {
-      dispInstances.push([instId, info]);
-    }
-  }
 
   // AST type fallback: when operand type is erased, try resolving from AST.
   if (dispInstances.length === 0) {
     const astType = resolveTypeFromNode(converter, propAccess.object);
     const astName = astType?.name;
     if (astName && astName !== objectTypeName) {
-      const astImpl = getOrPopulateImplementorNames(converter, astName);
-      for (const [instId, info] of converter.allInlineInstances) {
-        if (
-          info.className === astName ||
-          astImpl?.has(info.className) ||
-          isSubclassOf(converter, info.className, astName)
-        ) {
-          dispInstances.push([instId, info]);
-        }
-      }
+      addD3MethodInstancesForType(
+        converter,
+        astName,
+        dispInstances,
+        seenInstanceIds,
+      );
       // usedErasedFallback: miss path always emits LogError regardless.
     }
   }
@@ -1259,42 +1270,96 @@ function tryD3MethodDispatch(
     }
     if (candidateClasses.size === 1) {
       for (const [instId, info] of converter.allInlineInstances) {
-        if (candidateClasses.has(info.className)) {
+        if (
+          candidateClasses.has(info.className) &&
+          !seenInstanceIds.has(instId)
+        ) {
           dispInstances.push([instId, info]);
+          seenInstanceIds.add(instId);
         }
       }
       // usedErasedFallback: miss path always emits LogError regardless.
     } else if (candidateClasses.size > 1) {
-      // Multiple classes share this method name. Try narrowing via AST type.
+      // Multiple classes share this method name. Prefer the subset assignable
+      // to the AST receiver type; if no usable type is available, include all
+      // method-compatible inline classes rather than returning an empty table.
       const astType = resolveTypeFromNode(converter, propAccess.object);
       const astName = astType?.name;
-      let narrowed: string | undefined;
+      const narrowed = new Set<string>();
       if (astName) {
         if (candidateClasses.has(astName)) {
-          narrowed = astName;
-        } else {
-          // Tie-breaking uses the order returned by
-          // getImplementorsOfInterface — the first matching implementor wins.
-          const impls =
-            converter.classRegistry
-              ?.getImplementorsOfInterface(astName)
-              .map((i) => i.name) ?? [];
-          for (const impl of impls) {
-            if (candidateClasses.has(impl)) {
-              narrowed = impl;
-              break;
-            }
+          narrowed.add(astName);
+        }
+        const impls =
+          converter.classRegistry
+            ?.getImplementorsOfInterface(astName)
+            .map((i) => i.name) ?? [];
+        for (const impl of impls) {
+          if (candidateClasses.has(impl)) narrowed.add(impl);
+        }
+        for (const className of candidateClasses) {
+          if (isSubclassOf(converter, className, astName)) {
+            narrowed.add(className);
           }
         }
       }
-      if (narrowed) {
+      const selectedClasses = narrowed.size > 0 ? narrowed : candidateClasses;
+
+      // Check return type consistency before committing to these candidates.
+      // If they diverge, emitting D3DispatchFallback would be misleading.
+      let retTypeUdon: UdonType | undefined;
+      let retTypeName: string | undefined;
+      let retTypeDiverged = false;
+      for (const className of selectedClasses) {
+        const res = resolveClassMethod(
+          converter,
+          className,
+          propAccess.property,
+        );
+        // selectedClasses ⊆ candidateClasses, and candidateClasses is built by
+        // filtering classes that already passed resolveClassMethod (line 1267),
+        // so res cannot be undefined here. The safety-net below handles any
+        // unexpected case via D3DispatchMethodNotFound.
+        if (!res) continue;
+        const raw = res.method.returnType;
+        const sym = raw?.name
+          ? (converter.typeMapper.getAlias(raw.name) ?? raw)
+          : raw;
+        if (retTypeUdon === undefined) {
+          retTypeUdon = sym?.udonType;
+          retTypeName = sym?.name;
+        } else if (sym?.udonType !== retTypeUdon || sym?.name !== retTypeName) {
+          retTypeDiverged = true;
+          break;
+        }
+      }
+
+      if (retTypeDiverged) {
+        converter.warnAt(
+          propAccess,
+          "D3DispatchReturnTypeMismatch",
+          `D3 method dispatch skipped for "${propAccess.property}" — return types differ across candidate classes (${[...selectedClasses].join(", ")}).`,
+        );
+        // Leave dispInstances empty → falls through to return null below.
+      } else {
+        if (narrowed.size === 0) {
+          converter.warnAt(
+            propAccess,
+            "D3DispatchFallback",
+            `D3 method dispatch narrowing failed for "${propAccess.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
+          );
+        }
         for (const [instId, info] of converter.allInlineInstances) {
-          if (info.className === narrowed) {
+          if (
+            selectedClasses.has(info.className) &&
+            !seenInstanceIds.has(instId)
+          ) {
             dispInstances.push([instId, info]);
+            seenInstanceIds.add(instId);
           }
         }
-        // usedErasedFallback: miss path always emits LogError regardless.
       }
+      // usedErasedFallback: miss path always emits LogError regardless.
     }
   }
 
@@ -1305,11 +1370,49 @@ function tryD3MethodDispatch(
     return null;
   }
 
-  // Resolve the return type from the first candidate class. For the
-  // interface-implementor path all implementors share the same method
-  // signature, so the first is representative. For the method-name erased-type
-  // fallback, candidateClasses is narrowed to a single class before reaching
-  // this point, so divergent return types cannot occur.
+  // Safety-net: verify return type consistency across all dispatch candidates
+  // (covers the interface-implementor and AST-type paths; the method-name
+  // fallback already checked above).
+  {
+    const seenClasses = new Set<string>();
+    let refUdonType: UdonType | undefined;
+    let refRetName: string | undefined;
+    for (const [, info] of dispInstances) {
+      if (seenClasses.has(info.className)) continue;
+      seenClasses.add(info.className);
+      const res = resolveClassMethod(
+        converter,
+        info.className,
+        propAccess.property,
+      );
+      if (!res) {
+        converter.warnAt(
+          propAccess,
+          "D3DispatchMethodNotFound",
+          `D3 method dispatch skipped for "${propAccess.property}" — candidate class "${info.className}" does not define the method.`,
+        );
+        return null;
+      }
+      const raw = res.method.returnType;
+      const sym = raw?.name
+        ? (converter.typeMapper.getAlias(raw.name) ?? raw)
+        : raw;
+      if (refUdonType === undefined) {
+        refUdonType = sym?.udonType;
+        refRetName = sym?.name;
+      } else if (sym?.udonType !== refUdonType || sym?.name !== refRetName) {
+        converter.warnAt(
+          propAccess,
+          "D3DispatchReturnTypeMismatch",
+          `D3 method dispatch skipped for "${propAccess.property}" — return types differ across dispatch candidates (${[...seenClasses].join(", ")}).`,
+        );
+        return null;
+      }
+    }
+  }
+
+  // Resolve the return type from the first candidate. Return-type consistency
+  // across all candidates is enforced above, so any one is representative.
   const firstClassName = dispInstances[0][1].className;
   const methodResolved = resolveClassMethod(
     converter,
