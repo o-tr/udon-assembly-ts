@@ -1,8 +1,9 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import type {
-  UdonFloat,
-  UdonInt,
+import {
+  type UdonFloat,
+  type UdonInt,
+  UdonTypeConverters,
 } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
@@ -13,8 +14,9 @@ export class NumericTypePromotion extends UdonSharpBehaviour {
     // This verifies the promotion and conversion pipeline works
     const intVal: UdonInt = 10n as UdonInt;
     const floatVal: number = 3.5;
-    const sumTruncated: UdonInt = (Number(intVal) +
-      floatVal) as unknown as UdonInt;
+    const sumTruncated: UdonInt = UdonTypeConverters.truncToUdonInt(
+      Number(intVal) + floatVal,
+    );
     Debug.Log(sumTruncated); // 13 (promoted to Single for op, converted back to Int32)
 
     // Int * Single → product stored as explicit UdonFloat keeps decimal
