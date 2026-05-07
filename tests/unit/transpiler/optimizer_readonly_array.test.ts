@@ -25,6 +25,8 @@ import {
 
 const int32ArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.int32);
 const singleArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.single);
+const boolArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.boolean);
+const stringArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.string);
 
 const c = (v: number, type = PrimitiveTypes.int32) => createConstant(v, type);
 const t = (id: number, type = PrimitiveTypes.int32) =>
@@ -417,6 +419,163 @@ describe("readonlyArrayFolding", () => {
     expect(result.structurallyChanged).toBeUndefined();
   });
 
+  // --- Type-default folding for uninitialized slots ---
+
+  it("folds uninitialized slots of a number[] to 0", () => {
+    const arr = tArr(0);
+    const dest1 = t(1);
+    const dest2 = t(2);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(3)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(10)),
+      new ArrayAccessInstruction(dest1, arr, c(1)),
+      new ArrayAccessInstruction(dest2, arr, c(2)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).toContain("t2 = 0");
+  });
+
+  it("folds mixed array: explicit write and uninitialized slot both fold", () => {
+    const arr = tArr(0);
+    const dest0 = t(1);
+    const dest1 = t(2);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(2)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(42)),
+      new ArrayAccessInstruction(dest0, arr, c(0)),
+      new ArrayAccessInstruction(dest1, arr, c(1)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 42");
+    expect(text).toContain("t2 = 0");
+    expect(text).not.toContain("__ctor_SystemInt32Array");
+  });
+
+  it("does not fold out-of-bounds uninitialized index", () => {
+    const arr = tArr(0);
+    const dest = t(1);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(2)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(false);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = t0[2]");
+  });
+
+  it("does not fold non-constant write but does fold uninitialized slot in same array", () => {
+    const arr = tArr(0);
+    const nonConst = v("x");
+    const dest0 = t(1);
+    const dest1 = t(2);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(2)]),
+      new ArrayAssignmentInstruction(arr, c(0), nonConst),
+      new ArrayAccessInstruction(dest0, arr, c(0)),
+      new ArrayAccessInstruction(dest1, arr, c(1)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = t0[0]");
+    expect(text).toContain("t2 = 0");
+  });
+
+  it("folds uninitialized boolean[] slot to false", () => {
+    const arr = createTemporary(0, boolArrayType);
+    const dest = createTemporary(1, PrimitiveTypes.boolean);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemBooleanArray", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = false");
+    expect(text).not.toContain("__ctor_SystemBooleanArray");
+  });
+
+  it("folds uninitialized string[] slot to null", () => {
+    const arr = createTemporary(0, stringArrayType);
+    const dest = createTemporary(1, PrimitiveTypes.string);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemStringArray", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = null");
+    expect(text).not.toContain("__ctor_SystemStringArray");
+  });
+
+  it("removes all init instructions when all slots fold (explicit + default)", () => {
+    const arr = tArr(0);
+    const dest0 = t(1);
+    const dest1 = t(2);
+    const dest2 = t(3);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(3)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(7)),
+      new ArrayAccessInstruction(dest0, arr, c(0)),
+      new ArrayAccessInstruction(dest1, arr, c(1)),
+      new ArrayAccessInstruction(dest2, arr, c(2)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    expect(result.structurallyChanged).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 7");
+    expect(text).toContain("t2 = 0");
+    expect(text).toContain("t3 = 0");
+    expect(text).not.toContain("__ctor_SystemInt32Array");
+    expect(text).not.toContain("ArrayAssignment");
+  });
+
+  it("folds uninitialized float (Single) slot to 0 via isNumericUdonType", () => {
+    const arr = createTemporary(0, singleArrayType);
+    const dest = createTemporary(1, PrimitiveTypes.single);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemSingleArray", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).not.toContain("__ctor_SystemSingleArray");
+  });
+
+  it("folds uninitialized double (Double) slot to 0 via isNumericUdonType", () => {
+    const doubleArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.double);
+    const arr = createTemporary(0, doubleArrayType);
+    const dest = createTemporary(1, PrimitiveTypes.double);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemDoubleArray", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).not.toContain("__ctor_SystemDoubleArray");
+  });
+
   it("invalidates on init-phase catch-all (BinaryOp using temp)", () => {
     const arr = tArr(0);
     const alias = vArr("scores");
@@ -456,6 +615,9 @@ describe("readonlyArrayFolding", () => {
   });
 
   it("invalidates when transitive alias is reassigned to different array", () => {
+    // b is reassigned to 'other' (an unwritten array). The read b[0] must NOT
+    // fold to arr's content (10). With type-default folding it folds to 0
+    // (the zero-init default of other), which is the correct behaviour.
     const arr = tArr(0);
     const other = tArr(5);
     const scores = vArr("scores");
@@ -472,7 +634,10 @@ describe("readonlyArrayFolding", () => {
     ];
 
     const result = readonlyArrayFolding(instructions);
-    expect(result.changed).toBe(false);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).not.toContain("t1 = 10");
   });
 
   it("folds through depth-3 alias chain", () => {

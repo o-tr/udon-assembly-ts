@@ -1,4 +1,9 @@
 import {
+  NativeArrayTypeSymbol,
+  type TypeSymbol,
+} from "../../../frontend/type_symbols.js";
+import { UdonType } from "../../../frontend/types.js";
+import {
   type ArrayAccessInstruction,
   type ArrayAssignmentInstruction,
   AssignmentInstruction,
@@ -8,6 +13,7 @@ import {
 } from "../../tac_instruction.js";
 import {
   type ConstantOperand,
+  createConstant,
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
@@ -16,7 +22,7 @@ import {
 } from "../../tac_operand.js";
 import type { PassResult } from "../pass_types.js";
 import { forEachUsedOperand } from "../utils/instructions.js";
-import { getOperandType } from "./constant_folding.js";
+import { getOperandType, isNumericUdonType } from "./constant_folding.js";
 
 interface ArrayCandidate {
   tempId: number;
@@ -26,6 +32,8 @@ interface ArrayCandidate {
   valid: boolean;
   initInstructionIndices: Set<number>;
   startIndex: number;
+  arrayLength: number;
+  elementType: TypeSymbol;
 }
 
 function matchesCandidate(
@@ -105,6 +113,20 @@ function getLabelName(inst: TACInstruction): string {
     .name;
 }
 
+function getTypeDefault(elementType: TypeSymbol): ConstantOperand | null {
+  const t = elementType.udonType;
+  if (t === UdonType.Boolean) return createConstant(false, elementType);
+  if (t === UdonType.Int64 || t === UdonType.UInt64)
+    return createConstant(0n, elementType);
+  if (isNumericUdonType(t)) return createConstant(0, elementType);
+  // Char and Decimal are intentionally omitted: NATIVE_ARRAY_TYPE_NAMES, type_mapper.ts,
+  // and the assembler type classification do not support them yet, so folding to a
+  // constant would produce unverified UASM output. Return null (skip fold) until
+  // the full codegen path is wired up for those types.
+  if (t === UdonType.String) return createConstant(null, elementType);
+  return null;
+}
+
 export const readonlyArrayFolding = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,
@@ -139,22 +161,26 @@ export const readonlyArrayFolding = (
       if (
         call.dest &&
         call.dest.kind === TACOperandKind.Temporary &&
-        getOperandType(call.dest).udonType === "NativeArray" &&
         call.args.length >= 1
       ) {
-        const length = getConstantInt(call.args[0]);
-        if (length !== null && length >= 0) {
-          const tempId = (call.dest as TemporaryOperand).id;
-          candidates.set(tempId, {
-            tempId,
-            aliasNames: new Set(),
-            contents: new Map(),
-            phase: "init",
-            valid: true,
-            initInstructionIndices: new Set([i]),
-            startIndex: i,
-          });
-          continue;
+        const arrayType = getOperandType(call.dest);
+        if (arrayType instanceof NativeArrayTypeSymbol) {
+          const length = getConstantInt(call.args[0]);
+          if (length !== null && length >= 0) {
+            const tempId = (call.dest as TemporaryOperand).id;
+            candidates.set(tempId, {
+              tempId,
+              aliasNames: new Set(),
+              contents: new Map(),
+              phase: "init",
+              valid: true,
+              initInstructionIndices: new Set([i]),
+              startIndex: i,
+              arrayLength: length,
+              elementType: arrayType.elementType,
+            });
+            continue;
+          }
         }
       }
     }
@@ -407,10 +433,19 @@ export const readonlyArrayFolding = (
         const idx = getConstantInt(acc.index);
         if (idx !== null) {
           const constVal = c.contents.get(idx);
-          if (constVal) {
-            result.push(new AssignmentInstruction(acc.dest, constVal));
-            changed = true;
-            continue;
+          if (constVal !== undefined) {
+            if (constVal !== null) {
+              result.push(new AssignmentInstruction(acc.dest, constVal));
+              changed = true;
+              continue;
+            }
+          } else if (idx >= 0 && idx < c.arrayLength) {
+            const defaultVal = getTypeDefault(c.elementType);
+            if (defaultVal !== null) {
+              result.push(new AssignmentInstruction(acc.dest, defaultVal));
+              changed = true;
+              continue;
+            }
           }
         }
       }
