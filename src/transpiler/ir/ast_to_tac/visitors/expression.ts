@@ -1320,8 +1320,11 @@ export function visitBinaryExpression(
     }
   } else if (isRemainder) {
     // Udon VM does not implement Int64/UInt64 remainder (op_Remainder for Long
-    // is absent). Narrow any Int64/UInt64 operand to Int32 and emit a warning
-    // so the caller knows about the implicit demotion.
+    // is absent). Narrow any Int64/UInt64 operand to a 32-bit type and emit a
+    // warning so the caller knows about the implicit demotion.
+    // Use uint32 only when both operands are UInt64 (preserves unsigned
+    // semantics for values in [2^31, 2^32)). For mixed signedness use int32 for
+    // both so widenNumericOperands never re-promotes the pair back to Int64.
     const leftType = this.getOperandType(left);
     const rightType = this.getOperandType(right);
     const leftIsLong =
@@ -1334,23 +1337,21 @@ export function visitBinaryExpression(
       this.warnAt(
         node,
         "Int64RemainderNotSupported",
-        "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to Int32.",
+        "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to 32-bit.",
       );
+      const bothUnsigned =
+        leftType.udonType === UdonType.UInt64 &&
+        rightType.udonType === UdonType.UInt64;
+      const narrowTarget = bothUnsigned
+        ? PrimitiveTypes.uint32
+        : PrimitiveTypes.int32;
       if (leftIsLong) {
-        const targetType =
-          leftType.udonType === UdonType.UInt64
-            ? PrimitiveTypes.uint32
-            : PrimitiveTypes.int32;
-        const cast = this.newTemp(targetType);
+        const cast = this.newTemp(narrowTarget);
         this.emit(new CastInstruction(cast, left));
         left = cast;
       }
       if (rightIsLong) {
-        const targetType =
-          rightType.udonType === UdonType.UInt64
-            ? PrimitiveTypes.uint32
-            : PrimitiveTypes.int32;
-        const cast = this.newTemp(targetType);
+        const cast = this.newTemp(narrowTarget);
         this.emit(new CastInstruction(cast, right));
         right = cast;
       }
