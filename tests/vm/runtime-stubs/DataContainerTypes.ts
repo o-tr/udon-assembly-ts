@@ -41,8 +41,11 @@ export class DataToken {
         ? this._value
         : BigInt(
             typeof this._value === "number"
-              ? Math.trunc(this._value)
-              : typeof this._value === "string" || typeof this._value === "boolean"
+              ? Number.isFinite(this._value)
+                ? Math.trunc(this._value)
+                : 0
+              : typeof this._value === "string" ||
+                  typeof this._value === "boolean"
                 ? this._value
                 : 0,
           );
