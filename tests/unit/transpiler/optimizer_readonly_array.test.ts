@@ -545,6 +545,37 @@ describe("readonlyArrayFolding", () => {
     expect(text).not.toContain("ArrayAssignment");
   });
 
+  it("folds uninitialized float (Single) slot to 0 via isNumericUdonType", () => {
+    const arr = createTemporary(0, singleArrayType);
+    const dest = createTemporary(1, PrimitiveTypes.single);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemSingleArray", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).not.toContain("__ctor_SystemSingleArray");
+  });
+
+  it("folds uninitialized double (Double) slot to 0 via isNumericUdonType", () => {
+    const doubleArrayType = new NativeArrayTypeSymbol(PrimitiveTypes.double);
+    const arr = createTemporary(0, doubleArrayType);
+    const dest = createTemporary(1, PrimitiveTypes.double);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemDoubleArray", [c(2)]),
+      new ArrayAccessInstruction(dest, arr, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).not.toContain("__ctor_SystemDoubleArray");
+  });
+
   it("invalidates on init-phase catch-all (BinaryOp using temp)", () => {
     const arr = tArr(0);
     const alias = vArr("scores");
@@ -560,5 +591,74 @@ describe("readonlyArrayFolding", () => {
 
     const result = readonlyArrayFolding(instructions);
     expect(result.changed).toBe(false);
+  });
+
+  it("folds through transitive alias created by copy propagation", () => {
+    const arr = tArr(0);
+    const scores = vArr("scores");
+    const b = vArr("b");
+    const dest = t(1);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(3)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(10)),
+      new ArrayAssignmentInstruction(arr, c(1), c(20)),
+      new ArrayAssignmentInstruction(arr, c(2), c(30)),
+      new AssignmentInstruction(scores, arr),
+      new AssignmentInstruction(b, scores),
+      new ArrayAccessInstruction(dest, b, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    expect(stringify(result.instructions)).not.toContain("b[0]");
+    expect(stringify(result.instructions)).toContain("t1 = 10");
+  });
+
+  it("invalidates when transitive alias is reassigned to different array", () => {
+    // b is reassigned to 'other' (an unwritten array). The read b[0] must NOT
+    // fold to arr's content (10). With type-default folding it folds to 0
+    // (the zero-init default of other), which is the correct behaviour.
+    const arr = tArr(0);
+    const other = tArr(5);
+    const scores = vArr("scores");
+    const b = vArr("b");
+    const dest = t(1);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(1)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(10)),
+      new AssignmentInstruction(scores, arr),
+      new AssignmentInstruction(b, scores),
+      new CallInstruction(other, "__ctor_SystemInt32Array", [c(1)]),
+      new AssignmentInstruction(b, other),
+      new ArrayAccessInstruction(dest, b, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    expect(text).toContain("t1 = 0");
+    expect(text).not.toContain("t1 = 10");
+  });
+
+  it("folds through depth-3 alias chain", () => {
+    const arr = tArr(0);
+    const scores = vArr("scores");
+    const b = vArr("b");
+    const cx = vArr("c");
+    const dest = t(1);
+    const instructions = [
+      new CallInstruction(arr, "__ctor_SystemInt32Array", [c(2)]),
+      new ArrayAssignmentInstruction(arr, c(0), c(42)),
+      new ArrayAssignmentInstruction(arr, c(1), c(99)),
+      new AssignmentInstruction(scores, arr),
+      new AssignmentInstruction(b, scores),
+      new AssignmentInstruction(cx, b),
+      new ArrayAccessInstruction(dest, cx, c(0)),
+    ];
+
+    const result = readonlyArrayFolding(instructions);
+    expect(result.changed).toBe(true);
+    expect(stringify(result.instructions)).not.toContain("c[0]");
+    expect(stringify(result.instructions)).toContain("t1 = 42");
   });
 });

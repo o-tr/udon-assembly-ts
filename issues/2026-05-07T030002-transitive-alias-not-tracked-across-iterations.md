@@ -1,10 +1,12 @@
 ---
 created: 2026-05-07T03:00:02+09:00
-updated: 2026-05-07T03:00:02+09:00
-status: open
+updated: 2026-05-07T13:40:00+09:00
+status: closed
 severity: medium
 component: transpiler / TAC optimizer
 related_branch: feat/readonly-array-folding
+fix_branch: fix/transitive-alias-not-tracked-across-iterations
+fix_commit: 6daf8d1
 ---
 
 # Transitive aliases created by copy propagation are not tracked by readonlyArrayFolding
@@ -49,18 +51,28 @@ The AST-level `analyzeNativeArrayIneligibility` filter prevents user-level
 aliasing from reaching `NativeArrayTypeSymbol`, so this gap only affects
 optimizer-internal copies.
 
-## Possible fixes
+## Fix
 
-1. **Extend alias tracking to a set**: instead of a single `aliasName`, track
-   `Set<string>` and grow it whenever a new `Assignment`/`Copy` from any
-   tracked name is encountered in post-init.
-2. **Run readonlyArrayFolding after copy propagation**: copy propagation would
-   have already inlined `b → scores`, so the ArrayAccess operand becomes
-   `scores` directly.
-3. **Accept the limitation**: document as known conservative behavior.
+Fix 1 を適用: `aliasName: string | null` を `aliasNames: Set<string>` に変更し、
+post-init フェーズで既知エイリアスからのコピーを検出するたびに Set を成長させる。
+
+### 主な変更点
+
+- `ArrayCandidate.aliasName` → `aliasNames: Set<string>`
+- `matchesCandidate` / `findCandidateByTempOrAlias` を Set 参照に更新
+- Assignment/Copy の post-init 処理を2段階に分割:
+  - **(A) 再代入チェック**: src が同一配列でなければ無効化（`srcIsSameArray` ガード付き）
+  - **(B) 推移的エイリアス追加**: src が既知エイリアスなら dest を `aliasNames` に追加
+- init フェーズのエイリアス作成時、dest を保持する他候補を無効化して stale な推移エイリアスを防止
+- Pass 2 の `aliasToCandidates` 構築を `aliasNames` Set の iterate に変更
+- テスト3件追加: 推移エイリアス折りたたみ / 再代入時の無効化リグレッション / 深さ3チェーン
+
+### 適用しなかった代替案
+
+Fix 2 (pass ordering 変更) は readonlyArrayFolding を早期に実行する利点
+（同イテレーション内の後続パスが定数を活用できる）を失うため不採用。
 
 ## Relevant files
 
-- `src/transpiler/ir/optimizer/passes/readonly_array_folding.ts` — alias tracking (single `aliasName`)
-- `src/transpiler/ir/optimizer/passes/copy_propagation.ts` — creates transitive copies
-- `src/transpiler/ir/optimizer/tac_optimizer.ts` — pass ordering (readonlyArrayFolding before copy propagation)
+- `src/transpiler/ir/optimizer/passes/readonly_array_folding.ts` — 修正済み
+- `tests/unit/transpiler/optimizer_readonly_array.test.ts` — テスト追加済み

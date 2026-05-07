@@ -26,7 +26,7 @@ import { getOperandType, isNumericUdonType } from "./constant_folding.js";
 
 interface ArrayCandidate {
   tempId: number;
-  aliasName: string | null;
+  aliasNames: Set<string>;
   contents: Map<number, ConstantOperand | null>;
   phase: "init" | "post-init";
   valid: boolean;
@@ -47,9 +47,9 @@ function matchesCandidate(
     return true;
   }
   if (
-    candidate.aliasName !== null &&
+    candidate.aliasNames.size > 0 &&
     operand.kind === TACOperandKind.Variable &&
-    (operand as VariableOperand).name === candidate.aliasName
+    candidate.aliasNames.has((operand as VariableOperand).name)
   ) {
     return true;
   }
@@ -86,7 +86,7 @@ function findCandidateByTempOrAlias(
   if (operand.kind === TACOperandKind.Variable) {
     const name = (operand as VariableOperand).name;
     for (const c of candidates.values()) {
-      if (c.aliasName === name) return c;
+      if (c.aliasNames.has(name)) return c;
     }
   }
   return null;
@@ -170,7 +170,7 @@ export const readonlyArrayFolding = (
             const tempId = (call.dest as TemporaryOperand).id;
             candidates.set(tempId, {
               tempId,
-              aliasName: null,
+              aliasNames: new Set(),
               contents: new Map(),
               phase: "init",
               valid: true,
@@ -226,7 +226,19 @@ export const readonlyArrayFolding = (
           if (destVar.isExported) {
             invalidate(candidates, cBySrc);
           } else {
-            cBySrc.aliasName = destVar.name;
+            // dest is being reassigned to this candidate's array; remove it from any
+            // other candidate's aliasNames to prevent stale transitive alias matches
+            for (const c of candidates.values()) {
+              if (
+                c !== cBySrc &&
+                c.aliasNames.has(destVar.name) &&
+                c.phase === "post-init"
+              ) {
+                invalidate(candidates, c);
+                break;
+              }
+            }
+            cBySrc.aliasNames.add(destVar.name);
             cBySrc.initInstructionIndices.add(i);
             cBySrc.phase = "post-init";
           }
@@ -236,13 +248,36 @@ export const readonlyArrayFolding = (
         continue;
       }
 
-      // Check if dest is an alias being reassigned (post-init invalidation)
+      // (A) Reassignment check — invalidate only if src is NOT the same array
       if (assign.dest.kind === TACOperandKind.Variable) {
         const destName = (assign.dest as VariableOperand).name;
         for (const c of candidates.values()) {
-          if (c.aliasName === destName && c.phase === "post-init") {
-            invalidate(candidates, c);
+          if (c.aliasNames.has(destName) && c.phase === "post-init") {
+            const srcIsSameArray =
+              (assign.src.kind === TACOperandKind.Temporary &&
+                (assign.src as TemporaryOperand).id === c.tempId) ||
+              (assign.src.kind === TACOperandKind.Variable &&
+                c.aliasNames.has((assign.src as VariableOperand).name));
+            if (!srcIsSameArray) invalidate(candidates, c);
             break;
+          }
+        }
+      }
+
+      // (B) Transitive alias: src is a known alias → add dest as alias too
+      if (
+        assign.src.kind === TACOperandKind.Variable &&
+        assign.dest.kind === TACOperandKind.Variable
+      ) {
+        const srcName = (assign.src as VariableOperand).name;
+        const destVar = assign.dest as VariableOperand;
+        if (!destVar.isExported) {
+          for (const c of candidates.values()) {
+            if (c.aliasNames.has(srcName) && c.phase === "post-init") {
+              c.aliasNames.add(destVar.name);
+              c.initInstructionIndices.add(i);
+              break;
+            }
           }
         }
       }
@@ -344,11 +379,11 @@ export const readonlyArrayFolding = (
       tempIdToCandidates.set(c.tempId, tempArr);
     }
     tempArr.push(c);
-    if (c.aliasName !== null) {
-      let aliasArr = aliasToCandidates.get(c.aliasName);
+    for (const name of c.aliasNames) {
+      let aliasArr = aliasToCandidates.get(name);
       if (!aliasArr) {
         aliasArr = [];
-        aliasToCandidates.set(c.aliasName, aliasArr);
+        aliasToCandidates.set(name, aliasArr);
       }
       aliasArr.push(c);
     }
