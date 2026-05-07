@@ -21,7 +21,11 @@
  * ```
  */
 import { UdonStub } from "./UdonDecorators.js";
-import { type UdonInt, type UdonLong, UdonTypeConverters } from "./UdonTypes.js";
+import {
+  type UdonInt,
+  type UdonLong,
+  UdonTypeConverters,
+} from "./UdonTypes.js";
 import type { GameObject, Quaternion, Vector3 } from "./UnityTypes.js";
 
 @UdonStub("UnityEngine.HumanBodyBones")

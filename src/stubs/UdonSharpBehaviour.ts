@@ -5,7 +5,11 @@
  * スタブをまとめて定義する。
  */
 import { UdonStub } from "./UdonDecorators.js";
-import type { NetworkEventTarget, UdonEventArg, UdonLong } from "./UdonTypes.js";
+import type {
+  NetworkEventTarget,
+  UdonEventArg,
+  UdonLong,
+} from "./UdonTypes.js";
 import type { VRCPlayerApi } from "./VRChatTypes.js";
 
 type UdonInputEventArgs = unknown;
