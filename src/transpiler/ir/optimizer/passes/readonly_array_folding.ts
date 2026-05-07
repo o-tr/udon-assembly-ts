@@ -13,10 +13,16 @@ import {
   TACOperandKind,
   type TemporaryOperand,
   type VariableOperand,
+  createConstant,
 } from "../../tac_operand.js";
 import type { PassResult } from "../pass_types.js";
 import { forEachUsedOperand } from "../utils/instructions.js";
-import { getOperandType } from "./constant_folding.js";
+import { getOperandType, isNumericUdonType } from "./constant_folding.js";
+import {
+  NativeArrayTypeSymbol,
+  type TypeSymbol,
+} from "../../../frontend/type_symbols.js";
+import { UdonType } from "../../../frontend/types.js";
 
 interface ArrayCandidate {
   tempId: number;
@@ -26,6 +32,8 @@ interface ArrayCandidate {
   valid: boolean;
   initInstructionIndices: Set<number>;
   startIndex: number;
+  arrayLength: number;
+  elementType: TypeSymbol;
 }
 
 function matchesCandidate(
@@ -105,6 +113,16 @@ function getLabelName(inst: TACInstruction): string {
     .name;
 }
 
+function getTypeDefault(elementType: TypeSymbol): ConstantOperand | null {
+  const t = elementType.udonType;
+  if (t === UdonType.Boolean) return createConstant(false, elementType);
+  if (t === UdonType.Int64 || t === UdonType.UInt64)
+    return createConstant(0n, elementType);
+  if (isNumericUdonType(t)) return createConstant(0, elementType);
+  if (t === UdonType.String) return createConstant(null, elementType);
+  return null;
+}
+
 export const readonlyArrayFolding = (
   instructions: TACInstruction[],
   exposedLabels?: Set<string>,
@@ -144,17 +162,22 @@ export const readonlyArrayFolding = (
       ) {
         const length = getConstantInt(call.args[0]);
         if (length !== null && length >= 0) {
-          const tempId = (call.dest as TemporaryOperand).id;
-          candidates.set(tempId, {
-            tempId,
-            aliasName: null,
-            contents: new Map(),
-            phase: "init",
-            valid: true,
-            initInstructionIndices: new Set([i]),
-            startIndex: i,
-          });
-          continue;
+          const arrayType = getOperandType(call.dest);
+          if (arrayType instanceof NativeArrayTypeSymbol) {
+            const tempId = (call.dest as TemporaryOperand).id;
+            candidates.set(tempId, {
+              tempId,
+              aliasName: null,
+              contents: new Map(),
+              phase: "init",
+              valid: true,
+              initInstructionIndices: new Set([i]),
+              startIndex: i,
+              arrayLength: length,
+              elementType: arrayType.elementType,
+            });
+            continue;
+          }
         }
       }
     }
@@ -371,11 +394,20 @@ export const readonlyArrayFolding = (
       if (c) {
         const idx = getConstantInt(acc.index);
         if (idx !== null) {
-          const constVal = c.contents.get(idx);
-          if (constVal) {
-            result.push(new AssignmentInstruction(acc.dest, constVal));
-            changed = true;
-            continue;
+          if (c.contents.has(idx)) {
+            const constVal = c.contents.get(idx)!;
+            if (constVal !== null) {
+              result.push(new AssignmentInstruction(acc.dest, constVal));
+              changed = true;
+              continue;
+            }
+          } else if (idx >= 0 && idx < c.arrayLength) {
+            const defaultVal = getTypeDefault(c.elementType);
+            if (defaultVal !== null) {
+              result.push(new AssignmentInstruction(acc.dest, defaultVal));
+              changed = true;
+              continue;
+            }
           }
         }
       }
