@@ -154,7 +154,10 @@ export function assignToTarget(
       this.emit(
         new ArrayAssignmentInstruction(array, nativeIndex, nativeValue),
       );
-      return nativeValue;
+      // Return the original value (not the coerced nativeValue) to preserve
+      // JS assignment-expression semantics: `let x = arr[0] = d` must yield
+      // the Double `d`, not the Int32 coerced for the array Set.
+      return value;
     }
     // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
