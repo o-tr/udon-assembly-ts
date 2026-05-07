@@ -1322,9 +1322,13 @@ export function visitBinaryExpression(
     // Udon VM does not implement Int64/UInt64 remainder (op_Remainder for Long
     // is absent). Narrow any Int64/UInt64 operand to a 32-bit type and emit a
     // warning so the caller knows about the implicit demotion.
-    // Use uint32 only when both operands are UInt64 (preserves unsigned
-    // semantics for values in [2^31, 2^32)). For mixed signedness use int32 for
-    // both so widenNumericOperands never re-promotes the pair back to Int64.
+    //
+    // narrowTarget is chosen so that after narrowing, both operands share the
+    // same 32-bit type — widenNumericOperands would otherwise re-promote a
+    // mixed int32/uint32 pair back to Int64, defeating the narrowing:
+    //   • If both are Long: uint32 when both are UInt64, int32 otherwise.
+    //   • If only one is Long: match the signedness of the already-32-bit side
+    //     so the pair stays compatible after narrowing.
     const leftType = this.getOperandType(left);
     const rightType = this.getOperandType(right);
     const leftIsLong =
@@ -1339,12 +1343,24 @@ export function visitBinaryExpression(
         "Int64RemainderNotSupported",
         "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to 32-bit.",
       );
-      const bothUnsigned =
-        leftType.udonType === UdonType.UInt64 &&
-        rightType.udonType === UdonType.UInt64;
-      const narrowTarget = bothUnsigned
-        ? PrimitiveTypes.uint32
-        : PrimitiveTypes.int32;
+      let narrowTarget: TypeSymbol;
+      if (leftIsLong && rightIsLong) {
+        narrowTarget =
+          leftType.udonType === UdonType.UInt64 &&
+          rightType.udonType === UdonType.UInt64
+            ? PrimitiveTypes.uint32
+            : PrimitiveTypes.int32;
+      } else if (leftIsLong) {
+        narrowTarget =
+          rightType.udonType === UdonType.UInt32
+            ? PrimitiveTypes.uint32
+            : PrimitiveTypes.int32;
+      } else {
+        narrowTarget =
+          leftType.udonType === UdonType.UInt32
+            ? PrimitiveTypes.uint32
+            : PrimitiveTypes.int32;
+      }
       if (leftIsLong) {
         const cast = this.newTemp(narrowTarget);
         this.emit(new CastInstruction(cast, left));
