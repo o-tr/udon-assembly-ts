@@ -672,7 +672,6 @@ export function wrapDataToken(
     valueType.name &&
     isAllInlineInterface(this, valueType.name)
   ) {
-    const valueKey = operandTrackingKey(value);
     const info = valueKey ? this.resolveInlineInstance(valueKey) : undefined;
     // Only collapse to a compile-time constant when the operand IS the
     // canonical `__inst_*__handle` slot directly. For parameters or local

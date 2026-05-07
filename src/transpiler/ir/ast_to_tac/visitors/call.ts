@@ -1071,18 +1071,19 @@ function tryUntrackedInlineDispatch(
   const handleVar = normalizeOperandToInt32(converter, object);
   const endLabel = converter.newLabel("untracked_call_end");
 
-  // Track inline return info across branches for inline-like return types.
-  let resultInlineMapping:
-    | { prefix: string; className: string }
-    | null
-    | undefined;
+  const flagKey = dispatchResult ? operandTrackingKey(dispatchResult) : undefined;
+    // Track inline return info across branches for inline-like return types.
+    let resultInlineMapping:
+      | { prefix: string; className: string }
+      | null
+      | undefined;
 
-  for (const [, info] of candidateInstances) {
-    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
-    const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
-    const nextLabel = converter.newLabel("untracked_call_next");
-    const cond = converter.newTemp(PrimitiveTypes.boolean);
-    // Compare against the live __handle variable rather than a compile-time
+    for (const [, info] of candidateInstances) {
+      const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+      const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
+      const nextLabel = converter.newLabel("untracked_call_next");
+      const cond = converter.newTemp(PrimitiveTypes.boolean);
+ // Compare against the live __handle variable rather than a compile-time
     // constant so that cross-module and parameter-passing scenarios see the
     // runtime value.  This is safe because nextInstanceId starts at 1
     // (converter.ts), so an uninitialised slot (default 0) never aliases a
@@ -1105,14 +1106,17 @@ function tryUntrackedInlineDispatch(
       ),
     );
     if (!inlineRes) {
+      if (flagKey && converter.dispatchResultFlags) {
+        converter.dispatchResultFlags.delete(flagKey);
+      }
       converter.instructions.length = savedInstructionCount;
-      converter.tempCounter = savedTempCounter;
-      converter.labelCounter = savedLabelCounter;
-      converter.inlineInstanceMap = savedInlineInstanceMap;
-      converter.restoreInlineInstanceState(savedAllInlineInstances);
-      dispatchFailed = true;
-      break;
-    }
+        converter.tempCounter = savedTempCounter;
+        converter.labelCounter = savedLabelCounter;
+        converter.inlineInstanceMap = savedInlineInstanceMap;
+        converter.restoreInlineInstanceState(savedAllInlineInstances);
+        dispatchFailed = true;
+        break;
+      }
 
     if (dispatchResult) {
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
@@ -1367,36 +1371,40 @@ function tryD3MethodDispatch(
     | null
     | undefined;
 
-  for (const [instId, info] of dispInstances) {
-    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
-    const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
-    const nextLabel = converter.newLabel("d3_method_next");
-    const cond = converter.newTemp(PrimitiveTypes.boolean);
-    const instanceHandle = useInterfaceInstanceIdDispatch
-      ? createConstant(instId, PrimitiveTypes.int32)
-      : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
-    converter.emit(
-      new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
-    );
-    converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
+const flagKey = dispatchResult ? operandTrackingKey(dispatchResult) : undefined;
+    for (const [instId, info] of dispInstances) {
+      const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+      const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
+ const nextLabel = converter.newLabel("d3_method_next");
+      const cond = converter.newTemp(PrimitiveTypes.boolean);
+      const instanceHandle = useInterfaceInstanceIdDispatch
+        ? createConstant(instId, PrimitiveTypes.int32)
+        : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
+      converter.emit(
+        new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
+      );
+      converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-    const inlineRes = converter.withInlineCallSite(propAccess, () =>
-      converter.visitInlineInstanceMethodCallWithContext(
-        info.className,
-        info.prefix,
-        propAccess.property,
-        dispatchArgs,
-      ),
-    );
-    if (!inlineRes) {
-      converter.instructions.length = savedInstructionCount;
-      converter.tempCounter = savedTempCounter;
-      converter.labelCounter = savedLabelCounter;
-      converter.inlineInstanceMap = savedInlineInstanceMap;
-      converter.restoreInlineInstanceState(savedAllInlineInstances);
-      dispatchFailed = true;
-      break;
-    }
+      const inlineRes = converter.withInlineCallSite(propAccess, () =>
+        converter.visitInlineInstanceMethodCallWithContext(
+          info.className,
+          info.prefix,
+          propAccess.property,
+          dispatchArgs,
+        ),
+      );
+      if (!inlineRes) {
+        if (flagKey && converter.dispatchResultFlags) {
+          converter.dispatchResultFlags.delete(flagKey);
+        }
+        converter.instructions.length = savedInstructionCount;
+        converter.tempCounter = savedTempCounter;
+        converter.labelCounter = savedLabelCounter;
+        converter.inlineInstanceMap = savedInlineInstanceMap;
+        converter.restoreInlineInstanceState(savedAllInlineInstances);
+        dispatchFailed = true;
+        break;
+      }
 
     if (dispatchResult) {
       converter.emit(new CopyInstruction(dispatchResult, inlineRes));
