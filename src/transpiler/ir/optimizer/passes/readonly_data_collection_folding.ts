@@ -399,7 +399,9 @@ export const readonlyDataCollectionFolding = (
             }
           }
         } else {
-          cBySrc.phase = "post-init";
+          // Temp-to-temp copy (e.g. ternary expression): dest is untracked,
+          // so any mutation via it would be missed. Conservatively invalidate.
+          invalidate(candidates, cBySrc);
         }
         continue;
       }
@@ -422,6 +424,9 @@ export const readonlyDataCollectionFolding = (
             cBySrc.aliasNames.add(destVar.name);
             cBySrc.initInstructionIndices.add(i);
           }
+        } else {
+          // Temp-to-temp copy in post-init: dest is untracked, conservatively invalidate.
+          invalidate(candidates, cBySrc);
         }
         continue;
       }

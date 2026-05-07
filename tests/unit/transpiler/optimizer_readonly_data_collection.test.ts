@@ -967,4 +967,53 @@ describe("readonlyDataCollectionFolding", () => {
     expect(text).toContain("ShallowClone");
     expect(text).toContain("GetKeys");
   });
+
+  it("invalidates when candidate is copied to another temp (ternary-style temp-to-temp)", () => {
+    // t1 = t0 where t0 is a DataList candidate: t1 is untracked,
+    // so mutations via t1 cannot be caught. Candidate must be invalidated.
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const dl2 = tDL(2); // copy dest — untracked
+    const dest = tDT(3);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("hello")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      // Temp-to-temp copy: dl2 = dl (e.g. ternary true-branch result)
+      new AssignmentInstruction(dl2, dl),
+      // Read through original temp — should NOT be folded (candidate invalidated)
+      new MethodCallInstruction(dest, dl, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+    const text = stringify(result.instructions);
+    expect(text).toContain("get_Item");
+  });
+
+  it("invalidates post-init candidate on temp-to-temp copy (label-induced post-init)", () => {
+    // Candidate is in post-init when the Copy is seen.
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const alias = vDL("list");
+    const dl2 = tDL(2);
+    const dest = tDT(3);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("world")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(alias, dl), // alias registration → post-init
+      label("inner"),                        // non-exposed label (no-op for phase)
+      // Temp-to-temp copy in post-init: dl2 = dl
+      new AssignmentInstruction(dl2, dl),
+      new MethodCallInstruction(dest, alias, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+    const text = stringify(result.instructions);
+    expect(text).toContain("get_Item");
+  });
 });
