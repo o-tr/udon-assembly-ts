@@ -1,7 +1,7 @@
 ---
 created: 2026-05-07T23:20:03+09:00
-updated: 2026-05-07T23:20:03+09:00
-status: open
+updated: 2026-05-08T01:00:00+09:00
+status: partially-fixed
 severity: high
 component: transpiler / D3 method dispatch
 related_branch: master
@@ -104,6 +104,38 @@ High. ~19 / 38 mahjong-t2 VM tests still failing — same blast radius as
 #024001 originally had — despite the closure. Strong indicator that the
 existing fixes don't generalise to the structural-union / anonymous-shape
 candidate set.
+
+## Fix applied (2026-05-08)
+
+**Root cause identified and partially fixed** in `call.ts:1487`:
+
+The `useInterfaceInstanceIdDispatch` optimization path (second D3 dispatch loop,
+for property-access method calls through interface-typed variables) was comparing
+runtime handles against `createConstant(instId, ...)` instead of
+`createVariable(prefix + "__handle", ...)`. For non-SoA instances these are
+identical (handle is set to `instanceId` at compile time). For SoA instances,
+the runtime handle is the *SoA counter value* (1, 2, …), while `instanceId` is
+a globally sequential integer (5, 6, …). The comparison always missed.
+
+**Fix**: gate the constant path on `!converter.soaClasses.has(info.className)`:
+```ts
+const instanceHandle =
+  useInterfaceInstanceIdDispatch && !converter.soaClasses.has(info.className)
+    ? createConstant(instId, PrimitiveTypes.int32)
+    : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
+```
+
+This eliminates the `D3 method dispatch miss: check on untracked instance` log
+messages. VM tests need to run to confirm how many failures are cleared.
+
+**Remaining concern — SoA counter collision**: per-class SoA counters each start
+at 1. Two instances from different SoA classes created in the same context both
+get handle=1 (or handle=2 for the second of each, etc.). The dispatch loop checks
+handle equality only (no class tag), so it routes every dispatch to the first
+candidate whose `__handle` variable matches the runtime value — which may be the
+wrong class. This doesn't produce a dispatch-miss log; it produces *wrong-class
+dispatch*. Fixing this requires a class discriminator or a global counter shared
+across all SoA classes. To be addressed as follow-up after VM run.
 
 ## References
 
