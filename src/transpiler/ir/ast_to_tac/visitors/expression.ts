@@ -2135,8 +2135,12 @@ export function visitArrayLiteralExpression(
     for (let i = 0; i < node.elements.length; i++) {
       const prevExpected = this.currentExpectedType;
       this.currentExpectedType = resolvedElementType;
-      const value = this.visitExpression(node.elements[i].value);
-      this.currentExpectedType = prevExpected;
+      let value: TACOperand;
+      try {
+        value = this.visitExpression(node.elements[i].value);
+      } finally {
+        this.currentExpectedType = prevExpected;
+      }
       const idxConst = createConstant(i, PrimitiveTypes.int32);
       this.emit(new ArrayAssignmentInstruction(arrayResult, idxConst, value));
     }

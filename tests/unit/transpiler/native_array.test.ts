@@ -72,6 +72,30 @@ describe("native array optimization", () => {
       expect(uasm).not.toContain("DataToken");
     });
 
+    it("emits cast + native Set when a number variable is written to narrowed Int32Array", () => {
+      // Regression: values[1] = total where total is a number (Double) variable
+      // previously caused UdonVMException because Double was pushed to an
+      // Int32Array.__Set__ extern that expects SystemInt32.
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const values = [1, 2, 3, 4];
+            let total: number = 0;
+            for (const v of values) { total = total + v; }
+            values[1] = total;
+            Debug.Log(values[1]);
+          }
+        }
+      `);
+      expect(uasm).toContain(
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
+      );
+      // A Double→Int32 conversion must appear before the Set
+      expect(uasm).toContain(
+        "SystemConvert.__ToInt32__SystemDouble__SystemInt32",
+      );
+    });
+
     it("emits native Get+Set for compound assignment arr[i] += v", () => {
       const { uasm } = transpile(`
         class Demo {
