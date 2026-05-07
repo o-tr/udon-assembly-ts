@@ -106,12 +106,15 @@ describe("expression lowering", () => {
           }
         }
       `;
-      const { uasm, tac } = transpiler.transpile(source);
+      const { uasm, diagnostics } = transpiler.transpile(source);
       // Identity: no RightShift or LogicalAnd in UASM for the >>> 0 path
       expect(uasm).not.toContain("op_RightShift");
       expect(uasm).not.toContain("op_LogicalAnd");
       // No UnsupportedOperator warning for constant shift-by-zero
-      expect(tac).not.toContain("UnsupportedOperator");
+      const unsupported = (diagnostics ?? []).filter(
+        (w) => w.code === "UnsupportedOperator",
+      );
+      expect(unsupported).toHaveLength(0);
     });
 
     it("lowers >>> 1 to (x >> 1) & 0x7FFFFFFF — unsigned binary-search midpoint", () => {

@@ -1197,20 +1197,15 @@ export function visitBinaryExpression(
       this.emit(new CastInstruction(cast, left));
       narrowedLeft = cast;
     }
-    let narrowedRight = right;
-    const rightType = this.getOperandType(right);
-    if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
-      const castR = this.newTemp(PrimitiveTypes.int32);
-      this.emit(new CastInstruction(castR, right));
-      narrowedRight = castR;
-    }
 
     const narrowedLeftType = this.getOperandType(narrowedLeft);
 
     // Lowering is only safe when the left operand is in the Int32 domain (the
     // 32-bit mask & shift semantics are undefined for wider/unsigned types).
     if (narrowedLeftType.udonType === UdonType.Int32) {
-      // a >>> 0  →  identity (unsigned cast, same bit pattern as Int32)
+      // a >>> 0  →  identity (unsigned cast, same bit pattern as Int32).
+      // Check before narrowing the right operand to avoid emitting a dead
+      // CastInstruction for float zero literals like `>>> 0.0`.
       if (constShiftAmount === 0) {
         return narrowedLeft;
       }
@@ -1225,6 +1220,14 @@ export function visitBinaryExpression(
         constShiftAmount >= 1 &&
         constShiftAmount <= 31
       ) {
+        // Narrow right operand only when it will actually be used.
+        let narrowedRight = right;
+        const rightType = this.getOperandType(right);
+        if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+          const castR = this.newTemp(PrimitiveTypes.int32);
+          this.emit(new CastInstruction(castR, right));
+          narrowedRight = castR;
+        }
         const mask = (0x7fffffff >> (constShiftAmount - 1)) | 0;
         const shifted = this.newTemp(PrimitiveTypes.int32);
         this.emit(
@@ -1243,16 +1246,26 @@ export function visitBinaryExpression(
       }
     }
 
-    // Fallback for unsupported cases: variable shift amount, non-Int32 left
-    // operand, or shift amount out of [0, 31].  Emit a signed >> as a
-    // best-effort approximation and warn so the user can rewrite manually.
-    this.warnAt(
-      node,
-      "UnsupportedOperator",
-      narrowedLeftType.udonType !== UdonType.Int32
-        ? `Unsigned right shift (>>>) on non-Int32 type (${narrowedLeftType.udonType}) is not supported; using signed >> instead.`
-        : "Unsigned right shift (>>>) with a non-constant shift amount is not fully supported; using signed >> instead. Extract the shift amount to a constant to enable automatic lowering.",
-    );
+    // Fallback for unsupported cases: variable shift amount, constant shift
+    // amount outside [0, 31], or non-Int32 left operand.  Emit a signed >> as
+    // a best-effort approximation and warn so the user can rewrite manually.
+    let narrowedRight = right;
+    const rightType = this.getOperandType(right);
+    if (BITWISE_FLOAT_TYPES.has(rightType.udonType)) {
+      const castR = this.newTemp(PrimitiveTypes.int32);
+      this.emit(new CastInstruction(castR, right));
+      narrowedRight = castR;
+    }
+    let warnMessage: string;
+    if (narrowedLeftType.udonType !== UdonType.Int32) {
+      warnMessage = `Unsigned right shift (>>>) on non-Int32 type (${narrowedLeftType.udonType}) is not supported; using signed >> instead.`;
+    } else if (constShiftAmount !== null) {
+      warnMessage = `Unsigned right shift (>>>) with constant shift amount ${constShiftAmount} is out of the supported range [0, 31]; using signed >> instead.`;
+    } else {
+      warnMessage =
+        "Unsigned right shift (>>>) with a non-constant shift amount is not fully supported; using signed >> instead. Extract the shift amount to a constant to enable automatic lowering.";
+    }
+    this.warnAt(node, "UnsupportedOperator", warnMessage);
     const resultType = narrowedLeftType;
     const result = this.newTemp(resultType);
     this.emit(
