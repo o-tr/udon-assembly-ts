@@ -228,8 +228,8 @@ export class Networking {
     return false;
   }
 
-  static GetServerTimeInMilliseconds(): number {
-    return Date.now();
+  static GetServerTimeInMilliseconds(): bigint {
+    return BigInt(Date.now());
   }
 }
 

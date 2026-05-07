@@ -51,7 +51,7 @@ export class UdonSharpBehaviour {
 
   SendCustomEventDelayedFrames(
     _eventName: string,
-    _delayFrames: number,
+    _delayFrames: bigint,
     _eventTiming?: unknown,
   ): void {}
 
@@ -65,12 +65,12 @@ export class UdonSharpBehaviour {
 
   RequestSerialization(): void {}
 
-  GetUdonTypeID(): number {
-    return 0;
+  GetUdonTypeID(): bigint {
+    return 0n;
   }
 
-  static GetUdonTypeID<_T extends UdonSharpBehaviour>(): number {
-    return 0;
+  static GetUdonTypeID<_T extends UdonSharpBehaviour>(): bigint {
+    return 0n;
   }
 
   GetUdonTypeName(): string {
@@ -144,9 +144,9 @@ export class UdonSharpBehaviour {
     return true;
   }
 
-  MidiNoteOn(_channel: number, _number: number, _velocity: number): void {}
-  MidiNoteOff(_channel: number, _number: number, _velocity: number): void {}
-  MidiControlChange(_channel: number, _number: number, _value: number): void {}
+  MidiNoteOn(_channel: bigint, _number: bigint, _velocity: bigint): void {}
+  MidiNoteOff(_channel: bigint, _number: bigint, _velocity: bigint): void {}
+  MidiControlChange(_channel: bigint, _number: bigint, _value: bigint): void {}
 
   InputJump(_value: boolean, _args: UdonInputEventArgs): void {}
   InputUse(_value: boolean, _args: UdonInputEventArgs): void {}
