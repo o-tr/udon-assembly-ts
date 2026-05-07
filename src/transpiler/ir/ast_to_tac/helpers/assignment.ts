@@ -705,8 +705,8 @@ export function wrapDataToken(
   // For Double, op_Implicit stores TokenType.Double and the unwrap side uses
   // the DataToken.Double getter accordingly.
   // We apply op_Implicit to Double as well: the Single ctor was registered
-  // yet broken, so until Double ctor is verified on real hardware the
-  // implicit operator stays the safer path.
+  // yet broken, so op_Implicit is the safer path. Both Single and Double
+  // op_Implicit are verified in the VM test suite against the real VRC SDK.
   const ctorMember =
     valueType.udonType === UdonType.Single ||
     valueType.udonType === UdonType.Double
