@@ -473,6 +473,44 @@ function widenNumericOperands(
       if (retyped) return { left: retyped, right };
     }
   }
+  // If one operand is a non-float integer variable and the other is a
+  // floating-point constant whose value is a whole number, retype the
+  // constant to the integer type.  This covers the `1 + intVar` pattern
+  // when no `currentExpectedType` is available from the outer context.
+  // Fractional constants (e.g. 1.5) are left unchanged so the caller
+  // falls through to rank-based widening instead of truncating silently.
+  {
+    const leftIsConst = left.kind === TACOperandKind.Constant;
+    const rightIsConst = right.kind === TACOperandKind.Constant;
+    if (
+      !leftIsConst &&
+      rightIsConst &&
+      NUMERIC_UDON_TYPES.has(leftSym.udonType) &&
+      !FLOAT_UDON_TYPES.has(leftSym.udonType) &&
+      FLOAT_UDON_TYPES.has(rightSym.udonType) &&
+      leftSym instanceof PrimitiveTypeSymbol
+    ) {
+      const rv = (right as ConstantOperand).value;
+      if (typeof rv === "number" && Number.isInteger(rv)) {
+        const retyped = retypeNumericConstant(right as ConstantOperand, leftSym);
+        if (retyped) return { left, right: retyped };
+      }
+    }
+    if (
+      !rightIsConst &&
+      leftIsConst &&
+      NUMERIC_UDON_TYPES.has(rightSym.udonType) &&
+      !FLOAT_UDON_TYPES.has(rightSym.udonType) &&
+      FLOAT_UDON_TYPES.has(leftSym.udonType) &&
+      rightSym instanceof PrimitiveTypeSymbol
+    ) {
+      const lv = (left as ConstantOperand).value;
+      if (typeof lv === "number" && Number.isInteger(lv)) {
+        const retyped = retypeNumericConstant(left as ConstantOperand, rightSym);
+        if (retyped) return { left: retyped, right };
+      }
+    }
+  }
   const promoted = getPromotedType(leftSym, rightSym);
   if (!promoted) {
     return { left, right };
@@ -1010,7 +1048,23 @@ export function visitBinaryExpression(
   };
   if (compoundOps[node.operator]) {
     const leftOriginal = this.visitExpression(node.left);
-    const rightOriginal = this.visitExpression(node.right);
+    // Inject the LHS type as expected context for the RHS so that numeric
+    // literals inside the RHS (e.g. `arr[i] += 1 + 2`) stay in the integer
+    // lane rather than defaulting to Double.
+    const leftOriginalType = this.getOperandType(leftOriginal);
+    const prevExpectedTypeCompound = this.currentExpectedType;
+    if (
+      leftOriginalType instanceof PrimitiveTypeSymbol &&
+      NUMERIC_UDON_TYPES.has(leftOriginalType.udonType)
+    ) {
+      this.currentExpectedType = leftOriginalType;
+    }
+    let rightOriginal: TACOperand;
+    try {
+      rightOriginal = this.visitExpression(node.right);
+    } finally {
+      this.currentExpectedType = prevExpectedTypeCompound;
+    }
     const baseOp = compoundOps[node.operator];
     // compoundOps does not contain <<= or >>=, so no shift guard needed.
     // C# compound assignment: x op= y ≡ x = (T)(x op y), where T = typeof(x).
@@ -1218,7 +1272,33 @@ export function visitBinaryExpression(
   // inspection) and never calls visitExpression, so visiting left/right
   // here does not double-evaluate any sub-expression.
   let left = this.visitExpression(node.left);
-  let right = this.visitExpression(node.right);
+  // Cross-propagate: if the left operand resolved to a non-float integer
+  // type and no integer expected type is already in scope, temporarily
+  // inject it for the right operand visit so that numeric literals on
+  // the right (e.g. `intVar + 1`) are created as integers rather than
+  // Double and avoid unnecessary widening.
+  const leftTypeCross = this.getOperandType(left);
+  let right: TACOperand;
+  if (
+    leftTypeCross instanceof PrimitiveTypeSymbol &&
+    NUMERIC_UDON_TYPES.has(leftTypeCross.udonType) &&
+    !FLOAT_UDON_TYPES.has(leftTypeCross.udonType) &&
+    !(
+      this.currentExpectedType instanceof PrimitiveTypeSymbol &&
+      NUMERIC_UDON_TYPES.has(this.currentExpectedType.udonType) &&
+      !FLOAT_UDON_TYPES.has(this.currentExpectedType.udonType)
+    )
+  ) {
+    const prevCross = this.currentExpectedType;
+    this.currentExpectedType = leftTypeCross;
+    try {
+      right = this.visitExpression(node.right);
+    } finally {
+      this.currentExpectedType = prevCross;
+    }
+  } else {
+    right = this.visitExpression(node.right);
+  }
 
   const dataTokenNullishComparison = tryEmitDataTokenNullishComparison(
     this,
