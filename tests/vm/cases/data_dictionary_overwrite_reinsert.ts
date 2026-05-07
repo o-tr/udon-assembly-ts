@@ -18,7 +18,7 @@ export class DataDictionaryOverwriteReinsert extends UdonSharpBehaviour {
     dict.SetValue(new DataToken("y"), new DataToken(8.0));
 
     Debug.Log(dict.Count);
-    Debug.Log(dict.GetValue(new DataToken("x")).Float);
-    Debug.Log(dict.GetValue(new DataToken("y")).Float);
+    Debug.Log(dict.GetValue(new DataToken("x")).Double);
+    Debug.Log(dict.GetValue(new DataToken("y")).Double);
   }
 }

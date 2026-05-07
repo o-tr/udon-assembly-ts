@@ -142,7 +142,7 @@ class Entry extends UdonSharpBehaviour {
     );
     // Const value 42 is inlined as a data-section constant declaration
     expect(output).toMatch(
-      /__const_\d+_SystemSingle:\s*%SystemSingle,\s*42\.0/,
+      /__const_\d+_SystemDouble:\s*%SystemDouble,\s*42\.0/,
     );
     // Inline class methods produce no standalone code block or EXTERN
     expect(output).not.toContain("EXTERN");
@@ -215,8 +215,8 @@ class Entry extends UdonSharpBehaviour {
       "utf8",
     );
     // All const values are inlined as data-section constant declarations
-    expect(output).toMatch(/__const_\d+_SystemSingle:\s*%SystemSingle,\s*1\.0/);
-    expect(output).toMatch(/__const_\d+_SystemSingle:\s*%SystemSingle,\s*2\.0/);
+    expect(output).toMatch(/__const_\d+_SystemDouble:\s*%SystemDouble,\s*1\.0/);
+    expect(output).toMatch(/__const_\d+_SystemDouble:\s*%SystemDouble,\s*2\.0/);
     // No standalone code blocks or EXTERN for inline classes
     expect(output).not.toContain("EXTERN");
   });

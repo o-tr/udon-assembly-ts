@@ -16,14 +16,14 @@ export class DataListSetItem extends UdonSharpBehaviour {
     list.Add(new DataToken(30));
 
     // Read initial
-    Debug.Log(list.get_Item(0 as UdonInt).Float); // 10
-    Debug.Log(list.get_Item(1 as UdonInt).Float); // 20
+    Debug.Log(list.get_Item(0 as UdonInt).Double); // 10
+    Debug.Log(list.get_Item(1 as UdonInt).Double); // 20
 
     // Overwrite index 1
     list.set_Item(1 as UdonInt, new DataToken(99));
-    Debug.Log(list.get_Item(1 as UdonInt).Float); // 99
+    Debug.Log(list.get_Item(1 as UdonInt).Double); // 99
 
     // Verify others unchanged
-    Debug.Log(list.get_Item(2 as UdonInt).Float); // 30
+    Debug.Log(list.get_Item(2 as UdonInt).Double); // 30
   }
 }

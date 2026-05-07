@@ -17,7 +17,7 @@ export class DataListInsertRemoveatFlow extends UdonSharpBehaviour {
     list.RemoveAt(0 as UdonInt);
 
     Debug.Log(list.Count);
-    Debug.Log(list.get_Item(0 as UdonInt).Float);
-    Debug.Log(list.get_Item(1 as UdonInt).Float);
+    Debug.Log(list.get_Item(0 as UdonInt).Double);
+    Debug.Log(list.get_Item(1 as UdonInt).Double);
   }
 }

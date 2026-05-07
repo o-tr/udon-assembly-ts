@@ -139,7 +139,7 @@ export function visitClassDeclaration(
           name: paramName,
           type: param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : PrimitiveTypes.single,
+            : PrimitiveTypes.double,
           ...(serializeFieldParams.has(paramName)
             ? { isSerializeField: true }
             : {}),
@@ -161,7 +161,7 @@ export function visitClassDeclaration(
           const paramName = param.name.getText();
           const paramType = param.type
             ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-            : PrimitiveTypes.single;
+            : PrimitiveTypes.double;
           this.symbolTable.addSymbol(paramName, paramType, true, false);
         }
         body = this.visitBlock(member.body);
@@ -182,7 +182,7 @@ export function visitClassDeclaration(
         if (properties.some((prop) => prop.name === propName)) continue;
         const propType = param.type
           ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-          : PrimitiveTypes.single;
+          : PrimitiveTypes.double;
         const isPublic =
           param.modifiers?.some(
             (mod) => mod.kind === ts.SyntaxKind.PublicKeyword,
@@ -496,7 +496,7 @@ export function visitPropertyDeclaration(
   } else if (node.initializer) {
     type = this.inferType(node.initializer);
   } else {
-    type = PrimitiveTypes.single;
+    type = PrimitiveTypes.double;
   }
 
   const initializer = node.initializer
@@ -581,7 +581,7 @@ export function visitMethodDeclaration(
     const paramName = param.name.getText();
     const paramType = param.type
       ? this.mapTypeWithGenerics(param.type.getText(), param.type)
-      : PrimitiveTypes.single;
+      : PrimitiveTypes.double;
     const initializer = param.initializer
       ? this.parseParameterInitializer(param.initializer, param.type)
       : undefined;

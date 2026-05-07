@@ -1407,6 +1407,13 @@ function tryD3MethodDispatch(
         converter.inlineInstanceMap,
         resultInlineMapping,
       );
+      // Per-branch tracking propagation is intentionally NOT done here:
+      // `inlineInstanceMap` is replaced with `branchMapSnapshot` at the end
+      // of each iteration (and with `savedInlineInstanceMap` after the
+      // loop), so any `set` against the live map within the branch body
+      // would be overwritten before the next branch / the post-loop code
+      // can read it. The merged mapping is instead committed once after
+      // the loop (search for `Propagate inline tracking`).
     }
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
@@ -5082,7 +5089,8 @@ export function visitMathStaticCall(
     return result;
   }
 
-  const methodMap: Record<string, string> = {
+  // Mathf (Single) uses "Ceil"; System.Math (Double) uses "Ceiling".
+  const mathfMethodMap: Record<string, string> = {
     floor: "Floor",
     ceil: "Ceil",
     round: "Round",
@@ -5095,29 +5103,91 @@ export function visitMathStaticCall(
     tan: "Tan",
     pow: "Pow",
   };
-  const mapped = methodMap[methodName];
+  const systemMathNameOverrides: Record<string, string> = { Ceil: "Ceiling" };
+  const mapped = mathfMethodMap[methodName];
   if (!mapped) return null;
 
+  // Pick Mathf (Single) vs SystemMath (Double) based on argument width.
+  // After number=Double remap most callers pass Double; calling
+  // Mathf.Floor(Single) with a Double slot pushes 8 bytes where 4 are
+  // expected and the EXTERN reads garbage. SystemMath has Double overloads
+  // for the common ops; if resolution fails the throw guard below catches
+  // it rather than silently falling back to the wrong width.
+  const tryDouble = args.some(
+    (a) => this.getOperandType(a).udonType === UdonType.Double,
+  );
+  // Coerce every operand to the chosen extern's parameter width so a
+  // mixed-width call (e.g. Math.max(udonFloat, udonNumber)) cannot push
+  // a 4-byte Single slot into a Double parameter address (or vice versa).
+  // The CAST lowers to SystemConvert.ToDouble / ToSingle at codegen.
+  const targetParamType = tryDouble
+    ? PrimitiveTypes.double
+    : PrimitiveTypes.single;
+  const coerceArg = (arg: TACOperand): TACOperand => {
+    const argType = this.getOperandType(arg);
+    if (argType.udonType === targetParamType.udonType) return arg;
+    const coerced = this.newTemp(targetParamType);
+    this.emit(new CastInstruction(coerced, arg));
+    return coerced;
+  };
+  const coercedArgs = args.map(coerceArg);
+  const paramTypeName = tryDouble ? "double" : "float";
+  const resolveExtern = (
+    overrideParamTypes?: [string, string],
+  ): string | null => {
+    if (tryDouble) {
+      // SystemMath stub does not declare Floor/Ceil/Abs/etc. (only Truncate),
+      // so metadata lookup misses. Use resolveExternSignature directly with
+      // both paramTypes and returnType so the manual signature generator
+      // produces the well-known SystemMath.__<Op>__SystemDouble__SystemDouble.
+      const paramTypes =
+        overrideParamTypes ?? coercedArgs.map(() => paramTypeName);
+      const mathName = systemMathNameOverrides[mapped] ?? mapped;
+      const sig = resolveExternSignature(
+        "System.Math",
+        mathName,
+        "method",
+        paramTypes,
+        paramTypeName,
+      );
+      // resolveExternSignature always produces a signature when both
+      // paramTypes and returnType are supplied, so sig is non-null here.
+      // Guard explicitly: falling through to Mathf (4-byte Single) with
+      // Double-coerced args would cause a width mismatch at runtime.
+      if (!sig) {
+        throw new Error(
+          `[math-double] Failed to resolve System.Math extern for ${mathName}(${paramTypeName}). ` +
+            "This is a bug — resolveExternSignature should always produce a signature when paramTypes and returnType are both provided.",
+        );
+      }
+      return sig;
+    }
+    return this.resolveStaticExtern("Mathf", mapped, "method");
+  };
+
   if (methodName === "max" || methodName === "min") {
-    if (args.length < 2) return null;
-    let current = args[0];
-    for (let i = 1; i < args.length; i += 1) {
-      const stepResult = this.newTemp(PrimitiveTypes.single);
-      const externSig = this.resolveStaticExtern("Mathf", mapped, "method");
+    if (coercedArgs.length < 2) return null;
+    const twoParams = [paramTypeName, paramTypeName] as [string, string];
+    let current = coercedArgs[0];
+    for (let i = 1; i < coercedArgs.length; i += 1) {
+      const stepResult = this.newTemp(targetParamType);
+      const externSig = resolveExtern(twoParams);
       if (!externSig) return null;
-      this.emit(new CallInstruction(stepResult, externSig, [current, args[i]]));
+      this.emit(
+        new CallInstruction(stepResult, externSig, [current, coercedArgs[i]]),
+      );
       current = stepResult;
     }
     return current;
   }
 
-  if (args.length !== 1 && methodName !== "pow") return null;
-  if (methodName === "pow" && args.length !== 2) return null;
+  if (coercedArgs.length !== 1 && methodName !== "pow") return null;
+  if (methodName === "pow" && coercedArgs.length !== 2) return null;
 
-  const result = this.newTemp(PrimitiveTypes.single);
-  const externSig = this.resolveStaticExtern("Mathf", mapped, "method");
+  const result = this.newTemp(targetParamType);
+  const externSig = resolveExtern();
   if (!externSig) return null;
-  this.emit(new CallInstruction(result, externSig, args));
+  this.emit(new CallInstruction(result, externSig, coercedArgs));
   return result;
 }
 

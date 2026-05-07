@@ -506,6 +506,11 @@ export function coerceConstantToType(
       if (Number.isNaN(num)) return null;
       return createConstant(num, PrimitiveTypes.single);
     }
+    case UdonType.Double: {
+      const num = typeof raw === "number" ? raw : Number(raw);
+      if (Number.isNaN(num)) return null;
+      return createConstant(num, PrimitiveTypes.double);
+    }
     default:
       return null;
   }
@@ -692,9 +697,24 @@ export function wrapDataToken(
     );
   }
   const token = this.newTemp(ExternTypes.dataToken);
+  // VRChat's `DataToken.__ctor__SystemSingle` extern throws at runtime even
+  // though the signature is registered (the SDK dispatch is broken). The
+  // implicit operator is the path UdonSharp actually exercises, so it works.
+  // For Single, op_Implicit stores TokenType.Float — same as the ctor would —
+  // so the unwrap side (DataToken.Float getter) needs no matching change.
+  // For Double, op_Implicit stores TokenType.Double and the unwrap side uses
+  // the DataToken.Double getter accordingly.
+  // We apply op_Implicit to Double as well: the Single ctor was registered
+  // yet broken, so op_Implicit is the safer path. Both Single and Double
+  // op_Implicit are verified in the VM test suite against the real VRC SDK.
+  const ctorMember =
+    valueType.udonType === UdonType.Single ||
+    valueType.udonType === UdonType.Double
+      ? "op_Implicit"
+      : "ctor";
   const externSig = this.requireExternSignature(
     "DataToken",
-    "ctor",
+    ctorMember,
     "method",
     [valueType.name],
     "DataToken",

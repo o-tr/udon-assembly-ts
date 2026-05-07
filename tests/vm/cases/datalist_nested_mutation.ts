@@ -18,7 +18,7 @@ export class DatalistNestedMutation extends UdonSharpBehaviour {
     list.set_Item(1 as UdonInt, new DataToken(5.0));
     list.set_Item(2 as UdonInt, new DataToken(9.0));
 
-    Debug.Log(list.get_Item(1 as UdonInt).Float);
-    Debug.Log(list.get_Item(2 as UdonInt).Float);
+    Debug.Log(list.get_Item(1 as UdonInt).Double);
+    Debug.Log(list.get_Item(2 as UdonInt).Double);
   }
 }

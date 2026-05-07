@@ -114,17 +114,22 @@ describe("Convert method overload resolution", () => {
   });
 
   it("does not fold Single-to-Double cast (float precision mismatch)", () => {
-    // JS number is f64; folding Single→Double would skip the f32 round-trip,
-    // producing 3.7 instead of 3.700000047683716... as C# Convert.ToDouble would.
+    // f32 → f64 expansion must NOT be folded: f32 representation drops
+    // precision relative to JS's f64 literal, so the round-trip needs a
+    // runtime SystemConvert.ToDouble call. After number=Double remap, only
+    // an explicit UdonFloat brand triggers Single, and UdonTypeConverters
+    // provides the runtime widening to UdonDouble.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-      import type { UdonDouble } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import type { UdonDouble, UdonFloat } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
       import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
       @UdonBehaviour()
       export class T extends UdonSharpBehaviour {
         Start(): void {
-          const a: UdonDouble = 3.7 as UdonDouble;
+          const f: UdonFloat = 3.7 as UdonFloat;
+          const a: UdonDouble = UdonTypeConverters.toUdonDouble(f);
           Debug.Log(a);
         }
       }`;
@@ -149,5 +154,57 @@ describe("Convert method overload resolution", () => {
     const result = transpiler.transpile(source);
     // Out-of-range value should NOT be folded; fall back to CastInstruction
     expect(result.uasm).toContain("SystemConvert");
+  });
+
+  it("Math dispatch coerces mixed-width args to the chosen extern's parameter width", () => {
+    // Math.max(udonFloat, udonNumber) must NOT push a 4-byte Single slot
+    // into a SystemMath.__Max__SystemDouble_SystemDouble Double parameter
+    // address. The transpiler should emit a SystemConvert.ToDouble cast on
+    // the Single arg before the Double-overloaded extern is invoked.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import type { UdonFloat } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const f: UdonFloat = 1.5 as UdonFloat;
+          const d: number = 2.5;
+          const m = Math.max(f, d);
+          Debug.Log(m);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).toContain(
+      "SystemMath.__Max__SystemDouble_SystemDouble__SystemDouble",
+    );
+    // The Single operand must be coerced to Double before the call.
+    expect(result.uasm).toContain(
+      "SystemConvert.__ToDouble__SystemSingle__SystemDouble",
+    );
+    expect(result.uasm).not.toContain(
+      "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle",
+    );
+  });
+
+  it("Math.ceil routes to System.Math.Ceiling (not Ceil) for Double args", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+      @UdonBehaviour()
+      export class T extends UdonSharpBehaviour {
+        Start(): void {
+          const d: number = 2.3;
+          const c = Math.ceil(d);
+          Debug.Log(c);
+        }
+      }`;
+    const result = transpiler.transpile(source);
+    expect(result.uasm).toContain(
+      "SystemMath.__Ceiling__SystemDouble__SystemDouble",
+    );
+    expect(result.uasm).not.toContain("__Ceil__");
   });
 });

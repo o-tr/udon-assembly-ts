@@ -21,7 +21,7 @@ describe("returnInstancePrefix field type re-resolution", () => {
   it("re-resolves stale property type when type alias is declared after the interface", () => {
     // IResult references Score before Score is declared.
     // At parse time, IResult.score gets ClassTypeSymbol(name="Score",udonType="Object").
-    // The fix ensures typeMapper.getAlias("Score") is called to get SystemSingle.
+    // The fix ensures typeMapper.getAlias("Score") is called to get SystemDouble.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -55,9 +55,9 @@ describe("returnInstancePrefix field type re-resolution", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    // The stable-prefix variable for "score" must be %SystemSingle, not %SystemObject.
+    // The stable-prefix variable for "score" must be %SystemDouble, not %SystemObject.
     // A stale alias would produce: __inline_ret_0_score: %SystemObject
-    expect(result.uasm).toMatch(/__inline_ret_\d+_score:\s*%SystemSingle/);
+    expect(result.uasm).toMatch(/__inline_ret_\d+_score:\s*%SystemDouble/);
 
     // No EXTERN call for IResult/Score property access
     expect(result.uasm).not.toMatch(/IResult\.__get_score/);

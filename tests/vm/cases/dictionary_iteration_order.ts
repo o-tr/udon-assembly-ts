@@ -23,7 +23,7 @@ export class DictionaryIterationOrder extends UdonSharpBehaviour {
     const values = dict.GetValues();
     let valueSum = 0.0;
     for (const valueToken of values) {
-      valueSum += valueToken.Float;
+      valueSum += valueToken.Double;
     }
 
     Debug.Log(keys.Count);

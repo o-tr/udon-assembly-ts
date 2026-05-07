@@ -18,7 +18,7 @@ export class ArrayLiteralIteration extends UdonSharpBehaviour {
     let i: number = 0;
     while (i < arr.Count) {
       const token: DataToken = arr.get_Item(i as UdonInt);
-      const val: number = token.Float;
+      const val: number = token.Double;
       Debug.Log(val);
       sum = sum + val;
       i = i + 1;

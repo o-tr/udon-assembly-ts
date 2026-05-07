@@ -17,7 +17,7 @@ export class ForOfDictDestructure extends UdonSharpBehaviour {
     let sum: number = 0;
     let count: number = 0;
     for (const [_key, val] of dict) {
-      sum = sum + val.Float;
+      sum = sum + val.Double;
       count = count + 1;
     }
     Debug.Log(count); // 2

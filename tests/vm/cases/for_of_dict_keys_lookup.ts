@@ -20,7 +20,7 @@ export class ForOfDictKeysLookup extends UdonSharpBehaviour {
     let count: number = 0;
     for (const key of keys) {
       const val: DataToken = dict.GetValue(key);
-      sum = sum + val.Float;
+      sum = sum + val.Double;
       count = count + 1;
     }
     Debug.Log(sum); // 30

@@ -17,7 +17,7 @@ export class DataDictionaryGetvaluesAccumulate extends UdonSharpBehaviour {
     const values = dict.GetValues();
     let sum = 0.0;
     for (const token of values) {
-      sum += token.Float;
+      sum += token.Double;
     }
 
     Debug.Log(values.Count);

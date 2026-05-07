@@ -49,7 +49,7 @@ describe("collections support", () => {
     expect(
       externs.some((sig) =>
         sig.includes(
-          "VRCSDK3DataDataToken.__ctor__SystemSingle__VRCSDK3DataDataToken",
+          "VRCSDK3DataDataToken.__op_Implicit__SystemDouble__VRCSDK3DataDataToken",
         ),
       ),
     ).toBe(true);

@@ -5,7 +5,7 @@
  * コンパイル用スタブ。
  */
 import { UdonExtern, UdonStub } from "./UdonDecorators.js";
-import type { UdonInt } from "./UdonTypes.js";
+import type { UdonDouble, UdonFloat, UdonInt, UdonLong } from "./UdonTypes.js";
 
 @UdonStub("VRC.SDK3.Data.DataList")
 export class DataList {
@@ -45,14 +45,14 @@ export class DataToken {
   String!: string;
   Boolean!: boolean;
   Int!: UdonInt;
-  Long!: number;
-  Float!: number;
-  Double!: number;
+  Long!: UdonLong;
+  Float!: UdonFloat;
+  Double!: UdonDouble;
   DataList!: DataList;
   DataDictionary!: DataDictionary;
   Reference!: object;
   IsNull!: boolean;
-  TokenType!: number;
+  TokenType!: UdonInt;
 
   constructor();
   constructor(_value: number);

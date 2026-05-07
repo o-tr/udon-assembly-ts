@@ -16,8 +16,8 @@ export class ArrayLiteralBasic extends UdonSharpBehaviour {
     arr.Add(new DataToken(30.0));
     Debug.Log(arr.Count);
     const first: DataToken = arr.get_Item(0 as UdonInt);
-    Debug.Log(first.Float);
+    Debug.Log(first.Double);
     const last: DataToken = arr.get_Item(2 as UdonInt);
-    Debug.Log(last.Float);
+    Debug.Log(last.Double);
   }
 }

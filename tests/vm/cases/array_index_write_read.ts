@@ -17,15 +17,15 @@ export class ArrayIndexWriteRead extends UdonSharpBehaviour {
     list.Add(new DataToken(30));
 
     // Read via bracket notation
-    Debug.Log(list[0 as UdonInt].Float); // 10
-    Debug.Log(list[1 as UdonInt].Float); // 20
+    Debug.Log(list[0 as UdonInt].Double); // 10
+    Debug.Log(list[1 as UdonInt].Double); // 20
 
     // Write via set_Item then read
     list.set_Item(1 as UdonInt, new DataToken(99));
-    Debug.Log(list[1 as UdonInt].Float); // 99
+    Debug.Log(list[1 as UdonInt].Double); // 99
 
     // Verify other elements unchanged
-    Debug.Log(list[0 as UdonInt].Float); // 10
-    Debug.Log(list[2 as UdonInt].Float); // 30
+    Debug.Log(list[0 as UdonInt].Double); // 10
+    Debug.Log(list[2 as UdonInt].Double); // 30
   }
 }

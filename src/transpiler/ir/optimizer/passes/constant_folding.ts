@@ -570,7 +570,7 @@ export const getOperandType = (operand: TACOperand): TypeSymbol => {
   ) {
     return (operand as unknown as { type: TypeSymbol }).type;
   }
-  return PrimitiveTypes.single;
+  return PrimitiveTypes.double;
 };
 
 export const isNumericUdonType = (typeName: string): boolean => {

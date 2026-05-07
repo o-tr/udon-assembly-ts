@@ -180,7 +180,7 @@ export class TypeCheckerTypeResolver {
     if (type.isLiteral()) {
       if (type.flags & ts.TypeFlags.BigIntLiteral) return PrimitiveTypes.int64;
       if (typeof type.value === "string") return PrimitiveTypes.string;
-      if (typeof type.value === "number") return PrimitiveTypes.single;
+      if (typeof type.value === "number") return PrimitiveTypes.double;
     }
 
     // 3. Array / Tuple
@@ -205,7 +205,7 @@ export class TypeCheckerTypeResolver {
 
     // 4. Primitive flags
     if (type.flags & ts.TypeFlags.BooleanLike) return PrimitiveTypes.boolean;
-    if (type.flags & ts.TypeFlags.NumberLike) return PrimitiveTypes.single;
+    if (type.flags & ts.TypeFlags.NumberLike) return PrimitiveTypes.double;
     if (type.flags & ts.TypeFlags.StringLike) return PrimitiveTypes.string;
     if (type.flags & ts.TypeFlags.BigIntLike) return PrimitiveTypes.int64;
     if (type.flags & ts.TypeFlags.Void) return PrimitiveTypes.void;
@@ -604,6 +604,14 @@ export class TypeCheckerTypeResolver {
   private tryResolveBrandedPrimitive(
     intersection: ts.IntersectionType,
   ): TypeSymbol | null {
+    const intersectionText = this.checker.typeToString(
+      intersection,
+      undefined,
+      TYPE_TO_STRING_FLAGS,
+    );
+    const directMapped = UDON_BRANDED_TYPE_MAP.get(intersectionText);
+    if (directMapped) return directMapped;
+
     for (const constituent of intersection.types) {
       const symbol = constituent.getSymbol();
       if (!symbol) continue;
@@ -620,6 +628,14 @@ export class TypeCheckerTypeResolver {
       );
       const mapped = UDON_BRANDED_TYPE_MAP.get(text);
       if (mapped) return mapped;
+    }
+    // `intersectionText === brandName` already short-circuited via
+    // `directMapped` above; only the prefix form (e.g. `UdonInt & {…}`)
+    // is left to handle here.
+    for (const [brandName, mapped] of UDON_BRANDED_TYPE_MAP) {
+      if (intersectionText.startsWith(`${brandName} &`)) {
+        return mapped;
+      }
     }
     // Inline `T & { __brand: "Foo" }` intersections lose their `__brand`
     // property in the type API by the time the resolver sees them

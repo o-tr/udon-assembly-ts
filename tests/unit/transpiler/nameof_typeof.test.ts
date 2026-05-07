@@ -59,7 +59,7 @@ describe("nameof/typeof", () => {
     ).toBe(true);
   });
 
-  it("preserves the legacy primitive FQN for typeof on a number var", () => {
+  it("preserves the primitive FQN for typeof on a number var", () => {
     const parser = new TypeScriptParser();
     const source = `
       class Demo {
@@ -76,7 +76,7 @@ describe("nameof/typeof", () => {
     );
     const tac = converter.convert(ast);
 
-    expect(stringify(tac)).toContain('"System.Single"');
+    expect(stringify(tac)).toContain('"System.Double"');
   });
 
   it("resolves typeof on a Unity-extern type to the .NET FQN", () => {
