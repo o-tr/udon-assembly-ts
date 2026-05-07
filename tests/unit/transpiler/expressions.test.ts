@@ -93,4 +93,97 @@ describe("expression lowering", () => {
     );
     expect(concatCall).toBeDefined();
   });
+
+  describe("unsigned right shift (>>>)", () => {
+    it("lowers >>> 0 to identity — no shift or mask instructions emitted", () => {
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const source = `
+        @UdonBehaviour()
+        class UrsTest extends UdonSharpBehaviour {
+          Start(): void {
+            let x: number = 42;
+            let y: number = x >>> 0;
+          }
+        }
+      `;
+      const { uasm, diagnostics } = transpiler.transpile(source);
+      // Identity: no RightShift or LogicalAnd in UASM for the >>> 0 path
+      expect(uasm).not.toContain("op_RightShift");
+      expect(uasm).not.toContain("op_LogicalAnd");
+      // No UnsupportedOperator warning for constant shift-by-zero
+      const unsupported = (diagnostics ?? []).filter(
+        (w) => w.code === "UnsupportedOperator",
+      );
+      expect(unsupported).toHaveLength(0);
+    });
+
+    it("lowers >>> 1 to (x >> 1) & 0x7FFFFFFF — unsigned binary-search midpoint", () => {
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const source = `
+        @UdonBehaviour()
+        class UrsTest extends UdonSharpBehaviour {
+          Start(): void {
+            let lo: number = 0;
+            let hi: number = 2147483646;
+            let mid: number = (lo + hi) >>> 1;
+          }
+        }
+      `;
+      const { uasm } = transpiler.transpile(source);
+      // Must use Int32 signed right shift
+      expect(uasm).toContain(
+        "op_RightShift__SystemInt32_SystemInt32__SystemInt32",
+      );
+      // Must mask the sign-extension bits
+      expect(uasm).toContain(
+        "op_LogicalAnd__SystemInt32_SystemInt32__SystemInt32",
+      );
+      // Must NOT emit the old UnsupportedOperator-triggered signed-only shift
+      // (the mask is the distinguishing signal; we checked LogicalAnd above)
+    });
+
+    it("lowers >>> 2 to (x >> 2) & 0x3FFFFFFF", () => {
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const source = `
+        @UdonBehaviour()
+        class UrsTest extends UdonSharpBehaviour {
+          Start(): void {
+            let x: number = -8;
+            let y: number = x >>> 2;
+          }
+        }
+      `;
+      const { uasm } = transpiler.transpile(source);
+      expect(uasm).toContain(
+        "op_RightShift__SystemInt32_SystemInt32__SystemInt32",
+      );
+      expect(uasm).toContain(
+        "op_LogicalAnd__SystemInt32_SystemInt32__SystemInt32",
+      );
+      // 0x3FFFFFFF = 1073741823 — the mask constant must appear in the heap data
+      expect(uasm).toContain("1073741823");
+    });
+
+    it("does not emit UnsupportedOperator warning for constant shifts", () => {
+      // All four production sites in mahjong-t2 use constant shift amounts.
+      const transpiler = new TypeScriptToUdonTranspiler();
+      const source = `
+        @UdonBehaviour()
+        class UrsTest extends UdonSharpBehaviour {
+          @field() state: number = 0;
+          Start(): void {
+            let seed: number = 12345;
+            let a: number = seed >>> 0;
+            let b: number = seed >>> 1;
+            let c: number = this.state >>> 0;
+          }
+        }
+      `;
+      const { diagnostics } = transpiler.transpile(source);
+      const unsupportedWarnings = (diagnostics ?? []).filter(
+        (w) => w.code === "UnsupportedOperator",
+      );
+      expect(unsupportedWarnings).toHaveLength(0);
+    });
+  });
 });
