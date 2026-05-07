@@ -229,7 +229,7 @@ export class Networking {
   }
 
   static GetServerTimeInMilliseconds(): UdonLong {
-    return Date.now() as unknown as UdonLong;
+    return BigInt(Date.now()) as UdonLong;
   }
 }
 
