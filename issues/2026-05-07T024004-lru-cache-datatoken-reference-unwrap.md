@@ -1,11 +1,12 @@
 ---
 created: 2026-05-07T02:40:04+09:00
-updated: 2026-05-07T02:40:04+09:00
-status: open
+updated: 2026-05-07T12:00:00+09:00
+status: resolved
 severity: medium
 component: transpiler / unwrapDataToken
 related_branch: master / feat/number-double-mapping (both fail)
 related_test: mahjong-t2 lru_cache
+resolved_by: 6f23abe, b93f0e1
 ---
 
 # `lru_cache` test crashes on `DataToken.__get_Reference__SystemObject` for value-typed token
@@ -64,3 +65,19 @@ miss (issue 2026-05-07T024001).
 
 - mahjong-t2 fixture: `lru_cache` (LRU map test)
 - Branch baseline: master and `feat/number-double-mapping` both fail this test
+
+## Resolution
+
+Fixed by two prior commits:
+
+- **`6f23abe`** (2026-04-13): Added `ObjectTypeSymbol` guard in `unwrapDataToken` so that `unknown`/`any`/`object`
+  target types return the DataToken as-is instead of falling through to `.Reference`. Also added
+  `resolveIteratorValueTypeFromNextCall` and `dataTokenValueHints` so that `.value` on
+  `map.keys().next().value` uses the correct typed getter.
+- **`b93f0e1`** (2026-04-15): Promoted `__inline_ret_*` slots from `ObjectType` to `DataToken` when the
+  declared return type is `unknown`/`any`/`object`, preventing type erasure from losing DataToken
+  information across inline method boundaries.
+
+All unit tests pass; UASM for both `lru_cache_map_get_regression` and `mahjong_lru_cache_regression`
+contains no `__get_Reference__SystemObject`. The `disallowedExterns` guard was added to
+`mahjong_lru_cache_regression` in `vm_test_definitions.ts` as a regression fence.
