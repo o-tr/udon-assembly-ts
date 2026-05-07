@@ -471,6 +471,10 @@ function emitDispatchResultDefaults(
   returnType: TypeSymbol | undefined,
 ): void {
   if (!dispatchResult) return;
+  const key = operandTrackingKey(dispatchResult);
+  if (key && converter.dispatchResultFlags) {
+    converter.dispatchResultFlags.set(key, false);
+  }
   converter.emit(
     new AssignmentInstruction(
       dispatchResult,
@@ -1137,6 +1141,13 @@ function tryUntrackedInlineDispatch(
     converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
+  if (!dispatchFailed && dispatchResult) {
+    const key = operandTrackingKey(dispatchResult);
+    if (key && converter.dispatchResultFlags) {
+      converter.dispatchResultFlags.set(key, true);
+    }
+  }
+
   if (dispatchFailed) return null;
 
   // Miss path: do NOT emit a generic MethodCallInstruction.
@@ -1419,6 +1430,13 @@ function tryD3MethodDispatch(
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
     converter.restoreInlineInstanceState(branchAllInlineSnapshot);
+  }
+
+  if (!dispatchFailed && dispatchResult) {
+    const key = operandTrackingKey(dispatchResult);
+    if (key && converter.dispatchResultFlags) {
+      converter.dispatchResultFlags.set(key, true);
+    }
   }
 
   if (dispatchFailed) return null;

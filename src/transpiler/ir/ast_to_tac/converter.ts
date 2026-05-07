@@ -301,6 +301,11 @@ export class ASTToTACConverter {
   allInlineInstanceIdsByPrefix: Map<string, number> = new Map();
   /** Set of anonymous inline class names for O(1) isInlineHandleType checks */
   anonymousInlineClassNames: Set<string> = new Set();
+  /** Dispatch success tracking per dispatch result temp key.
+   *  Key: operand tracking key (e.g., "__tmpN") → boolean (true=matched, false=miss).
+   *  Used by wrapDataToken to short-circuit on undispatched results and prevent
+   *  crashes from DataToken.op_Implicit(Double) on uninitialised SoA prefix fields. */
+  dispatchResultFlags: Map<string, boolean> = new Map();
   /**
    * Classes whose constructor is invoked inside a loop body.
    * Detected in pass 1; pre-seeded into pass 2.
@@ -658,6 +663,7 @@ export class ASTToTACConverter {
     this.soaInitialized = new Set();
     this.soaConstructionPrefixes = new Set();
     this.implementorNamesCache = new Map();
+    this.dispatchResultFlags = new Map();
     this.allInlineInterfaceCache = new Map();
     this.anonymousInlineClassNames = new Set();
     this.inlineStructuralPropertyTypeCache = new Map();

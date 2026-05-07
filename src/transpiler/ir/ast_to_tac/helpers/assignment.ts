@@ -657,6 +657,16 @@ export function wrapDataToken(
   if (valueType.name === ExternTypes.dataToken.name) {
     return value;
   }
+
+  const valueKey = operandTrackingKey(value);
+  if (valueKey && this.dispatchResultFlags?.get(valueKey) === false) {
+    const safeConst = createConstant(0, PrimitiveTypes.int32);
+    const externSig = this.requireExternSignature("DataToken", "op_Implicit", "method", ["int"], "DataToken");
+    const safeToken = this.newTemp(ExternTypes.dataToken);
+    this.emit(new CallInstruction(safeToken, externSig, [safeConst]));
+    return safeToken;
+  }
+
   if (
     valueType instanceof InterfaceTypeSymbol &&
     valueType.name &&
