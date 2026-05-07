@@ -93,6 +93,54 @@ Two complementary improvements:
 Blocks 19/38 mahjong-t2 VM tests. Independent of Phase A — fixing in
 isolation would benefit master as well.
 
+## Implementation
+
+### Fix 2 — Defensive sentinel (completed)
+
+Implemented flag-based tracking to detect failed dispatches and short-circuit unsafe wraps.
+
+**変更ファイル:**
+
+1. `src/transpiler/ir/ast_to_tac/converter.ts`
+   - フィールド追加: `dispatchResultFlags: Map<string, boolean>` (~line 304-308)
+   - `resetState()` で Map をクリア (~line 666)
+
+2. `src/transpiler/ir/ast_to_tac/visitors/call.ts`
+   - `emitDispatchResultDefaults`: フラグを false に設定 (~line 475-478)
+   - `tryD3MethodDispatch`: ブランチループ終了後、成功時にフラグを true に設定 (~line 1429-1433)
+   - `tryUntrackedInlineDispatch`: ブランチループ終了後、成功時にフラグを true に設定 (~line 1146-1150)
+
+3. `src/transpiler/ir/ast_to_tac/helpers/assignment.ts`
+   - `wrapDataToken`: フラグが false の場合、即座に安全な DataToken を返す短絡チェックを追加 (~line 660-669)
+
+**動作:**
+- ディスパッチ失敗時 → フラグは false のまま
+- wrapDataToken が flag === false を検知 → `DataToken.op_Implicit(Int32)` センチネルを返す
+- これにより `StrongBox<Object>` null による crash を阻止
+
+### Build & Test Results
+
+```
+TypeScript: コンパイル成功（エラーなし）
+Test: 893 passed | 2 expected fail | 183 skipped (1078)
+```
+
+## Status
+
+- Fix 1 (ClassRegistry candidate collection): 未着手 — 優先度低
+- Fix 2 (Defensive sentinel): **完了** — 全テストパス
+
+## Out of Scope Fixes
+
+今回の修正で実施したのは Fix 2（防御的センチネル）のみであり、クラスレベルの修正は行いませんでした。具体的には：
+
+- `dispatchResultFlags` Map フィールド追加: Fix 2 のインフラ
+- `emitDispatchResultDefaults` フラグ設定: Fix 2 そのもの
+- `tryD3MethodDispatch` / `tryUntrackedInlineDispatch` フラグ更新: Fix 2 そのもの
+- `wrapDataToken` 短絡チェック: Fix 2 そのもの
+
+ClassRegistry やメタデータ収集に関する変更（Fix 1 に相当）は一切含まれていません。
+
 ## References
 
 - mahjong-t2 fixtures: `tests/vm/cases/*.ts` in mahjong-t2
