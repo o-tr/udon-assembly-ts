@@ -380,14 +380,10 @@ export const readonlyDataCollectionFolding = (
           if (destVar.isExported) {
             invalidate(candidates, cBySrc);
           } else {
-            // dest is being reassigned to this candidate; remove it from any
-            // other candidate's aliasNames to prevent stale transitive alias matches
-            for (const c of candidates.values()) {
-              if (
-                c !== cBySrc &&
-                c.aliasNames.has(destVar.name) &&
-                c.phase === "post-init"
-              ) {
+            // dest is being reassigned to this candidate; evict from any other
+            // candidate regardless of phase to prevent stale alias ownership.
+            for (const c of [...candidates.values()]) {
+              if (c !== cBySrc && c.aliasNames.has(destVar.name)) {
                 invalidate(candidates, c);
                 break;
               }
@@ -408,11 +404,37 @@ export const readonlyDataCollectionFolding = (
         continue;
       }
 
-      // (A) Reassignment check — invalidate only if src is NOT the same collection
+      if (cBySrc) {
+        // src is a candidate temp in post-init (e.g. label-induced phase transition
+        // then alias2 = t0). Register dest as alias so subsequent mutations via
+        // alias2 are detected; evict from any other candidate that owned the name.
+        if (assign.dest.kind === TACOperandKind.Variable) {
+          const destVar = assign.dest as VariableOperand;
+          if (destVar.isExported) {
+            invalidate(candidates, cBySrc);
+          } else {
+            for (const c of [...candidates.values()]) {
+              if (c !== cBySrc && c.aliasNames.has(destVar.name)) {
+                invalidate(candidates, c);
+                break;
+              }
+            }
+            cBySrc.aliasNames.add(destVar.name);
+            cBySrc.initInstructionIndices.add(i);
+          }
+        }
+        continue;
+      }
+
+      // src is not a candidate temp from here on.
+
+      // (A) Reassignment check — invalidate if dest was an alias of any candidate
+      // and src is NOT the same collection. Phase guard removed: the alias-before-adds
+      // pattern can leave candidates in "init" even after alias registration.
       if (assign.dest.kind === TACOperandKind.Variable) {
         const destName = (assign.dest as VariableOperand).name;
         for (const c of candidates.values()) {
-          if (c.aliasNames.has(destName) && c.phase === "post-init") {
+          if (c.aliasNames.has(destName)) {
             const srcIsSameCollection =
               (assign.src.kind === TACOperandKind.Temporary &&
                 (assign.src as TemporaryOperand).id === c.tempId) ||
@@ -440,6 +462,13 @@ export const readonlyDataCollectionFolding = (
         if (!destVar.isExported) {
           for (const c of candidates.values()) {
             if (c.aliasNames.has(srcName)) {
+              // Evict destVar from any other candidate before adding to this one.
+              for (const cOther of [...candidates.values()]) {
+                if (cOther !== c && cOther.aliasNames.has(destVar.name)) {
+                  invalidate(candidates, cOther);
+                  break;
+                }
+              }
               c.aliasNames.add(destVar.name);
               c.initInstructionIndices.add(i);
               if (

@@ -671,6 +671,76 @@ describe("readonlyDataCollectionFolding", () => {
     expect(result.changed).toBe(false);
   });
 
+  it("invalidates when post-init Temp→Variable alias is later mutated (label-induced phase)", () => {
+    const dl = tDL(0);
+    const alias1 = vDL("a");
+    const alias2 = vDL("b");
+    const tok = tDT(1);
+    const dest = tDT(2);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new AssignmentInstruction(alias1, dl),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("x")]),
+      new MethodCallInstruction(undefined, alias1, "Add", [tok]),
+      // Non-exposed label transitions alias1's candidate from init → post-init
+      label("inner"),
+      // Post-init Temp→Variable: alias2 = dl (the original temp t0)
+      new AssignmentInstruction(alias2, dl),
+      // Mutation via the newly registered alias2 — must invalidate
+      new MethodCallInstruction(undefined, alias2, "Add", [tok]),
+      new MethodCallInstruction(dest, alias1, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
+  it("invalidates init-phase candidate when alias is stolen by a second candidate (stale ownership)", () => {
+    const dl0 = tDL(0);
+    const dl1 = tDL(1);
+    const tok = tDT(2);
+    const alias = vDL("list");
+    const dest = tDT(3);
+
+    const instructions = [
+      // dl0 gets the alias first (init phase, alias before adds)
+      new CallInstruction(dl0, "DataList.__ctor__", []),
+      new AssignmentInstruction(alias, dl0),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("from-dl0")]),
+      new MethodCallInstruction(undefined, alias, "Add", [tok]),
+      // dl1 is created and takes over the same alias variable
+      new CallInstruction(dl1, "DataList.__ctor__", []),
+      new AssignmentInstruction(alias, dl1), // dl0 must be evicted here
+      // get_Item on alias must NOT fold (dl0 evicted; dl1 has no adds)
+      new MethodCallInstruction(dest, alias, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
+  it("invalidates init-phase candidate when its alias is reassigned to a non-candidate value", () => {
+    const dl = tDL(0);
+    const alias = vDL("list");
+    const tok = tDT(1);
+    const dest = tDT(2);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new AssignmentInstruction(alias, dl), // alias → dl, stays in init
+      new CallInstruction(tok, DT_STR_SIG, [cStr("x")]),
+      new MethodCallInstruction(undefined, alias, "Add", [tok]),
+      // Reassign alias to a non-candidate (DataToken temp) — must invalidate dl
+      new AssignmentInstruction(alias, tok),
+      // get_Item via the original temp should NOT fold (candidate invalidated)
+      new MethodCallInstruction(dest, dl, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+  });
+
   it("invalidates on transitive alias mutation (alias2 = alias1; alias2.Add() must invalidate)", () => {
     const dl = tDL(0);
     const alias1 = vDL("a");
