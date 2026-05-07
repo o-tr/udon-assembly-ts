@@ -1330,6 +1330,9 @@ export function visitBinaryExpression(
     //     Int64/UInt64 uses int32, mirroring C#'s int+uint→long precedent).
     //   • One Long: uint32 when the non-Long side is UInt32 (avoids the
     //     int32+uint32 pair); int32 in all other cases.
+    // Note: UInt64 values in [2^31, 2^32) are sign-extended when narrowed to
+    // int32 (e.g. UInt64 % Int32). This is a best-effort degradation — Udon VM
+    // offers no 64-bit remainder at all, so some precision loss is unavoidable.
     const leftType = this.getOperandType(left);
     const rightType = this.getOperandType(right);
     const leftIsLong =
