@@ -1384,7 +1384,7 @@ function tryD3MethodDispatch(
       if (!res) {
         converter.warnAt(
           propAccess,
-          "D3DispatchReturnTypeMismatch",
+          "D3DispatchMethodNotFound",
           `D3 method dispatch skipped for "${propAccess.property}" — candidate class "${info.className}" does not define the method.`,
         );
         return null;
