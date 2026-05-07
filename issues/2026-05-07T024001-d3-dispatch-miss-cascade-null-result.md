@@ -1,7 +1,7 @@
 ---
 created: 2026-05-07T02:40:01+09:00
-updated: 2026-05-07T02:40:01+09:00
-status: open
+updated: 2026-05-07T19:36:49+09:00
+status: closed
 severity: high
 component: transpiler / D3 method dispatch
 related_branch: feat/number-double-mapping
@@ -125,21 +125,40 @@ TypeScript: コンパイル成功（エラーなし）
 Test: 893 passed | 2 expected fail | 183 skipped (1078)
 ```
 
+### Fix 1 — D3 candidate collection (completed)
+
+Implemented broader D3 method candidate collection for erased receivers.
+
+**変更ファイル:**
+
+1. `src/transpiler/ir/ast_to_tac/visitors/call.ts`
+   - D3 method dispatch の type/interface/subclass インスタンス収集を helper 化
+   - erased `object` / `DataDictionary` receiver で同名メソッドを持つ複数 inline class が見つかった場合、AST receiver type に代入可能な全候補へ絞り込み
+   - AST type で絞れない場合も候補ゼロにせず、同名メソッドを持つ全 inline class を dispatch table に含め、診断 warning を出す
+
+2. `tests/unit/transpiler/inline_param_tracking.test.ts`
+   - `(c as any).check()` のような erased method receiver が複数 inline class (`BasicCheck`, `BonusCheck`) を dispatch 候補に含める回帰テストを追加
+
+**動作:**
+- 既知 type/interface/base class receiver → 従来通り direct / implementor / subclass インスタンスを候補化
+- erased receiver + 複数同名 method → 単一候補へ無理に tie-break せず、実際に到達し得る全 inline instance を候補化
+- これにより、BaseYaku/abstract-like hierarchy や `any`/`object` 経由で `check()` が呼ばれるケースでも dispatch table から具象 subclass が落ちにくくなる
+
 ## Status
 
-- Fix 1 (ClassRegistry candidate collection): 未着手 — 優先度低
+- Fix 1 (D3 candidate collection): **完了** — 全テストパス
 - Fix 2 (Defensive sentinel): **完了** — 全テストパス
 
 ## Out of Scope Fixes
 
-今回の修正で実施したのは Fix 2（防御的センチネル）のみであり、クラスレベルの修正は行いませんでした。具体的には：
+初回修正で実施したのは Fix 2（防御的センチネル）のみであり、クラスレベルの修正は行いませんでした。具体的には：
 
 - `dispatchResultFlags` Map フィールド追加: Fix 2 のインフラ
 - `emitDispatchResultDefaults` フラグ設定: Fix 2 そのもの
 - `tryD3MethodDispatch` / `tryUntrackedInlineDispatch` フラグ更新: Fix 2 そのもの
 - `wrapDataToken` 短絡チェック: Fix 2 そのもの
 
-ClassRegistry やメタデータ収集に関する変更（Fix 1 に相当）は一切含まれていません。
+今回の追加修正では D3 method dispatch 側の候補選択を広げましたが、ClassRegistry のデータモデルや新しいメタデータ収集 API は追加していません。
 
 ## References
 

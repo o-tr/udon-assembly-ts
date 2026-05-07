@@ -446,6 +446,40 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.tac).toContain("untracked_call_next");
   });
 
+  it("dispatches erased method receiver across all matching inline classes", () => {
+    const source = `
+      class BasicCheck {
+        value: number = 1;
+        check(): number { return this.value; }
+      }
+      class BonusCheck {
+        value: number = 2;
+        check(): number { return this.value; }
+      }
+      class Helper {
+        static read(c: object): number {
+          return (c as any).check();
+        }
+      }
+      class Main {
+        private basic: BasicCheck = new BasicCheck();
+        private bonus: BonusCheck = new BonusCheck();
+        private flag: boolean = true;
+        Start(): void {
+          const selected: object = this.flag ? this.basic : this.bonus;
+          const v = Helper.read(selected);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__check__/);
+    expect(result.tac).toMatch(/__inst_BasicCheck_\d+__handle/);
+    expect(result.tac).toMatch(/__inst_BonusCheck_\d+__handle/);
+    expect(result.tac).toContain("d3_method_next");
+  });
+
   it("re-lowers object literal args with interface parameter types in untracked dispatch", () => {
     const source = `
       interface I {

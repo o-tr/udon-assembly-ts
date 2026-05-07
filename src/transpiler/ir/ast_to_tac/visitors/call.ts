@@ -553,6 +553,27 @@ function getOrPopulateImplementorNames(
   return converter.implementorNamesCache.get(typeName) ?? null;
 }
 
+function addD3MethodInstancesForType(
+  converter: ASTToTACConverter,
+  typeName: string | undefined,
+  instances: Array<[number, { prefix: string; className: string }]>,
+  seenInstanceIds: Set<number>,
+): void {
+  if (!typeName) return;
+  const implementorNames = getOrPopulateImplementorNames(converter, typeName);
+  for (const [instId, info] of converter.allInlineInstances) {
+    if (seenInstanceIds.has(instId)) continue;
+    if (
+      info.className === typeName ||
+      implementorNames?.has(info.className) ||
+      isSubclassOf(converter, info.className, typeName)
+    ) {
+      instances.push([instId, info]);
+      seenInstanceIds.add(instId);
+    }
+  }
+}
+
 function isASTNode(value: unknown): value is ASTNode {
   return (
     value !== null &&
@@ -1209,37 +1230,27 @@ function tryD3MethodDispatch(
   // method-name fallback for erased types.
   const dispInstances: Array<[number, { prefix: string; className: string }]> =
     [];
+  const seenInstanceIds = new Set<number>();
 
-  // Direct type match + interface implementor match
-  const implementorNames = getOrPopulateImplementorNames(
+  // Direct type match + interface implementor/subclass match.
+  addD3MethodInstancesForType(
     converter,
     objectTypeName,
+    dispInstances,
+    seenInstanceIds,
   );
-  for (const [instId, info] of converter.allInlineInstances) {
-    if (
-      info.className === objectTypeName ||
-      implementorNames?.has(info.className) ||
-      isSubclassOf(converter, info.className, objectTypeName)
-    ) {
-      dispInstances.push([instId, info]);
-    }
-  }
 
   // AST type fallback: when operand type is erased, try resolving from AST.
   if (dispInstances.length === 0) {
     const astType = resolveTypeFromNode(converter, propAccess.object);
     const astName = astType?.name;
     if (astName && astName !== objectTypeName) {
-      const astImpl = getOrPopulateImplementorNames(converter, astName);
-      for (const [instId, info] of converter.allInlineInstances) {
-        if (
-          info.className === astName ||
-          astImpl?.has(info.className) ||
-          isSubclassOf(converter, info.className, astName)
-        ) {
-          dispInstances.push([instId, info]);
-        }
-      }
+      addD3MethodInstancesForType(
+        converter,
+        astName,
+        dispInstances,
+        seenInstanceIds,
+      );
       // usedErasedFallback: miss path always emits LogError regardless.
     }
   }
@@ -1259,42 +1270,57 @@ function tryD3MethodDispatch(
     }
     if (candidateClasses.size === 1) {
       for (const [instId, info] of converter.allInlineInstances) {
-        if (candidateClasses.has(info.className)) {
+        if (
+          candidateClasses.has(info.className) &&
+          !seenInstanceIds.has(instId)
+        ) {
           dispInstances.push([instId, info]);
+          seenInstanceIds.add(instId);
         }
       }
       // usedErasedFallback: miss path always emits LogError regardless.
     } else if (candidateClasses.size > 1) {
-      // Multiple classes share this method name. Try narrowing via AST type.
+      // Multiple classes share this method name. Prefer the subset assignable
+      // to the AST receiver type; if no usable type is available, include all
+      // method-compatible inline classes rather than returning an empty table.
       const astType = resolveTypeFromNode(converter, propAccess.object);
       const astName = astType?.name;
-      let narrowed: string | undefined;
+      const narrowed = new Set<string>();
       if (astName) {
         if (candidateClasses.has(astName)) {
-          narrowed = astName;
-        } else {
-          // Tie-breaking uses the order returned by
-          // getImplementorsOfInterface — the first matching implementor wins.
-          const impls =
-            converter.classRegistry
-              ?.getImplementorsOfInterface(astName)
-              .map((i) => i.name) ?? [];
-          for (const impl of impls) {
-            if (candidateClasses.has(impl)) {
-              narrowed = impl;
-              break;
-            }
+          narrowed.add(astName);
+        }
+        const impls =
+          converter.classRegistry
+            ?.getImplementorsOfInterface(astName)
+            .map((i) => i.name) ?? [];
+        for (const impl of impls) {
+          if (candidateClasses.has(impl)) narrowed.add(impl);
+        }
+        for (const className of candidateClasses) {
+          if (isSubclassOf(converter, className, astName)) {
+            narrowed.add(className);
           }
         }
       }
-      if (narrowed) {
-        for (const [instId, info] of converter.allInlineInstances) {
-          if (info.className === narrowed) {
-            dispInstances.push([instId, info]);
-          }
-        }
-        // usedErasedFallback: miss path always emits LogError regardless.
+      const selectedClasses = narrowed.size > 0 ? narrowed : candidateClasses;
+      if (narrowed.size === 0) {
+        converter.warnAt(
+          propAccess,
+          "D3DispatchFallback",
+          `D3 method dispatch narrowing failed for "${propAccess.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
+        );
       }
+      for (const [instId, info] of converter.allInlineInstances) {
+        if (
+          selectedClasses.has(info.className) &&
+          !seenInstanceIds.has(instId)
+        ) {
+          dispInstances.push([instId, info]);
+          seenInstanceIds.add(instId);
+        }
+      }
+      // usedErasedFallback: miss path always emits LogError regardless.
     }
   }
 
