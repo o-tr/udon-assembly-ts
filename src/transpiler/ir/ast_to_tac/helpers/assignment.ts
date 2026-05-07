@@ -103,7 +103,7 @@ export function assignToTarget(
     const array = this.visitExpression(arrayAccess.array);
     const prevExpectedType = this.currentExpectedType;
     this.currentExpectedType = PrimitiveTypes.int32;
-    let index: TACOperand | undefined;
+    let index: TACOperand;
     try {
       index = this.visitExpression(arrayAccess.index);
     } finally {

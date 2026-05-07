@@ -2370,7 +2370,7 @@ export function visitArrayAccessExpression(
   const array = this.visitExpression(node.array);
   const prevExpectedType = this.currentExpectedType;
   this.currentExpectedType = PrimitiveTypes.int32;
-  let index: TACOperand | undefined;
+  let index: TACOperand;
   try {
     index = this.visitExpression(node.index);
   } finally {
@@ -3607,7 +3607,7 @@ export function visitDeleteExpression(
     const array = this.visitExpression(arrayAccess.array);
     const prevExpectedType = this.currentExpectedType;
     this.currentExpectedType = PrimitiveTypes.int32;
-    let index: TACOperand | undefined;
+    let index: TACOperand;
     try {
       index = this.visitExpression(arrayAccess.index);
     } finally {
