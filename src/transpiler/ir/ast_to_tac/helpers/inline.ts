@@ -2170,8 +2170,24 @@ function visitInlineStaticMethodCallImpl(
       this.currentNativeArrayVarName = savedInlineNativeVarName;
       if (this.inlinedBodyStack.length > bodyStackDepth)
         this.inlinedBodyStack.pop();
-      if (this.inlineReturnStack.length > returnStackDepth)
+      if (this.inlineReturnStack.length > returnStackDepth) {
+        const innerCtx =
+          this.inlineReturnStack[this.inlineReturnStack.length - 1];
+        // If the inner expansion's return tracking was invalidated AND the
+        // method has a structural (interface) return type, the return variable
+        // holds an untracked structural handle. Add it to the set so that any
+        // outer `return <result>` (or `const x = <result>` via the else-if
+        // branch in visitVariableDeclaration) also triggers
+        // returnTrackingInvalidated rather than relying on a
+        // sibling-populated prefix that may never be written at runtime.
+        if (
+          innerCtx.returnTrackingInvalidated &&
+          innerCtx.returnInstancePrefix !== undefined
+        ) {
+          this.untrackedStructuralHandleVars.add(result.name);
+        }
         this.inlineReturnStack.pop();
+      }
       if (addedInlineMethodKey) this.inlineMethodStack.delete(inlineKey);
       this.currentParamExportMap = savedParamExportMap;
       this.currentParamExportReverseMap = savedParamExportReverseMap;
