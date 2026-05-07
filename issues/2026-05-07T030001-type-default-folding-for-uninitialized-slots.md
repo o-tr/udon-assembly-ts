@@ -1,10 +1,11 @@
 ---
 created: 2026-05-07T03:00:01+09:00
-updated: 2026-05-07T03:00:01+09:00
-status: open
+updated: 2026-05-07T13:40:00+09:00
+status: closed
 severity: low
 component: transpiler / TAC optimizer
-related_branch: feat/readonly-array-folding
+related_branch: fix/type-default-folding-for-uninitialized-slots
+fixed_commit: 221956c
 ---
 
 # Fold constant-index access to uninitialized native array slots as type defaults
@@ -54,3 +55,22 @@ Guard conditions:
 
 - `src/transpiler/ir/optimizer/passes/readonly_array_folding.ts` — Pass 2 fold logic
 - `src/transpiler/ir/ast_to_tac/helpers/inline.ts` (lines 1101-1151) — existing type-default values
+
+## Resolution
+
+Implemented in commit `221956c` on branch `fix/type-default-folding-for-uninitialized-slots`.
+
+**Approach:**
+- Added `arrayLength` and `elementType` fields to `ArrayCandidate` (stored from ctor call in Pass 1)
+- Added `getTypeDefault()` helper mapping element type to its zero-init constant:
+  - Numeric types → `0` (Int32, UInt32, Single, Double, etc.)
+  - Boolean → `false`
+  - String → `null` (C# `default(string)` is null, not `""`)
+  - Other reference types → not folded (conservative)
+- Pass 2 now uses `contents.has(idx)` to distinguish never-written slots (fold to default) from non-constant writes (`null` entry, skip fold), with bounds guard `0 <= idx < arrayLength`
+
+**Note:** The issue proposed `String → ""` but the correct C# zero-init default is `null`
+(`isNullableUdonType()` in `type_symbols.ts` lists `UdonType.String` as a nullable type).
+Folding to `""` would silently break code that checks `arr[i] == null` on unwritten slots.
+
+7 new tests added to `tests/unit/transpiler/optimizer_readonly_array.test.ts`.
