@@ -119,6 +119,10 @@ function getTypeDefault(elementType: TypeSymbol): ConstantOperand | null {
   if (t === UdonType.Int64 || t === UdonType.UInt64)
     return createConstant(0n, elementType);
   if (isNumericUdonType(t)) return createConstant(0, elementType);
+  // Char and Decimal are intentionally omitted: NATIVE_ARRAY_TYPE_NAMES, type_mapper.ts,
+  // and the assembler type classification do not support them yet, so folding to a
+  // constant would produce unverified UASM output. Return null (skip fold) until
+  // the full codegen path is wired up for those types.
   if (t === UdonType.String) return createConstant(null, elementType);
   return null;
 }
@@ -157,13 +161,12 @@ export const readonlyArrayFolding = (
       if (
         call.dest &&
         call.dest.kind === TACOperandKind.Temporary &&
-        getOperandType(call.dest).udonType === "NativeArray" &&
         call.args.length >= 1
       ) {
-        const length = getConstantInt(call.args[0]);
-        if (length !== null && length >= 0) {
-          const arrayType = getOperandType(call.dest);
-          if (arrayType instanceof NativeArrayTypeSymbol) {
+        const arrayType = getOperandType(call.dest);
+        if (arrayType instanceof NativeArrayTypeSymbol) {
+          const length = getConstantInt(call.args[0]);
+          if (length !== null && length >= 0) {
             const tempId = (call.dest as TemporaryOperand).id;
             candidates.set(tempId, {
               tempId,
