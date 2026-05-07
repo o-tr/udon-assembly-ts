@@ -1486,7 +1486,8 @@ function tryD3MethodDispatch(
     const cond = converter.newTemp(PrimitiveTypes.boolean);
     // SoA handles are dynamic counters, not static instanceIds — use variable
     const instanceHandle =
-      useInterfaceInstanceIdDispatch && !converter.soaClasses.has(info.className)
+      useInterfaceInstanceIdDispatch &&
+      !converter.soaClasses.has(info.className)
         ? createConstant(instId, PrimitiveTypes.int32)
         : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
     converter.emit(

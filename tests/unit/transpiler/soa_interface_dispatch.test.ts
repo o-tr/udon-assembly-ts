@@ -136,12 +136,14 @@ describe("SoA interface dispatch", () => {
     // There must be at least two dispatch comparison branches (Circle + Square)
     expect(d3BranchLines.length).toBeGreaterThanOrEqual(2);
 
-    // No comparison should use a bare integer constant as the RHS — that would
-    // be the broken constant-instId form: "tN = tM == 4" instead of using the
-    // __handle variable.
-    const badConstantComparisons = result.tac
-      .split("\n")
-      .filter((l) => /= t\d+ == \d+$/.test(l.trim()));
-    expect(badConstantComparisons).toHaveLength(0);
+    // No D3 dispatch branch should compare against a bare integer constant.
+    // Broken form: "tN = tM == 4" (constant instId). Fixed form uses __handle.
+    // Filter to D3 dispatch comparison lines only (contain "== __inst_" or are
+    // adjacent to d3_method labels) to avoid catching unrelated constant
+    // comparisons from inlined pick(which === 0) bodies.
+    const badD3Comparisons = d3BranchLines.filter((l) =>
+      /== \d+$/.test(l.trim()),
+    );
+    expect(badD3Comparisons).toHaveLength(0);
   });
 });
