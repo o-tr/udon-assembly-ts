@@ -13,7 +13,7 @@ component: transpiler / codegen
 When a caller converts `Map.Count` (or any Int32-typed property) to `UdonInt` via
 `BigInt(this.cache.size) as UdonInt`, the transpiler emits two unnecessary convert externs:
 
-```
+```text
 Int32  →  Int64   (BigInt() is always compiled as CastInstruction(Int64))
 Int64  →  Int32   (narrowed back to UdonInt / Int32 at the comparison or return site)
 ```

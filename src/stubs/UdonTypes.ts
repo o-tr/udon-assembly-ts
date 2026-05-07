@@ -86,7 +86,12 @@ export class UdonTypeConverters {
    * transpilerはCastInstruction(Int32)を生成し、UdonVMでSingle→Int32の切り捨てを行う
    */
   static truncToUdonInt(value: number): UdonInt {
-    return BigInt(Math.trunc(value)) as UdonInt;
+    if (!Number.isFinite(value)) {
+      return 0n as UdonInt;
+    }
+    const truncated = Math.trunc(value);
+    const clamped = Math.max(-2147483648, Math.min(2147483647, truncated));
+    return BigInt(clamped) as UdonInt;
   }
 
   /**

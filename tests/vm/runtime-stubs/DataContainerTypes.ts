@@ -36,7 +36,17 @@ export class DataToken {
     return Boolean(this._value);
   }
   get Int(): UdonInt {
-    return BigInt(Number(this._value) | 0) as UdonInt;
+    const v =
+      typeof this._value === "bigint"
+        ? this._value
+        : BigInt(
+            typeof this._value === "number" ||
+              typeof this._value === "string" ||
+              typeof this._value === "boolean"
+              ? this._value
+              : 0,
+          );
+    return BigInt.asIntN(32, v) as UdonInt;
   }
   get Long(): UdonLong {
     return BigInt(Math.trunc(Number(this._value))) as UdonLong;
