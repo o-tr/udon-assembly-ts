@@ -1005,7 +1005,7 @@ describe("readonlyDataCollectionFolding", () => {
       new CallInstruction(tok, DT_STR_SIG, [cStr("world")]),
       new MethodCallInstruction(undefined, dl, "Add", [tok]),
       new AssignmentInstruction(alias, dl), // alias registration → post-init
-      label("inner"),                        // non-exposed label (no-op for phase)
+      label("inner"), // non-exposed label (no-op for phase)
       // Temp-to-temp copy in post-init: dl2 = dl
       new AssignmentInstruction(dl2, dl),
       new MethodCallInstruction(dest, alias, "get_Item", [cInt(0)]),
