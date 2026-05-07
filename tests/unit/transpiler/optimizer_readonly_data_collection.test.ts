@@ -1089,4 +1089,37 @@ describe("readonlyDataCollectionFolding", () => {
     expect(result.changed).toBe(false);
     expect(stringify(result.instructions)).toContain("get_Item");
   });
+
+  it("does not remove DataToken ctor when dest temp has uses beyond the folded PropertyGet", () => {
+    // get_Item result (t2) is used both by PropertyGet(.String) AND a later instruction.
+    // The DataToken ctor should be kept so the later instruction still has a valid source.
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const dtResult = tDT(2); // get_Item dest — used twice
+    const strResult = tStr(3);
+    const extraResult = tBool(4);
+    const alias = vDL("list");
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("hello")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(alias, dl),
+      // get_Item + PropertyGet → foldWithPropertyGet fires
+      new MethodCallInstruction(dtResult, alias, "get_Item", [cInt(0)]),
+      new PropertyGetInstruction(strResult, dtResult, "String"),
+      // dtResult also used here — DataToken ctor must NOT be removed
+      new PropertyGetInstruction(extraResult, dtResult, "IsNull"),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(true);
+    const text = stringify(result.instructions);
+    // PropertyGet(.String) is folded to a direct assignment
+    expect(text).not.toContain(".String");
+    expect(text).toContain('"hello"');
+    // DataToken ctor for dtResult must remain so IsNull can still read it
+    expect(text).toContain("DataToken");
+    expect(text).toContain(".IsNull");
+  });
 });

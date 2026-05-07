@@ -657,7 +657,25 @@ export const readonlyDataCollectionFolding = (
           pg.property === expectedProp
         ) {
           result.push(newCall);
-          deadResultInstructions.add(newCall);
+          // Only mark as dead if dest temp has no uses beyond the immediately
+          // following PropertyGet we are folding away. If it does, leave the
+          // DataToken ctor in result so those downstream references stay valid.
+          const destTempId = (dest as TemporaryOperand).id;
+          let hasDownstreamUse = false;
+          for (
+            let j = i + 2;
+            j < instructions.length && !hasDownstreamUse;
+            j++
+          ) {
+            forEachUsedOperand(instructions[j], (op) => {
+              if (
+                op.kind === TACOperandKind.Temporary &&
+                (op as TemporaryOperand).id === destTempId
+              )
+                hasDownstreamUse = true;
+            });
+          }
+          if (!hasDownstreamUse) deadResultInstructions.add(newCall);
           result.push(new AssignmentInstruction(pg.dest, entry.value));
           return true;
         }
