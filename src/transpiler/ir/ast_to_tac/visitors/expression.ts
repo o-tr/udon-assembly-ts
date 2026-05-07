@@ -1294,6 +1294,7 @@ export function visitBinaryExpression(
   const isBitwise =
     node.operator === "|" || node.operator === "&" || node.operator === "^";
   const isShift = node.operator === "<<" || node.operator === ">>";
+  const isRemainder = node.operator === "%";
 
   if (isBitwise) {
     // Narrow to Int32 for bitwise ops — Udon VM has no float bitwise EXTERNs.
@@ -1317,6 +1318,38 @@ export function visitBinaryExpression(
       this.emit(new CastInstruction(cast, right));
       right = cast;
     }
+  } else if (isRemainder) {
+    // Udon VM does not implement Int64/UInt64 remainder (op_Remainder for Long
+    // is absent). Narrow any Int64/UInt64 operand to Int32 and emit a warning
+    // so the caller knows about the implicit demotion.
+    const leftType = this.getOperandType(left);
+    const rightType = this.getOperandType(right);
+    const leftIsLong =
+      leftType.udonType === UdonType.Int64 ||
+      leftType.udonType === UdonType.UInt64;
+    const rightIsLong =
+      rightType.udonType === UdonType.Int64 ||
+      rightType.udonType === UdonType.UInt64;
+    if (leftIsLong || rightIsLong) {
+      this.warnAt(
+        node,
+        "Int64RemainderNotSupported",
+        "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to Int32.",
+      );
+      if (leftIsLong) {
+        const cast = this.newTemp(PrimitiveTypes.int32);
+        this.emit(new CastInstruction(cast, left));
+        left = cast;
+      }
+      if (rightIsLong) {
+        const cast = this.newTemp(PrimitiveTypes.int32);
+        this.emit(new CastInstruction(cast, right));
+        right = cast;
+      }
+    }
+    const w = widenNumericOperands(this, left, right);
+    left = w.left;
+    right = w.right;
   } else {
     // Widen narrower operand when both are numeric and types differ (skip shifts).
     const w = widenNumericOperands(this, left, right);

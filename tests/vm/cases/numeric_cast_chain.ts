@@ -1,8 +1,9 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import type {
-  UdonFloat,
-  UdonInt,
+import {
+  type UdonFloat,
+  type UdonInt,
+  UdonTypeConverters,
 } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
@@ -11,7 +12,7 @@ export class NumericCastChain extends UdonSharpBehaviour {
   Start(): void {
     // float -> int (truncation)
     const a: number = 3.75;
-    const intA: UdonInt = a as unknown as UdonInt;
+    const intA: UdonInt = UdonTypeConverters.truncToUdonInt(a);
     Debug.Log(intA); // 3
 
     // float -> int -> float (round-trip loses decimal)
@@ -21,7 +22,7 @@ export class NumericCastChain extends UdonSharpBehaviour {
 
     // Another truncation
     const b: number = 7.5;
-    const intB: UdonInt = b as unknown as UdonInt;
+    const intB: UdonInt = UdonTypeConverters.truncToUdonInt(b);
     Debug.Log(intB); // 7
 
     // int arithmetic then cast to float

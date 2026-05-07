@@ -82,6 +82,14 @@ export class UdonTypeConverters {
   }
 
   /**
+   * number（float）をUdonIntに変換（ゼロ方向への切り捨て）
+   * transpilerはCastInstruction(Int32)を生成し、UdonVMでSingle→Int32の切り捨てを行う
+   */
+  static truncToUdonInt(value: number): UdonInt {
+    return BigInt(Math.trunc(value)) as UdonInt;
+  }
+
+  /**
    * bigintをUdonUIntに変換（32bit符号なし整数範囲にクランプ）
    */
   static toUdonUInt(value: bigint): UdonUInt {
