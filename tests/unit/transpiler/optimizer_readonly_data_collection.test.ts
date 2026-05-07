@@ -1040,4 +1040,53 @@ describe("readonlyDataCollectionFolding", () => {
     const text = stringify(result.instructions);
     expect(text).toContain("get_Item");
   });
+
+  it("invalidates when Call dest overwrites a known alias variable", () => {
+    // scores = DataList.ctor() → Add → scores (alias).
+    // Then: scores = SomeExtern() overwrites the alias via a Call dest.
+    // A subsequent get_Item must not fold.
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const alias = vDL("scores");
+    const dest = tDT(3);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("a")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(alias, dl),
+      // Overwrites "scores" with a different call result (same variable name)
+      new CallInstruction(alias, "SomeExtern.__ctor__", []),
+      new MethodCallInstruction(dest, alias, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+    expect(stringify(result.instructions)).toContain("get_Item");
+  });
+
+  it("invalidates when PropertyGet dest overwrites a known alias variable", () => {
+    // alias = dataList (registered alias), then alias = someObj.myDataList
+    // (PropertyGet writing to the same alias variable). A subsequent get_Item
+    // must not fold against the original candidate.
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const alias = vDL("alias");
+    const someObj = createTemporary(10, ExternTypes.dataList);
+    const dest = tDT(3);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("b")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(alias, dl),
+      // Overwrites alias via PropertyGet dest
+      new PropertyGetInstruction(alias, someObj, "SomeProperty"),
+      new MethodCallInstruction(dest, alias, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+    expect(stringify(result.instructions)).toContain("get_Item");
+  });
 });

@@ -255,7 +255,17 @@ export const readonlyDataCollectionFolding = (
 
       if (candidates.size === 0) continue;
 
-      // Any other Call: invalidate if a candidate appears as an arg
+      // Any other Call: invalidate if dest overwrites a known alias variable,
+      // or if a candidate appears as an arg (instructionUsesCandidate checks args only).
+      if (call.dest && call.dest.kind === TACOperandKind.Variable) {
+        const destName = (call.dest as VariableOperand).name;
+        for (const c of [...candidates.values()]) {
+          if (c.aliasNames.has(destName)) {
+            invalidate(candidates, c);
+            break;
+          }
+        }
+      }
       for (const c of [...candidates.values()]) {
         if (instructionUsesCandidate(inst, c)) {
           invalidate(candidates, c);
@@ -493,8 +503,18 @@ export const readonlyDataCollectionFolding = (
       continue;
     }
 
-    // PropertyGet: safe read, no invalidation
+    // PropertyGet: safe read for the object operand, but dest may overwrite a known alias.
     if (inst.kind === TACInstructionKind.PropertyGet) {
+      const pg = inst as unknown as PropertyGetInstruction;
+      if (pg.dest.kind === TACOperandKind.Variable) {
+        const destName = (pg.dest as VariableOperand).name;
+        for (const c of [...candidates.values()]) {
+          if (c.aliasNames.has(destName)) {
+            invalidate(candidates, c);
+            break;
+          }
+        }
+      }
       continue;
     }
 
