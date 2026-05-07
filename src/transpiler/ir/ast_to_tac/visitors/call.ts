@@ -1311,7 +1311,11 @@ function tryD3MethodDispatch(
       let retTypeName: string | undefined;
       let retTypeDiverged = false;
       for (const className of selectedClasses) {
-        const res = resolveClassMethod(converter, className, propAccess.property);
+        const res = resolveClassMethod(
+          converter,
+          className,
+          propAccess.property,
+        );
         if (!res) continue;
         const raw = res.method.returnType;
         const sym = raw?.name
@@ -1377,7 +1381,14 @@ function tryD3MethodDispatch(
         info.className,
         propAccess.property,
       );
-      if (!res) return null;
+      if (!res) {
+        converter.warnAt(
+          propAccess,
+          "D3DispatchReturnTypeMismatch",
+          `D3 method dispatch skipped for "${propAccess.property}" — candidate class "${info.className}" does not define the method.`,
+        );
+        return null;
+      }
       const raw = res.method.returnType;
       const sym = raw?.name
         ? (converter.typeMapper.getAlias(raw.name) ?? raw)
@@ -1389,7 +1400,7 @@ function tryD3MethodDispatch(
         converter.warnAt(
           propAccess,
           "D3DispatchReturnTypeMismatch",
-          `D3 method dispatch skipped for "${propAccess.property}" — return types differ across dispatch candidates.`,
+          `D3 method dispatch skipped for "${propAccess.property}" — return types differ across dispatch candidates (${[...seenClasses].join(", ")}).`,
         );
         return null;
       }

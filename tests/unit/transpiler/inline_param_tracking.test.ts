@@ -514,7 +514,9 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.tac).not.toContain("d3_method_end");
     // The diagnostic warning confirms the intended code path was taken.
     expect(
-      result.diagnostics?.some((d) => d.code === "D3DispatchReturnTypeMismatch"),
+      result.diagnostics?.some(
+        (d) => d.code === "D3DispatchReturnTypeMismatch",
+      ),
     ).toBe(true);
   });
 
