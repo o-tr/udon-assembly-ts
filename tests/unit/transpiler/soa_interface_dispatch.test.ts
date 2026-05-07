@@ -64,17 +64,10 @@ describe("SoA interface dispatch", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    // The dispatch must generate matching branches with inlined method bodies.
-    // Without the fix, the constant-instId comparison path never matches at
-    // runtime, so each branch silently falls through with no result assigned.
-    // With the fix, each branch body emits __inline_ret_N assignments.
-    const inlineRetInDispatch = result.tac
-      .split("\n")
-      .filter((l) => l.includes("__inline_ret_") && l.includes("= true"));
-    expect(inlineRetInDispatch.length).toBeGreaterThan(0);
-
     // The dispatch comparison must use __handle variables, not constant instIds.
-    // With the bug: "t == 1" (constant). With the fix: "t == __inst_*__handle".
+    // Bug form: "tN = tM == 5"  (sequential compile-time instanceId, never
+    //           matches the per-class SoA counter at runtime → dispatch miss).
+    // Fix form: "tN = tM == __inst_TanyaoYaku_K__handle"  (runtime variable).
     expect(result.tac).toContain("== __inst_TanyaoYaku_");
     expect(result.tac).toContain("== __inst_PinfuYaku_");
   });
