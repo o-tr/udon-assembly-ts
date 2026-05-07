@@ -1,7 +1,7 @@
 ---
 created: 2026-05-07T23:20:01+09:00
-updated: 2026-05-07T23:20:01+09:00
-status: open
+updated: 2026-05-08T00:57:00+09:00
+status: closed
 severity: medium
 component: transpiler / expression lowering
 related_branch: master
