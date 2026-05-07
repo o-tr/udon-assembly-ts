@@ -1,10 +1,10 @@
 ---
 created: 2026-05-07T23:20:00+09:00
-updated: 2026-05-07T23:20:00+09:00
-status: open
+updated: 2026-05-08T01:06:00+09:00
+status: resolved
 severity: low
 component: transpiler / outline dispatch
-related_branch: master
+related_branch: outline-dispatch-single-return-site
 related_test: mahjong-t2 transpile warnings (post PR #217 / #218)
 ---
 

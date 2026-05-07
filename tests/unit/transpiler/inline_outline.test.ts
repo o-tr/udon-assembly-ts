@@ -786,6 +786,65 @@ ${buildLargeBody(150)}
 
     expect(result.tac).not.toContain("outline_entry");
   });
+
+  it("single-return-site outline: body end-jump targets return site directly (no dispatch table)", () => {
+    // Scenario: outer method Wrapper is large and called twice → outlined in
+    // pass 2 (body emitted once).  Inner method (Inner.work) is called from inside
+    // Wrapper's body.  In pass 1, Inner.work.callSites is incremented twice
+    // (once per Wrapper call), so Inner.work also appears in outlineCandidates.
+    // But in pass 2, Wrapper's body is emitted once → Inner.work has only 1
+    // return site.  The inline-back fix should patch the body's end-jump to go
+    // directly to that return site and not emit a dispatch table.
+    const wrapperLines: string[] = [];
+    for (let i = 0; i < 80; i++) {
+      wrapperLines.push(`          acc = acc + ${i};`);
+    }
+    const source = `
+      class Inner {
+        static work(n: number): number {
+${buildLargeBody(150)}
+        }
+      }
+      class Wrapper {
+        static run(n: number): number {
+          let acc: number = 0;
+${wrapperLines.join("\n")}
+          acc = acc + Inner.work(n);
+          return acc;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const r1: number = Wrapper.run(1);
+          const r2: number = Wrapper.run(2);
+          Debug.Log(r1);
+          Debug.Log(r2);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    // No OutlineDispatchInvariant warning should be emitted
+    const hasInvariantWarning = (result.diagnostics ?? []).some((d) =>
+      d.message.includes("OutlineDispatchInvariant"),
+    );
+    expect(hasInvariantWarning).toBe(false);
+
+    // Both outer (Wrapper.run) and inner (Inner.work) should be outlined
+    const entryLabels = result.tac.match(/outline_entry\d*:/g);
+    expect(entryLabels).not.toBeNull();
+    expect(entryLabels?.length).toBeGreaterThanOrEqual(2);
+
+    // Inner.work has 1 return site → its dispatch label is patched away.
+    // Wrapper.run has 2 return sites → its dispatch label remains.
+    // Total dispatch labels in TAC must be exactly 1.
+    expect(result.tac.match(/outline_dispatch\d*:/g)?.length ?? 0).toBe(1);
+  });
 });
 
 describe("inline recursive static method", () => {

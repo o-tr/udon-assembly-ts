@@ -116,6 +116,8 @@ export interface OutlinedMethodState {
   returnSiteIdxVarName: string;
   returnSites: Array<{ index: number; labelName: string }>;
   nextReturnSiteIndex: number;
+  /** Index of the JUMP(dispatchLabel) instruction at the end of the outlined body. */
+  bodyReturnJumpIdx: number;
   method: {
     parameters: Array<{
       name: string;
@@ -3064,6 +3066,7 @@ function emitInlineOutlinedBody(
   // the deferred dispatch label.  bodyReturnLabel is also the target for
   // all early returns inside the outlined body.
   converter.emit(new LabelInstruction(bodyReturnLabel));
+  const bodyReturnJumpIdx = converter.instructions.length;
   converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
 
   // --- Register the outlined method state ---
@@ -3075,6 +3078,7 @@ function emitInlineOutlinedBody(
     returnSiteIdxVarName,
     returnSites: [],
     nextReturnSiteIndex: 1,
+    bodyReturnJumpIdx,
     method: {
       parameters: method.parameters.map((p) => ({
         name: p.name,
@@ -3106,23 +3110,17 @@ function emitInlineOutlinedBody(
     // Invariant: all call sites must be registered before the dispatch is
     // built.  If the converter were ever flushed incrementally, sites
     // registered after this lambda was pushed would be silently missing.
-    if (state.returnSites.length < OUTLINE_MIN_CALL_SITES) {
-      converter.warnAt(
-        state.method.body,
-        "OutlineDispatchInvariant",
-        `Outline dispatch for ${declaringClassName}.${methodName} has ${state.returnSites.length} return site(s), expected at least ${OUTLINE_MIN_CALL_SITES}.`,
-      );
-    }
-    converter.emit(new LabelInstruction(dispatchLabel));
     if (state.returnSites.length === 1) {
-      // Single return site — direct jump, no dispatch table needed.
-      converter.emit(
+      // Only one call site reached this method in pass 2 (pass-1 over-counted).
+      // Patch the body's end-jump to go directly to the single return site,
+      // skipping the dispatch table entirely.
+      converter.instructions[state.bodyReturnJumpIdx] =
         new UnconditionalJumpInstruction(
           createLabel(state.returnSites[0].labelName),
-        ),
-      );
+        );
       return;
     }
+    converter.emit(new LabelInstruction(dispatchLabel));
     const returnSiteIdxVarOp = createVariable(
       returnSiteIdxVarName,
       PrimitiveTypes.int32,
