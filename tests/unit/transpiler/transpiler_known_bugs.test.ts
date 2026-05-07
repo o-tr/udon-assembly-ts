@@ -641,8 +641,8 @@ describe("known transpiler bugs", () => {
       // Previously: [1,2,3] with arr[1]=99 generated DataList with a
       // bounds-check-and-grow loop (Add + get_Count + set_Item overhead).
       // Now: constant-length array literals are lowered to native Udon typed
-      // arrays (SystemDoubleArray), so index assignment uses __Set__ directly
-      // with no bounds-check overhead.
+      // arrays; all-integer initialisers narrow further to SystemInt32Array,
+      // so index assignment uses __Set__ directly with no overhead.
       const source = `
           class Main {
             Start(): void {
@@ -656,13 +656,13 @@ describe("known transpiler bugs", () => {
 
       // Native array ctor and Set/Get — no DataList or DataToken overhead
       expect(result.uasm).toContain(
-        "SystemDoubleArray.__ctor__SystemInt32__SystemDoubleArray",
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );
       expect(result.uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
       expect(result.uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       expect(result.uasm).not.toContain("VRCSDK3DataDataList");
       expect(result.uasm).not.toContain("VRCSDK3DataDataToken");

@@ -322,10 +322,10 @@ describe("optimizer regression tests", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // [KNOWN FAIL] compare:uasm — cases not yet improved (remove it.fails when fixed)
+  // UdonSharp parity: number[] with all-integer literal initialisers
   // ─────────────────────────────────────────────────────────────────────────
-  describe("[KNOWN FAIL] UdonSharp parity gaps", () => {
-    it.fails("array_index_mutation should stay on Int32Array path (why: still widened to SingleArray)", () => {
+  describe("UdonSharp parity: integer-literal array narrowing", () => {
+    it("array_index_mutation should stay on Int32Array path", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -346,7 +346,6 @@ describe("optimizer regression tests", () => {
       const optimized = transpiler.transpile(source, { optimize: true });
       const optimizedCount = countUasmInstructions(optimized.uasm);
 
-      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(optimized.uasm).toContain(
         "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );
@@ -356,7 +355,7 @@ describe("optimizer regression tests", () => {
       expect(optimizedCount).toBeLessThanOrEqual(63);
     });
 
-    it.fails("array_reassign_then_read should avoid float-conversion array pipeline (why: still SingleArray-based)", () => {
+    it("array_reassign_then_read should avoid float-conversion array pipeline", () => {
       const source = `
         import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
         import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -377,7 +376,6 @@ describe("optimizer regression tests", () => {
       const optimized = transpiler.transpile(source, { optimize: true });
       const optimizedCount = countUasmInstructions(optimized.uasm);
 
-      // TODO: convert to regular `it(...)` once the bug is fixed.
       expect(optimized.uasm).toContain(
         "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );

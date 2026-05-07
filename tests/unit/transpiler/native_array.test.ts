@@ -19,7 +19,7 @@ describe("native array optimization", () => {
     buildExternRegistryFromFiles([]);
   });
 
-  describe("array literal → SystemDoubleArray (number[])", () => {
+  describe("array literal → SystemInt32Array (number[] with integer literals)", () => {
     it("emits native ctor and no DataToken on array literal", () => {
       const { uasm } = transpile(`
         class Demo {
@@ -28,13 +28,13 @@ describe("native array optimization", () => {
           }
         }
       `);
-      // Native ctor must be present
+      // Integer-literal narrowing: number[] with all-integer init → Int32Array
       expect(uasm).toContain(
-        "SystemDoubleArray.__ctor__SystemInt32__SystemDoubleArray",
+        "SystemInt32Array.__ctor__SystemInt32__SystemInt32Array",
       );
       // Native set must be present for each element
       expect(uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
       // No DataList or DataToken externs should appear for this array
       expect(uasm).not.toContain("VRCSDK3DataDataToken.__ctor__");
@@ -51,7 +51,7 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       // No DataToken unwrap
       expect(uasm).not.toContain("DataToken");
@@ -67,9 +67,33 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
       expect(uasm).not.toContain("DataToken");
+    });
+
+    it("emits cast + native Set when a number variable is written to narrowed Int32Array", () => {
+      // Regression: values[1] = total where total is a number (Double) variable
+      // previously caused UdonVMException because Double was pushed to an
+      // Int32Array.__Set__ extern that expects SystemInt32.
+      const { uasm } = transpile(`
+        class Demo {
+          Start(): void {
+            const values = [1, 2, 3, 4];
+            let total: number = 0;
+            for (const v of values) { total = total + v; }
+            values[1] = total;
+            Debug.Log(values[1]);
+          }
+        }
+      `);
+      expect(uasm).toContain(
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
+      );
+      // A Double→Int32 conversion must appear before the Set
+      expect(uasm).toContain(
+        "SystemConvert.__ToInt32__SystemDouble__SystemInt32",
+      );
     });
 
     it("emits native Get+Set for compound assignment arr[i] += v", () => {
@@ -82,10 +106,10 @@ describe("native array optimization", () => {
         }
       `);
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       expect(uasm).toContain(
-        "SystemDoubleArray.__Set__SystemInt32_SystemDouble__SystemVoid",
+        "SystemInt32Array.__Set__SystemInt32_SystemInt32__SystemVoid",
       );
     });
 
@@ -98,7 +122,7 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemInt32Array.__get_Length__SystemInt32");
       // No DataList Count
       expect(uasm).not.toContain("__get_Count__");
     });
@@ -115,9 +139,9 @@ describe("native array optimization", () => {
           }
         }
       `);
-      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemInt32Array.__get_Length__SystemInt32");
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       // No DataList get_Item
       expect(uasm).not.toContain("__get_Item__");
@@ -141,9 +165,9 @@ describe("native array optimization", () => {
         }
       `);
       // Must use native externs (not DataList get_Item)
-      expect(uasm).toContain("SystemDoubleArray.__get_Length__SystemInt32");
+      expect(uasm).toContain("SystemInt32Array.__get_Length__SystemInt32");
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       expect(uasm).not.toContain("__get_Item__");
       // The forof_native_continue label must appear in the assembled output
@@ -327,9 +351,9 @@ describe("native array optimization", () => {
           }
         }
       `);
-      // Native externs from 'fixed'
+      // Native externs from 'fixed' (integer-literal narrowing → Int32Array)
       expect(uasm).toContain(
-        "SystemDoubleArray.__Get__SystemInt32__SystemDouble",
+        "SystemInt32Array.__Get__SystemInt32__SystemInt32",
       );
       // DataList externs from 'dynamic'
       expect(uasm).toContain("VRCSDK3DataDataList");

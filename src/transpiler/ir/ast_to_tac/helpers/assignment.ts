@@ -126,7 +126,37 @@ export function assignToTarget(
         this.emit(new CastInstruction(intIndex, index));
         nativeIndex = intIndex;
       }
-      this.emit(new ArrayAssignmentInstruction(array, nativeIndex, value));
+      // Coerce values to the native array's element type when the symbol
+      // table's declared element type (e.g. Double for number[]) differs from
+      // the narrowed array's actual element type (e.g. Int32 after
+      // integer-literal narrowing).  Without this, storing a Double into a
+      // SystemInt32Array.__Set__ extern that expects SystemInt32 causes a Udon
+      // VM heap-type mismatch.
+      let nativeValue = value;
+      const valueType = this.getOperandType(value);
+      if (valueType.udonType !== arrayType.elementType.udonType) {
+        if (value.kind === TACOperandKind.Constant) {
+          const coerced = coerceConstantToType.call(
+            this,
+            value as ConstantOperand,
+            arrayType.elementType,
+          );
+          if (coerced) nativeValue = coerced;
+        } else {
+          // Non-constant: emit a runtime cast (e.g. Double→Int32 via
+          // SystemConvert.__ToInt32__SystemDouble__SystemInt32) so that the
+          // value type matches the narrowed array's element type.
+          const castDest = this.newTemp(arrayType.elementType);
+          this.emit(new CastInstruction(castDest, value));
+          nativeValue = castDest;
+        }
+      }
+      this.emit(
+        new ArrayAssignmentInstruction(array, nativeIndex, nativeValue),
+      );
+      // Return the original value (not the coerced nativeValue) to preserve
+      // JS assignment-expression semantics: `let x = arr[0] = d` must yield
+      // the Double `d`, not the Int32 coerced for the array Set.
       return value;
     }
     // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
