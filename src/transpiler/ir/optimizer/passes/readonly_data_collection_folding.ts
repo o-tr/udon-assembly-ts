@@ -458,15 +458,18 @@ export const readonlyDataCollectionFolding = (
       // adds have already occurred (nextIndex > 0 || contents.size > 0), the
       // init window is closed and we transition to post-init so that further
       // Add/SetValue via any alias is treated as a mutation.
+      // Exported dest: dest is visible outside the method scope → invalidate.
       if (
         assign.src.kind === TACOperandKind.Variable &&
         assign.dest.kind === TACOperandKind.Variable
       ) {
         const srcName = (assign.src as VariableOperand).name;
         const destVar = assign.dest as VariableOperand;
-        if (!destVar.isExported) {
-          for (const c of candidates.values()) {
-            if (c.aliasNames.has(srcName)) {
+        for (const c of candidates.values()) {
+          if (c.aliasNames.has(srcName)) {
+            if (destVar.isExported) {
+              invalidate(candidates, c);
+            } else {
               // Evict destVar from any other candidate before adding to this one.
               for (const cOther of [...candidates.values()]) {
                 if (cOther !== c && cOther.aliasNames.has(destVar.name)) {
@@ -482,8 +485,8 @@ export const readonlyDataCollectionFolding = (
               ) {
                 c.phase = "post-init";
               }
-              break;
             }
+            break;
           }
         }
       }

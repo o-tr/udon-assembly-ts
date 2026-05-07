@@ -1016,4 +1016,28 @@ describe("readonlyDataCollectionFolding", () => {
     const text = stringify(result.instructions);
     expect(text).toContain("get_Item");
   });
+
+  it("invalidates via transitive alias to exported variable (Block B exported path)", () => {
+    // alias = t0 (init-phase Var alias), then exportedList = alias (Block B).
+    // exportedList is exported → candidate must be invalidated.
+    const dl = tDL(0);
+    const tok = tDT(1);
+    const alias = vDL("list");
+    const exported = vDL("exportedList", { isExported: true });
+    const dest = tDT(3);
+
+    const instructions = [
+      new CallInstruction(dl, "DataList.__ctor__", []),
+      new CallInstruction(tok, DT_STR_SIG, [cStr("hi")]),
+      new MethodCallInstruction(undefined, dl, "Add", [tok]),
+      new AssignmentInstruction(alias, dl), // alias registered, phase → post-init
+      new AssignmentInstruction(exported, alias), // Block B: exported dest → invalidate
+      new MethodCallInstruction(dest, alias, "get_Item", [cInt(0)]),
+    ];
+
+    const result = readonlyDataCollectionFolding(instructions);
+    expect(result.changed).toBe(false);
+    const text = stringify(result.instructions);
+    expect(text).toContain("get_Item");
+  });
 });
