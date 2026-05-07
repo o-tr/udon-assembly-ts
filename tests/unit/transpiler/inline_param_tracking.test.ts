@@ -509,10 +509,13 @@ describe("inline instance tracking across method boundaries", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
     // D3 dispatch must be skipped — divergent return types (number vs string).
-    // The absence of d3_method_next/d3_method_end labels proves no dispatch
-    // table was emitted for this call.
+    // The absence of d3_method labels proves no dispatch table was emitted.
     expect(result.tac).not.toContain("d3_method_next");
     expect(result.tac).not.toContain("d3_method_end");
+    // The diagnostic warning confirms the intended code path was taken.
+    expect(
+      result.diagnostics?.some((d) => d.code === "D3DispatchReturnTypeMismatch"),
+    ).toBe(true);
   });
 
   it("re-lowers object literal args with interface parameter types in untracked dispatch", () => {
