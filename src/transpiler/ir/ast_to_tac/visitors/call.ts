@@ -471,6 +471,10 @@ function emitDispatchResultDefaults(
   returnType: TypeSymbol | undefined,
 ): void {
   if (!dispatchResult) return;
+  const key = operandTrackingKey(dispatchResult);
+  if (key && converter.dispatchResultFlags) {
+    converter.dispatchResultFlags.set(key, false);
+  }
   converter.emit(
     new AssignmentInstruction(
       dispatchResult,
@@ -1067,6 +1071,9 @@ function tryUntrackedInlineDispatch(
   const handleVar = normalizeOperandToInt32(converter, object);
   const endLabel = converter.newLabel("untracked_call_end");
 
+  const flagKey = dispatchResult
+    ? operandTrackingKey(dispatchResult)
+    : undefined;
   // Track inline return info across branches for inline-like return types.
   let resultInlineMapping:
     | { prefix: string; className: string }
@@ -1101,6 +1108,9 @@ function tryUntrackedInlineDispatch(
       ),
     );
     if (!inlineRes) {
+      if (flagKey && converter.dispatchResultFlags) {
+        converter.dispatchResultFlags.delete(flagKey);
+      }
       converter.instructions.length = savedInstructionCount;
       converter.tempCounter = savedTempCounter;
       converter.labelCounter = savedLabelCounter;
@@ -1135,6 +1145,13 @@ function tryUntrackedInlineDispatch(
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
     converter.restoreInlineInstanceState(branchAllInlineSnapshot);
+  }
+
+  if (!dispatchFailed && dispatchResult) {
+    const key = operandTrackingKey(dispatchResult);
+    if (key && converter.dispatchResultFlags) {
+      converter.dispatchResultFlags.set(key, true);
+    }
   }
 
   if (dispatchFailed) return null;
@@ -1356,6 +1373,9 @@ function tryD3MethodDispatch(
     | null
     | undefined;
 
+  const flagKey = dispatchResult
+    ? operandTrackingKey(dispatchResult)
+    : undefined;
   for (const [instId, info] of dispInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
     const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
@@ -1378,6 +1398,9 @@ function tryD3MethodDispatch(
       ),
     );
     if (!inlineRes) {
+      if (flagKey && converter.dispatchResultFlags) {
+        converter.dispatchResultFlags.delete(flagKey);
+      }
       converter.instructions.length = savedInstructionCount;
       converter.tempCounter = savedTempCounter;
       converter.labelCounter = savedLabelCounter;
@@ -1419,6 +1442,13 @@ function tryD3MethodDispatch(
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
     converter.restoreInlineInstanceState(branchAllInlineSnapshot);
+  }
+
+  if (!dispatchFailed && dispatchResult) {
+    const key = operandTrackingKey(dispatchResult);
+    if (key && converter.dispatchResultFlags) {
+      converter.dispatchResultFlags.set(key, true);
+    }
   }
 
   if (dispatchFailed) return null;

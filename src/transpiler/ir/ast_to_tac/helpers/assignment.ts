@@ -664,12 +664,27 @@ export function wrapDataToken(
   if (valueType.name === ExternTypes.dataToken.name) {
     return value;
   }
+
+  const valueKey = operandTrackingKey(value);
+  if (valueKey && this.dispatchResultFlags?.get(valueKey) === false) {
+    const safeConst = createConstant(0, PrimitiveTypes.int32);
+    const externSig = this.requireExternSignature(
+      "DataToken",
+      "op_Implicit",
+      "method",
+      ["int"],
+      "DataToken",
+    );
+    const safeToken = this.newTemp(ExternTypes.dataToken);
+    this.emit(new CallInstruction(safeToken, externSig, [safeConst]));
+    return safeToken;
+  }
+
   if (
     valueType instanceof InterfaceTypeSymbol &&
     valueType.name &&
     isAllInlineInterface(this, valueType.name)
   ) {
-    const valueKey = operandTrackingKey(value);
     const info = valueKey ? this.resolveInlineInstance(valueKey) : undefined;
     // Only collapse to a compile-time constant when the operand IS the
     // canonical `__inst_*__handle` slot directly. For parameters or local
