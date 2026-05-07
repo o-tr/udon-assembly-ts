@@ -1,4 +1,4 @@
----
+﻿---
 created: 2026-05-07T18:30:00+09:00
 updated: 2026-05-07T18:30:00+09:00
 status: open
@@ -28,11 +28,10 @@ This is a separate, larger refactor that should be tracked independently from th
 
 ## Dependencies
 
-- Requires completion of `stub-bigint-migration-for-int-parameters` (PR #209)
+- Requires completion of stub bigint migration (`issues/2026-05-07T024002-stub-bigint-migration-for-int-parameters.md`)
 - May coordinate with TypeID emitter alignment (`GetUdonTypeID()` return type)
 - Would need transpiler changes to recognize branded types and emit correct TAC instructions
 
 ## References
 
 - Migration issue: `issues/2026-05-07T024002-stub-bigint-migration-for-int-parameters.md`
-- Plan file: `~/.claude/plans/drifting-conjuring-walrus.md` (§ Phase C)
