@@ -40,14 +40,10 @@ export class DataToken {
       typeof this._value === "bigint"
         ? this._value
         : BigInt(
-            typeof this._value === "number"
-              ? Number.isFinite(this._value)
-                ? Math.trunc(this._value)
-                : 0
-              : typeof this._value === "string" ||
-                  typeof this._value === "boolean"
-                ? this._value
-                : 0,
+            (() => {
+              const n = Number(this._value);
+              return Number.isFinite(n) ? Math.trunc(n) : 0;
+            })(),
           );
     return BigInt.asIntN(32, v) as UdonInt;
   }
