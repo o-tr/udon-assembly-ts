@@ -65,4 +65,5 @@ migration that is safe to land standalone.
 
 ## References
 
+- Branded bigint subtypes: [branded-bigint-subtypes](./2026-05-07T183000-branded-bigint-subtypes.md)
 - Baseline branch: `feat/number-double-mapping`
