@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-const INT32_ADD = "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32";
+const INT32_ADD =
+  "SystemInt32.__op_Addition__SystemInt32_SystemInt32__SystemInt32";
 const DOUBLE_ADD =
   "SystemDouble.__op_Addition__SystemDouble_SystemDouble__SystemDouble";
 const INT32_MUL =
@@ -138,5 +139,7 @@ describe("binary expression expected-type propagation", () => {
     `);
     // 1.5 is not an integer — should NOT be silently retyped to Int32
     expect(result.uasm).not.toContain(INT32_ADD);
+    // The addition must still happen via Double arithmetic
+    expect(result.uasm).toContain(DOUBLE_ADD);
   });
 });

@@ -492,7 +492,10 @@ function widenNumericOperands(
     ) {
       const rv = (right as ConstantOperand).value;
       if (typeof rv === "number" && Number.isInteger(rv)) {
-        const retyped = retypeNumericConstant(right as ConstantOperand, leftSym);
+        const retyped = retypeNumericConstant(
+          right as ConstantOperand,
+          leftSym,
+        );
         if (retyped) return { left, right: retyped };
       }
     }
@@ -506,7 +509,10 @@ function widenNumericOperands(
     ) {
       const lv = (left as ConstantOperand).value;
       if (typeof lv === "number" && Number.isInteger(lv)) {
-        const retyped = retypeNumericConstant(left as ConstantOperand, rightSym);
+        const retyped = retypeNumericConstant(
+          left as ConstantOperand,
+          rightSym,
+        );
         if (retyped) return { left: retyped, right };
       }
     }
