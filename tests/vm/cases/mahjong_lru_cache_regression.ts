@@ -10,7 +10,7 @@ class LRUCache {
   private cache: Map<string, unknown>;
   private readonly maxSize: UdonInt;
 
-  constructor(maxSize: UdonInt = UdonTypeConverters.toUdonInt(1000)) {
+  constructor(maxSize: UdonInt = 1000n as UdonInt) {
     if (maxSize <= 0) {
       throw new Error("LRUCache maxSize must be positive");
     }
@@ -34,7 +34,7 @@ class LRUCache {
 
     this.cache.set(key, value);
 
-    if (this.cache.size > this.maxSize) {
+    if (BigInt(this.cache.size) > this.maxSize) {
       const firstKey = this.cache.keys().next().value;
       if (firstKey !== undefined) {
         this.cache.delete(firstKey);
@@ -47,7 +47,7 @@ class LRUCache {
   }
 
   size(): UdonInt {
-    return UdonTypeConverters.toUdonInt(this.cache.size);
+    return BigInt(this.cache.size) as UdonInt;
   }
 
   has(key: string): boolean {
@@ -58,7 +58,7 @@ class LRUCache {
 @UdonBehaviour()
 export class MahjongLruCacheRegression extends UdonSharpBehaviour {
   Start(): void {
-    const cache = new LRUCache(UdonTypeConverters.toUdonInt(3));
+    const cache = new LRUCache(3n as UdonInt);
     cache.set("a", "hello");
     Debug.Log(cache.has("a") ? "True" : "False");
     Debug.Log(cache.get("a") as string);

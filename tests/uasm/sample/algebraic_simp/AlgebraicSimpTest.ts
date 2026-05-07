@@ -5,14 +5,14 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class AlgebraicSimpTest extends UdonSharpBehaviour {
-  private value: UdonInt = 0 as UdonInt;
+  private value: UdonInt = 0n as UdonInt;
 
   Start(): void {
-    this.value = 10 as UdonInt;
-    const a: UdonInt = (this.value + (0 as UdonInt)) as UdonInt;
-    const b: UdonInt = (this.value * (1 as UdonInt)) as UdonInt;
-    const c: UdonInt = (this.value - (0 as UdonInt)) as UdonInt;
-    const d: UdonInt = (this.value * (0 as UdonInt)) as UdonInt;
+    this.value = 10n as UdonInt;
+    const a: UdonInt = (this.value + (0n as UdonInt)) as UdonInt;
+    const b: UdonInt = (this.value * (1n as UdonInt)) as UdonInt;
+    const c: UdonInt = (this.value - (0n as UdonInt)) as UdonInt;
+    const d: UdonInt = (this.value * (0n as UdonInt)) as UdonInt;
     Debug.Log(a);
     Debug.Log(b);
     Debug.Log(c);

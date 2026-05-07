@@ -16,7 +16,7 @@ export class ConvertOverload extends UdonSharpBehaviour {
     Debug.Log(intFromFloat); // 4 (Convert rounds, not truncates)
 
     // Convert.ToInt32 with UdonInt argument (identity)
-    const intVal: UdonInt = 42 as UdonInt;
+    const intVal: UdonInt = 42n as UdonInt;
     const intFromInt: UdonInt = Convert.ToInt32(intVal);
     Debug.Log(intFromInt); // 42
 

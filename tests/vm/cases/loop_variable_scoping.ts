@@ -8,9 +8,9 @@ export class LoopVariableScoping extends UdonSharpBehaviour {
   Start(): void {
     // First loop with variable 'i'
     for (
-      let i: UdonInt = 0 as UdonInt;
-      i < (3 as UdonInt);
-      i = (i + 1) as UdonInt
+      let i: UdonInt = 0n as UdonInt;
+      i < (3n as UdonInt);
+      i = (i + 1n) as UdonInt
     ) {
       Debug.Log(i);
     }
@@ -18,9 +18,9 @@ export class LoopVariableScoping extends UdonSharpBehaviour {
 
     // Second loop reusing 'i' - should start fresh
     for (
-      let i: UdonInt = 10 as UdonInt;
-      i < (13 as UdonInt);
-      i = (i + 1) as UdonInt
+      let i: UdonInt = 10n as UdonInt;
+      i < (13n as UdonInt);
+      i = (i + 1n) as UdonInt
     ) {
       Debug.Log(i);
     }

@@ -19,7 +19,7 @@ class Hand {
     this.tiles = tiles;
   }
   tileCount(): UdonInt {
-    return UdonTypeConverters.toUdonInt(this.tiles.length);
+    return BigInt(this.tiles.length) as UdonInt;
   }
   firstKind(): UdonInt {
     return this.tiles[0].kind;
@@ -30,11 +30,11 @@ class Hand {
 export class HandTileCountMethod extends UdonSharpBehaviour {
   Start(): void {
     const hand = new Hand([
-      new Tile(UdonTypeConverters.toUdonInt(3)),
-      new Tile(UdonTypeConverters.toUdonInt(7)),
-      new Tile(UdonTypeConverters.toUdonInt(12)),
+      new Tile(3n as UdonInt),
+      new Tile(7n as UdonInt),
+      new Tile(12n as UdonInt),
     ]);
-    Debug.Log(hand.tileCount() as number);
-    Debug.Log(hand.firstKind() as number);
+    Debug.Log(Number(hand.tileCount()));
+    Debug.Log(Number(hand.firstKind()));
   }
 }

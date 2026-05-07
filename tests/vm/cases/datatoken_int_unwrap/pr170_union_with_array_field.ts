@@ -27,7 +27,7 @@ type Result = Win | Loss;
 class M {
   private selectBest(a: Result, b: Result): Result {
     if (a.tag && b.tag) {
-      return (a.value as number) >= (b.value as number) ? a : b;
+      return Number(a.value) >= Number(b.value) ? a : b;
     }
     if (a.tag) return a;
     if (b.tag) return b;
@@ -44,10 +44,10 @@ class M {
 export class Pr170UnionWithArrayField extends UdonSharpBehaviour {
   Start(): void {
     const m = new M();
-    const r = m.compute(UdonTypeConverters.toUdonInt(11));
+    const r = m.compute(11n as UdonInt);
     Debug.Log(r.tag ? "WIN" : "LOSS");
     if (r.tag) {
-      Debug.Log(r.value as number); // 11
+      Debug.Log(Number(r.value)); // 11
       Debug.Log(r.list.length); // 2
     }
   }

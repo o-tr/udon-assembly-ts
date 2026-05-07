@@ -7,11 +7,11 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class UnaryNegationTyped extends UdonSharpBehaviour {
   Start(): void {
     // Unary negation on UdonInt constant
-    const a: UdonInt = -10 as UdonInt;
+    const a: UdonInt = -10n as UdonInt;
     Debug.Log(a); // -10
 
     // Unary negation on UdonInt variable
-    const x: UdonInt = 42 as UdonInt;
+    const x: UdonInt = 42n as UdonInt;
     const negX: UdonInt = -x as UdonInt;
     Debug.Log(negX); // -42
 

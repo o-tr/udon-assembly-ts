@@ -8,7 +8,7 @@ import type { UdonInt } from "./UdonTypes.js";
 
 @UdonStub("UdonSharpRuntime_List")
 export class UdonList<T> {
-  Count: UdonInt = 0 as UdonInt;
+  Count: UdonInt = 0n as UdonInt;
 
   Add(_value: T): void {}
   Remove(_value: T): boolean {
@@ -21,7 +21,7 @@ export class UdonList<T> {
     return false;
   }
   IndexOf(_value: T): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
   Insert(_index: UdonInt, _value: T): void {}
   Sort(): void {}
@@ -48,7 +48,7 @@ export class UdonList<T> {
 
 @UdonStub("UdonSharpRuntime_Dictionary")
 export class UdonDictionary<TKey, TValue> {
-  Count: UdonInt = 0 as UdonInt;
+  Count: UdonInt = 0n as UdonInt;
 
   Add(_key: TKey, _value: TValue): void {}
   Remove(_key: TKey): boolean {
@@ -75,7 +75,7 @@ export class UdonDictionary<TKey, TValue> {
 
 @UdonStub("UdonSharpRuntime_Queue")
 export class UdonQueue<T> {
-  Count: UdonInt = 0 as UdonInt;
+  Count: UdonInt = 0n as UdonInt;
 
   Enqueue(_value: T): void {}
   Dequeue(): T {
@@ -104,7 +104,7 @@ export class UdonQueue<T> {
 
 @UdonStub("UdonSharpRuntime_Stack")
 export class UdonStack<T> {
-  Count: UdonInt = 0 as UdonInt;
+  Count: UdonInt = 0n as UdonInt;
 
   Push(_value: T): void {}
   Pop(): T {
@@ -134,7 +134,7 @@ export class UdonStack<T> {
 
 @UdonStub("UdonSharpRuntime_HashSet")
 export class UdonHashSet<T> {
-  Count: UdonInt = 0 as UdonInt;
+  Count: UdonInt = 0n as UdonInt;
 
   Add(_value: T): boolean {
     return false;

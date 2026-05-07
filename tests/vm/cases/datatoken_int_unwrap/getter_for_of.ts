@@ -30,13 +30,13 @@ class Hand {
 export class GetterForOf extends UdonSharpBehaviour {
   Start(): void {
     const hand = new Hand([
-      new Tile(UdonTypeConverters.toUdonInt(2)),
-      new Tile(UdonTypeConverters.toUdonInt(3)),
-      new Tile(UdonTypeConverters.toUdonInt(5)),
+      new Tile(2n as UdonInt),
+      new Tile(3n as UdonInt),
+      new Tile(5n as UdonInt),
     ]);
     let sum = 0;
     for (const tile of hand.tiles) {
-      sum += tile.kind as number;
+      sum += Number(tile.kind);
     }
     Debug.Log(sum);
   }

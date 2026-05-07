@@ -24,7 +24,7 @@ export class DataList {
   Insert(_index: UdonInt, _value: DataToken): void {}
   Sort(): void {}
   IndexOf(_value: DataToken): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
   TryGetValue(_index: UdonInt, _value: DataToken): boolean {
     return false;
@@ -79,6 +79,7 @@ export class DataDictionary {
     | DataToken
     | DataList
     | number
+    | bigint
     | boolean
     | ((...args: DataToken[]) => DataToken | DataList | boolean | undefined)
     | ((...args: DataToken[]) => void);

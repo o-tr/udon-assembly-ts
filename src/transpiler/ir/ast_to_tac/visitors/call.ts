@@ -5102,6 +5102,8 @@ export function getUdonTypeConverterTargetType(
       return PrimitiveTypes.byte;
     case "toUdonInt":
       return PrimitiveTypes.int32;
+    case "toUdonUInt":
+      return PrimitiveTypes.uint32;
     case "toUdonFloat":
       return PrimitiveTypes.single;
     case "toUdonDouble":

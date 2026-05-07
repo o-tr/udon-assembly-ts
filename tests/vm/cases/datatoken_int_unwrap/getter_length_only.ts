@@ -30,9 +30,9 @@ class Hand {
 export class GetterLengthOnly extends UdonSharpBehaviour {
   Start(): void {
     const hand = new Hand([
-      new Tile(UdonTypeConverters.toUdonInt(2)),
-      new Tile(UdonTypeConverters.toUdonInt(3)),
-      new Tile(UdonTypeConverters.toUdonInt(5)),
+      new Tile(2n as UdonInt),
+      new Tile(3n as UdonInt),
+      new Tile(5n as UdonInt),
     ]);
     Debug.Log(hand.tiles.length);
   }

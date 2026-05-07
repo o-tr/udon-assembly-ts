@@ -5,14 +5,14 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class DiamondSimpTest extends UdonSharpBehaviour {
-  private score: UdonInt = 0 as UdonInt;
+  private score: UdonInt = 0n as UdonInt;
 
   Start(): void {
-    this.score = 75 as UdonInt;
+    this.score = 75n as UdonInt;
     // biome-ignore lint/complexity/noUselessTernary: intentional — tests diamond simplification of `cond ? true : false` pattern
-    const passed: boolean = this.score >= (60 as UdonInt) ? true : false;
+    const passed: boolean = this.score >= (60n as UdonInt) ? true : false;
     // biome-ignore lint/complexity/noUselessTernary: intentional — tests diamond simplification of `cond ? true : false` pattern
-    const failed: boolean = this.score < (60 as UdonInt) ? true : false;
+    const failed: boolean = this.score < (60n as UdonInt) ? true : false;
     Debug.Log(passed);
     Debug.Log(failed);
   }

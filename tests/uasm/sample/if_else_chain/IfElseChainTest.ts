@@ -6,14 +6,14 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class IfElseChainTest extends UdonSharpBehaviour {
   Start(): void {
-    const x: UdonInt = 5 as UdonInt;
-    let result: UdonInt = 0 as UdonInt;
-    if (x > (10 as UdonInt)) {
-      result = 1 as UdonInt;
-    } else if (x > (3 as UdonInt)) {
-      result = 2 as UdonInt;
+    const x: UdonInt = 5n as UdonInt;
+    let result: UdonInt = 0n as UdonInt;
+    if (x > (10n as UdonInt)) {
+      result = 1n as UdonInt;
+    } else if (x > (3n as UdonInt)) {
+      result = 2n as UdonInt;
     } else {
-      result = 3 as UdonInt;
+      result = 3n as UdonInt;
     }
     Debug.Log(result);
   }

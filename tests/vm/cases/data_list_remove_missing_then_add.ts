@@ -21,7 +21,7 @@ export class DataListRemoveMissingThenAdd extends UdonSharpBehaviour {
     Debug.Log(removedMissing);
     Debug.Log(removedOne);
     Debug.Log(list.Count);
-    Debug.Log(list.get_Item(0 as UdonInt).Double);
-    Debug.Log(list.get_Item(1 as UdonInt).Double);
+    Debug.Log(list.get_Item(0n as UdonInt).Double);
+    Debug.Log(list.get_Item(1n as UdonInt).Double);
   }
 }

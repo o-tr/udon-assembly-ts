@@ -15,10 +15,10 @@ export class DatalistNestedMutation extends UdonSharpBehaviour {
     list.Add(new DataToken(3.0));
     list.Add(new DataToken(4.0));
 
-    list.set_Item(1 as UdonInt, new DataToken(5.0));
-    list.set_Item(2 as UdonInt, new DataToken(9.0));
+    list.set_Item(1n as UdonInt, new DataToken(5.0));
+    list.set_Item(2n as UdonInt, new DataToken(9.0));
 
-    Debug.Log(list.get_Item(1 as UdonInt).Double);
-    Debug.Log(list.get_Item(2 as UdonInt).Double);
+    Debug.Log(list.get_Item(1n as UdonInt).Double);
+    Debug.Log(list.get_Item(2n as UdonInt).Double);
   }
 }

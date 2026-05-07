@@ -58,34 +58,34 @@ class Tile {
   }
 
   toString(): string {
-    return ID_TO_STRING[this.code as number];
+    return ID_TO_STRING[Number(this.code)];
   }
 
   static parse(str: string): Tile {
     switch (str) {
       case "1m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(0));
+        return Tile.fromCode(0n as UdonInt);
       case "2m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(1));
+        return Tile.fromCode(1n as UdonInt);
       case "5m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(4));
+        return Tile.fromCode(4n as UdonInt);
       case "9m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(8));
+        return Tile.fromCode(8n as UdonInt);
       case "1z":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(27));
+        return Tile.fromCode(27n as UdonInt);
       case "4z":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(30));
+        return Tile.fromCode(30n as UdonInt);
       case "5z":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(31));
+        return Tile.fromCode(31n as UdonInt);
       case "7z":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(33));
+        return Tile.fromCode(33n as UdonInt);
       default:
         throw new Error(`Unsupported tile literal: ${str}`);
     }
   }
 
   static fromKind(kind: UdonInt, isRed?: boolean): Tile {
-    const k = kind as number;
+    const k = Number(kind);
     if (k < 0 || k > 33) {
       throw new Error(`Invalid TileKind: ${k}`);
     }
@@ -99,7 +99,7 @@ class Tile {
   }
 
   static fromCode(code: UdonInt): Tile {
-    const c = code as number;
+    const c = Number(code);
     if (c < 0 || c > 36) {
       throw new Error(`Invalid TileCode: ${c}`);
     }
@@ -114,16 +114,16 @@ class Tile {
     for (let i = 0; i < 34; i += 1) {
       instances.push(
         new Tile(
-          UdonTypeConverters.toUdonInt(i),
-          UdonTypeConverters.toUdonInt(i),
+          BigInt(i) as UdonInt,
+          BigInt(i) as UdonInt,
           false,
         ),
       );
     }
     for (let suitIdx = 0; suitIdx < 3; suitIdx += 1) {
-      const kind = UdonTypeConverters.toUdonInt(suitIdx * 9 + 4);
+      const kind = BigInt(suitIdx * 9 + 4) as UdonInt;
       instances.push(
-        new Tile(kind, UdonTypeConverters.toUdonInt(34 + suitIdx), true),
+        new Tile(kind, BigInt(34 + suitIdx) as UdonInt, true),
       );
     }
     Tile._instances = instances;
@@ -131,14 +131,14 @@ class Tile {
   }
 
   static nextDoraKind(kind: UdonInt): UdonInt {
-    const k = kind as number;
+    const k = Number(kind);
     if (k < 27) {
-      return UdonTypeConverters.toUdonInt(k % 9 === 8 ? k - 8 : k + 1);
+      return BigInt(k % 9 === 8 ? k - 8 : k + 1) as UdonInt;
     }
     if (k <= 30) {
-      return UdonTypeConverters.toUdonInt(((k - 27 + 1) % 4) + 27);
+      return BigInt(((k - 27 + 1) % 4) + 27) as UdonInt;
     }
-    return UdonTypeConverters.toUdonInt(((k - 31 + 1) % 3) + 31);
+    return BigInt(((k - 31 + 1) % 3) + 31) as UdonInt;
   }
 
   isDoraIndicatorFor(tile: Tile): boolean {

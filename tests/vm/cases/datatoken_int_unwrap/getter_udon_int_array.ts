@@ -22,11 +22,11 @@ class Container {
 export class GetterUdonIntArray extends UdonSharpBehaviour {
   Start(): void {
     const c = new Container([
-      UdonTypeConverters.toUdonInt(2),
-      UdonTypeConverters.toUdonInt(3),
-      UdonTypeConverters.toUdonInt(5),
+      2n as UdonInt,
+      3n as UdonInt,
+      5n as UdonInt,
     ]);
-    Debug.Log(c.values[0] as number);
+    Debug.Log(Number(c.values[0]));
     Debug.Log(c.values.length);
   }
 }

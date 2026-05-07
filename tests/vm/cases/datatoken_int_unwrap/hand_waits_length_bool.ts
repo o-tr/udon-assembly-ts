@@ -27,13 +27,13 @@ export class HandWaitsLengthBool extends UdonSharpBehaviour {
   Start(): void {
     const r = new TenpaiResult(
       [
-        new Tile(UdonTypeConverters.toUdonInt(5)),
-        new Tile(UdonTypeConverters.toUdonInt(8)),
+        new Tile(5n as UdonInt),
+        new Tile(8n as UdonInt),
       ],
       true,
     );
     Debug.Log(r.isTenpai ? "True" : "False");
     Debug.Log(r.waits.length);
-    Debug.Log(r.waits[0].kind as number);
+    Debug.Log(Number(r.waits[0].kind));
   }
 }

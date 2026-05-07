@@ -7,8 +7,8 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class IntArithmetic extends UdonSharpBehaviour {
   Start(): void {
     // Integer division truncates toward zero
-    const a: UdonInt = 7 as UdonInt;
-    const b: UdonInt = 2 as UdonInt;
+    const a: UdonInt = 7n as UdonInt;
+    const b: UdonInt = 2n as UdonInt;
     const div: UdonInt = (a / b) as UdonInt;
     Debug.Log(div); // 3 (integer division)
 
@@ -17,7 +17,7 @@ export class IntArithmetic extends UdonSharpBehaviour {
     Debug.Log(mod); // 1
 
     // Negative integer division truncates toward zero
-    const c: UdonInt = -7 as UdonInt;
+    const c: UdonInt = -7n as UdonInt;
     const negDiv: UdonInt = (c / b) as UdonInt;
     Debug.Log(negDiv); // -3
 

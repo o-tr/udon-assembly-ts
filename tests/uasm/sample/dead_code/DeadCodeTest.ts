@@ -6,10 +6,10 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class DeadCodeTest extends UdonSharpBehaviour {
   Start(): void {
-    const x: UdonInt = 10 as UdonInt;
-    const y: UdonInt = 20 as UdonInt;
+    const x: UdonInt = 10n as UdonInt;
+    const y: UdonInt = 20n as UdonInt;
     const _z: UdonInt = (x + y) as UdonInt;
-    const w: UdonInt = (x * (2 as UdonInt)) as UdonInt;
+    const w: UdonInt = (x * (2n as UdonInt)) as UdonInt;
     Debug.Log(w);
     return;
     // biome-ignore lint/correctness/noUnreachable: intentional — tests dead code elimination of unreachable code

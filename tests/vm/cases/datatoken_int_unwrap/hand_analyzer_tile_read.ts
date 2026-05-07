@@ -23,8 +23,8 @@ class Tile {
     for (let i = 0; i < 10; i += 1) {
       instances.push(
         new Tile(
-          UdonTypeConverters.toUdonInt(i),
-          UdonTypeConverters.toUdonInt(i),
+          BigInt(i) as UdonInt,
+          BigInt(i) as UdonInt,
         ),
       );
     }
@@ -33,7 +33,7 @@ class Tile {
   }
 
   static get(idx: UdonInt): Tile {
-    return Tile._getInstances()[idx as number];
+    return Tile._getInstances()[Number(idx)];
   }
 }
 
@@ -48,9 +48,9 @@ class HandAnalyzer {
   sumKinds(hand: Hand): UdonInt {
     let sum = 0;
     for (let i = 0; i < hand.tiles.length; i += 1) {
-      sum += hand.tiles[i].kind as number;
+      sum += Number(hand.tiles[i].kind);
     }
-    return UdonTypeConverters.toUdonInt(sum);
+    return BigInt(sum) as UdonInt;
   }
 
   firstKind(hand: Hand): UdonInt {
@@ -63,11 +63,11 @@ export class HandAnalyzerTileRead extends UdonSharpBehaviour {
   Start(): void {
     const analyzer = new HandAnalyzer();
     const hand = new Hand([
-      Tile.get(UdonTypeConverters.toUdonInt(2)),
-      Tile.get(UdonTypeConverters.toUdonInt(3)),
-      Tile.get(UdonTypeConverters.toUdonInt(5)),
+      Tile.get(2n as UdonInt),
+      Tile.get(3n as UdonInt),
+      Tile.get(5n as UdonInt),
     ]);
-    Debug.Log(analyzer.sumKinds(hand) as number);
-    Debug.Log(analyzer.firstKind(hand) as number);
+    Debug.Log(Number(analyzer.sumKinds(hand)));
+    Debug.Log(Number(analyzer.firstKind(hand)));
   }
 }

@@ -36,7 +36,7 @@ export class DataToken {
     return Boolean(this._value);
   }
   get Int(): UdonInt {
-    return (Number(this._value) | 0) as UdonInt;
+    return BigInt(Number(this._value) | 0) as UdonInt;
   }
   get Long(): UdonLong {
     return BigInt(Math.trunc(Number(this._value))) as UdonLong;
@@ -135,7 +135,7 @@ class DataListImpl {
   _items: DataToken[] = [];
 
   get Count(): UdonInt {
-    return this._items.length as UdonInt;
+    return BigInt(this._items.length) as UdonInt;
   }
 
   Add(value: DataToken): void {
@@ -143,11 +143,11 @@ class DataListImpl {
   }
 
   get_Item(index: UdonInt): DataToken {
-    return this._items[index as number];
+    return this._items[Number(index)];
   }
 
   set_Item(index: UdonInt, value: DataToken): void {
-    this._items[index as number] = value;
+    this._items[Number(index)] = value;
   }
 
   Remove(value: DataToken): boolean {
@@ -158,11 +158,11 @@ class DataListImpl {
   }
 
   RemoveAt(index: UdonInt): void {
-    this._items.splice(index as number, 1);
+    this._items.splice(Number(index), 1);
   }
 
   Insert(index: UdonInt, value: DataToken): void {
-    this._items.splice(index as number, 0, value);
+    this._items.splice(Number(index), 0, value);
   }
 
   Sort(): void {
@@ -182,11 +182,11 @@ class DataListImpl {
 
   IndexOf(value: DataToken): UdonInt {
     const idx = this._items.findIndex((item) => item._equals(value));
-    return idx as UdonInt;
+    return BigInt(idx) as UdonInt;
   }
 
   TryGetValue(index: UdonInt, outToken: DataToken): boolean {
-    const i = index as number;
+    const i = Number(index);
     if (i >= 0 && i < this._items.length) {
       outToken._copyFrom(this._items[i]);
       return true;
@@ -253,7 +253,7 @@ export class DataDictionary {
   private _values: DataToken[] = [];
 
   get Count(): UdonInt {
-    return this._keys.length as UdonInt;
+    return BigInt(this._keys.length) as UdonInt;
   }
 
   // Allow index signature for compatibility
@@ -261,6 +261,7 @@ export class DataDictionary {
     | DataToken
     | DataList
     | number
+    | bigint
     | boolean
     | ((...args: DataToken[]) => DataToken | DataList | boolean | undefined)
     | ((...args: DataToken[]) => void);

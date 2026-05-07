@@ -29,7 +29,7 @@ class Holder {
 @UdonBehaviour()
 export class GetterSingleTile extends UdonSharpBehaviour {
   Start(): void {
-    const holder = new Holder(new Tile(UdonTypeConverters.toUdonInt(7)));
-    Debug.Log(holder.tile.kind as number);
+    const holder = new Holder(new Tile(7n as UdonInt));
+    Debug.Log(Number(holder.tile.kind));
   }
 }

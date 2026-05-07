@@ -25,16 +25,10 @@ class Hand {
 @UdonBehaviour()
 export class HandTileKindReadback extends UdonSharpBehaviour {
   Start(): void {
-    const t0 = new Tile(
-      UdonTypeConverters.toUdonInt(0),
-      UdonTypeConverters.toUdonInt(0),
-    );
-    const t1 = new Tile(
-      UdonTypeConverters.toUdonInt(1),
-      UdonTypeConverters.toUdonInt(1),
-    );
+    const t0 = new Tile(0n as UdonInt, 0n as UdonInt);
+    const t1 = new Tile(1n as UdonInt, 1n as UdonInt);
     const hand = new Hand([t0, t1]);
-    Debug.Log(hand.tiles[0].kind as number);
-    Debug.Log(hand.tiles[1].kind as number);
+    Debug.Log(Number(hand.tiles[0].kind));
+    Debug.Log(Number(hand.tiles[1].kind));
   }
 }

@@ -5,15 +5,15 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class BooleanShortcircuitSideeffectsTest extends UdonSharpBehaviour {
-  private counter: UdonInt = 0 as UdonInt;
+  private counter: UdonInt = 0n as UdonInt;
 
   private bumpTrue(): boolean {
-    this.counter = (this.counter + (1 as UdonInt)) as UdonInt;
+    this.counter = (this.counter + (1n as UdonInt)) as UdonInt;
     return true;
   }
 
   private bumpFalse(): boolean {
-    this.counter = (this.counter + (1 as UdonInt)) as UdonInt;
+    this.counter = (this.counter + (1n as UdonInt)) as UdonInt;
     return false;
   }
 

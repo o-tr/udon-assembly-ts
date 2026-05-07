@@ -6,7 +6,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class StringConcatMixedTypes extends UdonSharpBehaviour {
   Start(): void {
-    const intVal: UdonInt = 42 as UdonInt;
+    const intVal: UdonInt = 42n as UdonInt;
     const boolVal: boolean = true;
     const floatVal: number = 3.25;
 

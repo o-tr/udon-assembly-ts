@@ -47,7 +47,7 @@ export class Transform extends Component {
   localRotation: Quaternion = new Quaternion(0, 0, 0, 1);
   localScale: Vector3 = new Vector3(1, 1, 1);
   parent: Transform = null as unknown as Transform;
-  childCount: UdonInt = 0 as UdonInt;
+  childCount: UdonInt = 0n as UdonInt;
 
   SetParent(_parent: Transform): void {}
 
@@ -144,7 +144,7 @@ export class Mathf {
     return 0 as UdonFloat;
   }
   static CeilToInt(_value: UdonFloat): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
   static Clamp(_value: UdonFloat, _min: UdonFloat, _max: UdonFloat): UdonFloat {
     return 0 as UdonFloat;
@@ -156,7 +156,7 @@ export class Mathf {
     return 0 as UdonFloat;
   }
   static FloorToInt(_value: UdonFloat): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
   static Lerp(_a: UdonFloat, _b: UdonFloat, _t: UdonFloat): UdonFloat {
     return 0 as UdonFloat;
@@ -174,7 +174,7 @@ export class Mathf {
     return 0 as UdonFloat;
   }
   static RoundToInt(_value: UdonFloat): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
   static Sin(_value: UdonFloat): UdonFloat {
     return 0 as UdonFloat;
@@ -376,6 +376,6 @@ export class Animator extends Component {
     return 0 as UdonFloat;
   }
   GetInteger(_name: string): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
 }
