@@ -546,7 +546,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
   {
     name: "inline_structural_untracked_return",
     sourceFile: "inline_structural_untracked_return.ts",
-    expectedLogs: ["True", "99", "True", "200"],
+    expectedLogs: ["True", "99", "True", "200", "True", "99", "True", "200"],
   },
   // --- TS/Udon string compat methods ---
   {

@@ -102,6 +102,12 @@ export type InlineParamSaveEntry = {
   // can put the caller's value back after the inlined body returns.
   // The restore is emitted as a COPY into the original named slot.
   valueBackup?: { temp: TACOperand; slotType: TypeSymbol };
+  // Set to true when saveAndBindInlineParams freshly added this param name to
+  // untrackedStructuralHandleVars (i.e. it was not already in the set before
+  // binding). restoreInlineParams uses this to remove the entry so that
+  // identically-named parameters from later inline expansions are not
+  // incorrectly flagged as untracked.
+  addedToUntrackedSet?: boolean;
 };
 export type InlineParamSave = Map<string, InlineParamSaveEntry>;
 
@@ -867,8 +873,18 @@ export function saveAndBindInlineParams(
           // relying on a sibling-populated prefix that may never be written on
           // this execution path.
           const argKey = operandTrackingKey(argVar);
-          if (argKey && converter.untrackedStructuralHandleVars.has(argKey)) {
+          if (
+            argKey &&
+            converter.untrackedStructuralHandleVars.has(argKey) &&
+            !converter.untrackedStructuralHandleVars.has(param.name)
+          ) {
             converter.untrackedStructuralHandleVars.add(param.name);
+            // Mark the save entry so restoreInlineParams removes this name
+            // from the set when the inline expansion finishes, preventing
+            // stale membership from leaking into later expansions that reuse
+            // the same parameter name with a tracked argument.
+            const savedEntry = saved.get(param.name);
+            if (savedEntry) savedEntry.addedToUntrackedSet = true;
           }
           continue;
         }
@@ -990,6 +1006,12 @@ export function restoreInlineParams(
           entry.valueBackup.temp,
         ),
       );
+    }
+    // Remove untracked-handle status added during this expansion so that
+    // later inline expansions reusing the same parameter name with a tracked
+    // argument are not incorrectly penalised with D-3 dispatch.
+    if (entry.addedToUntrackedSet) {
+      converter.untrackedStructuralHandleVars.delete(name);
     }
   }
 }

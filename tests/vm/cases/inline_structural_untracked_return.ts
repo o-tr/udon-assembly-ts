@@ -51,6 +51,29 @@ class Outer {
   }
 }
 
+// Covers the saveAndBindInlineParams propagation path:
+// an already-untracked local is forwarded through a parameter and then
+// returned directly from the callee, which should also trigger
+// returnTrackingInvalidated (via untrackedStructuralHandleVars propagation
+// from arg → param in saveAndBindInlineParams).
+class Wrapper {
+  static wrap(p: WaitInfo): WaitInfo {
+    return p;
+  }
+}
+
+class OuterViaWrap {
+  static analyzeViaWrap(x: number): WaitInfo {
+    const result = Inner.getInfo(x); // untracked (NC with method-call LHS)
+    if (x > 100) {
+      // result is untracked → saveAndBindInlineParams propagates to p
+      // → `return p` triggers returnTrackingInvalidated → D-3 dispatch
+      return Wrapper.wrap(result);
+    }
+    return { found: true, count: 99 }; // tracked sibling
+  }
+}
+
 @UdonBehaviour()
 export class InlineStructuralUntrackedReturn extends UdonSharpBehaviour {
   Start(): void {
@@ -64,6 +87,15 @@ export class InlineStructuralUntrackedReturn extends UdonSharpBehaviour {
     // After fix: should read count=200
     const r2 = Outer.analyze(200);
     Debug.Log(r2.found); // True
-    Debug.Log(r2.count); // 200 (correct) or 99 (bug)
+    Debug.Log(r2.count); // 200
+
+    // Call 3 & 4: same via the param-forwarding path (OuterViaWrap)
+    const r3 = OuterViaWrap.analyzeViaWrap(50);
+    Debug.Log(r3.found); // True
+    Debug.Log(r3.count); // 99
+
+    const r4 = OuterViaWrap.analyzeViaWrap(200);
+    Debug.Log(r4.found); // True
+    Debug.Log(r4.count); // 200
   }
 }

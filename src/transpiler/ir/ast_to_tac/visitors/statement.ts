@@ -528,6 +528,9 @@ export function visitVariableDeclaration(
           className: structuralType.name,
         });
       }
+      // Clear any stale untracked-handle status: the variable now holds a
+      // tracked value, so a subsequent `return dest` should not be penalised.
+      this.untrackedStructuralHandleVars.delete(destKey);
     } else if (structuralType && srcKey && destKey && !sourcePrefix) {
       // The source is a named operand (not a null constant — those produce
       // srcKey=undefined) but has no inlineInstanceMap entry. This means

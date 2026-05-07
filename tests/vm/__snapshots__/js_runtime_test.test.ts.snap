@@ -715,6 +715,10 @@ exports[`JS Runtime Equivalence Tests > JS: inline_structural_untracked_return 1
   "99",
   "True",
   "200",
+  "True",
+  "99",
+  "True",
+  "200",
 ]
 `;
 
