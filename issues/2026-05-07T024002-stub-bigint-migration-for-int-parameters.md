@@ -29,7 +29,7 @@ branded `UdonInt`/`UdonLong`/`UdonUInt`/`UdonULong` subtypes).
 | Line | Member | Before | After |
 |---|---|---|---|
 | 54 | `SendCustomEventDelayedFrames(_eventName: string, _delayFrames: bigint)` | `number` | `bigint` |
-| 68, 72 | `GetUdonTypeID(): bigint` / generic | `number` | `bigint`, returns `0n` |
+| 68, 72 | `GetUdonTypeID(): UdonLong` / generic | `number` | `UdonLong`, returns `0n as UdonLong` |
 | 147–149 | `MidiNoteOn/Off/ControlChange(_channel, _number, _velocity: bigint)` | `number` | `bigint` |
 
 ### `src/stubs/DataContainerTypes.ts` — No changes needed
@@ -43,7 +43,7 @@ use branded types when available.
 
 | Line | Member | Before | After |
 |---|---|---|---|
-| 231 | `GetServerTimeInMilliseconds(): bigint` | `number` | `bigint`, uses `BigInt(Date.now())` |
+| 231 | `GetServerTimeInMilliseconds(): UdonLong` | `number` | `UdonLong`, uses `BigInt(Date.now()) as UdonLong` |
 
 ### Stays as `number` (= Double) — verified correct
 
@@ -65,5 +65,4 @@ migration that is safe to land standalone.
 
 ## References
 
-- Plan file: `~/.claude/plans/drifting-conjuring-walrus.md` (§ Phase C)
 - Baseline branch: `feat/number-double-mapping`
