@@ -1072,44 +1072,44 @@ function tryUntrackedInlineDispatch(
   const endLabel = converter.newLabel("untracked_call_end");
 
   const flagKey = dispatchResult ? operandTrackingKey(dispatchResult) : undefined;
-    // Track inline return info across branches for inline-like return types.
-    let resultInlineMapping:
-      | { prefix: string; className: string }
-      | null
-      | undefined;
+  // Track inline return info across branches for inline-like return types.
+  let resultInlineMapping:
+    | { prefix: string; className: string }
+    | null
+    | undefined;
 
-    for (const [, info] of candidateInstances) {
+ for (const [, info] of candidateInstances) {
       const branchMapSnapshot = new Map(converter.inlineInstanceMap);
       const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
       const nextLabel = converter.newLabel("untracked_call_next");
       const cond = converter.newTemp(PrimitiveTypes.boolean);
- // Compare against the live __handle variable rather than a compile-time
-    // constant so that cross-module and parameter-passing scenarios see the
-    // runtime value.  This is safe because nextInstanceId starts at 1
-    // (converter.ts), so an uninitialised slot (default 0) never aliases a
-    // valid instance ID.
-    const instanceHandle = createVariable(
-      `${info.prefix}__handle`,
-      PrimitiveTypes.int32,
-    );
-    converter.emit(
-      new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
-    );
-    converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
+      // Compare against the live __handle variable rather than a compile-time
+      // constant so that cross-module and parameter-passing scenarios see the
+// runtime value.  This is safe because nextInstanceId starts at 1
+      // (converter.ts), so an uninitialised slot (default 0) never aliases a
+      // valid instance ID.
+      const instanceHandle = createVariable(
+        `${info.prefix}__handle`,
+        PrimitiveTypes.int32,
+      );
+      converter.emit(
+        new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
+      );
+      converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
-    const inlineRes = converter.withInlineCallSite(propAccess, () =>
-      converter.visitInlineInstanceMethodCallWithContext(
-        info.className,
-        info.prefix,
-        propAccess.property,
-        dispatchArgs,
-      ),
-    );
-    if (!inlineRes) {
-      if (flagKey && converter.dispatchResultFlags) {
-        converter.dispatchResultFlags.delete(flagKey);
-      }
-      converter.instructions.length = savedInstructionCount;
+      const inlineRes = converter.withInlineCallSite(propAccess, () =>
+        converter.visitInlineInstanceMethodCallWithContext(
+          info.className,
+          info.prefix,
+          propAccess.property,
+          dispatchArgs,
+        ),
+      );
+      if (!inlineRes) {
+        if (flagKey && converter.dispatchResultFlags) {
+          converter.dispatchResultFlags.delete(flagKey);
+        }
+        converter.instructions.length = savedInstructionCount;
         converter.tempCounter = savedTempCounter;
         converter.labelCounter = savedLabelCounter;
         converter.inlineInstanceMap = savedInlineInstanceMap;
@@ -1371,11 +1371,11 @@ function tryD3MethodDispatch(
     | null
     | undefined;
 
-const flagKey = dispatchResult ? operandTrackingKey(dispatchResult) : undefined;
+  const flagKey = dispatchResult ? operandTrackingKey(dispatchResult) : undefined;
     for (const [instId, info] of dispInstances) {
       const branchMapSnapshot = new Map(converter.inlineInstanceMap);
       const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
- const nextLabel = converter.newLabel("d3_method_next");
+      const nextLabel = converter.newLabel("d3_method_next");
       const cond = converter.newTemp(PrimitiveTypes.boolean);
       const instanceHandle = useInterfaceInstanceIdDispatch
         ? createConstant(instId, PrimitiveTypes.int32)
