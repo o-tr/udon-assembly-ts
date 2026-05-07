@@ -1316,6 +1316,10 @@ function tryD3MethodDispatch(
           className,
           propAccess.property,
         );
+        // selectedClasses ⊆ candidateClasses, and candidateClasses is built by
+        // filtering classes that already passed resolveClassMethod (line 1267),
+        // so res cannot be undefined here. The safety-net below handles any
+        // unexpected case via D3DispatchMethodNotFound.
         if (!res) continue;
         const raw = res.method.returnType;
         const sym = raw?.name
