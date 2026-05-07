@@ -80,7 +80,6 @@ import {
   type VariableOperand,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
-import { OUTLINE_MIN_CALL_SITES } from "../converter.js";
 import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
 
