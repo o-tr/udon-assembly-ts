@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 const ID_TO_STRING: string[] = [
@@ -113,32 +110,25 @@ class Tile {
     const instances: Tile[] = [];
     for (let i = 0; i < 34; i += 1) {
       instances.push(
-        new Tile(
-          BigInt(i) as UdonInt,
-          BigInt(i) as UdonInt,
-          false,
-        ),
+        new Tile(BigInt(i) as UdonInt, BigInt(i) as UdonInt, false),
       );
     }
     for (let suitIdx = 0; suitIdx < 3; suitIdx += 1) {
       const kind = BigInt(suitIdx * 9 + 4) as UdonInt;
-      instances.push(
-        new Tile(kind, BigInt(34 + suitIdx) as UdonInt, true),
-      );
+      instances.push(new Tile(kind, BigInt(34 + suitIdx) as UdonInt, true));
     }
     Tile._instances = instances;
     return instances;
   }
 
   static nextDoraKind(kind: UdonInt): UdonInt {
-    const k = Number(kind);
-    if (k < 27) {
-      return BigInt(k % 9 === 8 ? k - 8 : k + 1) as UdonInt;
+    if (kind < 27n) {
+      return (kind % 9n === 8n ? kind - 8n : kind + 1n) as UdonInt;
     }
-    if (k <= 30) {
-      return BigInt(((k - 27 + 1) % 4) + 27) as UdonInt;
+    if (kind <= 30n) {
+      return (((kind - 27n + 1n) % 4n) + 27n) as UdonInt;
     }
-    return BigInt(((k - 31 + 1) % 3) + 31) as UdonInt;
+    return (((kind - 31n + 1n) % 3n) + 31n) as UdonInt;
   }
 
   isDoraIndicatorFor(tile: Tile): boolean {

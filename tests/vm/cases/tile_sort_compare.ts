@@ -1,7 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
 import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
-import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 class Tile {
@@ -12,8 +11,7 @@ class Tile {
   }
 
   static compare(a: Tile, b: Tile): UdonInt {
-    const kindDiff = Number(a.kind) - Number(b.kind);
-    return BigInt(kindDiff) as UdonInt;
+    return (a.kind - b.kind) as UdonInt;
   }
 }
 

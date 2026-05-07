@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 // PR #170 residual regression: discriminated union where WIN branch has an

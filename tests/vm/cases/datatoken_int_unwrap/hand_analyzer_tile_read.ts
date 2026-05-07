@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 class Tile {
@@ -21,12 +18,7 @@ class Tile {
     if (Tile._instances !== null) return Tile._instances;
     const instances: Tile[] = [];
     for (let i = 0; i < 10; i += 1) {
-      instances.push(
-        new Tile(
-          BigInt(i) as UdonInt,
-          BigInt(i) as UdonInt,
-        ),
-      );
+      instances.push(new Tile(BigInt(i) as UdonInt, BigInt(i) as UdonInt));
     }
     Tile._instances = instances;
     return instances;

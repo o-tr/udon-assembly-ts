@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 const ID_TO_STRING: string[] = [
@@ -99,26 +96,19 @@ class Tile {
     const instances: Tile[] = [];
     for (let i = 0; i < 34; i += 1) {
       instances.push(
-        new Tile(
-          BigInt(i) as UdonInt,
-          BigInt(i) as UdonInt,
-          false,
-        ),
+        new Tile(BigInt(i) as UdonInt, BigInt(i) as UdonInt, false),
       );
     }
     for (let suitIdx = 0; suitIdx < 3; suitIdx += 1) {
       const kind = BigInt(suitIdx * 9 + 4) as UdonInt;
-      instances.push(
-        new Tile(kind, BigInt(34 + suitIdx) as UdonInt, true),
-      );
+      instances.push(new Tile(kind, BigInt(34 + suitIdx) as UdonInt, true));
     }
     Tile._instances = instances;
     return instances;
   }
 
   static compare(a: Tile, b: Tile): UdonInt {
-    const kindDiff = Number(a.kind) - Number(b.kind);
-    if (kindDiff !== 0) return BigInt(kindDiff) as UdonInt;
+    if (a.kind !== b.kind) return (a.kind - b.kind) as UdonInt;
     if (a.isRed === b.isRed) return 0n as UdonInt;
     return a.isRed ? (-1n as UdonInt) : (1n as UdonInt);
   }
