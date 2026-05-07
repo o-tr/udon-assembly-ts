@@ -295,6 +295,7 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "mahjong_lru_cache_regression",
     sourceFile: "mahjong_lru_cache_regression.ts",
     expectedLogs: ["True", "hello", "2", "False", "True", "3", "0"],
+    disallowedExterns: dataTokenReferenceDisallowedExterns,
   },
   // --- Inline-class-owned Tile[] baseline (mahjong-t2 #24 investigation) ---
   // Originally registered with knownFail: true to reproduce mahjong-t2's
