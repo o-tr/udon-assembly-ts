@@ -21,7 +21,7 @@
  * ```
  */
 import { UdonStub } from "./UdonDecorators.js";
-import { type UdonInt, UdonTypeConverters } from "./UdonTypes.js";
+import { type UdonInt, type UdonLong, UdonTypeConverters } from "./UdonTypes.js";
 import type { GameObject, Quaternion, Vector3 } from "./UnityTypes.js";
 
 @UdonStub("UnityEngine.HumanBodyBones")
@@ -228,8 +228,8 @@ export class Networking {
     return false;
   }
 
-  static GetServerTimeInMilliseconds(): bigint {
-    return BigInt(Date.now());
+  static GetServerTimeInMilliseconds(): UdonLong {
+    return Date.now() as unknown as UdonLong;
   }
 }
 

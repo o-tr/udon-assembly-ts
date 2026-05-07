@@ -11,7 +11,7 @@ related_branch: stub-bigint-migration-for-int-parameters
 
 ## Summary
 
-The [stub-bigint-migration](issues/2026-05-07T024002-stub-bigint-migration-for-int-parameters.md) issue migrated bare `number` → `bigint` for integer-typed APIs. While this eliminates unnecessary Double→Int32 conversions at the EXTERN boundary, it loses compile-time type safety: callers cannot distinguish `UdonInt` from `UdonLong` at the TypeScript level.
+The [stub-bigint-migration](./2026-05-07T024002-stub-bigint-migration-for-int-parameters.md) issue migrated bare `number` → `bigint` for integer-typed APIs. While this eliminates unnecessary Double→Int32 conversions at the EXTERN boundary, it loses compile-time type safety: callers cannot distinguish `UdonInt` from `UdonLong` at the TypeScript level.
 
 The cleaner end state is branded subtypes of `bigint` that encode the C# type in the TypeScript type system:
 - `UdonInt extends bigint` — maps to Int32 (32-bit signed)
@@ -28,10 +28,10 @@ This is a separate, larger refactor that should be tracked independently from th
 
 ## Dependencies
 
-- Requires completion of stub bigint migration ([stub-bigint-migration](issues/2026-05-07T024002-stub-bigint-migration-for-int-parameters.md))
+- Requires completion of stub bigint migration ([stub-bigint-migration](./2026-05-07T024002-stub-bigint-migration-for-int-parameters.md))
 - May coordinate with TypeID emitter alignment (`GetUdonTypeID()` return type)
 - Would need transpiler changes to recognize branded types and emit correct TAC instructions
 
 ## References
 
-- Migration issue: [stub-bigint-migration](issues/2026-05-07T024002-stub-bigint-migration-for-int-parameters.md)
+- Migration issue: [stub-bigint-migration](./2026-05-07T024002-stub-bigint-migration-for-int-parameters.md)

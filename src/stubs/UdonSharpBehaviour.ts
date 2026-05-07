@@ -5,7 +5,7 @@
  * スタブをまとめて定義する。
  */
 import { UdonStub } from "./UdonDecorators.js";
-import type { NetworkEventTarget, UdonEventArg } from "./UdonTypes.js";
+import type { NetworkEventTarget, UdonEventArg, UdonLong } from "./UdonTypes.js";
 import type { VRCPlayerApi } from "./VRChatTypes.js";
 
 type UdonInputEventArgs = unknown;
@@ -65,12 +65,12 @@ export class UdonSharpBehaviour {
 
   RequestSerialization(): void {}
 
-  GetUdonTypeID(): bigint {
-    return 0n;
+  GetUdonTypeID(): UdonLong {
+    return 0n as UdonLong;
   }
 
-  static GetUdonTypeID<_T extends UdonSharpBehaviour>(): bigint {
-    return 0n;
+  static GetUdonTypeID<_T extends UdonSharpBehaviour>(): UdonLong {
+    return 0n as UdonLong;
   }
 
   GetUdonTypeName(): string {
