@@ -480,6 +480,41 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.tac).toContain("d3_method_next");
   });
 
+  it("skips D3 dispatch when candidate methods have divergent return types", () => {
+    // Ternary makes the receiver genuinely ambiguous (transpiler cannot trace
+    // it to a single concrete class), so D3 dispatch is attempted.
+    const source = `
+      class NumCheck {
+        getValue(): number { return 1; }
+      }
+      class StrCheck {
+        getValue(): string { return "x"; }
+      }
+      class Helper {
+        static read(c: object): number {
+          return (c as any).getValue() as number;
+        }
+      }
+      class Main {
+        private nc: NumCheck = new NumCheck();
+        private sc: StrCheck = new StrCheck();
+        private flag: boolean = true;
+        Start(): void {
+          const selected: object = this.flag ? this.nc : this.sc;
+          const v = Helper.read(selected);
+          Debug.Log(v);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    // D3 dispatch must be skipped — divergent return types (number vs string).
+    // The absence of d3_method_next/d3_method_end labels proves no dispatch
+    // table was emitted for this call.
+    expect(result.tac).not.toContain("d3_method_next");
+    expect(result.tac).not.toContain("d3_method_end");
+  });
+
   it("re-lowers object literal args with interface parameter types in untracked dispatch", () => {
     const source = `
       interface I {

@@ -1304,20 +1304,51 @@ function tryD3MethodDispatch(
         }
       }
       const selectedClasses = narrowed.size > 0 ? narrowed : candidateClasses;
-      if (narrowed.size === 0) {
+
+      // Check return type consistency before committing to these candidates.
+      // If they diverge, emitting D3DispatchFallback would be misleading.
+      let retTypeUdon: UdonType | undefined;
+      let retTypeName: string | undefined;
+      let retTypeDiverged = false;
+      for (const className of selectedClasses) {
+        const res = resolveClassMethod(converter, className, propAccess.property);
+        if (!res) continue;
+        const raw = res.method.returnType;
+        const sym = raw?.name
+          ? (converter.typeMapper.getAlias(raw.name) ?? raw)
+          : raw;
+        if (retTypeUdon === undefined) {
+          retTypeUdon = sym?.udonType;
+          retTypeName = sym?.name;
+        } else if (sym?.udonType !== retTypeUdon || sym?.name !== retTypeName) {
+          retTypeDiverged = true;
+          break;
+        }
+      }
+
+      if (retTypeDiverged) {
         converter.warnAt(
           propAccess,
-          "D3DispatchFallback",
-          `D3 method dispatch narrowing failed for "${propAccess.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
+          "D3DispatchReturnTypeMismatch",
+          `D3 method dispatch skipped for "${propAccess.property}" — return types differ across candidate classes (${[...selectedClasses].join(", ")}).`,
         );
-      }
-      for (const [instId, info] of converter.allInlineInstances) {
-        if (
-          selectedClasses.has(info.className) &&
-          !seenInstanceIds.has(instId)
-        ) {
-          dispInstances.push([instId, info]);
-          seenInstanceIds.add(instId);
+        // Leave dispInstances empty → falls through to return null below.
+      } else {
+        if (narrowed.size === 0) {
+          converter.warnAt(
+            propAccess,
+            "D3DispatchFallback",
+            `D3 method dispatch narrowing failed for "${propAccess.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
+          );
+        }
+        for (const [instId, info] of converter.allInlineInstances) {
+          if (
+            selectedClasses.has(info.className) &&
+            !seenInstanceIds.has(instId)
+          ) {
+            dispInstances.push([instId, info]);
+            seenInstanceIds.add(instId);
+          }
         }
       }
       // usedErasedFallback: miss path always emits LogError regardless.
@@ -1331,11 +1362,42 @@ function tryD3MethodDispatch(
     return null;
   }
 
-  // Resolve the return type from the first candidate class. For the
-  // interface-implementor path all implementors share the same method
-  // signature, so the first is representative. For the method-name erased-type
-  // fallback, candidateClasses is narrowed to a single class before reaching
-  // this point, so divergent return types cannot occur.
+  // Safety-net: verify return type consistency across all dispatch candidates
+  // (covers the interface-implementor and AST-type paths; the method-name
+  // fallback already checked above).
+  {
+    const seenClasses = new Set<string>();
+    let refUdonType: UdonType | undefined;
+    let refRetName: string | undefined;
+    for (const [, info] of dispInstances) {
+      if (seenClasses.has(info.className)) continue;
+      seenClasses.add(info.className);
+      const res = resolveClassMethod(
+        converter,
+        info.className,
+        propAccess.property,
+      );
+      if (!res) return null;
+      const raw = res.method.returnType;
+      const sym = raw?.name
+        ? (converter.typeMapper.getAlias(raw.name) ?? raw)
+        : raw;
+      if (refUdonType === undefined) {
+        refUdonType = sym?.udonType;
+        refRetName = sym?.name;
+      } else if (sym?.udonType !== refUdonType || sym?.name !== refRetName) {
+        converter.warnAt(
+          propAccess,
+          "D3DispatchReturnTypeMismatch",
+          `D3 method dispatch skipped for "${propAccess.property}" — return types differ across dispatch candidates.`,
+        );
+        return null;
+      }
+    }
+  }
+
+  // Resolve the return type from the first candidate. Return-type consistency
+  // across all candidates is enforced above, so any one is representative.
   const firstClassName = dispInstances[0][1].className;
   const methodResolved = resolveClassMethod(
     converter,

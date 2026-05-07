@@ -15,6 +15,7 @@ export type TranspileWarningCode =
   | "InlineErasedReturnType"
   | "AllInlineInterfaceFallback"
   | "D3DispatchFallback"
+  | "D3DispatchReturnTypeMismatch"
   | "SoAFieldListMissing"
   | "RecursiveSelfCallOvercount"
   | "WriteToGetter"
