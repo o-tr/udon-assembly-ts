@@ -1337,12 +1337,20 @@ export function visitBinaryExpression(
         "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to Int32.",
       );
       if (leftIsLong) {
-        const cast = this.newTemp(PrimitiveTypes.int32);
+        const targetType =
+          leftType.udonType === UdonType.UInt64
+            ? PrimitiveTypes.uint32
+            : PrimitiveTypes.int32;
+        const cast = this.newTemp(targetType);
         this.emit(new CastInstruction(cast, left));
         left = cast;
       }
       if (rightIsLong) {
-        const cast = this.newTemp(PrimitiveTypes.int32);
+        const targetType =
+          rightType.udonType === UdonType.UInt64
+            ? PrimitiveTypes.uint32
+            : PrimitiveTypes.int32;
+        const cast = this.newTemp(targetType);
         this.emit(new CastInstruction(cast, right));
         right = cast;
       }
