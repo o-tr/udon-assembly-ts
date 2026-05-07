@@ -5,7 +5,11 @@
  * スタブをまとめて定義する。
  */
 import { UdonStub } from "./UdonDecorators.js";
-import type { NetworkEventTarget, UdonEventArg } from "./UdonTypes.js";
+import type {
+  NetworkEventTarget,
+  UdonEventArg,
+  UdonLong,
+} from "./UdonTypes.js";
 import type { VRCPlayerApi } from "./VRChatTypes.js";
 
 type UdonInputEventArgs = unknown;
@@ -51,7 +55,7 @@ export class UdonSharpBehaviour {
 
   SendCustomEventDelayedFrames(
     _eventName: string,
-    _delayFrames: number,
+    _delayFrames: bigint,
     _eventTiming?: unknown,
   ): void {}
 
@@ -65,12 +69,12 @@ export class UdonSharpBehaviour {
 
   RequestSerialization(): void {}
 
-  GetUdonTypeID(): number {
-    return 0;
+  GetUdonTypeID(): UdonLong {
+    return 0n as UdonLong;
   }
 
-  static GetUdonTypeID<_T extends UdonSharpBehaviour>(): number {
-    return 0;
+  static GetUdonTypeID<_T extends UdonSharpBehaviour>(): UdonLong {
+    return 0n as UdonLong;
   }
 
   GetUdonTypeName(): string {
@@ -144,9 +148,9 @@ export class UdonSharpBehaviour {
     return true;
   }
 
-  MidiNoteOn(_channel: number, _number: number, _velocity: number): void {}
-  MidiNoteOff(_channel: number, _number: number, _velocity: number): void {}
-  MidiControlChange(_channel: number, _number: number, _value: number): void {}
+  MidiNoteOn(_channel: bigint, _number: bigint, _velocity: bigint): void {}
+  MidiNoteOff(_channel: bigint, _number: bigint, _velocity: bigint): void {}
+  MidiControlChange(_channel: bigint, _number: bigint, _value: bigint): void {}
 
   InputJump(_value: boolean, _args: UdonInputEventArgs): void {}
   InputUse(_value: boolean, _args: UdonInputEventArgs): void {}

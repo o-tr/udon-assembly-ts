@@ -1,7 +1,7 @@
 ---
 created: 2026-05-07T02:40:02+09:00
-updated: 2026-05-07T02:40:02+09:00
-status: open
+updated: 2026-05-07T18:30:00+09:00
+status: resolved
 severity: medium
 component: stubs
 related_branch: feat/number-double-mapping
@@ -22,28 +22,28 @@ The plan agreed during PR design was: replace those `number` declarations
 with `bigint` (which maps to Int64 today and will be the future home of
 branded `UdonInt`/`UdonLong`/`UdonUInt`/`UdonULong` subtypes).
 
-## Locations to migrate (~8 confirmed)
+## Locations migrated
 
-### `src/stubs/UdonSharpBehaviour.ts`
+### `src/stubs/UdonSharpBehaviour.ts` — ✅ Migrated (no overloads)
 
-| Line | Member | Today | Target |
+| Line | Member | Before | After |
 |---|---|---|---|
-| 54 | `SendCustomEventDelayedFrames(_eventName: string, _delayFrames: number)` | `number` | `bigint` (overload, keep `number` overload for back-compat) |
-| 68, 72 | `GetUdonTypeID(): number` / generic | `number` | `bigint` (return-type breaking; coordinate with TypeID emitter, see below) |
-| 147–149 | `MidiNoteOn/Off/ControlChange(_channel, _number, _velocity: number)` | `number` | `bigint` (overload set) |
+| 54 | `SendCustomEventDelayedFrames(_eventName: string, _delayFrames: bigint)` | `number` | `bigint` |
+| 68, 72 | `GetUdonTypeID(): UdonLong` / generic | `number` | `UdonLong`, returns `0n as UdonLong` |
+| 147–149 | `MidiNoteOn/Off/ControlChange(_channel, _number, _velocity: bigint)` | `number` | `bigint` |
 
-### `src/stubs/DataContainerTypes.ts`
+### `src/stubs/DataContainerTypes.ts` — No changes needed
 
-| Line | Member | Today | Target |
+TypeScript limitations prevent union index signatures (`[index: number]` and
+`[index: bigint]` cannot coexist on the same interface). The indexer remains
+`[index: number]`. Consumer code comparing against `TokenType.Int` etc. should
+use branded types when available.
+
+### `src/stubs/VRChatTypes.ts` — ✅ Migrated
+
+| Line | Member | Before | After |
 |---|---|---|---|
-| 13 | `[index: number]: DataToken` | `number` | `[index: number \| bigint]: DataToken` (union signature — `[index: number]` and `[index: bigint]` cannot coexist on the same interface) |
-| 55 | `TokenType!: number` | `number` | `bigint` (breaking; consumer code comparing against `=== TokenType.Int` etc. needs `=== Int<n>`) |
-
-### `src/stubs/VRChatTypes.ts`
-
-| Line | Member | Today | Target |
-|---|---|---|---|
-| 231 | `GetServerTimeInMilliseconds(): number` | `number` | `bigint` (semantically a long anyway) |
+| 231 | `GetServerTimeInMilliseconds(): UdonLong` | `number` | `UdonLong`, uses `BigInt(Date.now()) as UdonLong` |
 
 ### Stays as `number` (= Double) — verified correct
 
@@ -51,27 +51,10 @@ branded `UdonInt`/`UdonLong`/`UdonUInt`/`UdonULong` subtypes).
 `_prevEyeHeightAsMeters`, Vector*.x/y/z, Color channels (0..1), Math
 return values — all genuinely floating-point.
 
-## Required pre-work for `GetUdonTypeID` migration
+## Key decisions
 
-Changing the return type of `GetUdonTypeID` to `bigint` breaks any user code
-that does `=== <numeric-literal>` comparisons. Before flipping, grep the
-TypeID emitter side and align:
-
-```bash
-git grep -n "UdonTypeID\|GetUdonTypeID\|__udonTypeId\|udonTypeId"
-```
-
-Likely emit sites: `src/stubs/UdonDecorators.ts` (`@UdonBehaviour` decorator),
-`src/transpiler/frontend/class_registry.ts` (type ID assignment), reflection
-metadata path (`reflect: true`).
-
-## Required pre-work for `[index: number | bigint]` indexer
-
-Confirm with a minimal test that TypeScript actually accepts a union index
-signature in this position — historically `[index: number]: T` and
-`[index: bigint]: T` cannot coexist on the same interface. If union doesn't
-work, fall back to keeping `number` only for the indexer and document
-that callers must pass through `Number(bigintValue)`.
+- **No overloads**: MIDI parameters and `SendCustomEventDelayedFrames` are replaced directly with `bigint`. No backward-compat overload sets were needed per user feedback on C# int signatures.
+- **DataContainerTypes indexer**: Union index signature `[index: number \| bigint]` is not supported by TypeScript for this interface position. Indexer remains `number`; consumers should use branded types when available.
 
 ## Out-of-scope (future phase)
 
@@ -82,5 +65,5 @@ migration that is safe to land standalone.
 
 ## References
 
-- Plan file: `~/.claude/plans/drifting-conjuring-walrus.md` (§ Phase C)
+- Branded bigint subtypes: [branded-bigint-subtypes](./2026-05-07T183000-branded-bigint-subtypes.md)
 - Baseline branch: `feat/number-double-mapping`
