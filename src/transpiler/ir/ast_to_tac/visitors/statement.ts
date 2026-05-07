@@ -8,6 +8,7 @@ import {
   isPlainObjectType,
   NativeArrayTypeSymbol,
   ObjectType,
+  PrimitiveTypeSymbol,
   PrimitiveTypes,
   type TypeSymbol,
 } from "../../../frontend/type_symbols.js";
@@ -26,6 +27,7 @@ import {
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
+  isNumericUdonType,
   type LiteralNode,
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
@@ -392,10 +394,22 @@ export function visitVariableDeclaration(
       ) {
         this.currentNativeArrayVarName = node.name;
       }
+      // Propagate the declared numeric-primitive type as expected type so that
+      // numeric literals in the initializer (e.g. `let x: UdonInt = a + 1`)
+      // are created with the correct integer type rather than defaulting to Double.
+      // Mirrors the same pattern in visitAssignmentExpression (helpers/assignment.ts).
+      const prevExpectedType = this.currentExpectedType;
+      if (
+        node.type instanceof PrimitiveTypeSymbol &&
+        isNumericUdonType(node.type.udonType)
+      ) {
+        this.currentExpectedType = node.type;
+      }
       try {
         src = this.visitExpression(node.initializer);
       } finally {
         this.currentNativeArrayVarName = null;
+        this.currentExpectedType = prevExpectedType;
       }
     }
 
