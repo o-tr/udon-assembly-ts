@@ -3458,7 +3458,11 @@ export function visitPropertyAccessExpression(
               const fieldList = fieldLists?.get(node.property);
               if (fieldList) {
                 const hdlVar = normalizeOperandToInt32(this, object);
-                const indexVar = emitSoaHandleToIndex(this, hdlVar, soaClassName);
+                const indexVar = emitSoaHandleToIndex(
+                  this,
+                  hdlVar,
+                  soaClassName,
+                );
                 const token = this.newTemp(ExternTypes.dataToken);
                 emitBoundedDataListGetItem(
                   this,
