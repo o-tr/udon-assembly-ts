@@ -211,5 +211,8 @@ describe("structural union isWin dispatch", () => {
     // must emit Debug.LogError instead.
     expect(result.uasm).not.toMatch(/SystemObject\.__get_isWin__SystemBoolean/);
     expect(result.uasm).not.toMatch(/__get_isWin/);
+    // Positive assertion: the safety-net branch must emit the limit-exceeded
+    // diagnostic string so that a future silent removal is caught.
+    expect(result.uasm).toMatch(/D3 dispatch miss \(limit exceeded\)/);
   });
 });
