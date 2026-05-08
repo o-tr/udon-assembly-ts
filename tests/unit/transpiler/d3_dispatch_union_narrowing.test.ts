@@ -24,23 +24,35 @@ export function UdonBehaviour(): ClassDecorator { return () => {}; }
 export class UdonSharpBehaviour {}
 `;
 
-/** Create a fresh pair of temp dirs with stubs.ts already written. */
-function makeTempDirs(): {
-  srcDir: string;
-  outDir: string;
-  cleanup: () => void;
-} {
+/**
+ * Transpile `src` in an isolated temp directory and assert that no
+ * D3DispatchFallback warning is emitted for any file in that directory.
+ * Each call creates fresh temp dirs (with stubs.ts pre-written), runs
+ * BatchTranspiler, and cleans up unconditionally.
+ */
+function assertNoBatchD3(src: string): void {
   const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-src-"));
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-out-"));
-  fs.writeFileSync(path.join(srcDir, "stubs.ts"), STUBS_SRC);
-  return {
-    srcDir,
-    outDir,
-    cleanup: () => {
-      fs.rmSync(srcDir, { recursive: true, force: true });
-      fs.rmSync(outDir, { recursive: true, force: true });
-    },
-  };
+  try {
+    fs.writeFileSync(path.join(srcDir, "stubs.ts"), STUBS_SRC);
+    fs.writeFileSync(path.join(srcDir, "main.ts"), src);
+    const result = new BatchTranspiler().transpile({
+      sourceDir: srcDir,
+      outputDir: outDir,
+      silent: true,
+      useOutputCache: false,
+    });
+    const d3 =
+      result.diagnostics?.filter(
+        (d) =>
+          d.code === "D3DispatchFallback" &&
+          d.location.filePath.includes("main.ts"),
+      ) ?? [];
+    expect(d3).toHaveLength(0);
+  } finally {
+    fs.rmSync(srcDir, { recursive: true, force: true });
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
 }
 
 describe("D3 dispatch union-member narrowing", () => {
@@ -60,7 +72,7 @@ describe("D3 dispatch union-member narrowing", () => {
     // Uses BatchTranspiler with real temp files so that TypeScript's
     // getTypeAtLocation can resolve union members (the inline transpiler
     // cannot resolve imports at test time, causing TypeChecker crashes).
-    const src = `
+    assertNoBatchD3(`
 import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 
 class A {
@@ -88,26 +100,7 @@ class Main extends UdonSharpBehaviour {
     this.readVal(a);
   }
 }
-`;
-    const { srcDir, outDir, cleanup } = makeTempDirs();
-    try {
-      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
-      const result = new BatchTranspiler().transpile({
-        sourceDir: srcDir,
-        outputDir: outDir,
-        silent: true,
-        useOutputCache: false,
-      });
-      const d3 =
-        result.diagnostics?.filter(
-          (d) =>
-            d.code === "D3DispatchFallback" &&
-            d.location.filePath.includes("main.ts"),
-        ) ?? [];
-      expect(d3).toHaveLength(0);
-    } finally {
-      cleanup();
-    }
+`);
   });
 
   it("does not emit D3DispatchFallback when ALL candidateClasses are union members (exact-match case)", () => {
@@ -115,7 +108,7 @@ class Main extends UdonSharpBehaviour {
     // condition change: when candidateClasses == union members exactly (no
     // extra "Noise" class), the old condition `> 0 && < candidateClasses.size`
     // would have left the warning fired; the new `> 0` condition suppresses it.
-    const src = `
+    assertNoBatchD3(`
 import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 
 class X {
@@ -139,26 +132,7 @@ class Main extends UdonSharpBehaviour {
     this.readCode(x);
   }
 }
-`;
-    const { srcDir, outDir, cleanup } = makeTempDirs();
-    try {
-      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
-      const result = new BatchTranspiler().transpile({
-        sourceDir: srcDir,
-        outputDir: outDir,
-        silent: true,
-        useOutputCache: false,
-      });
-      const d3 =
-        result.diagnostics?.filter(
-          (d) =>
-            d.code === "D3DispatchFallback" &&
-            d.location.filePath.includes("main.ts"),
-        ) ?? [];
-      expect(d3).toHaveLength(0);
-    } finally {
-      cleanup();
-    }
+`);
   });
 
   it("does not emit D3DispatchFallback for NamedClass | anonymous-struct union (naming consistency)", () => {
@@ -172,7 +146,7 @@ class Main extends UdonSharpBehaviour {
     //
     // Without this naming consistency the memberSet.has(c) filter would silently
     // exclude the anon-struct candidate and the warning would fire.
-    const src = `
+    assertNoBatchD3(`
 import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 
 class Tile {
@@ -211,26 +185,7 @@ class Main extends UdonSharpBehaviour {
     this.getTiles(h);
   }
 }
-`;
-    const { srcDir, outDir, cleanup } = makeTempDirs();
-    try {
-      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
-      const result = new BatchTranspiler().transpile({
-        sourceDir: srcDir,
-        outputDir: outDir,
-        silent: true,
-        useOutputCache: false,
-      });
-      const d3 =
-        result.diagnostics?.filter(
-          (d) =>
-            d.code === "D3DispatchFallback" &&
-            d.location.filePath.includes("main.ts"),
-        ) ?? [];
-      expect(d3).toHaveLength(0);
-    } finally {
-      cleanup();
-    }
+`);
   });
 
   it("does not emit D3DispatchFallback for nullable union (A | B | null) — nullish member stripped", () => {
@@ -245,7 +200,7 @@ class Main extends UdonSharpBehaviour {
     // If isNullishType were broken (e.g., null not stripped), null would slip into
     // the loop, resolveFromTsType(null) returns ObjectType, the ObjectType guard
     // returns null, and D3DispatchFallback would fire — making the test fail.
-    const src = `
+    assertNoBatchD3(`
 import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 
 class P {
@@ -273,26 +228,7 @@ class Main extends UdonSharpBehaviour {
     reader.read(p);
   }
 }
-`;
-    const { srcDir, outDir, cleanup } = makeTempDirs();
-    try {
-      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
-      const result = new BatchTranspiler().transpile({
-        sourceDir: srcDir,
-        outputDir: outDir,
-        silent: true,
-        useOutputCache: false,
-      });
-      const d3 =
-        result.diagnostics?.filter(
-          (d) =>
-            d.code === "D3DispatchFallback" &&
-            d.location.filePath.includes("main.ts"),
-        ) ?? [];
-      expect(d3).toHaveLength(0);
-    } finally {
-      cleanup();
-    }
+`);
   });
 
   it("still emits D3DispatchFallback when receiver type is not a union (cannot narrow)", () => {
