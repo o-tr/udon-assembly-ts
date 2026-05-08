@@ -8,9 +8,9 @@
  *     which the transpiler rejects (callback must be a single call expression).
  *   - src/vrc/adapters/VRChatInputBridge.ts implements a UdonBehaviour interface
  *     without the @UdonBehaviour decorator.
- * When either batch throws, that directory's warnings are silently lost.  The
- * partial output is still printed; verify coverage by checking which entry
- * points produced output.
+ * When either batch throws, that directory's warnings are not included in the
+ * count (the error is logged to stderr).  The partial output is still printed;
+ * verify coverage by checking which entry points produced output.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -52,8 +52,12 @@ for (const srcDir of MAHJONG_DIRS) {
       allWarnings.push(w);
     }
   } catch (err) {
-    console.error(`\n[count_warnings] batch failed for ${srcDir}: ${(err as Error).message}`);
-    console.error("  Warnings from this batch are not included in the count.\n");
+    console.error(
+      `\n[count_warnings] batch failed for ${srcDir}: ${(err as Error).message}`,
+    );
+    console.error(
+      "  Warnings from this batch are not included in the count.\n",
+    );
   }
 }
 
@@ -72,13 +76,17 @@ for (const w of allWarnings) {
   else bySite.set(key, { w, count: 1 });
 }
 
-console.log(`\nTotal: ${allWarnings.length} warning(s) (${bySite.size} unique)\n`);
+console.log(
+  `\nTotal: ${allWarnings.length} warning(s) (${bySite.size} unique)\n`,
+);
 console.log("By code:");
 for (const [code, n] of [...byCode.entries()].sort((a, b) => b[1] - a[1])) {
   console.log(`  ${code}: ${n}`);
 }
 console.log("\nTop unique sites (top 30):");
-const topSites = [...bySite.values()].sort((a, b) => b.count - a.count).slice(0, 30);
+const topSites = [...bySite.values()]
+  .sort((a, b) => b.count - a.count)
+  .slice(0, 30);
 for (const { w, count } of topSites) {
   const loc = `${w.location.filePath.replace(/.*mahjong-t2\//, "")}:${w.location.line}:${w.location.column}`;
   console.log(`  x${count} [${w.code}] ${loc} — ${w.message.slice(0, 120)}`);

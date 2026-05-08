@@ -11,8 +11,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
-import { BatchTranspiler } from "../../../src/transpiler/index.js";
-import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
+import {
+  BatchTranspiler,
+  TypeScriptToUdonTranspiler,
+} from "../../../src/transpiler/index.js";
 
 // Minimal stubs so TypeScript can fully type-check the test sources.  The
 // transpiler detects @UdonBehaviour by decorator name, not by structural type,
@@ -89,7 +91,12 @@ class Main extends UdonSharpBehaviour {
       useOutputCache: false,
     });
 
-    const d3 = result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
+    const d3 =
+      result.diagnostics?.filter(
+        (d) =>
+          d.code === "D3DispatchFallback" &&
+          d.location.filePath.includes("main_positive.ts"),
+      ) ?? [];
     expect(d3).toHaveLength(0);
   });
 
@@ -133,9 +140,12 @@ class Main extends UdonSharpBehaviour {
       useOutputCache: false,
     });
 
-    const d3 = result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
+    const d3 =
+      result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
     // Only D3 warnings from this test's code matter — filter to the exact file.
-    const d3Here = d3.filter((d) => d.location.filePath.includes("main_exact.ts"));
+    const d3Here = d3.filter((d) =>
+      d.location.filePath.includes("main_exact.ts"),
+    );
     expect(d3Here).toHaveLength(0);
   });
 
@@ -200,8 +210,11 @@ class Main extends UdonSharpBehaviour {
       useOutputCache: false,
     });
 
-    const d3 = result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
-    const d3Here = d3.filter((d) => d.location.filePath.includes("main_anon_union.ts"));
+    const d3 =
+      result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
+    const d3Here = d3.filter((d) =>
+      d.location.filePath.includes("main_anon_union.ts"),
+    );
     expect(d3Here).toHaveLength(0);
   });
 
@@ -228,7 +241,8 @@ class B {
 }
 `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    const d3 = result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
+    const d3 =
+      result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
     expect(d3.length).toBeGreaterThan(0);
   });
 });

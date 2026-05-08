@@ -129,15 +129,14 @@ export class TypeCheckerTypeResolver {
     const names: string[] = [];
     for (const memberType of nonNullish) {
       const resolved = this.resolveFromTsType(memberType);
-      if (resolved === ObjectType) {
-        // An erased union member (e.g. `any`) could match any runtime type.
-        // Silently filtering it out could cause us to dispatch to a too-narrow
-        // subset and miss the erased member at runtime.  Give up narrowing.
+      if (resolved === ObjectType || !resolved.name) {
+        // An erased or unnameable member (e.g. `any`, or a composite type
+        // whose name is empty) could match any runtime type.  Silently
+        // filtering it out could cause dispatch to a too-narrow subset and
+        // miss the erased member at runtime.  Give up narrowing.
         return null;
       }
-      if (resolved.name) {
-        names.push(resolved.name);
-      }
+      names.push(resolved.name);
     }
     return names.length > 0 ? names : null;
   }
