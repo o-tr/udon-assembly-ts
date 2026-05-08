@@ -4823,10 +4823,11 @@ export function emitCopyWithTracking(
           }
         }
       }
-      // If folding failed (null/object value or unhandled type), fall through
-      // with actualSrc still equal to src; the raw COPY is still correct here
-      // because the Udon VM will trap later anyway on type mismatch if the
-      // value is genuinely unrepresentable.
+      // If folding failed (null/object value or dest type not in the switch),
+      // actualSrc stays as src and a mismatched COPY is emitted — the same
+      // behavior as before this fix. The switch covers Int32/Single/Double,
+      // the only dest types reachable via user-written TypeScript today; other
+      // Udon numeric types are latent gaps that are not currently triggered.
     } else {
       const castTemp = this.newTemp(destType);
       this.emit(new CastInstruction(castTemp, src));
