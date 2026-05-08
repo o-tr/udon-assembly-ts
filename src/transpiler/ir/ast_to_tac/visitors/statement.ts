@@ -434,10 +434,9 @@ export function visitVariableDeclaration(
           destType.udonType === UdonType.Single ||
           destType.udonType === UdonType.Double;
         const inferredIsInteger =
+          isNumericUdonType(inferredType.udonType) &&
           inferredType.udonType !== UdonType.Single &&
-          inferredType.udonType !== UdonType.Double &&
-          inferredType.udonType !== UdonType.Boolean &&
-          inferredType.udonType !== UdonType.String;
+          inferredType.udonType !== UdonType.Double;
         if (!(destIsFloat && inferredIsInteger)) {
           destType = inferredType;
         }
@@ -448,10 +447,9 @@ export function visitVariableDeclaration(
             destType.udonType === UdonType.Single ||
             destType.udonType === UdonType.Double;
           const resolvedIsInteger =
+            isNumericUdonType(resolvedType.udonType) &&
             resolvedType.udonType !== UdonType.Single &&
-            resolvedType.udonType !== UdonType.Double &&
-            resolvedType.udonType !== UdonType.Boolean &&
-            resolvedType.udonType !== UdonType.String;
+            resolvedType.udonType !== UdonType.Double;
           if (!(destIsFloat && resolvedIsInteger)) {
             destType = resolvedType;
           }

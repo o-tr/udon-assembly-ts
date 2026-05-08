@@ -6,7 +6,7 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
-import { UdonType } from "../../../frontend/types.js";
+import { isNumericUdonType, UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
@@ -26,6 +26,7 @@ function normalizeToInt32(
 ): TACOperand {
   const type = converter.getOperandType(operand);
   if (type.udonType === UdonType.Int32) return operand;
+  if (!isNumericUdonType(type.udonType)) return operand;
   const temp = converter.newTemp(PrimitiveTypes.int32);
   converter.emitCopyWithTracking(temp, operand);
   return temp;
