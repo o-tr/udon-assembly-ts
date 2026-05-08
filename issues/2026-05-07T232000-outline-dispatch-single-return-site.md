@@ -1,6 +1,6 @@
 ---
 created: 2026-05-07T23:20:00+09:00
-updated: 2026-05-08T01:06:00+09:00
+updated: 2026-05-09T02:00:00+09:00
 status: resolved
 severity: low
 component: transpiler / outline dispatch
@@ -79,7 +79,32 @@ would be misleading.
 
 Low. No correctness impact; UASM-size and diagnostic-noise concern only.
 
+## Resolution
+
+Confirmed implemented in `src/transpiler/ir/ast_to_tac/helpers/inline.ts:3191`
+(verified 2026-05-09). The `pendingOutlineDispatches` lambda detects the
+degenerate case and patches the body's end-jump to point directly to the single
+return site, suppressing both the `OutlineDispatchInvariant` warning and the
+superfluous dispatch-table emission:
+
+```ts
+if (state.returnSites.length === 1) {
+  // Only one call site reached this method in pass 2 (pass-1 over-counted).
+  // Patch the body's end-jump to go directly to the single return site,
+  // skipping the dispatch table entirely.
+  converter.instructions[state.bodyReturnJumpIdx] =
+    new UnconditionalJumpInstruction(
+      createLabel(state.returnSites[0].labelName),
+    );
+  return;
+}
+```
+
+This is functionally equivalent to the preferred Option (1): the outline body
+is retained (no full re-inline), but the degenerate dispatch overhead is
+eliminated. The `OutlineDispatchInvariant` warning is no longer emitted.
+
 ## References
 
-- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:3102-3125`
+- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:3191`
 - mahjong-t2 transpile log (post-merge of PR #217 / #218, 2026-05-07)
