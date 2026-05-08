@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T02:10:00+09:00
-updated: 2026-05-09T02:30:00+09:00
+updated: 2026-05-09T02:50:00+09:00
 status: open
 severity: medium
 component: transpiler / IR / recursive inline
@@ -29,9 +29,12 @@ if (isPlainObjectType(returnType)) {
 return emitInlineRecursiveStaticMethod(this, methodName, method, returnType, ...);
 ```
 
-The `InlineErasedReturnType` diagnostic is emitted but the method proceeds with
-the original (unerased) `returnType`, so the return-value slot and any caller
-`as T` casts may operate on a type-mismatched heap slot.
+The `InlineErasedReturnType` diagnostic is emitted but `isErasedReturn` is never
+propagated back to the outer call site. The internal return slot is correctly
+promoted to DataToken inside `emitInlineRecursiveStaticMethod` (via
+`resolveInlineReturnType` at `inline.ts:2269`), but the outer caller context
+never learns the slot holds a DataToken and may therefore apply a direct copy or
+wrong unwrap instead of the DataToken-specific `as T` path.
 
 ## Why the promotion is non-trivial for recursive methods
 
