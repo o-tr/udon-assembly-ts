@@ -517,11 +517,20 @@ export function visitVariableDeclaration(
         if (src.kind === TACOperandKind.Constant) {
           const constSrc = src as ConstantOperand;
           const raw = constSrc.value;
+          let folded = false;
           if (raw !== null && typeof raw !== "object") {
             const num = typeof raw === "number" ? raw : Number(raw);
             if (!Number.isNaN(num)) {
               emitSrc = createConstant(num, destType);
+              folded = true;
             }
+          }
+          if (!folded) {
+            // Constant folding failed (null/object/NaN raw); fall back to
+            // runtime cast to avoid storing wrong-typed StrongBox in float slot.
+            const castTemp = this.newTemp(destType);
+            this.emit(new CastInstruction(castTemp, src));
+            emitSrc = castTemp;
           }
         } else {
           const castTemp = this.newTemp(destType);
