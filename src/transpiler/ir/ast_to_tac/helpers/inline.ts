@@ -1128,10 +1128,14 @@ function ensureSoaOperands(
   // never collide. Class 0 gets offset 0 (unchanged behaviour); subsequent
   // classes get offset = classIndex * SOA_PARTITION_SIZE.
   if (!converter.soaClassOffsets.has(className)) {
-    converter.soaClassOffsets.set(
-      className,
-      converter.soaClassOffsets.size * SOA_PARTITION_SIZE,
-    );
+    const nextOffset = converter.soaClassOffsets.size * SOA_PARTITION_SIZE;
+    if (nextOffset > 0x7fff_ffff) {
+      throw new Error(
+        `SoA class count exceeded Int32 handle range at class "${className}". ` +
+          `Reduce the number of SoA classes or decrease SOA_PARTITION_SIZE.`,
+      );
+    }
+    converter.soaClassOffsets.set(className, nextOffset);
   }
 
   const fields = collectAllInstanceFields(converter, classNode);
@@ -1278,7 +1282,12 @@ function emitSoaInitGuard(
   // [offset+1 .. offset+SOA_PARTITION_SIZE-1], keeping different SoA
   // classes' handles in non-overlapping partitions. Class 0 starts at 1
   // (offset=0) for backwards compatibility.
-  const classOffset = converter.soaClassOffsets.get(className) ?? 0;
+  const classOffset = converter.soaClassOffsets.get(className);
+  if (classOffset === undefined) {
+    throw new Error(
+      `emitSoaInitGuard called before ensureSoaOperands for "${className}"`,
+    );
+  }
   converter.emit(
     new AssignmentInstruction(
       counterVar,

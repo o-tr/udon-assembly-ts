@@ -838,6 +838,10 @@ export class ASTToTACConverter {
       [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
     );
     const soaClassesFromPass1 = new Set(this.soaClasses);
+    // Snapshot offsets from pass 1 so pass 2 reuses the same assignments.
+    // If a SoA class somehow appears only in pass 2, ensureSoaOperands will
+    // assign it a new slot; this is safe but unexpected in normal operation
+    // since pass 1 is a full codegen sweep.
     const soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
 
     // Compute outline candidates from pass-1 call info.
