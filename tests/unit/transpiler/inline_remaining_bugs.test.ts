@@ -847,6 +847,9 @@ describe("inline remaining bugs", () => {
       expect(tac).toMatch(/__soa_B__counter = 1048577\b/);
       expect(tac).toMatch(/__soa_C__counter = 2097153\b/);
 
+      // Class A (offset=0) must not emit a spurious "- 0" instruction.
+      expect(tac).not.toContain("- 0");
+
       // Two distinct subtractions for B and C offsets.
       expect(tac).toContain("- 1048576");
       expect(tac).toContain("- 2097152");

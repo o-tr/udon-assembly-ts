@@ -1108,10 +1108,6 @@ function collectAllInstanceFields(
 }
 
 /**
- * Lazily emit DataList constructors and counter initialization for a SoA class.
- * Idempotent: no-ops if already initialized for this className.
- */
-/**
  * Ensure per-field DataList operands and counter operand exist for a SoA class.
  * Memoized by soaInitialized — creates operands exactly once per class per pass.
  * Does NOT emit code; call emitSoaInitGuard separately.
