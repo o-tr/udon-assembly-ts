@@ -5,6 +5,7 @@ import type { TypeMapper } from "./type_mapper.js";
 import {
   ArrayTypeSymbol,
   ClassTypeSymbol,
+  CollectionTypeSymbol,
   ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
@@ -284,7 +285,10 @@ export class TypeCheckerTypeResolver {
         // `interface Map { … }`) are NOT widened to the builtin extern.
         if (this.isLibInterfaceSymbol(symbol)) {
           const fqn = stripModuleQualifier(this.fqName(symbol));
-          const builtinShortcut = this.tryResolveBuiltinGenericInterface(fqn);
+          const builtinShortcut = this.tryResolveBuiltinGenericInterface(
+            fqn,
+            type,
+          );
           if (builtinShortcut) return builtinShortcut;
         }
         // Symbol-keyed cache for non-generic interfaces only.
@@ -524,18 +528,42 @@ export class TypeCheckerTypeResolver {
    *  no Udon equivalent and dominates resolver cost. The corresponding
    *  parser-time path in `parser/types.ts mapTypeWithGenerics` returns
    *  similar widenings via the TypeReference switch. */
-  private tryResolveBuiltinGenericInterface(fqn: string): TypeSymbol | null {
+  private tryResolveBuiltinGenericInterface(
+    fqn: string,
+    type: ts.Type,
+  ): TypeSymbol | null {
     switch (fqn) {
-      // Map / Set are dictionary-backed in the Udon model. The parser's
-      // mapTypeWithGenerics returns CollectionTypeSymbol(dataDictionary, …)
-      // here; the resolver path lacks the type-arg context needed to build
-      // that, so widen to dataDictionary itself — consumers reach the
-      // parser-resolved CollectionTypeSymbol via the parser-time path
-      // before falling back to this resolver result.
+      // Map / ReadonlyMap are dictionary-backed in the Udon model. Extract
+      // the TypeScript type arguments so the resolved CollectionTypeSymbol
+      // carries keyType / valueType, matching what the parser-time text-based
+      // path produces for Map<K, V>.
       case "Map":
-      case "ReadonlyMap":
+      case "ReadonlyMap": {
+        const args = this.checker.getTypeArguments(type as ts.TypeReference);
+        if (args && args.length === 2) {
+          return new CollectionTypeSymbol(
+            ExternTypes.dataDictionary.name,
+            undefined,
+            this.resolveFromTsType(args[0]),
+            this.resolveFromTsType(args[1]),
+          );
+        }
+        return ExternTypes.dataDictionary;
+      }
       case "Set":
-      case "ReadonlySet":
+      case "ReadonlySet": {
+        const args = this.checker.getTypeArguments(type as ts.TypeReference);
+        if (args && args.length === 1) {
+          const elemType = this.resolveFromTsType(args[0]);
+          return new CollectionTypeSymbol(
+            ExternTypes.dataDictionary.name,
+            elemType,
+            elemType,
+            PrimitiveTypes.boolean,
+          );
+        }
+        return ExternTypes.dataDictionary;
+      }
       case "WeakMap":
       case "WeakSet":
         return ExternTypes.dataDictionary;

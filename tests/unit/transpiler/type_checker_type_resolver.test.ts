@@ -9,6 +9,7 @@ import {
 import { TypeMapper } from "../../../src/transpiler/frontend/type_mapper.js";
 import {
   ArrayTypeSymbol,
+  CollectionTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
   ObjectType,
@@ -281,7 +282,7 @@ describe("TypeCheckerTypeResolver", () => {
   });
 
   describe("interface caching and builtin shortcuts", () => {
-    it("widens lib Map<K,V> to ExternTypes.dataDictionary via the builtin shortcut", () => {
+    it("resolves lib Map<K,V> to CollectionTypeSymbol with key/value types via the builtin shortcut", () => {
       const filePath = "/virtual/type_resolver_lib_map.ts";
       const source = "let m: Map<string, number> = new Map();";
       const { context, resolver } = createResolverFromSource(source, filePath);
@@ -292,7 +293,11 @@ describe("TypeCheckerTypeResolver", () => {
         ts.isVariableDeclaration,
       );
       const resolved = resolver.resolveFromTsNode(declaration.name);
-      expect(resolved).toBe(ExternTypes.dataDictionary);
+      expect(resolved).toBeInstanceOf(CollectionTypeSymbol);
+      const coll = resolved as CollectionTypeSymbol;
+      expect(coll.name).toBe(ExternTypes.dataDictionary.name);
+      expect(coll.keyType).toBe(PrimitiveTypes.string);
+      expect(coll.valueType).toBe(PrimitiveTypes.double);
     });
 
     it("does NOT widen a user-defined interface that shares a lib-shortcut name", () => {
@@ -355,13 +360,14 @@ describe("TypeCheckerTypeResolver", () => {
       expect(bHead).toBe(PrimitiveTypes.double);
     });
 
-    it("widens user-augmented lib interfaces too (some-based gate, by design)", () => {
+    it("resolves user-augmented lib interfaces to CollectionTypeSymbol with type args (some-based gate, by design)", () => {
       // Non-module script file (no `export`/`import`) so the top-level
       // `interface Map<K,V>` merges into lib.es2015.collection's global
       // Map symbol — the resulting symbol carries declarations from BOTH
       // the lib `.d.ts` and the user's file. `isLibInterfaceSymbol` uses
       // `some`, so the merged case still hits the builtin shortcut and
-      // resolves to `dataDictionary`. The added `myExtension` member is
+      // resolves to a CollectionTypeSymbol with key/value types extracted
+      // from the type arguments. The added `myExtension` member is
       // intentionally dropped — see the comment on `isLibInterfaceSymbol`
       // for the full trade-off, including why a stricter `every`-based
       // gate was tried and reverted (it caused a TypeScript-internal
@@ -379,7 +385,11 @@ describe("TypeCheckerTypeResolver", () => {
         "m",
       );
       const resolved = resolver.resolveFromTsNode(declaration.name);
-      expect(resolved).toBe(ExternTypes.dataDictionary);
+      expect(resolved).toBeInstanceOf(CollectionTypeSymbol);
+      const coll = resolved as CollectionTypeSymbol;
+      expect(coll.name).toBe(ExternTypes.dataDictionary.name);
+      expect(coll.keyType).toBe(PrimitiveTypes.string);
+      expect(coll.valueType).toBe(PrimitiveTypes.double);
     });
 
     it("returns the same InterfaceTypeSymbol for two uses of a non-generic user interface (symbol-keyed cache)", () => {
