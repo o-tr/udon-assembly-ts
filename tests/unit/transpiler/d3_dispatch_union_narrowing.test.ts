@@ -218,6 +218,56 @@ class Main extends UdonSharpBehaviour {
     expect(d3Here).toHaveLength(0);
   });
 
+  it("does not emit D3DispatchFallback for nullable union (A | B | null) — nullish member stripped", () => {
+    // Verifies the nullish-stripping branch in resolveUnionMemberNamesFromAstNode.
+    // TypeScript's union type `P | Q | null` has 3 members; after stripping null
+    // the method sees [P, Q] (length ≥ 2) and returns ["P", "Q"].  Both P and Q
+    // are in candidateClasses, so narrowedCandidates = [P, Q], length > 0 →
+    // warning suppressed.  Without nullish stripping the null member would hit
+    // the `!resolved.name` guard (resolveFromTsType returns ObjectType for null)
+    // and return null — falling through to the D3DispatchFallback warning.
+    const src = `
+import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
+
+class P {
+  constructor(public readonly score: number) {}
+}
+class Q {
+  constructor(public readonly score: number) {}
+}
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  getScore(item: P | Q | null): number {
+    if (item === null) return 0;
+    return item.score;
+  }
+  Start(): void {
+    const p = new P(1);
+    const q = new Q(2);
+    this.getScore(p);
+  }
+}
+`;
+    const srcFile = path.join(tmpSrcDir, "main_nullable.ts");
+    fs.writeFileSync(srcFile, src);
+
+    const result = new BatchTranspiler().transpile({
+      sourceDir: tmpSrcDir,
+      outputDir: tmpOutDir,
+      silent: true,
+      useOutputCache: false,
+    });
+
+    const d3 =
+      result.diagnostics?.filter(
+        (d) =>
+          d.code === "D3DispatchFallback" &&
+          d.location.filePath.includes("main_nullable.ts"),
+      ) ?? [];
+    expect(d3).toHaveLength(0);
+  });
+
   it("still emits D3DispatchFallback when receiver type is not a union (cannot narrow)", () => {
     // When the receiver is typed as `any` (erased to ObjectType), there is no
     // union type for TypeChecker to expose, so narrowing cannot help and the

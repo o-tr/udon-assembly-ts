@@ -104,8 +104,9 @@ export class TypeCheckerTypeResolver {
   }
 
   /** Returns the names of non-nullish union members for a union-typed AST node.
-   *  Returns null when the node is not union-typed or when no member resolves
-   *  to a named (non-ObjectType) TypeSymbol.
+   *  Returns null when the node is not union-typed, when fewer than 2
+   *  non-nullish members remain, or when **any** member resolves to ObjectType
+   *  or has an empty name (giving up narrowing to avoid a too-narrow dispatch).
    *
    *  Intentionally bypasses `astNodeCache` — the cache stores the collapsed
    *  result (ObjectType for heterogeneous unions) and would hide the individual
@@ -138,7 +139,9 @@ export class TypeCheckerTypeResolver {
       }
       names.push(resolved.name);
     }
-    return names.length > 0 ? names : null;
+    // Invariant: nonNullish.length >= 2 and every member pushed to names, so
+    // names.length >= 2 here.
+    return names;
   }
 
   /** Resolve directly from a TypeScript AST node. */
