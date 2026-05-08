@@ -96,6 +96,11 @@ latest verification section points here because the remaining
 `UntrackedStructuralUnionReturn` warnings now correlate with runtime
 structural-union correctness failures, not just warning-budget noise.
 
+It is in the same fix cluster as
+`2026-05-09T013503-tenpai-correctness-regression.md`: both issues investigate
+`untrackedStructuralHandleVars` propagation through the `HandAnalyzer.ts:229`
+and `HandAnalyzer.ts:872` structural-union return paths.
+
 ## Investigation tasks
 
 1. Trace `result1` / `__inline_ret_6661` in `YakuYakumanTest.uasm` back to the

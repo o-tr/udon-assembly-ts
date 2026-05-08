@@ -40,6 +40,11 @@ It is also linked from
 verification section forwards the remaining `UntrackedStructuralUnionReturn`
 warnings to this correctness issue.
 
+This is in the same fix cluster as
+`2026-05-09T013501-structural-union-object-iswin-dispatch.md`: both issues
+center on `untrackedStructuralHandleVars` propagation through the
+`HandAnalyzer.ts:229` and `HandAnalyzer.ts:872` structural-union return paths.
+
 ## Current warning context
 
 The latest transpile emits 518 warnings (116 unique), all dominated by
