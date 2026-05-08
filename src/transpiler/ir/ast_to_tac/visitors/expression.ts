@@ -3197,6 +3197,14 @@ export function visitPropertyAccessExpression(
             dispInstances.push([instId, info]);
           }
         }
+        // Track whether dispInstances were populated by the anonUnionIface path
+        // (structural union: type R = A | B → __anon_union_N). When true,
+        // the dispatch limit is widened (512 vs 100) and the miss path must
+        // emit a diagnostic instead of falling through to PropertyGetInstruction.
+        // Mutually exclusive with usedErasedFallback (erased fallbacks only run
+        // when dispInstances is still empty after the anonUnionIface pass).
+        const usedAnonUnionIface =
+          anonUnionIface !== null && dispInstances.length > 0;
         // Track whether dispInstances were populated by a fallback heuristic
         // (AST type or property-based). When true, a miss path must emit a
         // PropertyGetInstruction instead of returning a zeroed heap default,
@@ -3385,12 +3393,16 @@ export function visitPropertyAccessExpression(
         const dispatchLimit = this.dispatchLimitResolver.getLimit({
           property: node.property,
           usedErasedFallback,
+          isStructuralUnionDispatch: usedAnonUnionIface,
         });
-        if (usedErasedFallback && dispInstances.length > dispatchLimit) {
+        if (
+          (usedErasedFallback || usedAnonUnionIface) &&
+          dispInstances.length > dispatchLimit
+        ) {
           this.warnAt(
             node,
             "D3DispatchFallback",
-            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: ${dispatchLimit}) — dispatch is skipped. For erased operand types this falls through to PropertyGetInstruction with an invalid EXTERN signature.`,
+            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: ${dispatchLimit}) — dispatch block is skipped. For structural-union or erased paths the safety-net else-if emits Debug.LogError + zero-init; for other paths this falls through to PropertyGetInstruction.`,
           );
         }
         if (dispInstances.length > 0 && dispInstances.length <= dispatchLimit) {
@@ -3602,13 +3614,14 @@ export function visitPropertyAccessExpression(
               this.emit(new LabelInstruction(dispNext));
             }
             // Miss path: if no handle matched in the dispatch table.
-            if (usedErasedFallback) {
+            if (usedErasedFallback || usedAnonUnionIface) {
               // Do NOT emit PropertyGetInstruction here. The erased owner
               // type produces invalid EXTERN signatures (e.g.
-              // DataDictionary.__get_isOpen__SystemObject) that the Udon VM
-              // rejects at load time. The miss path is unreachable when all
-              // instances of the target class are tracked via
-              // allInlineInstances. Emit a diagnostic log so that reaching
+              // DataDictionary.__get_isOpen__SystemObject, or
+              // SystemObject.__get_isWin__SystemBoolean for structural unions)
+              // that the Udon VM rejects at load time. The miss path is
+              // unreachable when all instances of the target class are tracked
+              // via allInlineInstances. Emit a diagnostic log so that reaching
               // this path at runtime (which would indicate a transpiler bug)
               // is visible in the VRChat console.
               const logExtern = this.requireExternSignature(
@@ -3634,6 +3647,63 @@ export function visitPropertyAccessExpression(
             this.emit(new LabelInstruction(dispEnd));
             return dispResult;
           }
+        } else if (
+          dispInstances.length > dispatchLimit &&
+          (usedErasedFallback || usedAnonUnionIface)
+        ) {
+          // Dispatch limit exceeded for a structural-union or erased-fallback
+          // path. We cannot emit the full dispatch table, but we MUST NOT fall
+          // through to PropertyGetInstruction: on an untracked structural-union
+          // handle that is typed as SystemObject, it generates an invalid EXTERN
+          // (e.g. SystemObject.__get_isWin__SystemBoolean) that Unity rejects
+          // at runtime with NotSupportedException.
+          //
+          // Emit a zero-init result and a Debug.LogError miss diagnostic.
+          // Reaching this at runtime indicates a transpiler bug (the limit
+          // should be tuned via DispatchLimitResolver so the table fits).
+          let missType: TypeSymbol | undefined;
+          for (const [, info] of dispInstances) {
+            const pv =
+              this.mapInlineProperty(
+                info.className,
+                info.prefix,
+                node.property,
+              ) ??
+              tryMapAliasInlineProperty(
+                this,
+                info.className,
+                info.prefix,
+                node.property,
+              );
+            if (pv) {
+              missType = this.getOperandType(pv);
+              break;
+            }
+          }
+          const missResult = createVariable(
+            `__uninst_prop_${this.tempCounter++}`,
+            missType ?? ObjectType,
+            { isLocal: true },
+          );
+          this.emit(
+            new AssignmentInstruction(
+              missResult,
+              createSoaSentinelValue(this, missType ?? ObjectType),
+            ),
+          );
+          const logExtern = this.requireExternSignature(
+            "Debug",
+            "LogError",
+            "method",
+            ["object"],
+            "void",
+          );
+          const errMsg = createConstant(
+            `[udon-assembly-ts] D3 dispatch miss (limit exceeded): ${node.property} on untracked instance`,
+            PrimitiveTypes.string,
+          );
+          this.emit(new CallInstruction(undefined, logExtern, [errMsg]));
+          return missResult;
         }
       }
     }

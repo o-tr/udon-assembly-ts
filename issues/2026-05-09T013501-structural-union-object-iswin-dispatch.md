@@ -1,7 +1,7 @@
 ---
 created: 2026-05-09T01:35:01+09:00
-updated: 2026-05-09T01:35:01+09:00
-status: open
+updated: 2026-05-09T04:14:00+09:00
+status: pending-vm-verification
 severity: high
 component: transpiler / structural union returns / D3 dispatch
 related_test: mahjong-t2 VM suite
@@ -124,3 +124,63 @@ and `HandAnalyzer.ts:872` structural-union return paths.
   Function '__get_isWin__SystemBoolean' is not implemented yet`.
 - The D3 dispatch miss diagnostics for `check on untracked instance` do not
   appear in these tests.
+
+## Root cause (identified 2026-05-09)
+
+The bug occurs through a sequence of three issues:
+
+1. **Untracked NC return**: `WinAnalyzer.tryWin` uses `tryGet(x) ?? fallback`
+   where `tryGet` is a method call. `isSideEffectFreeNullCoalesceLeft = false` →
+   NC split skipped → result is an untracked Temporary → `returnTrackingInvalidated = true`
+   → the returnVar is NOT in `inlineInstanceMap`.
+
+2. **Caller also untracked**: `Outer.analyze` returns the untracked result from
+   `tryWin` → `UntrackedStructuralUnionReturn` → `returnTrackingInvalidated = true`.
+   The LAST return (tracked literal) does NOT write field copies because tracking was
+   already invalidated → `returnVar_isWin` never enters `symbolTable` →
+   `sourcePrefixFromNamedSlots = false` in caller → caller's variable goes to
+   `untrackedStructuralHandleVars`, NOT `inlineInstanceMap`.
+
+3. **Dispatch limit exceeded**: Property access on the untracked variable falls to
+   D3 dispatch. The `anonUnionIface` path (for `type WinResult = StandardWin | ChiitoitsuWin`
+   → `__anon_union_N`) matches the concrete instances. But `usedErasedFallback` was
+   `false` for this path → dispatch limit stayed at `DEFAULT_DISPATCH_LIMIT = 100`.
+   In the mahjong program, `dispInstances.length > 100` → dispatch block skipped entirely,
+   including the miss path → silent fallthrough to `PropertyGetInstruction` →
+   `SystemObject.__get_isWin__SystemBoolean`.
+
+## Fix (2026-05-09)
+
+Two changes in `src/transpiler/ir/ast_to_tac/`:
+
+**`dispatch_limit_resolver.ts`**:
+- Added `isStructuralUnionDispatch?: boolean` to `DispatchLimitContext`
+- `createDefaultDispatchLimitResolver().getLimit()` returns `LARGE_ERASED_DISPATCH_LIMIT`
+  (512) when `isStructuralUnionDispatch = true`
+
+**`visitors/expression.ts`** (3 changes):
+- Track `usedAnonUnionIface = anonUnionIface !== null && dispInstances.length > 0` after
+  the initial instance loop
+- Pass `isStructuralUnionDispatch: usedAnonUnionIface` to `getLimit()`; update warning
+  guard to `(usedErasedFallback || usedAnonUnionIface)`
+- Update miss-path condition inside the dispatch block from `if (usedErasedFallback)` to
+  `if (usedErasedFallback || usedAnonUnionIface)`
+- Add `else if (dispInstances.length > dispatchLimit && (usedErasedFallback || usedAnonUnionIface))`
+  safety-net branch that emits `Debug.LogError` + zero-init result and returns instead
+  of falling through to `PropertyGetInstruction`
+
+**Tests added** (`tests/unit/transpiler/structural_union_iswin_dispatch.test.ts`):
+- 3-case regression test covering: NC method-call-LHS untracked path, param-forwarding
+  path, and limit-exceeded path (tiny `dispatchLimitResolver.getLimit = () => 1`).
+  All 3 assert no `__get_isWin` extern.
+
+All 978 unit tests pass. VM test results pending (yaku_yakuman, win_chiitoitsu, scoring_fu).
+
+## Known caveat
+
+`hasCompatibleUnionProperty` admits any concrete class whose `isWin` property is
+structurally equal to the union's `isWin` — it does not check that the class is an
+actual union member. In programs with many unrelated classes sharing a property name
+and type, the 512-instance dispatch table could still be exhausted. The safety-net
+`else if` branch prevents the invalid EXTERN in that case, but returns a zero-init
+value and emits a runtime diagnostic.
