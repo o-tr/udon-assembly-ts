@@ -70,10 +70,10 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
+  type ConstantOperand,
   createConstant,
   createLabel,
   createVariable,
-  type ConstantOperand,
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
@@ -4820,14 +4820,19 @@ export function emitCopyWithTracking(
             case UdonType.Double:
               actualSrc = createConstant(num, PrimitiveTypes.double);
               break;
+            default: {
+              // Dest type is numeric but not compile-time-foldable here;
+              // fall back to a runtime cast so behaviour matches the non-constant path.
+              const castTemp = this.newTemp(destType);
+              this.emit(new CastInstruction(castTemp, src));
+              actualSrc = castTemp;
+              break;
+            }
           }
         }
       }
-      // If folding failed (null/object value or dest type not in the switch),
-      // actualSrc stays as src and a mismatched COPY is emitted — the same
-      // behavior as before this fix. The switch covers Int32/Single/Double,
-      // the only dest types reachable via user-written TypeScript today; other
-      // Udon numeric types are latent gaps that are not currently triggered.
+      // If folding failed (null/object value), actualSrc stays as src and
+      // a mismatched COPY is emitted — the same behavior as pre-fix code.
     } else {
       const castTemp = this.newTemp(destType);
       this.emit(new CastInstruction(castTemp, src));

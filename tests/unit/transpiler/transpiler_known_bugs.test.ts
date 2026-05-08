@@ -3303,7 +3303,9 @@ class Main extends UdonSharpBehaviour {
       expect(result.uasm).not.toContain("SystemConvert.__ToDouble");
       // The "x" slot must be declared as Double.
       const dataSection = getDataSection(result.uasm);
-      expect(dataSection.some((l) => /\bx\b.*%SystemDouble/.test(l))).toBe(true);
+      expect(dataSection.some((l) => /\bx\b.*%SystemDouble/.test(l))).toBe(
+        true,
+      );
     });
 
     it("number variable assigned from UdonFloat emits Convert.ToDouble (Single→Double lane)", () => {
