@@ -1,6 +1,6 @@
 ---
 created: 2026-05-08T12:30:01+09:00
-updated: 2026-05-08T13:28:00+09:00
+updated: 2026-05-09T01:35:00+09:00
 status: fixed
 severity: high
 component: transpiler / DataToken unwrap
@@ -142,3 +142,9 @@ Files changed:
   `VRCSDK3DataDataToken.__get_Reference__SystemObject` unwrap for primitive-capable
   tokens.
 - The previously resolved regression cases remain covered.
+
+## Latest verification (2026-05-09)
+
+The latest mahjong-t2 VM run confirms `VM: lru_cache` passes. The previous
+`DataToken.__get_Reference__SystemObject` crash is no longer present in the
+failed-test list.

@@ -202,3 +202,21 @@ Regression test added: `Bug 16` in `tests/unit/transpiler/transpiler_known_bugs.
 when a `number` (Double) variable is assigned from a UdonInt multiplication.
 
 All 962 pre-existing tests continue to pass; the new Bug 16 test also passes.
+
+## Latest verification (2026-05-09)
+
+The latest mahjong-t2 VM run confirms this issue's original symptom is fixed:
+
+- `tile_parse`, `tile_predicates`, `tile_sort_compare`, `tile_dora`,
+  `tile_counts`, `dora_calculator`, and `lru_cache` now pass.
+- No listed failure report mentions
+  `SystemMath.__Truncate__SystemDouble__SystemDouble`.
+- Overall suite improved from **33 failed / 5 passed** to
+  **25 failed / 13 passed**.
+
+Residual numeric-slot mismatches still exist in different lowering paths
+(recursive stack DataToken boxing and generated get-range loops). Those are
+tracked separately in:
+
+- `issues/2026-05-09T013500-recursive-stack-numeric-datatoken-double.md`
+- `issues/2026-05-09T013502-recursive-structural-list-return-null.md`

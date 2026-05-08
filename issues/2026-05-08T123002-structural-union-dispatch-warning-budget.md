@@ -1,6 +1,6 @@
 ---
 created: 2026-05-08T12:30:02+09:00
-updated: 2026-05-08T15:00:00+09:00
+updated: 2026-05-09T01:35:00+09:00
 status: resolved
 severity: medium
 component: transpiler / structural unions and D3 dispatch
@@ -176,3 +176,20 @@ useful once those upstream issues are resolved.
 - [x] `UntrackedStructuralUnionReturn` is documented as safe for the listed
   shared source sites (null-narrowing guarantee applies; no
   `returnTrackingInvalidated` escalation; auditable diagnostic retained).
+
+## Latest verification (2026-05-09)
+
+The latest mahjong-t2 transpile warning volume dropped from
+`1270 warning(s) (160 unique)` to `518 warning(s) (116 unique)`.
+The earlier repeated `D3DispatchFallback` warnings for
+`TerminalBasedYaku.ts:48-49` are absent from the provided warning list, which
+confirms the D3 fallback-noise portion of this issue is resolved.
+
+However, `UntrackedStructuralUnionReturn` remains the dominant warning family,
+and the VM output now shows structural-union runtime failures (`SystemObject`
+property getter for `isWin`, D3 dispatch miss diagnostics, and tenpai wrong
+logs). Those are no longer just a warning-budget problem and are tracked as
+correctness tasks:
+
+- `issues/2026-05-09T013501-structural-union-object-iswin-dispatch.md`
+- `issues/2026-05-09T013503-tenpai-correctness-regression.md`
