@@ -8,14 +8,14 @@ export class ForLoopBreakContinue extends UdonSharpBehaviour {
   Start(): void {
     // Skip even numbers with continue, break at 7
     for (
-      let i: UdonInt = 0 as UdonInt;
-      i < (10 as UdonInt);
-      i = (i + 1) as UdonInt
+      let i: UdonInt = 0n as UdonInt;
+      i < (10n as UdonInt);
+      i = (i + 1n) as UdonInt
     ) {
-      if (i % (2 as UdonInt) === (0 as UdonInt)) {
+      if (i % (2n as UdonInt) === (0n as UdonInt)) {
         continue;
       }
-      if (i > (6 as UdonInt)) {
+      if (i > (6n as UdonInt)) {
         break;
       }
       Debug.Log(i);
@@ -24,16 +24,16 @@ export class ForLoopBreakContinue extends UdonSharpBehaviour {
 
     // Nested loops: break only inner
     for (
-      let i: UdonInt = 0 as UdonInt;
-      i < (2 as UdonInt);
-      i = (i + 1) as UdonInt
+      let i: UdonInt = 0n as UdonInt;
+      i < (2n as UdonInt);
+      i = (i + 1n) as UdonInt
     ) {
       for (
-        let j: UdonInt = 0 as UdonInt;
-        j < (5 as UdonInt);
-        j = (j + 1) as UdonInt
+        let j: UdonInt = 0n as UdonInt;
+        j < (5n as UdonInt);
+        j = (j + 1n) as UdonInt
       ) {
-        if (j > (1 as UdonInt)) {
+        if (j > (1n as UdonInt)) {
           break;
         }
         Debug.Log(j);

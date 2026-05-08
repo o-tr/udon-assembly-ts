@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 class Tile {
@@ -30,11 +27,11 @@ class Hand {
 export class MethodReturnsArray extends UdonSharpBehaviour {
   Start(): void {
     const hand = new Hand([
-      new Tile(UdonTypeConverters.toUdonInt(2)),
-      new Tile(UdonTypeConverters.toUdonInt(3)),
-      new Tile(UdonTypeConverters.toUdonInt(5)),
+      new Tile(2n as UdonInt),
+      new Tile(3n as UdonInt),
+      new Tile(5n as UdonInt),
     ]);
-    Debug.Log(hand.getTiles()[0].kind as number);
+    Debug.Log(Number(hand.getTiles()[0].kind));
     Debug.Log(hand.getTiles().length);
   }
 }

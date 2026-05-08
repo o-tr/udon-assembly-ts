@@ -23,7 +23,7 @@ class LRUCache {
     }
     this.cache.set(key, value);
 
-    if (this.cache.size > this.maxSize) {
+    if (BigInt(this.cache.size) > this.maxSize) {
       const firstKey = this.cache.keys().next().value;
       if (firstKey !== undefined) {
         this.cache.delete(firstKey);
@@ -36,7 +36,7 @@ class LRUCache {
   }
 
   size(): UdonInt {
-    return this.cache.size as UdonInt;
+    return BigInt(this.cache.size) as UdonInt;
   }
 
   has(key: string): boolean {
@@ -47,7 +47,7 @@ class LRUCache {
 @UdonBehaviour()
 export class LruCacheMapGetRegression extends UdonSharpBehaviour {
   Start(): void {
-    const cache = new LRUCache(3 as UdonInt);
+    const cache = new LRUCache(3n as UdonInt);
     cache.set("a", "hello");
     Debug.Log(cache.has("a") ? "True" : "False");
     const got = cache.get("a");

@@ -20,9 +20,15 @@ export type UdonByte = number & { readonly __brand: "UdonByte" };
 
 /**
  * UdonSharp int型（C# int: -2,147,483,648 to 2,147,483,647）
- * TypeScriptでは number として扱うが、型レベルで区別する
+ * TypeScriptでは bigint として扱う
  */
-export type UdonInt = number & { readonly __brand: "UdonInt" };
+export type UdonInt = bigint & { readonly __brand: "UdonInt" };
+
+/**
+ * UdonSharp uint型（C# uint: 0 to 4,294,967,295）
+ * TypeScriptでは bigint として扱う
+ */
+export type UdonUInt = bigint & { readonly __brand: "UdonUInt" };
 
 /**
  * UdonSharp float型（C# float: 単精度浮動小数点）
@@ -66,16 +72,35 @@ export class UdonTypeConverters {
   }
 
   /**
-   * numberをUdonIntに変換（32bit整数範囲にクランプ）
+   * bigintをUdonIntに変換（32bit符号付き整数範囲にクランプ）
    */
-  static toUdonInt(value: number): UdonInt {
-    if (!Number.isFinite(value)) {
-      return 0 as UdonInt;
-    }
-    const clamped = Math.floor(
-      Math.max(-2147483648, Math.min(2147483647, value)),
-    );
+  static toUdonInt(value: bigint): UdonInt {
+    const min = -2147483648n;
+    const max = 2147483647n;
+    const clamped = value < min ? min : value > max ? max : value;
     return clamped as UdonInt;
+  }
+
+  /**
+   * number（float）をUdonIntに変換（ゼロ方向への切り捨て）
+   * transpilerはCastInstruction(Int32)を生成し、UdonVMでSingle→Int32の切り捨てを行う
+   */
+  static truncToUdonInt(value: number): UdonInt {
+    if (!Number.isFinite(value)) {
+      return 0n as UdonInt;
+    }
+    const truncated = Math.trunc(value);
+    const clamped = Math.max(-2147483648, Math.min(2147483647, truncated));
+    return BigInt(clamped) as UdonInt;
+  }
+
+  /**
+   * bigintをUdonUIntに変換（32bit符号なし整数範囲にクランプ）
+   */
+  static toUdonUInt(value: bigint): UdonUInt {
+    const max = 4294967295n;
+    const clamped = value < 0n ? 0n : value > max ? max : value;
+    return clamped as UdonUInt;
   }
 
   /**

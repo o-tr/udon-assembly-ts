@@ -440,7 +440,7 @@ export const UDON_BRANDED_TYPE_MAP: ReadonlyMap<string, PrimitiveTypeSymbol> =
     ["UdonInt16", PrimitiveTypes.int16],
     ["UdonUInt16", PrimitiveTypes.uint16],
     ["UdonInt", PrimitiveTypes.int32],
-    ["UdonUInt32", PrimitiveTypes.uint32],
+    ["UdonUInt", PrimitiveTypes.uint32],
     ["UdonFloat", PrimitiveTypes.single],
     ["UdonDouble", PrimitiveTypes.double],
     ["UdonLong", PrimitiveTypes.int64],

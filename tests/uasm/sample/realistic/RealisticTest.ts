@@ -5,13 +5,13 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class RealisticTest extends UdonSharpBehaviour {
-  private score: UdonInt = 0 as UdonInt;
-  private highScore: UdonInt = 0 as UdonInt;
+  private score: UdonInt = 0n as UdonInt;
+  private highScore: UdonInt = 0n as UdonInt;
   private isPlaying: boolean = false;
 
   Start(): void {
-    this.score = 0 as UdonInt;
-    this.highScore = 100 as UdonInt;
+    this.score = 0n as UdonInt;
+    this.highScore = 100n as UdonInt;
     this.isPlaying = true;
   }
 
@@ -29,7 +29,7 @@ export class RealisticTest extends UdonSharpBehaviour {
   }
 
   ResetGame(): void {
-    this.score = 0 as UdonInt;
+    this.score = 0n as UdonInt;
     this.isPlaying = true;
     Debug.Log("Game reset");
   }

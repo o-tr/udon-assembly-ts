@@ -5,7 +5,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class FieldInitOrder extends UdonSharpBehaviour {
-  private count: UdonInt = 10 as UdonInt;
+  private count: UdonInt = 10n as UdonInt;
   private name: string = "default";
   private flag: boolean = true;
   private rate: number = 3.25;

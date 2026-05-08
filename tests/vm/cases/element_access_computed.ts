@@ -18,12 +18,12 @@ export class ElementAccessComputed extends UdonSharpBehaviour {
     // Computed index access
     const base: number = 1;
     const idx: number = base + 1;
-    Debug.Log(list[idx as UdonInt].Double); // "30"
+    Debug.Log(list.get_Item(BigInt(idx) as UdonInt).Double); // "30"
 
     // Loop index access with accumulation
     let sum: number = 0;
     for (let i: number = 0; i < 3; i++) {
-      const val: DataToken = list[i as UdonInt];
+      const val: DataToken = list.get_Item(BigInt(i) as UdonInt);
       sum = sum + val.Double;
     }
     Debug.Log(sum); // "60"

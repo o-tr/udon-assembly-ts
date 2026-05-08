@@ -42,7 +42,7 @@ export class Convert {
   ): UdonInt {
     // C# Convert.ToInt32 uses banker's rounding (MidpointRounding.ToEven)
     const v = Number(_value);
-    return bankerRound(v) as UdonInt;
+    return BigInt(bankerRound(v)) as UdonInt;
   }
 
   static ToInt64(_value: UdonByte): UdonLong;

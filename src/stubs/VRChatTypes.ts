@@ -52,7 +52,7 @@ export class VRCPlayerApi {
    * 接続中プレイヤー数を取得
    */
   static GetPlayerCount(): UdonInt {
-    return VRCPlayerApi.players.length as UdonInt;
+    return BigInt(VRCPlayerApi.players.length) as UdonInt;
   }
 
   /**
@@ -65,7 +65,7 @@ export class VRCPlayerApi {
     for (let i = 0; i < count; i += 1) {
       buffer[i] = VRCPlayerApi.players[i];
     }
-    return count as UdonInt;
+    return BigInt(Math.trunc(count)) as UdonInt;
   }
 
   /**
@@ -266,7 +266,7 @@ export class VRChatStubFactory {
    */
   static createMockVRCStation(): VRCStation {
     const emptyPlayer: VRCPlayerApi = new VRCPlayerApi(
-      UdonTypeConverters.toUdonInt(-1),
+      UdonTypeConverters.toUdonInt(-1n),
       "",
       false,
       false,

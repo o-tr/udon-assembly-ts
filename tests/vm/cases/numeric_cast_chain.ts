@@ -1,8 +1,9 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import type {
-  UdonFloat,
-  UdonInt,
+import {
+  type UdonFloat,
+  type UdonInt,
+  UdonTypeConverters,
 } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
@@ -11,7 +12,7 @@ export class NumericCastChain extends UdonSharpBehaviour {
   Start(): void {
     // float -> int (truncation)
     const a: number = 3.75;
-    const intA: UdonInt = a as UdonInt;
+    const intA: UdonInt = UdonTypeConverters.truncToUdonInt(a);
     Debug.Log(intA); // 3
 
     // float -> int -> float (round-trip loses decimal)
@@ -21,14 +22,13 @@ export class NumericCastChain extends UdonSharpBehaviour {
 
     // Another truncation
     const b: number = 7.5;
-    const intB: UdonInt = b as UdonInt;
+    const intB: UdonInt = UdonTypeConverters.truncToUdonInt(b);
     Debug.Log(intB); // 7
 
     // int arithmetic then cast to float
-    const intC: UdonInt = 15 as UdonInt;
-    const intD: UdonInt = 2 as UdonInt;
-    // @ts-expect-error UdonInt→UdonFloat casts are runtime numeric conversions in the transpiler
-    const floatResult: UdonFloat = (intC as UdonFloat) / (intD as UdonFloat);
+    const intC: UdonInt = 15n as UdonInt;
+    const intD: UdonInt = 2n as UdonInt;
+    const floatResult: UdonFloat = (Number(intC) / Number(intD)) as UdonFloat;
     Debug.Log(floatResult); // 7.5
   }
 }

@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 class Tile {
@@ -19,14 +16,14 @@ class Tile {
     if (Tile._instances !== null) return Tile._instances;
     const instances: Tile[] = [];
     for (let i = 0; i < 10; i += 1) {
-      instances.push(new Tile(UdonTypeConverters.toUdonInt(i)));
+      instances.push(new Tile(BigInt(i) as UdonInt));
     }
     Tile._instances = instances;
     return instances;
   }
 
   static get(idx: UdonInt): Tile {
-    return Tile._getInstances()[idx as number];
+    return Tile._getInstances()[Number(idx)];
   }
 }
 
@@ -52,10 +49,10 @@ class HandAnalyzer {
   analyze(hand: Hand): AnalysisResult {
     let total = 0;
     for (let i = 0; i < hand.tiles.length; i += 1) {
-      total += hand.tiles[i].kind as number;
+      total += Number(hand.tiles[i].kind);
     }
     return new AnalysisResult(
-      UdonTypeConverters.toUdonInt(total),
+      BigInt(total) as UdonInt,
       hand.tiles[0].kind,
       hand.tiles.length > 0,
     );
@@ -67,13 +64,13 @@ export class HandAnalyzerResultObject extends UdonSharpBehaviour {
   Start(): void {
     const analyzer = new HandAnalyzer();
     const hand = new Hand([
-      Tile.get(UdonTypeConverters.toUdonInt(1)),
-      Tile.get(UdonTypeConverters.toUdonInt(4)),
-      Tile.get(UdonTypeConverters.toUdonInt(6)),
+      Tile.get(1n as UdonInt),
+      Tile.get(4n as UdonInt),
+      Tile.get(6n as UdonInt),
     ]);
     const result = analyzer.analyze(hand);
-    Debug.Log(result.total as number);
-    Debug.Log(result.firstKind as number);
+    Debug.Log(Number(result.total));
+    Debug.Log(Number(result.firstKind));
     Debug.Log(result.isValid ? "True" : "False");
   }
 }

@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 // PR #170 residual regression: null-literal arg into a `Result | null`
@@ -22,7 +19,7 @@ type Result = Win | Loss;
 class M {
   private selectBest(a: Result | null, b: Result | null): Result {
     if (a?.tag && b !== null && b.tag) {
-      return (a.value as number) >= (b.value as number) ? a : b;
+      return Number(a.value) >= Number(b.value) ? a : b;
     }
     if (a?.tag) return a;
     if (b?.tag) return b;
@@ -39,10 +36,10 @@ class M {
 export class Pr170UnionWithNullBranch extends UdonSharpBehaviour {
   Start(): void {
     const m = new M();
-    const r = m.run(UdonTypeConverters.toUdonInt(9));
+    const r = m.run(9n as UdonInt);
     Debug.Log(r.tag ? "WIN" : "LOSS");
     if (r.tag) {
-      Debug.Log(r.value as number); // 9
+      Debug.Log(Number(r.value)); // 9
     }
   }
 }

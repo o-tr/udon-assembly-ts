@@ -15,7 +15,7 @@ import type {
 @UdonStub("System.String")
 export class SystemString {
   @UdonExtern("Length")
-  length: UdonInt = 0 as UdonInt;
+  length: UdonInt = 0n as UdonInt;
 
   static Concat(_a: string, _b: string): string {
     return "";
@@ -34,7 +34,7 @@ export class SystemString {
     return false;
   }
   IndexOf(_value: string): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
 
   // JS-style aliases that map to C# methods via @UdonExtern
@@ -42,7 +42,7 @@ export class SystemString {
     signature: "SystemString.__IndexOf__SystemString__SystemInt32",
   })
   indexOf(_value: string): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
   @UdonExtern({
     signature: "SystemString.__Contains__SystemString__SystemBoolean",
@@ -134,7 +134,7 @@ export class StringBuilder {
   }
 
   @UdonExtern("Length")
-  length: UdonInt = 0 as UdonInt;
+  length: UdonInt = 0n as UdonInt;
 
   Clear(): StringBuilder {
     return this;
@@ -144,7 +144,7 @@ export class StringBuilder {
 @UdonStub("System.Int32")
 export class Int32 {
   static Parse(_value: string): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
 }
 
@@ -168,7 +168,7 @@ export class Convert {
   static ToInt32(
     _value: UdonByte | UdonInt | UdonFloat | UdonDouble | UdonLong | UdonULong,
   ): UdonInt {
-    return 0 as UdonInt;
+    return 0n as UdonInt;
   }
 
   static ToInt64(_value: UdonByte): UdonLong;

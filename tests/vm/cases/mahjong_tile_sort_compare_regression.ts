@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 const ID_TO_STRING: string[] = [
@@ -58,34 +55,34 @@ class Tile {
   }
 
   toString(): string {
-    return ID_TO_STRING[this.code as number];
+    return ID_TO_STRING[Number(this.code)];
   }
 
   static parse(str: string): Tile {
     switch (str) {
       case "1m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(0));
+        return Tile.fromCode(0n as UdonInt);
       case "2m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(1));
+        return Tile.fromCode(1n as UdonInt);
       case "5m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(4));
+        return Tile.fromCode(4n as UdonInt);
       case "9m":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(8));
+        return Tile.fromCode(8n as UdonInt);
       case "3p":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(11));
+        return Tile.fromCode(11n as UdonInt);
       case "1s":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(18));
+        return Tile.fromCode(18n as UdonInt);
       case "5s":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(22));
+        return Tile.fromCode(22n as UdonInt);
       case "9s":
-        return Tile.fromCode(UdonTypeConverters.toUdonInt(26));
+        return Tile.fromCode(26n as UdonInt);
       default:
         throw new Error(`Unsupported tile literal: ${str}`);
     }
   }
 
   static fromCode(code: UdonInt): Tile {
-    const c = code as number;
+    const c = Number(code);
     if (c < 0 || c > 36) {
       throw new Error(`Invalid TileCode: ${c}`);
     }
@@ -99,30 +96,21 @@ class Tile {
     const instances: Tile[] = [];
     for (let i = 0; i < 34; i += 1) {
       instances.push(
-        new Tile(
-          UdonTypeConverters.toUdonInt(i),
-          UdonTypeConverters.toUdonInt(i),
-          false,
-        ),
+        new Tile(BigInt(i) as UdonInt, BigInt(i) as UdonInt, false),
       );
     }
     for (let suitIdx = 0; suitIdx < 3; suitIdx += 1) {
-      const kind = UdonTypeConverters.toUdonInt(suitIdx * 9 + 4);
-      instances.push(
-        new Tile(kind, UdonTypeConverters.toUdonInt(34 + suitIdx), true),
-      );
+      const kind = BigInt(suitIdx * 9 + 4) as UdonInt;
+      instances.push(new Tile(kind, BigInt(34 + suitIdx) as UdonInt, true));
     }
     Tile._instances = instances;
     return instances;
   }
 
   static compare(a: Tile, b: Tile): UdonInt {
-    const kindDiff = (a.kind as number) - (b.kind as number);
-    if (kindDiff !== 0) return UdonTypeConverters.toUdonInt(kindDiff);
-    if (a.isRed === b.isRed) return UdonTypeConverters.toUdonInt(0);
-    return a.isRed
-      ? UdonTypeConverters.toUdonInt(-1)
-      : UdonTypeConverters.toUdonInt(1);
+    if (a.kind !== b.kind) return (a.kind - b.kind) as UdonInt;
+    if (a.isRed === b.isRed) return 0n as UdonInt;
+    return a.isRed ? (-1n as UdonInt) : (1n as UdonInt);
   }
 
   static sortTiles(tiles: readonly Tile[]): Tile[] {
@@ -173,7 +161,7 @@ export class MahjongTileSortCompareRegression extends UdonSharpBehaviour {
     Debug.Log(cmp2 > 0 ? "GT" : "LE");
 
     const cmp3 = Tile.compare(Tile.parse("5m"), Tile.parse("5m"));
-    Debug.Log(cmp3 === 0 ? "EQ" : "NE");
+    Debug.Log(cmp3 === (0n as UdonInt) ? "EQ" : "NE");
 
     const sorted = Tile.sortTiles([
       Tile.parse("9m"),

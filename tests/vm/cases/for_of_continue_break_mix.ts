@@ -7,7 +7,7 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class ForOfContinueBreakMix extends UdonSharpBehaviour {
   Start(): void {
     const values = [1, 2, 3, 4, 5];
-    let sum: UdonInt = 0 as UdonInt;
+    let sum: UdonInt = 0n as UdonInt;
 
     for (const value of values) {
       if (value === 2) {
@@ -16,7 +16,7 @@ export class ForOfContinueBreakMix extends UdonSharpBehaviour {
       if (value === 5) {
         break;
       }
-      sum = (sum + (value as UdonInt)) as UdonInt;
+      sum = (sum + (BigInt(value) as UdonInt)) as UdonInt;
     }
 
     Debug.Log(sum);

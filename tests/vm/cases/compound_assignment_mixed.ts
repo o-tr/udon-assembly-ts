@@ -7,22 +7,22 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 export class CompoundAssignmentMixed extends UdonSharpBehaviour {
   Start(): void {
     // Integer division: 7 / 2 = 3 (not 3.5)
-    let a: UdonInt = 7 as UdonInt;
-    a = (a / (2 as UdonInt)) as UdonInt;
+    let a: UdonInt = 7n as UdonInt;
+    a = (a / (2n as UdonInt)) as UdonInt;
     Debug.Log(a); // 3
 
     // Accumulate with integer operations
-    let sum: UdonInt = 0 as UdonInt;
-    let i: UdonInt = 1 as UdonInt;
-    while (i <= (10 as UdonInt)) {
+    let sum: UdonInt = 0n as UdonInt;
+    let i: UdonInt = 1n as UdonInt;
+    while (i <= (10n as UdonInt)) {
       sum = (sum + i) as UdonInt;
-      i = (i + (1 as UdonInt)) as UdonInt;
+      i = (i + (1n as UdonInt)) as UdonInt;
     }
     Debug.Log(sum); // 55
 
     // Integer modulo chain
-    let val: UdonInt = 100 as UdonInt;
-    val = (val % (7 as UdonInt)) as UdonInt; // 100 % 7 = 2
+    let val: UdonInt = 100n as UdonInt;
+    val = (val % (7n as UdonInt)) as UdonInt; // 100 % 7 = 2
     Debug.Log(val); // 2
 
     // Float accumulation for comparison

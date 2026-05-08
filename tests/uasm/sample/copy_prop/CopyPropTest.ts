@@ -6,10 +6,10 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class CopyPropTest extends UdonSharpBehaviour {
   Start(): void {
-    const a: UdonInt = 5 as UdonInt;
+    const a: UdonInt = 5n as UdonInt;
     const b: UdonInt = a;
     const c: UdonInt = b;
-    const d: UdonInt = (c + (1 as UdonInt)) as UdonInt;
+    const d: UdonInt = (c + (1n as UdonInt)) as UdonInt;
     Debug.Log(d);
   }
 }

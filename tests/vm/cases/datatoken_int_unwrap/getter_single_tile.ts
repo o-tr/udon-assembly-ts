@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 class Tile {
@@ -29,7 +26,7 @@ class Holder {
 @UdonBehaviour()
 export class GetterSingleTile extends UdonSharpBehaviour {
   Start(): void {
-    const holder = new Holder(new Tile(UdonTypeConverters.toUdonInt(7)));
-    Debug.Log(holder.tile.kind as number);
+    const holder = new Holder(new Tile(7n as UdonInt));
+    Debug.Log(Number(holder.tile.kind));
   }
 }

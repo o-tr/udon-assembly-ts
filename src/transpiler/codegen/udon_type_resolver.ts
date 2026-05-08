@@ -58,6 +58,7 @@ const TS_PRIMITIVE_ALIASES = new Map<string, string>([
   ["Object", "System.Object"],
   ["UdonByte", "System.Byte"],
   ["UdonInt", "System.Int32"],
+  ["UdonUInt", "System.UInt32"],
   ["UdonFloat", "System.Single"],
   ["UdonDouble", "System.Double"],
   ["UdonLong", "System.Int64"],

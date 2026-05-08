@@ -1,9 +1,6 @@
 import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
 import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
-import {
-  type UdonInt,
-  UdonTypeConverters,
-} from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 class Tile {
@@ -19,14 +16,14 @@ class Tile {
     if (Tile._instances !== null) return Tile._instances;
     const instances: Tile[] = [];
     for (let i = 0; i < 10; i += 1) {
-      instances.push(new Tile(UdonTypeConverters.toUdonInt(i)));
+      instances.push(new Tile(BigInt(i) as UdonInt));
     }
     Tile._instances = instances;
     return instances;
   }
 
   static get(idx: UdonInt): Tile {
-    return Tile._getInstances()[idx as number];
+    return Tile._getInstances()[Number(idx)];
   }
 }
 
@@ -46,11 +43,11 @@ class Hand {
 export class HandGetterOnly extends UdonSharpBehaviour {
   Start(): void {
     const hand = new Hand([
-      Tile.get(UdonTypeConverters.toUdonInt(2)),
-      Tile.get(UdonTypeConverters.toUdonInt(3)),
-      Tile.get(UdonTypeConverters.toUdonInt(5)),
+      Tile.get(2n as UdonInt),
+      Tile.get(3n as UdonInt),
+      Tile.get(5n as UdonInt),
     ]);
-    Debug.Log(hand.tiles[0].kind as number);
+    Debug.Log(Number(hand.tiles[0].kind));
     Debug.Log(hand.tiles.length);
   }
 }

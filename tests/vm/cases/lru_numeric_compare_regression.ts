@@ -13,18 +13,18 @@ class LRUCache {
   }
 
   isDifferentSize(): boolean {
-    return this.cache.size !== this.maxSize;
+    return BigInt(this.cache.size) !== this.maxSize;
   }
 
   isOverflow(): boolean {
-    return this.cache.size > this.maxSize;
+    return BigInt(this.cache.size) > this.maxSize;
   }
 }
 
 @UdonBehaviour()
 export class LruNumericCompareRegression extends UdonSharpBehaviour {
   Start(): void {
-    const c = new LRUCache(0 as UdonInt);
+    const c = new LRUCache(0n as UdonInt);
     c.seed();
     Debug.Log(c.isDifferentSize());
     Debug.Log(c.isOverflow());

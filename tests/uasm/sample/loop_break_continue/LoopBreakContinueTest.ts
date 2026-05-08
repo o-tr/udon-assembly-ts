@@ -6,13 +6,13 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class LoopBreakContinueTest extends UdonSharpBehaviour {
   Start(): void {
-    let sum: UdonInt = 0 as UdonInt;
+    let sum: UdonInt = 0n as UdonInt;
 
-    for (let i: UdonInt = 0 as UdonInt; i < (8 as UdonInt); i++) {
-      if (i === (2 as UdonInt)) {
+    for (let i: UdonInt = 0n as UdonInt; i < (8n as UdonInt); i++) {
+      if (i === (2n as UdonInt)) {
         continue;
       }
-      if (i === (6 as UdonInt)) {
+      if (i === (6n as UdonInt)) {
         break;
       }
       sum = (sum + i) as UdonInt;

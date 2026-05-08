@@ -6,12 +6,12 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class BitwiseShiftMixTest extends UdonSharpBehaviour {
   Start(): void {
-    const value: UdonInt = 42 as UdonInt;
-    const mask: UdonInt = 15 as UdonInt;
+    const value: UdonInt = 42n as UdonInt;
+    const mask: UdonInt = 15n as UdonInt;
 
     const andValue: UdonInt = (value & mask) as UdonInt;
-    const leftShift: UdonInt = (andValue << (1 as UdonInt)) as UdonInt;
-    const rightShift: UdonInt = (leftShift >> (2 as UdonInt)) as UdonInt;
+    const leftShift: UdonInt = (andValue << (1n as UdonInt)) as UdonInt;
+    const rightShift: UdonInt = (leftShift >> (2n as UdonInt)) as UdonInt;
 
     Debug.Log(andValue);
     Debug.Log(leftShift);

@@ -59,6 +59,7 @@ export {
   type UdonSyncMode,
   type UdonSyncType,
   UdonTypeConverters,
+  type UdonUInt,
   type UdonULong,
 } from "./UdonTypes.js";
 // UnityEngine / TMPro 型スタブ

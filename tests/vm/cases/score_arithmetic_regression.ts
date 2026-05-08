@@ -14,8 +14,8 @@ class Score {
 @UdonBehaviour()
 export class ScoreArithmeticRegression extends UdonSharpBehaviour {
   Start(): void {
-    const s = new Score(25000 as UdonInt);
-    const s2 = s.add(1000 as UdonInt);
+    const s = new Score(25000n as UdonInt);
+    const s2 = s.add(1000n as UdonInt);
     Debug.Log(s.value);
     Debug.Log(s2.value);
   }

@@ -71,7 +71,7 @@ export class Mathf {
     return Math.ceil(Math.fround(value)) as UdonFloat;
   }
   static CeilToInt(value: UdonFloat): UdonInt {
-    return Math.ceil(Math.fround(value)) as UdonInt;
+    return BigInt(Math.ceil(Math.fround(value))) as UdonInt;
   }
   static Clamp(value: UdonFloat, min: UdonFloat, max: UdonFloat): UdonFloat {
     return Math.fround(
@@ -90,7 +90,7 @@ export class Mathf {
     return Math.floor(Math.fround(value)) as UdonFloat;
   }
   static FloorToInt(value: UdonFloat): UdonInt {
-    return Math.floor(Math.fround(value)) as UdonInt;
+    return BigInt(Math.floor(Math.fround(value))) as UdonInt;
   }
   static Lerp(a: UdonFloat, b: UdonFloat, t: UdonFloat): UdonFloat {
     const fa = Math.fround(a);
@@ -116,7 +116,7 @@ export class Mathf {
     return bankerRound(Math.fround(value)) as UdonFloat;
   }
   static RoundToInt(value: UdonFloat): UdonInt {
-    return bankerRound(Math.fround(value)) as UdonInt;
+    return BigInt(bankerRound(Math.fround(value))) as UdonInt;
   }
   static Sqrt(value: UdonFloat): UdonFloat {
     return Math.fround(Math.sqrt(Math.fround(value))) as UdonFloat;

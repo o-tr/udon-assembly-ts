@@ -5,13 +5,13 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 
 @UdonBehaviour()
 export class TailMergeTest extends UdonSharpBehaviour {
-  private mode: UdonInt = 0 as UdonInt;
+  private mode: UdonInt = 0n as UdonInt;
 
   Start(): void {
-    this.mode = 1 as UdonInt;
-    if (this.mode === (1 as UdonInt)) {
+    this.mode = 1n as UdonInt;
+    if (this.mode === (1n as UdonInt)) {
       Debug.Log("mode one");
-    } else if (this.mode === (2 as UdonInt)) {
+    } else if (this.mode === (2n as UdonInt)) {
       Debug.Log("mode two");
     } else {
       Debug.Log("other");

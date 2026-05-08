@@ -6,8 +6,8 @@ import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
 @UdonBehaviour()
 export class StringConcatBinaryFallback extends UdonSharpBehaviour {
   Start(): void {
-    const a: UdonInt = 5 as UdonInt;
-    const b: UdonInt = 3 as UdonInt;
+    const a: UdonInt = 5n as UdonInt;
+    const b: UdonInt = 3n as UdonInt;
 
     // Left operand is non-string (int + int result), right is string literal.
     // flattenStringConcatChain returns null here because recursion into (a + b)
