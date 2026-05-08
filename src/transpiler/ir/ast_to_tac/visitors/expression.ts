@@ -1091,7 +1091,12 @@ export function visitBinaryExpression(
     let preWidenLeft = leftOriginal;
     let preWidenRight = rightOriginal;
     if (isRemainderCompound) {
-      const nr = narrowLongForRemainder(this, node, leftOriginal, rightOriginal);
+      const nr = narrowLongForRemainder(
+        this,
+        node,
+        leftOriginal,
+        rightOriginal,
+      );
       preWidenLeft = nr.left;
       preWidenRight = nr.right;
     }
