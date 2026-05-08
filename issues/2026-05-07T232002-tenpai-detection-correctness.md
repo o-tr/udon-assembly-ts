@@ -1,11 +1,12 @@
 ---
 created: 2026-05-07T23:20:02+09:00
-updated: 2026-05-07T23:20:02+09:00
-status: open
+updated: 2026-05-08T11:40:00+09:00
+status: fixed
 severity: high
 component: transpiler / IR + structural-union return tracking
-related_branch: master
+related_branch: tenpai-detection-correctness
 related_test: mahjong-t2 VM `hand_tenpai`, `tenpai_edge`
+fix_commits: 1d703c3, af8adf1, 5433ef2, 46e9ee3, 475b225
 ---
 
 # Tenpai detection produces wrong results (no VM crash, just wrong logs)
@@ -36,7 +37,40 @@ VM: tenpai_edge
 kokushi-musou (13-orphans) shape — `13` is the tile-acceptance count for the
 13-tile wait. The transpiled run misses the wait entirely.
 
-## Suspected root cause
+## Fix applied (commits 1d703c3–475b225, branch `tenpai-detection-correctness`)
+
+Root cause confirmed and fixed. See details below.
+
+**`untrackedStructuralHandleVars` set** added to `ASTToTACConverter`:
+
+- In `visitVariableDeclaration`: when a local variable is assigned from a named
+  operand (Variable or Temporary) that has no `inlineInstanceMap` entry — but
+  NOT from a null constant (which is a dead path guarded by TypeScript narrowing)
+  — the destination variable is added to `untrackedStructuralHandleVars`.
+  The discriminator is `operandTrackingKey()`: returns `undefined` for Constants,
+  a name string for Variable/Temporary.
+
+- In `UntrackedStructuralUnionReturn` path (`statement.ts`): `returnTrackingInvalidated`
+  is now only set when the returned variable is in `untrackedStructuralHandleVars`.
+  This preserves existing safe behavior for null-bound variables while forcing
+  D-3 dispatch for genuinely untracked handles. The previous unconditional
+  invalidation would have broken the `inline_erased_return` regression test.
+
+- In `saveAndBindInlineParams` (`helpers/inline.ts`): when a non-heap-prefix
+  Variable arg has no `inlineInstanceMap` entry and is in
+  `untrackedStructuralHandleVars`, its status propagates to the parameter slot,
+  covering the case where an untracked handle is forwarded through a parameter
+  and returned directly.
+
+Unit tests (961 tests, 96 files) all pass. Udon VM tests (365 tests) all pass.
+
+Additional fixes added after code review (commits af8adf1, 5433ef2, 46e9ee3, 475b225):
+- **af8adf1**: Prune set membership: param names added during inline expansion are removed by `restoreInlineParams` (via `addedToUntrackedSet` field on `InlineParamSaveEntry`); monotone-add preserved (no delete in tracked branch after inner-scope shadowing concern). Test extended with `Wrapper.wrap(p)` + `OuterViaWrap` path.
+- **5433ef2**: Propagate out of nested static inline expansions: `emitInlineStaticMethod` finally block adds `result.name` to set when inner `returnTrackingInvalidated && returnInstancePrefix !== undefined`.
+- **46e9ee3**: Same propagation for instance method calls (`inlineInstanceMethodCallCore` finally block). Reverted `delete(destKey)` from tracked branch (false-negative risk from inner-scope shadowing outweighs false-positive D-3 cost).
+- **475b225**: Clear spurious `inlineInstanceMap` entry: `emitStructuralParamFieldCopies` (called before the `!isHeapPrefix` guard in `saveAndBindInlineParams`) sets `inlineInstanceMap[param.name]` via the `copiedAny` path when the argument has structural slots. When the param ends up in `untrackedStructuralHandleVars`, delete the entry so that `return p` inside the callee triggers `returnTrackingInvalidated` rather than propagating zeroed field-slot values through the tracked return path. Fixes `OuterViaWrap.analyzeViaWrap(200)` in the `inline_structural_untracked_return` VM test (was: `False/0`, now: `True/200`).
+
+## Root cause (confirmed)
 
 Both tenpai-detection paths flow through `HandAnalyzer.checkTenpai` and
 related helpers. The transpile log emits the following warnings repeatedly
@@ -67,22 +101,24 @@ failure mode is that the kokushi-detection branch returns a tracked instance
 that doesn't match the sibling-prefix layout, so the union narrows to
 `null`/`0` and the kokushi result is discarded.
 
-## Where to investigate
+## Investigation notes (resolved)
 
-1. **The two warning sites** —
-   - `mahjong-t2/src/core/domain/services/HandAnalyzer.ts:229` and `:872`.
-     Inspect what each branch returns and whether the unified-return prefix
-     can actually represent every variant.
-2. **Transpiler structural-union return path** —
-   - `src/transpiler/ir/ast_to_tac/visitors/statement.ts:1717` (warning emit).
-     The warning text says "ensure null narrowing guards this path"; verify
-     the codegen actually inserts the null narrowing it advises.
-   - The unified-return-prefix populate logic should be cross-checked against
-     mixed tracked/untracked sibling-return cases.
-3. **Kokushi-musou specific path** (for `tenpai_edge`) — bisect by writing a
-   minimal repro that returns a kokushi `WaitInfo` from one branch and a
-   standard-form `WaitInfo` from another, and see whether the call site
-   reads back the kokushi tile-count correctly.
+1. **The two warning sites** — both confirmed to be the exact pattern: a
+   method uses `tryGet(x) ?? fallback` (NC with method-call LHS → NC split
+   skipped → Temporary result → no `inlineInstanceMap` entry), assigned to a
+   local, then returned from a method that also has a tracked sibling return
+   (literal struct). Callers using the tracked sibling's prefix read stale
+   field values when the untracked path executed.
+
+2. **Transpiler structural-union return path** — the root cause was not in
+   the null-narrowing advice but in `returnTrackingInvalidated` never being
+   set for methods with a mix of tracked and untracked returns. Fixed by
+   `untrackedStructuralHandleVars` (see "Fix applied" above).
+
+3. **Kokushi-musou path** — same structural pattern; fix covers it because
+   `returnTrackingInvalidated = true` causes the entire call site to use D-3
+   dispatch, which reads the correct runtime prefix regardless of which return
+   path was taken.
 
 ## Why this is independent of #024001
 

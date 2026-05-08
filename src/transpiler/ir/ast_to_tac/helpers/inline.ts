@@ -102,6 +102,12 @@ export type InlineParamSaveEntry = {
   // can put the caller's value back after the inlined body returns.
   // The restore is emitted as a COPY into the original named slot.
   valueBackup?: { temp: TACOperand; slotType: TypeSymbol };
+  // Set to true when saveAndBindInlineParams freshly added this param name to
+  // untrackedStructuralHandleVars (i.e. it was not already in the set before
+  // binding). restoreInlineParams uses this to remove the entry so that
+  // identically-named parameters from later inline expansions are not
+  // incorrectly flagged as untracked.
+  addedToUntrackedSet?: boolean;
 };
 export type InlineParamSave = Map<string, InlineParamSaveEntry>;
 
@@ -858,7 +864,40 @@ export function saveAndBindInlineParams(
         const isHeapPrefix = HEAP_INSTANCE_PREFIXES.some((p) =>
           argVar.name.startsWith(p),
         );
-        if (!isHeapPrefix) continue;
+        if (!isHeapPrefix) {
+          // Propagate untracked-handle status: if the arg is a known untracked
+          // structural handle (set in visitVariableDeclaration when a named
+          // operand with no inlineInstanceMap is assigned to a local), the
+          // parameter inherits that status. This ensures `return p` inside the
+          // callee also triggers returnTrackingInvalidated rather than silently
+          // relying on a sibling-populated prefix that may never be written on
+          // this execution path.
+          const argKey = operandTrackingKey(argVar);
+          if (
+            argKey &&
+            converter.untrackedStructuralHandleVars.has(argKey) &&
+            !converter.untrackedStructuralHandleVars.has(param.name)
+          ) {
+            converter.untrackedStructuralHandleVars.add(param.name);
+            // Mark the save entry so restoreInlineParams removes this name
+            // from the set when the inline expansion finishes, preventing
+            // stale membership from leaking into later expansions that reuse
+            // the same parameter name with a tracked argument.
+            const savedEntry = saved.get(param.name);
+            if (savedEntry) savedEntry.addedToUntrackedSet = true;
+          }
+          // emitStructuralParamFieldCopies (called above) may have set
+          // inlineInstanceMap[param.name] via the copiedAny path, making the
+          // parameter appear tracked even though its argument is an untracked
+          // structural handle.  Remove that spurious entry so that `return p`
+          // inside the callee triggers returnTrackingInvalidated instead of
+          // silently propagating zeroed field-slot values through the tracked
+          // path.
+          if (converter.untrackedStructuralHandleVars.has(param.name)) {
+            converter.inlineInstanceMap.delete(param.name);
+          }
+          continue;
+        }
 
         const argType = converter.getOperandType(argVar);
         const isTypeAlias =
@@ -977,6 +1016,12 @@ export function restoreInlineParams(
           entry.valueBackup.temp,
         ),
       );
+    }
+    // Remove untracked-handle status added during this expansion so that
+    // later inline expansions reusing the same parameter name with a tracked
+    // argument are not incorrectly penalised with D-3 dispatch.
+    if (entry.addedToUntrackedSet) {
+      converter.untrackedStructuralHandleVars.delete(name);
     }
   }
 }
@@ -2135,8 +2180,24 @@ function visitInlineStaticMethodCallImpl(
       this.currentNativeArrayVarName = savedInlineNativeVarName;
       if (this.inlinedBodyStack.length > bodyStackDepth)
         this.inlinedBodyStack.pop();
-      if (this.inlineReturnStack.length > returnStackDepth)
+      if (this.inlineReturnStack.length > returnStackDepth) {
+        const innerCtx =
+          this.inlineReturnStack[this.inlineReturnStack.length - 1];
+        // If the inner expansion's return tracking was invalidated AND the
+        // method has a structural (interface) return type, the return variable
+        // holds an untracked structural handle. Add it to the set so that any
+        // outer `return <result>` (or `const x = <result>` via the else-if
+        // branch in visitVariableDeclaration) also triggers
+        // returnTrackingInvalidated rather than relying on a
+        // sibling-populated prefix that may never be written at runtime.
+        if (
+          innerCtx.returnTrackingInvalidated &&
+          innerCtx.returnInstancePrefix !== undefined
+        ) {
+          this.untrackedStructuralHandleVars.add(result.name);
+        }
         this.inlineReturnStack.pop();
+      }
       if (addedInlineMethodKey) this.inlineMethodStack.delete(inlineKey);
       this.currentParamExportMap = savedParamExportMap;
       this.currentParamExportReverseMap = savedParamExportReverseMap;
@@ -4389,7 +4450,22 @@ function inlineResolvedMethodBodyImpl(
       converter.nativeArrayIneligible = savedInstNativeIneligible;
       converter.currentNativeArrayVarName = savedInstNativeVarName;
       if (pushedInlineBody) converter.inlinedBodyStack.pop();
-      if (pushedInlineReturn) converter.inlineReturnStack.pop();
+      if (pushedInlineReturn) {
+        const innerCtx =
+          converter.inlineReturnStack[converter.inlineReturnStack.length - 1];
+        // Mirror the static-method propagation: if the inner expansion's return
+        // tracking was invalidated for a structural (interface) return type, the
+        // result variable holds an untracked structural handle. Adding it to the
+        // set ensures that any enclosing `return obj.method(…)` or
+        // `const x = obj.method(…)` also triggers returnTrackingInvalidated.
+        if (
+          innerCtx.returnTrackingInvalidated &&
+          innerCtx.returnInstancePrefix !== undefined
+        ) {
+          converter.untrackedStructuralHandleVars.add(result.name);
+        }
+        converter.inlineReturnStack.pop();
+      }
       if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
       converter.currentParamExportMap = savedParamExportMap;
       converter.currentParamExportReverseMap = savedParamExportReverseMap;

@@ -538,6 +538,16 @@ export const VM_TEST_CASES: VmTestCase[] = [
     name: "inline_multi_return_paths",
     sourceFile: "inline_multi_return_paths.ts",
   },
+  // --- Bug regression: UntrackedStructuralUnionReturn stale prefix ---
+  // Repro for the bug where a method with mixed tracked/untracked return paths
+  // leaves the caller's prefix stale when an untracked (first) path is taken.
+  // Fixed: untrackedStructuralHandleVars now detects untracked handle variables
+  // assigned from named operands and forces D-3 dispatch instead of stale prefix reads.
+  {
+    name: "inline_structural_untracked_return",
+    sourceFile: "inline_structural_untracked_return.ts",
+    expectedLogs: ["True", "99", "True", "200", "True", "99", "True", "200"],
+  },
   // --- TS/Udon string compat methods ---
   {
     name: "string_ts_compat_methods",
