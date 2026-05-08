@@ -73,6 +73,7 @@ import {
   createConstant,
   createLabel,
   createVariable,
+  type ConstantOperand,
   type LabelOperand,
   type TACOperand,
   TACOperandKind,
@@ -4799,9 +4800,38 @@ export function emitCopyWithTracking(
     !isInlineHandleType(this, srcType) &&
     !isInlineHandleType(this, destType)
   ) {
-    const castTemp = this.newTemp(destType);
-    this.emit(new CastInstruction(castTemp, src));
-    actualSrc = castTemp;
+    if (src.kind === TACOperandKind.Constant) {
+      // Fold numeric constants at compile time to avoid emitting a runtime
+      // Convert.X extern for e.g. `let d: number = 42 as UdonInt`. Mirrors
+      // the coerceConstantToType path in assignment.ts (not imported here to
+      // avoid a circular dependency — assignment.ts already imports inline.ts).
+      const constSrc = src as ConstantOperand;
+      const raw = constSrc.value;
+      if (raw !== null && typeof raw !== "object") {
+        const num = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isNaN(num)) {
+          switch (destType.udonType) {
+            case UdonType.Int32:
+              actualSrc = createConstant(Math.trunc(num), PrimitiveTypes.int32);
+              break;
+            case UdonType.Single:
+              actualSrc = createConstant(num, PrimitiveTypes.single);
+              break;
+            case UdonType.Double:
+              actualSrc = createConstant(num, PrimitiveTypes.double);
+              break;
+          }
+        }
+      }
+      // If folding failed (null/object value or unhandled type), fall through
+      // with actualSrc still equal to src; the raw COPY is still correct here
+      // because the Udon VM will trap later anyway on type mismatch if the
+      // value is genuinely unrepresentable.
+    } else {
+      const castTemp = this.newTemp(destType);
+      this.emit(new CastInstruction(castTemp, src));
+      actualSrc = castTemp;
+    }
   }
   this.emit(new CopyInstruction(dest, actualSrc));
   const destName = operandTrackingKey(dest);
