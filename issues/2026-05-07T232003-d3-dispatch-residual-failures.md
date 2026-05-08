@@ -1,6 +1,6 @@
 ---
 created: 2026-05-07T23:20:03+09:00
-updated: 2026-05-08T13:30:00+09:00
+updated: 2026-05-09T02:00:00+09:00
 status: fixed
 severity: high
 component: transpiler / D3 method dispatch
@@ -137,6 +137,11 @@ candidate whose `__handle` variable matches the runtime value — which may be t
 wrong class. This doesn't produce a dispatch-miss log; it produces *wrong-class
 dispatch*. Fixing this requires a class discriminator or a global counter shared
 across all SoA classes. To be addressed as follow-up after VM run.
+
+**→ Resolved in sub-issue `2026-05-08T010000-soa-handle-collision-wrong-class-dispatch.md`**
+via compile-time partition offsets: each SoA class is assigned a unique offset
+`i * SOA_PARTITION_SIZE` (1 << 20 = 1,048,576), so handles are non-overlapping
+across classes. Verified 2026-05-08: 183/183 VM tests pass, 0 bad externs.
 
 ## VM verification (2026-05-08)
 
