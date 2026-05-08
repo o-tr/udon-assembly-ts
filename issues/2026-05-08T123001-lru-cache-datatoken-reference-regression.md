@@ -1,7 +1,7 @@
 ---
 created: 2026-05-08T12:30:01+09:00
-updated: 2026-05-08T12:30:01+09:00
-status: open
+updated: 2026-05-08T13:28:00+09:00
+status: fixed
 severity: high
 component: transpiler / DataToken unwrap
 related_test: mahjong-t2 lru_cache
@@ -106,6 +106,33 @@ at the property access.
    the LRU cache path does not contain
    `__get_Reference__SystemObject` when the token may contain primitives.
 5. Re-run `VM: lru_cache` after the fix.
+
+## Root cause
+
+The bug only manifested in **batch (cross-module) transpilation**. When LRUCache
+was defined in a separate file, `TypeCheckerTypeResolver.tryResolveBuiltinGenericInterface`
+returned bare `ExternTypes.dataDictionary` (no key/value type args) for `Map<K,V>`,
+because it lacked the type-arg context. The `mapTypeWithGenerics` TypeChecker-first
+path then returned that bare symbol early, bypassing the text-based `Map` case
+that creates `CollectionTypeSymbol(dataDictionary.name, undefined, keyType, valueType)`.
+The missing `keyType` caused the `keys().next().value` DataToken getter to fall
+back to `__get_Reference__SystemObject` instead of `__get_String__SystemString`.
+
+In single-file mode (inline transpiler), `checkerTypeResolver` is not set, so
+the TypeChecker-first path was never taken and the text-based path always worked.
+
+## Fix
+
+`tryResolveBuiltinGenericInterface` now accepts the `ts.Type` and calls
+`checker.getTypeArguments()` to extract key/value type args for `Map`/`ReadonlyMap`
+and element type for `Set`/`ReadonlySet`, returning a proper `CollectionTypeSymbol`.
+This mirrors the single-file parser-time path and propagates the type information
+needed for correct DataToken getter selection.
+
+Files changed:
+- `src/transpiler/frontend/type_checker_type_resolver.ts`
+- `tests/unit/transpiler/type_checker_type_resolver.test.ts` (updated 2 assertions)
+- `tests/unit/transpiler/cross_module_lru_cache_eviction.test.ts` (new regression test)
 
 ## Acceptance criteria
 
