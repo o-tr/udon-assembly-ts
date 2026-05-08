@@ -3328,9 +3328,9 @@ export function visitPropertyAccessExpression(
               // Last-resort narrowing: if the TypeChecker sees the receiver as a
               // heterogeneous union, its individual member names (e.g. "Meld" and
               // "__anon_isOpen:boolean|tiles:Tile[]|type:string") may intersect with
-              // candidateClasses as a proper subset.  Classes that merely share the
-              // property name but are not union members (e.g. "Hand" when the param
-              // type is `Meld | AnonStruct`) are excluded.
+              // candidateClasses (as a subset, including full equality).  Classes
+              // that merely share the property name but are not union members (e.g.
+              // "Hand" when the param type is `Meld | AnonStruct`) are excluded.
               let unionNarrowed = false;
               if (this.checkerContext && this.checkerTypeResolver) {
                 const unionNames =

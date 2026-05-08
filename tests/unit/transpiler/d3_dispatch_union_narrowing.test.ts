@@ -9,7 +9,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import {
   BatchTranspiler,
@@ -24,20 +24,28 @@ export function UdonBehaviour(): ClassDecorator { return () => {}; }
 export class UdonSharpBehaviour {}
 `;
 
-let tmpSrcDir: string;
-let tmpOutDir: string;
+/** Create a fresh pair of temp dirs with stubs.ts already written. */
+function makeTempDirs(): {
+  srcDir: string;
+  outDir: string;
+  cleanup: () => void;
+} {
+  const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-src-"));
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-out-"));
+  fs.writeFileSync(path.join(srcDir, "stubs.ts"), STUBS_SRC);
+  return {
+    srcDir,
+    outDir,
+    cleanup: () => {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+      fs.rmSync(outDir, { recursive: true, force: true });
+    },
+  };
+}
 
 describe("D3 dispatch union-member narrowing", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
-    tmpSrcDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-src-"));
-    tmpOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-out-"));
-    fs.writeFileSync(path.join(tmpSrcDir, "stubs.ts"), STUBS_SRC);
-  });
-
-  afterAll(() => {
-    fs.rmSync(tmpSrcDir, { recursive: true, force: true });
-    fs.rmSync(tmpOutDir, { recursive: true, force: true });
   });
 
   it("does not emit D3DispatchFallback when TypeChecker union members narrow candidateClasses", () => {
@@ -81,23 +89,25 @@ class Main extends UdonSharpBehaviour {
   }
 }
 `;
-    const srcFile = path.join(tmpSrcDir, "main_positive.ts");
-    fs.writeFileSync(srcFile, src);
-
-    const result = new BatchTranspiler().transpile({
-      sourceDir: tmpSrcDir,
-      outputDir: tmpOutDir,
-      silent: true,
-      useOutputCache: false,
-    });
-
-    const d3 =
-      result.diagnostics?.filter(
-        (d) =>
-          d.code === "D3DispatchFallback" &&
-          d.location.filePath.includes("main_positive.ts"),
-      ) ?? [];
-    expect(d3).toHaveLength(0);
+    const { srcDir, outDir, cleanup } = makeTempDirs();
+    try {
+      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
+      const result = new BatchTranspiler().transpile({
+        sourceDir: srcDir,
+        outputDir: outDir,
+        silent: true,
+        useOutputCache: false,
+      });
+      const d3 =
+        result.diagnostics?.filter(
+          (d) =>
+            d.code === "D3DispatchFallback" &&
+            d.location.filePath.includes("main.ts"),
+        ) ?? [];
+      expect(d3).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
   });
 
   it("does not emit D3DispatchFallback when ALL candidateClasses are union members (exact-match case)", () => {
@@ -130,23 +140,25 @@ class Main extends UdonSharpBehaviour {
   }
 }
 `;
-    const srcFile = path.join(tmpSrcDir, "main_exact.ts");
-    fs.writeFileSync(srcFile, src);
-
-    const result = new BatchTranspiler().transpile({
-      sourceDir: tmpSrcDir,
-      outputDir: tmpOutDir,
-      silent: true,
-      useOutputCache: false,
-    });
-
-    const d3 =
-      result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
-    // Only D3 warnings from this test's code matter — filter to the exact file.
-    const d3Here = d3.filter((d) =>
-      d.location.filePath.includes("main_exact.ts"),
-    );
-    expect(d3Here).toHaveLength(0);
+    const { srcDir, outDir, cleanup } = makeTempDirs();
+    try {
+      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
+      const result = new BatchTranspiler().transpile({
+        sourceDir: srcDir,
+        outputDir: outDir,
+        silent: true,
+        useOutputCache: false,
+      });
+      const d3 =
+        result.diagnostics?.filter(
+          (d) =>
+            d.code === "D3DispatchFallback" &&
+            d.location.filePath.includes("main.ts"),
+        ) ?? [];
+      expect(d3).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
   });
 
   it("does not emit D3DispatchFallback for NamedClass | anonymous-struct union (naming consistency)", () => {
@@ -200,22 +212,25 @@ class Main extends UdonSharpBehaviour {
   }
 }
 `;
-    const srcFile = path.join(tmpSrcDir, "main_anon_union.ts");
-    fs.writeFileSync(srcFile, src);
-
-    const result = new BatchTranspiler().transpile({
-      sourceDir: tmpSrcDir,
-      outputDir: tmpOutDir,
-      silent: true,
-      useOutputCache: false,
-    });
-
-    const d3 =
-      result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
-    const d3Here = d3.filter((d) =>
-      d.location.filePath.includes("main_anon_union.ts"),
-    );
-    expect(d3Here).toHaveLength(0);
+    const { srcDir, outDir, cleanup } = makeTempDirs();
+    try {
+      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
+      const result = new BatchTranspiler().transpile({
+        sourceDir: srcDir,
+        outputDir: outDir,
+        silent: true,
+        useOutputCache: false,
+      });
+      const d3 =
+        result.diagnostics?.filter(
+          (d) =>
+            d.code === "D3DispatchFallback" &&
+            d.location.filePath.includes("main.ts"),
+        ) ?? [];
+      expect(d3).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
   });
 
   it("does not emit D3DispatchFallback for nullable union (A | B | null) — nullish member stripped", () => {
@@ -249,23 +264,25 @@ class Main extends UdonSharpBehaviour {
   }
 }
 `;
-    const srcFile = path.join(tmpSrcDir, "main_nullable.ts");
-    fs.writeFileSync(srcFile, src);
-
-    const result = new BatchTranspiler().transpile({
-      sourceDir: tmpSrcDir,
-      outputDir: tmpOutDir,
-      silent: true,
-      useOutputCache: false,
-    });
-
-    const d3 =
-      result.diagnostics?.filter(
-        (d) =>
-          d.code === "D3DispatchFallback" &&
-          d.location.filePath.includes("main_nullable.ts"),
-      ) ?? [];
-    expect(d3).toHaveLength(0);
+    const { srcDir, outDir, cleanup } = makeTempDirs();
+    try {
+      fs.writeFileSync(path.join(srcDir, "main.ts"), src);
+      const result = new BatchTranspiler().transpile({
+        sourceDir: srcDir,
+        outputDir: outDir,
+        silent: true,
+        useOutputCache: false,
+      });
+      const d3 =
+        result.diagnostics?.filter(
+          (d) =>
+            d.code === "D3DispatchFallback" &&
+            d.location.filePath.includes("main.ts"),
+        ) ?? [];
+      expect(d3).toHaveLength(0);
+    } finally {
+      cleanup();
+    }
   });
 
   it("still emits D3DispatchFallback when receiver type is not a union (cannot narrow)", () => {
