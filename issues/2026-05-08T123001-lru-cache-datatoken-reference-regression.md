@@ -142,3 +142,9 @@ Files changed:
   `VRCSDK3DataDataToken.__get_Reference__SystemObject` unwrap for primitive-capable
   tokens.
 - The previously resolved regression cases remain covered.
+
+## Latest verification (2026-05-09)
+
+The latest mahjong-t2 VM run confirms `VM: lru_cache` passes. The previous
+`DataToken.__get_Reference__SystemObject` crash is no longer present in the
+failed-test list.
