@@ -6,10 +6,13 @@ export interface DispatchLimitContext {
   property: string;
   usedErasedFallback: boolean;
   /**
-   * True when dispInstances were populated via the anonUnionIface path
-   * (structural union: `type R = A | B` resolved to `__anon_union_N`).
-   * These dispatch tables can grow large in programs with many union instances
-   * and need the wider LARGE_ERASED_DISPATCH_LIMIT rather than the default 100.
+   * True when the operand type is a structural union (`type R = A | B` resolved
+   * to `__anon_union_N`) and at least one dispatch candidate was found.
+   * Candidates may come from instances whose className equals the anon-union
+   * type name directly, or from concrete variant classes matched via
+   * `hasCompatibleUnionProperty`. Either way, the dispatch table can grow large
+   * in programs with many union instances and needs the wider
+   * LARGE_ERASED_DISPATCH_LIMIT rather than the default 100.
    */
   isStructuralUnionDispatch?: boolean;
 }
