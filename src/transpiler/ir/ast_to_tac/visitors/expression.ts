@@ -3181,30 +3181,41 @@ export function visitPropertyAccessExpression(
           untrackedAnonUnion.properties.size > 0
             ? untrackedAnonUnion
             : null;
+        // True when at least one dispInstance was contributed while operating in
+        // structural-union dispatch mode (anonUnionIface !== null). Instances
+        // may match via className === untrackedTypeName (when the object-literal
+        // was created directly as `__anon_union_N`) OR via
+        // hasCompatibleUnionProperty (when a concrete variant class like
+        // `StandardWin` is matched against the union interface). Both need the
+        // wider dispatch limit (512) and the erased miss-path diagnostic.
+        // Note: mutually exclusive with usedErasedFallback because erased
+        // fallbacks run only when dispInstances is empty after the main loop.
+        let usedAnonUnionIface = false;
         for (const [instId, info] of this.allInlineInstances) {
           if (
             info.className === untrackedTypeName ||
             implementorNames?.has(info.className) ||
-            isSubclassOf(this, info.className, untrackedTypeName) ||
-            (anonUnionIface !== null &&
-              hasCompatibleUnionProperty(
-                this,
-                info.className,
-                anonUnionIface,
-                node.property,
-              ))
+            isSubclassOf(this, info.className, untrackedTypeName)
           ) {
             dispInstances.push([instId, info]);
+            if (anonUnionIface !== null) {
+              // untrackedTypeName is __anon_union_N — these are structural-union
+              // instances and need the same wider limit as the union iface path.
+              usedAnonUnionIface = true;
+            }
+          } else if (
+            anonUnionIface !== null &&
+            hasCompatibleUnionProperty(
+              this,
+              info.className,
+              anonUnionIface,
+              node.property,
+            )
+          ) {
+            dispInstances.push([instId, info]);
+            usedAnonUnionIface = true;
           }
         }
-        // Track whether dispInstances were populated by the anonUnionIface path
-        // (structural union: type R = A | B → __anon_union_N). When true,
-        // the dispatch limit is widened (512 vs 100) and the miss path must
-        // emit a diagnostic instead of falling through to PropertyGetInstruction.
-        // Mutually exclusive with usedErasedFallback (erased fallbacks only run
-        // when dispInstances is still empty after the anonUnionIface pass).
-        const usedAnonUnionIface =
-          anonUnionIface !== null && dispInstances.length > 0;
         // Track whether dispInstances were populated by a fallback heuristic
         // (AST type or property-based). When true, a miss path must emit a
         // PropertyGetInstruction instead of returning a zeroed heap default,
@@ -3663,6 +3674,16 @@ export function visitPropertyAccessExpression(
           // should be tuned via DispatchLimitResolver so the table fits).
           let missType: TypeSymbol | undefined;
           for (const [, info] of dispInstances) {
+            const probeResolved = resolveClassProperty(
+              this,
+              info.className,
+              node.property,
+            );
+            if (probeResolved?.prop.isGetter) {
+              missType =
+                probeResolved.prop.getterReturnType ?? probeResolved.prop.type;
+              break;
+            }
             const pv =
               this.mapInlineProperty(
                 info.className,

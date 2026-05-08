@@ -10,8 +10,8 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
-import type { DispatchLimitResolver } from "../../../src/transpiler/ir/ast_to_tac/dispatch_limit_resolver.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
+import type { DispatchLimitResolver } from "../../../src/transpiler/ir/ast_to_tac/dispatch_limit_resolver.js";
 
 describe("structural union isWin dispatch", () => {
   beforeAll(() => {
