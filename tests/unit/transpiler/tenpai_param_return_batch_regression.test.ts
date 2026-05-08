@@ -118,8 +118,9 @@ export class TestBehaviour extends UdonSharpBehaviour {
     // → "return p" → UntrackedStructuralUnionReturn → returnTrackingInvalidated
     // → caller emits D-3 dispatch (__uninst_prop_*) instead of direct prefix read
     const r3 = HandAnalyzer.passThrough(fromNC);
-    // Property access: must use D-3 dispatch, not stale direct prefix read
-    const val = r3.count;
+    // Feed into Debug.Log (a live Unity extern call) so the property access
+    // is never dead-code-eliminated, mirroring the inline test.
+    Debug.Log(r3.count);
   }
 }
 `,
