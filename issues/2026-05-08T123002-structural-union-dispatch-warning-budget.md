@@ -1,6 +1,6 @@
 ---
 created: 2026-05-08T12:30:02+09:00
-updated: 2026-05-08T15:00:00+09:00
+updated: 2026-05-09T01:35:00+09:00
 status: resolved
 severity: medium
 component: transpiler / structural unions and D3 dispatch

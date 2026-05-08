@@ -1,6 +1,6 @@
 ---
 created: 2026-05-08T12:30:01+09:00
-updated: 2026-05-08T13:28:00+09:00
+updated: 2026-05-09T01:35:00+09:00
 status: fixed
 severity: high
 component: transpiler / DataToken unwrap

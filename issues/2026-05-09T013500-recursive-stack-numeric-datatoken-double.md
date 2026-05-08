@@ -8,7 +8,7 @@ related_test: mahjong-t2 VM suite
 related_issue: 2026-05-08T123000-math-truncate-double-vm-crash.md
 ---
 
-# Recursive inline stack boxes Int32-backed `number` locals as Double DataTokens
+# Recursive stack/DataToken and get-range numeric raw-copy mismatches
 
 ## Summary
 
@@ -22,6 +22,9 @@ VRCSDK3DataDataToken.__op_Implicit__SystemDouble__VRCSDK3DataDataToken
 The failure appears in yaku/scoring/analysis tests that flow through
 `HandAnalyzerDecompositionService.extractAllMelds`. The generated UASM shows
 the crash happens while saving local variables into the recursive inline stack.
+A related raw-copy mismatch also remains in generated get-range helper loops:
+`hand_operations` now fails when a Double-backed value is copied into an Int32
+slot and later passed to `SystemInt32.__op_LessThan`.
 
 ## Latest observed result
 
@@ -142,4 +145,3 @@ Int32 slot and later pass that slot to an Int32 extern.
   `SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean`.
 - Generated UASM does not raw-copy Double values into Int32 slots, nor
   Int32-backed values into Double slots before Double-only externs.
-
