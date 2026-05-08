@@ -109,6 +109,12 @@ import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 import { Inner } from "./inner";
 import { HandAnalyzer } from "./hand_analyzer";
 
+// Debug is a Unity extern resolved via the global extern registry.
+// Defining it in stubs.ts would make the transpiler treat it as an inline
+// class and inline its empty body instead of emitting an EXTERN call,
+// so it is intentionally left unimported here.
+declare const Debug: { Log(v: unknown): void };
+
 @UdonBehaviour()
 export class TestBehaviour extends UdonSharpBehaviour {
   Start(): void {
@@ -164,6 +170,11 @@ export class TestBehaviour extends UdonSharpBehaviour {
   });
 
   it("D-3 dispatch (__uninst_prop_*) appears in generated assembly for cross-module untracked arg", () => {
+    // Guard: verify Debug.Log was emitted as a live EXTERN (UnityEngineDebug),
+    // not silently dropped. This confirms r3.count is live so the assertion
+    // below is not vacuous.
+    expect(assembledUasm).toContain("UnityEngineDebug");
+
     // D-3 dispatch creates a TAC-level slot named __uninst_prop_N which the
     // assembler preserves verbatim in the .tasm data section (local variables
     // keep their TAC names in the output format). BatchResult does not expose
