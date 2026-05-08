@@ -914,7 +914,7 @@ describe("inline recursive static method", () => {
       /__inlineRec_Combiner_combine_retVal_\d+/,
     );
     expect(retValMatch).not.toBeNull();
-    const retVal = retValMatch![0];
+    const retVal = retValMatch?.[0] ?? "";
 
     // Preamble (before inline_rec_entry) must initialise retVal.
     const parts = compiled.tac.split(/inline_rec_entry\w*/);
@@ -1088,7 +1088,7 @@ describe("inline recursive instance method", () => {
       /__inlineRecInst_Solver_solve_retVal_\d+/,
     );
     expect(retValMatch).not.toBeNull();
-    const retVal = retValMatch![0];
+    const retVal = retValMatch?.[0] ?? "";
 
     // The preamble (everything before inline_rec_entry) must initialize retVal
     // to a DataList default so that the overflow handler path arrives at
