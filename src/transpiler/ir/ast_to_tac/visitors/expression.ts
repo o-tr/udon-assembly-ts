@@ -3413,7 +3413,7 @@ export function visitPropertyAccessExpression(
           this.warnAt(
             node,
             "D3DispatchFallback",
-            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: ${dispatchLimit}) — dispatch block is skipped. For structural-union or erased paths the safety-net else-if emits Debug.LogError + zero-init; for other paths this falls through to PropertyGetInstruction.`,
+            `D3 dispatch for property "${node.property}" has ${dispInstances.length} combined candidate instances (limit: ${dispatchLimit}) — dispatch block is skipped. The safety-net else-if branch will emit Debug.LogError + zero-init result to avoid an invalid PropertyGetInstruction EXTERN.`,
           );
         }
         if (dispInstances.length > 0 && dispInstances.length <= dispatchLimit) {
