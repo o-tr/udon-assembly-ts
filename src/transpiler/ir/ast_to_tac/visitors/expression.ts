@@ -3329,21 +3329,56 @@ export function visitPropertyAccessExpression(
               }
               if (dispInstances.length > 0) usedErasedFallback = true;
             } else {
-              // Narrowing failed entirely — include instances from ALL
-              // candidate classes so the dispatch table handles any
-              // concrete class at runtime.  Log at transpile time so
-              // developers can track mixed-class collections.
-              this.warnAt(
-                node,
-                "D3DispatchFallback",
-                `D3 dispatch narrowing failed for property "${node.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
-              );
-              for (const [instId, info] of this.allInlineInstances) {
-                if (candidateClasses.has(info.className)) {
-                  dispInstances.push([instId, info]);
+              // Last-resort narrowing: if the TypeChecker sees the receiver as a
+              // heterogeneous union, its individual member names (e.g. "Meld" and
+              // "__anon_isOpen:boolean|tiles:Tile[]|type:string") may intersect with
+              // candidateClasses (as a subset, including full equality).  Classes
+              // that merely share the property name but are not union members (e.g.
+              // "Hand" when the param type is `Meld | AnonStruct`) are excluded.
+              let unionNarrowed = false;
+              if (this.checkerContext && this.checkerTypeResolver) {
+                const unionNames =
+                  this.checkerTypeResolver.resolveUnionMemberNamesFromAstNode(
+                    node.object,
+                    this.checkerContext,
+                  );
+                if (unionNames) {
+                  const memberSet = new Set(unionNames);
+                  const narrowedCandidates = [...candidateClasses].filter((c) =>
+                    memberSet.has(c),
+                  );
+                  if (narrowedCandidates.length > 0) {
+                    // All dispatched classes are confirmed union members — the
+                    // dispatch is semantically correct whether or not we narrowed
+                    // below the full candidateClasses set.
+                    unionNarrowed = true;
+                    const narrowedSet = new Set(narrowedCandidates);
+                    for (const [instId, info] of this.allInlineInstances) {
+                      if (narrowedSet.has(info.className)) {
+                        dispInstances.push([instId, info]);
+                      }
+                    }
+                    if (dispInstances.length > 0) usedErasedFallback = true;
+                  }
                 }
               }
-              if (dispInstances.length > 0) usedErasedFallback = true;
+              if (!unionNarrowed) {
+                // Narrowing failed entirely — include instances from ALL
+                // candidate classes so the dispatch table handles any
+                // concrete class at runtime.  Log at transpile time so
+                // developers can track mixed-class collections.
+                this.warnAt(
+                  node,
+                  "D3DispatchFallback",
+                  `D3 dispatch narrowing failed for property "${node.property}" — ${candidateClasses.size} candidate classes (${[...candidateClasses].join(", ")}), dispatching all candidates.`,
+                );
+                for (const [instId, info] of this.allInlineInstances) {
+                  if (candidateClasses.has(info.className)) {
+                    dispInstances.push([instId, info]);
+                  }
+                }
+                if (dispInstances.length > 0) usedErasedFallback = true;
+              }
             }
           }
         }
