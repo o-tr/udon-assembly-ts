@@ -1,7 +1,7 @@
 ---
 created: 2026-05-09T01:35:02+09:00
-updated: 2026-05-09T01:35:02+09:00
-status: open
+updated: 2026-05-09T04:05:00+09:00
+status: fix-applied-pending-vm
 severity: high
 component: transpiler / recursive inline returns / DataList
 related_test: mahjong-t2 VM suite
@@ -80,6 +80,35 @@ DataList, including the base case (`return [[]]`) and no-result case
 4. Add a minimal recursive inline regression where a method returns `T[][]`
    and the caller immediately iterates the result.
 5. Re-run `yaku_triplet` and `yaku_yakuman_extra`.
+
+## Root cause
+
+Both `emitInlineRecursiveInstanceMethod` and `emitInlineRecursiveStaticMethod`
+left the `retVal` slot uninitialised in the preamble. Two structural gaps meant
+`retVal` could be null when the caller read it at `inline_rec_done`:
+
+1. **Overflow handler** — logs error, resets depth/sp, then `goto doneLabel`
+   without setting retVal.
+2. **End-of-body fallthrough** — after the method body, jumps back to
+   `dispatchLabel` without setting retVal (dispatch index 0 falls through to
+   doneLabel).
+
+Self-calls bypass the preamble by jumping directly to `entryLabel`, so only
+the outermost invocation needs the initialisation.
+
+## Fix (2026-05-09)
+
+In both emitters, after the SP-reset block and before the overflow handler,
+emit a `CopyInstruction(result, createSoaSentinelValue(converter, effectiveReturnType))`
+for non-void, non-erased return types. For DataList/Array types this constructs
+an empty `DataList`; for primitives it uses 0/false/"". This covers both
+structural gaps in a single initialisation point.
+
+Files changed:
+- `src/transpiler/ir/ast_to_tac/helpers/inline.ts`: apply fix to both
+  `emitInlineRecursiveStaticMethod` and `emitInlineRecursiveInstanceMethod`
+- `tests/unit/transpiler/inline_outline.test.ts`: regression test
+  "initialises retVal before overflow handler for T[][] return type"
 
 ## Acceptance criteria
 
