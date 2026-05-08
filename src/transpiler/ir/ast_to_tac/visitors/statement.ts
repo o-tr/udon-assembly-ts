@@ -46,6 +46,7 @@ import {
   AssignmentInstruction,
   BinaryOpInstruction,
   CallInstruction,
+  CastInstruction,
   ConditionalJumpInstruction,
   CopyInstruction,
   LabelInstruction,
@@ -423,11 +424,35 @@ export function visitVariableDeclaration(
     ) {
       const inferredType = this.getOperandType(src);
       if (!isObjectTypeSymbol(inferredType)) {
-        destType = inferredType;
+        // Do not narrow a float-declared variable to an integer type.
+        // collectRecursiveLocals records the declared AST type (Double for
+        // TypeScript `number`). If we narrow Double→Int here the heap slot
+        // becomes %SystemInt32, but emitCallSitePush creates the local with
+        // local.type=Double and calls op_Implicit__SystemDouble on the Int32
+        // slot → Udon VM crash. Widen instead (coercion inserted below).
+        const destIsFloat =
+          destType.udonType === UdonType.Single ||
+          destType.udonType === UdonType.Double;
+        const inferredIsInteger =
+          isNumericUdonType(inferredType.udonType) &&
+          inferredType.udonType !== UdonType.Single &&
+          inferredType.udonType !== UdonType.Double;
+        if (!(destIsFloat && inferredIsInteger)) {
+          destType = inferredType;
+        }
       } else {
         const resolvedType = resolveTypeFromNode(this, node.initializer);
         if (resolvedType && !isObjectTypeSymbol(resolvedType)) {
-          destType = resolvedType;
+          const destIsFloat =
+            destType.udonType === UdonType.Single ||
+            destType.udonType === UdonType.Double;
+          const resolvedIsInteger =
+            isNumericUdonType(resolvedType.udonType) &&
+            resolvedType.udonType !== UdonType.Single &&
+            resolvedType.udonType !== UdonType.Double;
+          if (!(destIsFloat && resolvedIsInteger)) {
+            destType = resolvedType;
+          }
         }
       }
     }
@@ -473,7 +498,48 @@ export function visitVariableDeclaration(
   }
 
   if (src) {
-    this.emit(new AssignmentInstruction(dest, src));
+    // When the declared dest type is float (Single/Double) but the source
+    // produces an integer, insert a CastInstruction to widen the value.
+    // This ensures the heap slot holds a properly-typed float value; without
+    // coercion the COPY would store a boxed-int reference in a float slot and
+    // any later EXTERN reading the slot as float will trap at runtime.
+    // Use a separate emitSrc so the original src is still passed to
+    // tracking helpers below (numeric values carry no instance tracking).
+    let emitSrc = src;
+    {
+      const srcType = this.getOperandType(src);
+      if (
+        (destType.udonType === UdonType.Single ||
+          destType.udonType === UdonType.Double) &&
+        isNumericUdonType(srcType.udonType) &&
+        srcType.udonType !== destType.udonType
+      ) {
+        if (src.kind === TACOperandKind.Constant) {
+          const constSrc = src as ConstantOperand;
+          const raw = constSrc.value;
+          let folded = false;
+          if (raw !== null && typeof raw !== "object") {
+            const num = typeof raw === "number" ? raw : Number(raw);
+            if (!Number.isNaN(num)) {
+              emitSrc = createConstant(num, destType);
+              folded = true;
+            }
+          }
+          if (!folded) {
+            // Constant folding failed (null/object/NaN raw); fall back to
+            // runtime cast to avoid storing wrong-typed StrongBox in float slot.
+            const castTemp = this.newTemp(destType);
+            this.emit(new CastInstruction(castTemp, src));
+            emitSrc = castTemp;
+          }
+        } else {
+          const castTemp = this.newTemp(destType);
+          this.emit(new CastInstruction(castTemp, src));
+          emitSrc = castTemp;
+        }
+      }
+    }
+    this.emit(new AssignmentInstruction(dest, emitSrc));
     // Preserve pre-existing tracking when src is untracked: a local variable
     // may shadow a same-named parameter/outer-scope variable whose tracking
     // is still valid (e.g. `const { hand } = context` inside an inlined method

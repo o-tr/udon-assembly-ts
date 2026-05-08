@@ -6,7 +6,7 @@ import {
   ObjectType,
   PrimitiveTypes,
 } from "../../../frontend/type_symbols.js";
-import { UdonType } from "../../../frontend/types.js";
+import { isNumericUdonType, UdonType } from "../../../frontend/types.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
@@ -19,6 +19,18 @@ import {
 } from "../../tac_instruction.js";
 import { createConstant, type TACOperand } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+
+function normalizeToInt32(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+): TACOperand {
+  const type = converter.getOperandType(operand);
+  if (type.udonType === UdonType.Int32) return operand;
+  if (!isNumericUdonType(type.udonType)) return operand;
+  const temp = converter.newTemp(PrimitiveTypes.int32);
+  converter.emitCopyWithTracking(temp, operand);
+  return temp;
+}
 
 export const isSetCollectionType = (
   type: TypeSymbol | null,
@@ -175,6 +187,12 @@ export function emitDataListGetRangeLoop(
   );
   converter.emit(new CallInstruction(result, listCtorSig, []));
 
+  // Coerce start and count to Int32 — callers may pass Double-typed operands
+  // (TypeScript `number` maps to SystemDouble in the AST type, but these
+  // loop variables must be Int32 for the VM comparisons/arithmetic to work).
+  const coercedStart = normalizeToInt32(converter, start);
+  const coercedCount = normalizeToInt32(converter, count);
+
   // Loop: for i in 0..countVar, copy source.get_Item(start + i) → result.Add(token)
   const idx = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(
@@ -182,7 +200,7 @@ export function emitDataListGetRangeLoop(
   );
   // Snapshot count before loop to guard against mutation during iteration
   const countVar = converter.newTemp(PrimitiveTypes.int32);
-  converter.emit(new AssignmentInstruction(countVar, count));
+  converter.emit(new AssignmentInstruction(countVar, coercedCount));
   const loopStart = converter.newLabel("getrange_start");
   const loopEnd = converter.newLabel("getrange_end");
 
@@ -193,7 +211,7 @@ export function emitDataListGetRangeLoop(
 
   // srcIdx = start + idx
   const srcIdx = converter.newTemp(PrimitiveTypes.int32);
-  converter.emit(new BinaryOpInstruction(srcIdx, start, "+", idx));
+  converter.emit(new BinaryOpInstruction(srcIdx, coercedStart, "+", idx));
 
   // token = source.get_Item(srcIdx)
   const token = converter.newTemp(ExternTypes.dataToken);
