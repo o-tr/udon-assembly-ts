@@ -124,6 +124,15 @@
  *         DataToken.__get_Int__SystemInt32, not __ctor__SystemSingle /
  *         __get_Float__ or __ctor__SystemObject / __get_Reference__.
  *         (root cause #24 in vm-test-failures-investigation.md)
+ *
+ * Bug 16 — Int32→Double heap-slot type mismatch / Math.Truncate crash
+ *         When a `number` (Double) variable is assigned the result of a UdonInt
+ *         (Int32) arithmetic expression via raw COPY, the Udon VM heap slot
+ *         holds a boxed Int32. A subsequent UdonTypeConverters.toUdonInt() call
+ *         emits Math.Truncate(Double) which tries to unbox the slot as Double
+ *         and traps with UdonVMException. Fix: emitCopyWithTracking inserts a
+ *         CastInstruction (→ SystemConvert.ToDouble) whenever src/dest numeric
+ *         types differ and neither operand is an inline class handle.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -3236,6 +3245,37 @@ class Main extends UdonSharpBehaviour {
       expect(result.uasm).not.toContain(
         "VRCSDK3DataDataToken.__get_Reference__SystemObject",
       );
+    });
+  });
+
+  describe("Bug 16: Int32→Double heap-slot type mismatch / Math.Truncate crash", () => {
+    it("number variable assigned from UdonInt multiplication emits Convert.ToDouble before COPY", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { UdonTypeConverters } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          Start(): void {
+            const a: UdonInt = 3n as UdonInt;
+            const b: UdonInt = 7n as UdonInt;
+            let code: number;
+            code = a * b;
+            const r = UdonTypeConverters.toUdonInt(code);
+            Debug.Log(r);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // A Convert.ToDouble must appear to widen the Int32 result into the
+      // Double-typed slot before Math.Truncate reads it.
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToDouble__SystemInt32__SystemDouble",
+      );
+      // Confirm the slot is declared as Double, not Int32
+      expect(result.uasm).toContain("%SystemDouble");
     });
   });
 });

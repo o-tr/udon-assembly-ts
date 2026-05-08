@@ -4781,7 +4781,29 @@ export function emitCopyWithTracking(
   src: TACOperand,
   clearIfUntracked = true,
 ): void {
-  this.emit(new CopyInstruction(dest, src));
+  const destType = this.getOperandType(dest);
+  const srcType = this.getOperandType(src);
+  // When the declared numeric type of the destination slot differs from the
+  // source's type, insert a CastInstruction before the COPY to produce a
+  // correctly-typed value. Without this, a raw COPY of e.g. an Int32 result
+  // into a Double-typed slot stores a boxed Int32 in the slot; any later EXTERN
+  // that reads the slot as Double (e.g. Math.Truncate in toUdonInt) will trap
+  // with an Udon VM heap-type mismatch.
+  // Guard: skip coercion for inline class handles (Int32-backed class instances)
+  // so handle IDs are not accidentally widened to Double.
+  let actualSrc = src;
+  if (
+    destType.udonType !== srcType.udonType &&
+    isNumericUdonType(destType.udonType) &&
+    isNumericUdonType(srcType.udonType) &&
+    !isInlineHandleType(this, srcType) &&
+    !isInlineHandleType(this, destType)
+  ) {
+    const castTemp = this.newTemp(destType);
+    this.emit(new CastInstruction(castTemp, src));
+    actualSrc = castTemp;
+  }
+  this.emit(new CopyInstruction(dest, actualSrc));
   const destName = operandTrackingKey(dest);
   if (!destName) return;
   const srcName = operandTrackingKey(src);
