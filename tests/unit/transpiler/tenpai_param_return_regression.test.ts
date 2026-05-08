@@ -17,7 +17,7 @@
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
+import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { getStartSection } from "./test_helpers.js";
 
@@ -127,7 +127,7 @@ describe("tenpai param-direct-return regression", () => {
     // With a tracked arg, D-3 dispatch must NOT fire at the call site.
     // Scope to the Start section (not the full TAC) so that __uninst_prop slots
     // in passThrough's internal body (literal sibling returns) don't produce
-    // false negatives.
+    // false positives.
     expect(startSection).not.toMatch(/__uninst_prop_\d+/);
   });
 
