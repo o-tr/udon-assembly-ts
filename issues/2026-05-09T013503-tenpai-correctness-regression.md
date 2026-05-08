@@ -29,6 +29,17 @@ This is the same symptom family as the previously fixed
 `2026-05-07T232002-tenpai-detection-correctness.md`, but it has reappeared
 after the numeric and DataToken crash fixes changed which paths execute.
 
+## Related context
+
+This regression is directly downstream of the numeric coercion work tracked in
+`2026-05-08T123000-math-truncate-double-vm-crash.md`: investigation task 3
+checks whether the inserted casts break the structural tracking key chain.
+
+It is also linked from
+`2026-05-08T123002-structural-union-dispatch-warning-budget.md`, whose latest
+verification section forwards the remaining `UntrackedStructuralUnionReturn`
+warnings to this correctness issue.
+
 ## Current warning context
 
 The latest transpile emits 518 warnings (116 unique), all dominated by
@@ -62,4 +73,3 @@ an untracked structural-union return is treated as a sibling-prefix return.
 - `VM: tenpai_edge` logs
   `["TENPAI:YES","2","TENPAI:NO","TENPAI:YES","13"]`.
 - The fix does not reintroduce D3 dispatch miss cascades.
-

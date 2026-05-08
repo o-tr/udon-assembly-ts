@@ -88,6 +88,14 @@ D3 dispatch. The latest output shows a new or regressed path where:
 3. the property access does not use them; and
 4. D3 dispatch miss diagnostics are emitted repeatedly for related checks.
 
+## Related context
+
+This issue is also a follow-up from
+`2026-05-08T123002-structural-union-dispatch-warning-budget.md`: that issue's
+latest verification section points here because the remaining
+`UntrackedStructuralUnionReturn` warnings now correlate with runtime
+structural-union correctness failures, not just warning-budget noise.
+
 ## Investigation tasks
 
 1. Trace `result1` / `__inline_ret_6661` in `YakuYakumanTest.uasm` back to the
@@ -111,4 +119,3 @@ D3 dispatch. The latest output shows a new or regressed path where:
   Function '__get_isWin__SystemBoolean' is not implemented yet`.
 - The D3 dispatch miss diagnostics for `check on untracked instance` do not
   appear in these tests.
-
