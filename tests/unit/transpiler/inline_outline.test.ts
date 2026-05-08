@@ -880,6 +880,47 @@ describe("inline recursive static method", () => {
     expect(result.tac).toMatch(/goto inline_rec_entry/);
     expect(result.tac).not.toContain("__inlineRec_Derived_factorial");
   });
+
+  it("initialises retVal before overflow handler for T[][] return type (static regression)", () => {
+    const source = `
+      class Combiner {
+        static combine(n: number): number[][] {
+          if (n <= 0) return [[]];
+          if (n === 1) return [];
+          const sub: number[][] = Combiner.combine(n - 1);
+          const out: number[][] = [];
+          for (let i = 0; i < sub.length; i++) {
+            out.push(sub[i]);
+          }
+          return out;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const result: number[][] = Combiner.combine(5);
+          const len: number = result.length;
+        }
+      }
+    `;
+
+    const compiled = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    expect(compiled.tac).toContain("__inlineRec_Combiner_combine_retVal_");
+
+    const retValMatch = compiled.tac.match(
+      /__inlineRec_Combiner_combine_retVal_\d+/,
+    );
+    expect(retValMatch).not.toBeNull();
+    const retVal = retValMatch![0];
+
+    // Preamble (before inline_rec_entry) must initialise retVal.
+    const parts = compiled.tac.split(/inline_rec_entry\w*/);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts[0]).toMatch(new RegExp(`${retVal}\\s*=`));
+  });
 });
 
 describe("inline recursive instance method", () => {
@@ -1005,5 +1046,57 @@ describe("inline recursive instance method", () => {
     // Distinct prefixes prevent stack collision
     expect(result.tac).toContain("__inlineRec_StaticRec_factorial");
     expect(result.tac).toContain("__inlineRecInst_InstRec_recurse");
+  });
+
+  it("initialises retVal before overflow handler for T[][] return type (regression: null at inline_rec_done)", () => {
+    // extractAllMelds-shaped pattern: recursive instance method returning T[][]
+    // (backed by DataList). If retVal is never initialized in the preamble, the
+    // overflow handler jumps to inline_rec_done leaving retVal null, and the
+    // caller's .Count/.length call crashes.
+    const source = `
+      class Solver {
+        solve(n: number): number[][] {
+          if (n <= 0) return [[]];
+          if (n === 1) return [];
+          const sub: number[][] = this.solve(n - 1);
+          const out: number[][] = [];
+          for (let i = 0; i < sub.length; i++) {
+            out.push(sub[i]);
+          }
+          return out;
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const s: Solver = new Solver();
+          const result: number[][] = s.solve(5);
+          const len: number = result.length;
+        }
+      }
+    `;
+
+    const compiled = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+
+    // Must be lowered as a recursive inline instance method
+    expect(compiled.tac).toContain("__inlineRecInst_Solver_solve_retVal_");
+
+    // Find the retVal variable name
+    const retValMatch = compiled.tac.match(
+      /__inlineRecInst_Solver_solve_retVal_\d+/,
+    );
+    expect(retValMatch).not.toBeNull();
+    const retVal = retValMatch![0];
+
+    // The preamble (everything before inline_rec_entry) must initialize retVal
+    // to a DataList default so that the overflow handler path arrives at
+    // inline_rec_done with a non-null value.
+    const parts = compiled.tac.split(/inline_rec_entry\w*/);
+    // parts[0] = preamble (before entry label)
+    expect(parts.length).toBeGreaterThan(1);
+    const preamble = parts[0];
+    expect(preamble).toMatch(new RegExp(`${retVal}\\s*=`));
   });
 });

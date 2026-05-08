@@ -2266,7 +2266,8 @@ function emitInlineRecursiveStaticMethod(
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
-    const { effectiveReturnType } = resolveInlineReturnType(returnType);
+    const { effectiveReturnType, isErasedReturn } =
+      resolveInlineReturnType(returnType);
 
     // Collect locals (parameters + declared variables)
     const locals = collectRecursiveLocals.call(converter, method);
@@ -2455,6 +2456,15 @@ function emitInlineRecursiveStaticMethod(
           createConstant(0, PrimitiveTypes.int32),
         );
         converter.emit(new LabelInstruction(skipSpResetLabel));
+      }
+
+      // Initialize retVal to a type-appropriate default so the overflow handler
+      // and the end-of-body fallthrough both reach inline_rec_done with a
+      // non-null value. Self-calls jump directly to entryLabel, bypassing this
+      // preamble, so the initialization only runs for the outermost invocation.
+      if (returnType.udonType !== UdonType.Void && !isErasedReturn) {
+        const sentinel = createSoaSentinelValue(converter, effectiveReturnType);
+        converter.emit(new CopyInstruction(result, sentinel));
       }
 
       // Overflow handler
@@ -3552,7 +3562,8 @@ function emitInlineRecursiveInstanceMethod(
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
-    const { effectiveReturnType } = resolveInlineReturnType(returnType);
+    const { effectiveReturnType, isErasedReturn } =
+      resolveInlineReturnType(returnType);
 
     const locals = collectRecursiveLocals.call(converter, method);
     locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
@@ -3736,6 +3747,15 @@ function emitInlineRecursiveInstanceMethod(
           createConstant(0, PrimitiveTypes.int32),
         );
         converter.emit(new LabelInstruction(skipSpResetLabel));
+      }
+
+      // Initialize retVal to a type-appropriate default so the overflow handler
+      // and the end-of-body fallthrough both reach inline_rec_done with a
+      // non-null value. Self-calls jump directly to entryLabel, bypassing this
+      // preamble, so the initialization only runs for the outermost invocation.
+      if (returnType.udonType !== UdonType.Void && !isErasedReturn) {
+        const sentinel = createSoaSentinelValue(converter, effectiveReturnType);
+        converter.emit(new CopyInstruction(result, sentinel));
       }
 
       // Overflow handler
