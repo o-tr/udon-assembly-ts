@@ -1,12 +1,12 @@
 ---
 created: 2026-05-07T23:20:02+09:00
-updated: 2026-05-08T05:35:00+09:00
-status: fix-pending-vm
+updated: 2026-05-08T11:40:00+09:00
+status: fixed
 severity: high
 component: transpiler / IR + structural-union return tracking
 related_branch: tenpai-detection-correctness
 related_test: mahjong-t2 VM `hand_tenpai`, `tenpai_edge`
-fix_commits: 1d703c3, af8adf1, 5433ef2, 46e9ee3
+fix_commits: 1d703c3, af8adf1, 5433ef2, 46e9ee3, 475b225
 ---
 
 # Tenpai detection produces wrong results (no VM crash, just wrong logs)
@@ -37,7 +37,7 @@ VM: tenpai_edge
 kokushi-musou (13-orphans) shape — `13` is the tile-acceptance count for the
 13-tile wait. The transpiled run misses the wait entirely.
 
-## Fix applied (commits 1d703c3–46e9ee3, branch `tenpai-detection-correctness`)
+## Fix applied (commits 1d703c3–475b225, branch `tenpai-detection-correctness`)
 
 Root cause confirmed and fixed. See details below.
 
@@ -62,12 +62,13 @@ Root cause confirmed and fixed. See details below.
   covering the case where an untracked handle is forwarded through a parameter
   and returned directly.
 
-Unit tests (961 tests, 96 files) all pass. Udon VM verification pending (requires Unity).
+Unit tests (961 tests, 96 files) all pass. Udon VM tests (365 tests) all pass.
 
-Additional fixes added after code review (commits af8adf1, 5433ef2, 46e9ee3):
+Additional fixes added after code review (commits af8adf1, 5433ef2, 46e9ee3, 475b225):
 - **af8adf1**: Prune set membership: param names added during inline expansion are removed by `restoreInlineParams` (via `addedToUntrackedSet` field on `InlineParamSaveEntry`); monotone-add preserved (no delete in tracked branch after inner-scope shadowing concern). Test extended with `Wrapper.wrap(p)` + `OuterViaWrap` path.
 - **5433ef2**: Propagate out of nested static inline expansions: `emitInlineStaticMethod` finally block adds `result.name` to set when inner `returnTrackingInvalidated && returnInstancePrefix !== undefined`.
 - **46e9ee3**: Same propagation for instance method calls (`inlineInstanceMethodCallCore` finally block). Reverted `delete(destKey)` from tracked branch (false-negative risk from inner-scope shadowing outweighs false-positive D-3 cost).
+- **475b225**: Clear spurious `inlineInstanceMap` entry: `emitStructuralParamFieldCopies` (called before the `!isHeapPrefix` guard in `saveAndBindInlineParams`) sets `inlineInstanceMap[param.name]` via the `copiedAny` path when the argument has structural slots. When the param ends up in `untrackedStructuralHandleVars`, delete the entry so that `return p` inside the callee triggers `returnTrackingInvalidated` rather than propagating zeroed field-slot values through the tracked return path. Fixes `OuterViaWrap.analyzeViaWrap(200)` in the `inline_structural_untracked_return` VM test (was: `False/0`, now: `True/200`).
 
 ## Root cause (confirmed)
 
