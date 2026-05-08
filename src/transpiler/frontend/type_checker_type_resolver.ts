@@ -103,6 +103,45 @@ export class TypeCheckerTypeResolver {
     return result;
   }
 
+  /** Returns the names of non-nullish union members for a union-typed AST node.
+   *  Returns null when the node is not union-typed or when no member resolves
+   *  to a named (non-ObjectType) TypeSymbol.
+   *
+   *  Intentionally bypasses `astNodeCache` — the cache stores the collapsed
+   *  result (ObjectType for heterogeneous unions) and would hide the individual
+   *  member names we need here. */
+  resolveUnionMemberNamesFromAstNode(
+    node: ASTNode,
+    checkerContext: TypeCheckerContext,
+  ): string[] | null {
+    const tsNode = checkerContext.resolveTsNode(node);
+    if (!tsNode) return null;
+    let type: ts.Type;
+    try {
+      type = this.checker.getTypeAtLocation(tsNode);
+    } catch {
+      return null;
+    }
+    if (!(type.flags & ts.TypeFlags.Union)) return null;
+    const union = type as ts.UnionType;
+    const nonNullish = union.types.filter((t) => !this.isNullishType(t));
+    if (nonNullish.length < 2) return null;
+    const names: string[] = [];
+    for (const memberType of nonNullish) {
+      const resolved = this.resolveFromTsType(memberType);
+      if (resolved === ObjectType) {
+        // An erased union member (e.g. `any`) could match any runtime type.
+        // Silently filtering it out could cause us to dispatch to a too-narrow
+        // subset and miss the erased member at runtime.  Give up narrowing.
+        return null;
+      }
+      if (resolved.name) {
+        names.push(resolved.name);
+      }
+    }
+    return names.length > 0 ? names : null;
+  }
+
   /** Resolve directly from a TypeScript AST node. */
   resolveFromTsNode(node: ts.Node): TypeSymbol {
     const type = this.checker.getTypeAtLocation(node);
