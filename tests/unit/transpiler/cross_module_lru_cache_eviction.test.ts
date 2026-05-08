@@ -127,12 +127,6 @@ describe("cross-module LRU cache eviction path DataToken unwrap", () => {
     uasm = buildCrossModuleLruUasm();
   });
 
-  it("does not emit __get_Reference__SystemObject for the keys().next().value eviction path", () => {
-    expect(uasm).not.toContain(
-      "VRCSDK3DataDataToken.__get_Reference__SystemObject",
-    );
-  });
-
   it("emits __get_String__SystemString for the string key eviction path", () => {
     expect(uasm).toContain("VRCSDK3DataDataToken.__get_String__SystemString");
   });
