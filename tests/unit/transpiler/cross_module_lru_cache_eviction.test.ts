@@ -127,7 +127,12 @@ describe("cross-module LRU cache eviction path DataToken unwrap", () => {
     uasm = buildCrossModuleLruUasm();
   });
 
-  it("emits __get_String__SystemString for the string key eviction path", () => {
+  it("uses __get_String__SystemString (not __get_Reference__SystemObject) for the eviction path", () => {
+    // Regression guard: the eviction path must select the typed String getter for string keys.
+    // __get_Reference__ appearing anywhere in the output signals the key type was lost.
     expect(uasm).toContain("VRCSDK3DataDataToken.__get_String__SystemString");
+    expect(uasm).not.toContain(
+      "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+    );
   });
 });
