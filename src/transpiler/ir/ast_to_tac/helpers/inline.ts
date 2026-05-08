@@ -70,6 +70,7 @@ import {
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
+  type ConstantOperand,
   createConstant,
   createLabel,
   createVariable,
@@ -4798,9 +4799,70 @@ export function emitCopyWithTracking(
   src: TACOperand,
   clearIfUntracked = true,
 ): void {
-  this.emit(new CopyInstruction(dest, src));
+  const destType = this.getOperandType(dest);
+  const srcType = this.getOperandType(src);
+  // When the declared numeric type of the destination slot differs from the
+  // source's type, insert a CastInstruction before the COPY to produce a
+  // correctly-typed value. Without this, a raw COPY of e.g. an Int32 result
+  // into a Double-typed slot stores a boxed Int32 in the slot; any later EXTERN
+  // that reads the slot as Double (e.g. Math.Truncate in toUdonInt) will trap
+  // with an Udon VM heap-type mismatch.
+  // Guard: skip coercion for inline class handles (Int32-backed class instances)
+  // so handle IDs are not accidentally widened to Double.
+  let actualSrc = src;
+  if (
+    destType.udonType !== srcType.udonType &&
+    isNumericUdonType(destType.udonType) &&
+    isNumericUdonType(srcType.udonType) &&
+    !isInlineHandleType(this, srcType) &&
+    !isInlineHandleType(this, destType)
+  ) {
+    if (src.kind === TACOperandKind.Constant) {
+      // Fold numeric constants at compile time to avoid emitting a runtime
+      // Convert.X extern for e.g. `let d: number = 42 as UdonInt`. Mirrors
+      // the coerceConstantToType path in assignment.ts (not imported here to
+      // avoid a circular dependency — assignment.ts already imports inline.ts).
+      const constSrc = src as ConstantOperand;
+      const raw = constSrc.value;
+      if (raw !== null && typeof raw !== "object") {
+        const num = typeof raw === "number" ? raw : Number(raw);
+        if (!Number.isNaN(num)) {
+          switch (destType.udonType) {
+            case UdonType.Int32:
+              actualSrc = createConstant(Math.trunc(num), PrimitiveTypes.int32);
+              break;
+            case UdonType.Single:
+              actualSrc = createConstant(num, PrimitiveTypes.single);
+              break;
+            case UdonType.Double:
+              actualSrc = createConstant(num, PrimitiveTypes.double);
+              break;
+            default: {
+              // Dest type is numeric but not compile-time-foldable here;
+              // fall back to a runtime cast so behaviour matches the non-constant path.
+              const castTemp = this.newTemp(destType);
+              this.emit(new CastInstruction(castTemp, src));
+              actualSrc = castTemp;
+              break;
+            }
+          }
+        }
+      }
+      // If folding failed (null/object value), actualSrc stays as src and
+      // a mismatched COPY is emitted — the same behavior as pre-fix code.
+    } else {
+      const castTemp = this.newTemp(destType);
+      this.emit(new CastInstruction(castTemp, src));
+      actualSrc = castTemp;
+    }
+  }
+  this.emit(new CopyInstruction(dest, actualSrc));
   const destName = operandTrackingKey(dest);
   if (!destName) return;
+  // Use the original src for tracking: when a CastInstruction was inserted
+  // above, the guards already excluded inline handles, so srcInfo will be
+  // undefined either way. Keeping src (not actualSrc) preserves tracking for
+  // the no-cast path.
   const srcName = operandTrackingKey(src);
   const srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (srcInfo) {

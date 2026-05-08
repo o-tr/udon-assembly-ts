@@ -1,10 +1,11 @@
 ---
 created: 2026-05-08T12:30:00+09:00
-updated: 2026-05-08T12:30:00+09:00
-status: open
+updated: 2026-05-08T13:06:00+09:00
+status: fixed
 severity: critical
 component: transpiler / numeric codegen
 related_test: mahjong-t2 VM suite
+fix_commit: math-truncate-double-vm-crash branch
 ---
 
 # Mahjong VM suite crashes broadly on `SystemMath.__Truncate__SystemDouble__SystemDouble`
@@ -182,3 +183,22 @@ followed by `UdonTypeConverters.toUdonInt(code)`.
 - The focused regression test fails before the fix and passes after it.
 - Generated UASM for integer-only tile operations does not contain avoidable
   Double truncation on hot paths.
+
+## Fix
+
+Root cause confirmed: `emitCopyWithTracking` in
+`src/transpiler/ir/ast_to_tac/helpers/inline.ts` emitted a raw `CopyInstruction`
+without numeric coercion when src and dest operand types differed.
+
+Fix (IR-level, in `emitCopyWithTracking`): when the destination slot's numeric
+Udon type differs from the source's, and neither is an inline class handle,
+insert a `CastInstruction(castTemp: destType, src)` before the `CopyInstruction`.
+This produces a correctly-typed intermediate value so the Udon VM heap slot
+stores the expected boxed type. The pattern mirrors the existing coercion in
+`assignment.ts` for native array element writes.
+
+Regression test added: `Bug 16` in `tests/unit/transpiler/transpiler_known_bugs.test.ts`
+— asserts that `SystemConvert.__ToDouble__SystemInt32__SystemDouble` is emitted
+when a `number` (Double) variable is assigned from a UdonInt multiplication.
+
+All 962 pre-existing tests continue to pass; the new Bug 16 test also passes.
