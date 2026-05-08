@@ -526,6 +526,77 @@ function narrowToInt32ForBitwise(
   return { left: newLeft, right: newRight };
 }
 
+/**
+ * Narrow Int64/UInt64 remainder operands to a 32-bit type and emit a warning.
+ * Called for both `%` and `%=` so both paths avoid unsupported 64-bit externs.
+ * Returns the (possibly cast) operands; caller is responsible for the
+ * subsequent widenNumericOperands call.
+ */
+function narrowLongForRemainder(
+  converter: ASTToTACConverter,
+  node: ASTNode | undefined,
+  left: TACOperand,
+  right: TACOperand,
+): { left: TACOperand; right: TACOperand } {
+  const leftType = converter.getOperandType(left);
+  const rightType = converter.getOperandType(right);
+  const leftIsLong =
+    leftType.udonType === UdonType.Int64 ||
+    leftType.udonType === UdonType.UInt64;
+  const rightIsLong =
+    rightType.udonType === UdonType.Int64 ||
+    rightType.udonType === UdonType.UInt64;
+  if (!(leftIsLong || rightIsLong)) return { left, right };
+
+  converter.warnAt(
+    node,
+    "Int64RemainderNotSupported",
+    "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to 32-bit.",
+  );
+
+  // narrowTarget avoids a same-rank-3 mixed-sign (int32+uint32) pair, which
+  // is the only case where widenNumericOperands re-promotes to Int64:
+  //   • Both Long: uint32 when both are UInt64, int32 otherwise (mixed
+  //     Int64/UInt64 uses int32, mirroring C#'s int+uint→long precedent).
+  //   • One Long: uint32 when the non-Long side is UInt32 (avoids the
+  //     int32+uint32 pair); int32 in all other cases.
+  // Note: UInt64 values in [2^31, 2^32) are sign-extended when narrowed to
+  // int32 (e.g. UInt64 % Int32). This is a best-effort degradation — Udon VM
+  // offers no 64-bit remainder at all, so some precision loss is unavoidable.
+  let narrowTarget: TypeSymbol;
+  if (leftIsLong && rightIsLong) {
+    narrowTarget =
+      leftType.udonType === UdonType.UInt64 &&
+      rightType.udonType === UdonType.UInt64
+        ? PrimitiveTypes.uint32
+        : PrimitiveTypes.int32;
+  } else if (leftIsLong) {
+    narrowTarget =
+      rightType.udonType === UdonType.UInt32
+        ? PrimitiveTypes.uint32
+        : PrimitiveTypes.int32;
+  } else {
+    narrowTarget =
+      leftType.udonType === UdonType.UInt32
+        ? PrimitiveTypes.uint32
+        : PrimitiveTypes.int32;
+  }
+
+  let newLeft = left;
+  let newRight = right;
+  if (leftIsLong) {
+    const cast = converter.newTemp(narrowTarget);
+    converter.emit(new CastInstruction(cast, left));
+    newLeft = cast;
+  }
+  if (rightIsLong) {
+    const cast = converter.newTemp(narrowTarget);
+    converter.emit(new CastInstruction(cast, right));
+    newRight = cast;
+  }
+  return { left: newLeft, right: newRight };
+}
+
 function resolvePropertyTypeFromType(
   converter: ASTToTACConverter,
   baseType: TypeSymbol,
@@ -1016,9 +1087,17 @@ export function visitBinaryExpression(
     // C# compound assignment: x op= y ≡ x = (T)(x op y), where T = typeof(x).
     const isBitwiseCompound =
       baseOp === "&" || baseOp === "|" || baseOp === "^";
+    const isRemainderCompound = baseOp === "%";
+    let preWidenLeft = leftOriginal;
+    let preWidenRight = rightOriginal;
+    if (isRemainderCompound) {
+      const nr = narrowLongForRemainder(this, node, leftOriginal, rightOriginal);
+      preWidenLeft = nr.left;
+      preWidenRight = nr.right;
+    }
     const w = isBitwiseCompound
-      ? narrowToInt32ForBitwise(this, leftOriginal, rightOriginal)
-      : widenNumericOperands(this, leftOriginal, rightOriginal);
+      ? narrowToInt32ForBitwise(this, preWidenLeft, preWidenRight)
+      : widenNumericOperands(this, preWidenLeft, preWidenRight);
     const opResult = this.newTemp(this.getOperandType(w.left));
     this.emit(new BinaryOpInstruction(opResult, w.left, baseOp, w.right));
 
@@ -1319,63 +1398,9 @@ export function visitBinaryExpression(
       right = cast;
     }
   } else if (isRemainder) {
-    // Udon VM does not implement Int64/UInt64 remainder (op_Remainder for Long
-    // is absent). Narrow any Int64/UInt64 operand to a 32-bit type and emit a
-    // warning so the caller knows about the implicit demotion.
-    //
-    // narrowTarget is chosen to avoid a same-rank-3 mixed-sign (int32+uint32)
-    // pair, which is the only case where widenNumericOperands re-promotes to
-    // Int64, defeating the narrowing:
-    //   • Both Long: uint32 when both are UInt64, int32 otherwise (mixed
-    //     Int64/UInt64 uses int32, mirroring C#'s int+uint→long precedent).
-    //   • One Long: uint32 when the non-Long side is UInt32 (avoids the
-    //     int32+uint32 pair); int32 in all other cases.
-    // Note: UInt64 values in [2^31, 2^32) are sign-extended when narrowed to
-    // int32 (e.g. UInt64 % Int32). This is a best-effort degradation — Udon VM
-    // offers no 64-bit remainder at all, so some precision loss is unavoidable.
-    const leftType = this.getOperandType(left);
-    const rightType = this.getOperandType(right);
-    const leftIsLong =
-      leftType.udonType === UdonType.Int64 ||
-      leftType.udonType === UdonType.UInt64;
-    const rightIsLong =
-      rightType.udonType === UdonType.Int64 ||
-      rightType.udonType === UdonType.UInt64;
-    if (leftIsLong || rightIsLong) {
-      this.warnAt(
-        node,
-        "Int64RemainderNotSupported",
-        "Udon VM does not support Int64/UInt64 remainder (%). Narrowing operand(s) to 32-bit.",
-      );
-      let narrowTarget: TypeSymbol;
-      if (leftIsLong && rightIsLong) {
-        narrowTarget =
-          leftType.udonType === UdonType.UInt64 &&
-          rightType.udonType === UdonType.UInt64
-            ? PrimitiveTypes.uint32
-            : PrimitiveTypes.int32;
-      } else if (leftIsLong) {
-        narrowTarget =
-          rightType.udonType === UdonType.UInt32
-            ? PrimitiveTypes.uint32
-            : PrimitiveTypes.int32;
-      } else {
-        narrowTarget =
-          leftType.udonType === UdonType.UInt32
-            ? PrimitiveTypes.uint32
-            : PrimitiveTypes.int32;
-      }
-      if (leftIsLong) {
-        const cast = this.newTemp(narrowTarget);
-        this.emit(new CastInstruction(cast, left));
-        left = cast;
-      }
-      if (rightIsLong) {
-        const cast = this.newTemp(narrowTarget);
-        this.emit(new CastInstruction(cast, right));
-        right = cast;
-      }
-    }
+    const nr = narrowLongForRemainder(this, node, left, right);
+    left = nr.left;
+    right = nr.right;
     const w = widenNumericOperands(this, left, right);
     left = w.left;
     right = w.right;
