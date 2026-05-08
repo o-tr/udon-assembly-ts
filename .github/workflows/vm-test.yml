@@ -3,8 +3,22 @@ name: VM Tests
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - 'issues/**'
+      - 'unity/**'
+      - 'docs/**'
+      - 'z/**'
+      - '**.md'
+      - 'tests/unit/**'
   pull_request:
     branches: [master]
+    paths-ignore:
+      - 'issues/**'
+      - 'unity/**'
+      - 'docs/**'
+      - 'z/**'
+      - '**.md'
+      - 'tests/unit/**'
   workflow_dispatch:
 
 jobs:
