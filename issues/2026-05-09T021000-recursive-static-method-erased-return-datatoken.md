@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T02:10:00+09:00
-updated: 2026-05-09T02:10:00+09:00
+updated: 2026-05-09T02:30:00+09:00
 status: open
 severity: medium
 component: transpiler / IR / recursive inline
@@ -58,10 +58,16 @@ encountered, so the failure is detectable at transpile time but not blocked.
 
 ## Scope
 
-- `emitInlineRecursiveStaticMethod` (`inline.ts:2249`) — static self-recursion
-- `emitInlineRecursiveInstanceMethod` (`inline.ts:3534`) — contains the same
-  comment in its docstring (`inline.ts:3514-3533`); the same restriction may
-  apply if an instance method with an erased return type is self-recursive.
+- `emitInlineRecursiveStaticMethod` (`inline.ts:2249`) — static self-recursion.
+  The call site at `inline.ts:2062-2071` guards entry with
+  `isPlainObjectType(returnType)` and emits `InlineErasedReturnType` before
+  routing to the recursive emitter.
+- `emitInlineRecursiveInstanceMethod` (`inline.ts:3534`) — instance self-recursion.
+  The call site at `inline.ts:3909-3921` routes to `emitInlineRecursiveInstanceMethod`
+  when `selfCallCountHint > 0` **without any `isPlainObjectType` guard or
+  `InlineErasedReturnType` warning**. If an instance method has an erased return
+  type and is self-recursive, the gap is silent — no diagnostic is emitted and
+  the return slot is not promoted to DataToken.
 
 ## Investigation tasks
 
@@ -91,7 +97,8 @@ encountered, so the failure is detectable at transpile time but not blocked.
 
 ## References
 
-- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:2063-2070` — TODO and warning
+- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:2063-2070` — TODO and `InlineErasedReturnType` warning (static path)
 - `src/transpiler/ir/ast_to_tac/helpers/inline.ts:1031-1055` — `resolveInlineReturnType` (non-recursive path)
 - `src/transpiler/ir/ast_to_tac/helpers/inline.ts:2249` — `emitInlineRecursiveStaticMethod`
-- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:3534` — `emitInlineRecursiveInstanceMethod` (same restriction)
+- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:3909-3921` — instance recursive call site (no erased-return guard)
+- `src/transpiler/ir/ast_to_tac/helpers/inline.ts:3534` — `emitInlineRecursiveInstanceMethod`
