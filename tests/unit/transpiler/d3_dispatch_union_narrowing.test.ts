@@ -234,13 +234,17 @@ class Main extends UdonSharpBehaviour {
   });
 
   it("does not emit D3DispatchFallback for nullable union (A | B | null) — nullish member stripped", () => {
-    // Verifies the nullish-stripping branch in resolveUnionMemberNamesFromAstNode.
-    // TypeScript's union type `P | Q | null` has 3 members; after stripping null
-    // the method sees [P, Q] (length ≥ 2) and returns ["P", "Q"].  Both P and Q
-    // are in candidateClasses, so narrowedCandidates = [P, Q], length > 0 →
-    // warning suppressed.  Without nullish stripping the null member would hit
-    // the `!resolved.name` guard (resolveFromTsType returns ObjectType for null)
-    // and return null — falling through to the D3DispatchFallback warning.
+    // Verifies the isNullishType filter in resolveUnionMemberNamesFromAstNode.
+    // The property access must occur at a site where TypeScript has NOT flow-narrowed
+    // away null, so getTypeAtLocation returns the full P | Q | null union.
+    // ScoreReader.read accesses item.score without a null guard; TypeScript strict
+    // mode flags this but BatchTranspiler does not check diagnostics — it only uses
+    // the TypeChecker for type resolution.  At the item.score site the TypeChecker
+    // returns P | Q | null.  resolveUnionMemberNamesFromAstNode strips null via
+    // isNullishType → [P, Q] → narrowedCandidates = [P, Q] → warning suppressed.
+    // If isNullishType were broken (e.g., null not stripped), null would slip into
+    // the loop, resolveFromTsType(null) returns ObjectType, the ObjectType guard
+    // returns null, and D3DispatchFallback would fire — making the test fail.
     const src = `
 import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
 
@@ -251,16 +255,22 @@ class Q {
   constructor(public readonly score: number) {}
 }
 
-@UdonBehaviour()
-class Main extends UdonSharpBehaviour {
-  getScore(item: P | Q | null): number {
-    if (item === null) return 0;
+// Intentionally no null guard: TypeChecker sees item as P | Q | null at item.score,
+// exercising the isNullishType strip.  TypeScript strict-mode errors on this
+// ("Object is possibly 'null'") but the BatchTranspiler ignores diagnostics.
+class ScoreReader {
+  read(item: P | Q | null): number {
     return item.score;
   }
+}
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
   Start(): void {
     const p = new P(1);
     const q = new Q(2);
-    this.getScore(p);
+    const reader = new ScoreReader();
+    reader.read(p);
   }
 }
 `;
