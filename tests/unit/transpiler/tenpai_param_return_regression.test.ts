@@ -119,15 +119,16 @@ describe("tenpai param-direct-return regression", () => {
       }
     `;
 
-    const result = new TypeScriptToUdonTranspiler().transpile(trackedOnlySource);
+    const result = new TypeScriptToUdonTranspiler().transpile(
+      trackedOnlySource,
+    );
     const startSection = getStartSection(result.tac);
 
-    // With a tracked arg, D-3 dispatch is not needed (and not expected).
-    // The count field should be read directly from the inline return prefix slot.
-    // We can't easily assert the absence of __uninst_prop entirely because
-    // tracked sibling returns also exist, so just check that the direct copy
-    // appears somewhere in the TAC output.
-    expect(result.tac).not.toContain("DataToken");
+    // With a tracked arg, D-3 dispatch must NOT fire at the call site.
+    // Scope to the Start section (not the full TAC) so that __uninst_prop slots
+    // in passThrough's internal body (literal sibling returns) don't produce
+    // false negatives.
+    expect(startSection).not.toMatch(/__uninst_prop_\d+/);
   });
 
   it("emits UntrackedStructuralUnionReturn diagnostic for param-direct-return", () => {

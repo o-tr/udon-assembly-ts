@@ -17,10 +17,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
-import { BatchTranspiler } from "../../../src/transpiler/index.js";
+import {
+  BatchTranspiler,
+  type TranspileWarning,
+} from "../../../src/transpiler/index.js";
 
 let assembledUasm = "";
-let batchDiagnostics: Array<{ code: string; [k: string]: unknown }> = [];
+let batchDiagnostics: TranspileWarning[] = [];
 let batchOutputCount = 0;
 
 const createdDirs: string[] = [];
@@ -131,7 +134,7 @@ export class TestBehaviour extends UdonSharpBehaviour {
     });
 
     batchOutputCount = result.outputs.length;
-    batchDiagnostics = (result.diagnostics ?? []) as typeof batchDiagnostics;
+    batchDiagnostics = result.diagnostics ?? [];
 
     // Read all generated assembly files (extension may be .tasm or .uasm)
     const asmFiles = fs
@@ -160,10 +163,17 @@ export class TestBehaviour extends UdonSharpBehaviour {
   });
 
   it("D-3 dispatch (__uninst_prop_*) appears in generated assembly for cross-module untracked arg", () => {
-    // D-3 dispatch creates a local variable __uninst_prop_N in the data section.
-    // If returnTrackingInvalidated was not set (because the batch type resolution
-    // broke structuralInterfaceForType or untrackedStructuralHandleVars propagation),
-    // the caller falls back to a direct prefix read and __uninst_prop_N never appears.
+    // D-3 dispatch creates a TAC-level slot named __uninst_prop_N which the
+    // assembler preserves verbatim in the .tasm data section (local variables
+    // keep their TAC names in the output format). BatchResult does not expose
+    // a tac field, so this is the only layer at which the slot name is
+    // observable without refactoring the batch pipeline. If the assembly
+    // lowering stage ever renames these slots, update this pattern to match.
+    //
+    // If returnTrackingInvalidated was not set — because structuralInterfaceForType
+    // returned null for the cross-module WaitInfo, or untrackedStructuralHandleVars
+    // propagation failed — the caller uses a direct prefix read and __uninst_prop_N
+    // never appears in the output.
     expect(assembledUasm).toMatch(/__uninst_prop_\d+/);
   });
 });
