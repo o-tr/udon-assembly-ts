@@ -82,6 +82,7 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
+import { SOA_PARTITION_SIZE } from "./soa_data_list.js";
 
 // Heap-variable name prefixes that identify "real" inline-instance backing
 // slots (as opposed to synthetic temps such as `__inline_ret_*`). Only
@@ -1123,6 +1124,16 @@ function ensureSoaOperands(
   if (converter.soaInitialized.has(className)) return;
   converter.soaInitialized.add(className);
 
+  // Assign a unique partition offset so handles from different SoA classes
+  // never collide. Class 0 gets offset 0 (unchanged behaviour); subsequent
+  // classes get offset = classIndex * SOA_PARTITION_SIZE.
+  if (!converter.soaClassOffsets.has(className)) {
+    converter.soaClassOffsets.set(
+      className,
+      converter.soaClassOffsets.size * SOA_PARTITION_SIZE,
+    );
+  }
+
   const fields = collectAllInstanceFields(converter, classNode);
   const fieldLists = new Map<string, VariableOperand>();
   const fieldTypes = new Map<string, TypeSymbol>();
@@ -1263,14 +1274,15 @@ function emitSoaInitGuard(
     converter.emit(new CallInstruction(listVar, listCtorSig, []));
   }
 
-  // Counter starts at 1: Udon zero-initialises heap slots, so an
-  // uninitialised array element holds 0. Reserving handle 0 as "no valid
-  // instance" prevents false SoA lookups on partially-populated arrays
-  // (consistent with the non-SoA nextInstanceId starting at 1).
+  // Counter starts at offset+1: handles for this class occupy the range
+  // [offset+1 .. offset+SOA_PARTITION_SIZE-1], keeping different SoA
+  // classes' handles in non-overlapping partitions. Class 0 starts at 1
+  // (offset=0) for backwards compatibility.
+  const classOffset = converter.soaClassOffsets.get(className) ?? 0;
   converter.emit(
     new AssignmentInstruction(
       counterVar,
-      createConstant(1, PrimitiveTypes.int32),
+      createConstant(classOffset + 1, PrimitiveTypes.int32),
     ),
   );
 

@@ -100,7 +100,10 @@ import {
   usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
-import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
+import {
+  emitBoundedDataListGetItem,
+  emitSoaHandleToIndex,
+} from "../helpers/soa_data_list.js";
 import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 
@@ -135,13 +138,14 @@ function tryReadSoAField(
     `${instancePrefix}__handle`,
     PrimitiveTypes.int32,
   );
+  const indexVar = emitSoaHandleToIndex(converter, hdlVar, className);
   const token = converter.newTemp(ExternTypes.dataToken);
   const resolved = resolveClassProperty(converter, className, property);
   const fieldType = resolved?.prop.type ?? ObjectType;
   emitBoundedDataListGetItem(
     converter,
     fieldList,
-    hdlVar,
+    indexVar,
     token,
     () => createSoaSentinelValue(converter, fieldType),
     true,
@@ -3454,11 +3458,12 @@ export function visitPropertyAccessExpression(
               const fieldList = fieldLists?.get(node.property);
               if (fieldList) {
                 const hdlVar = normalizeOperandToInt32(this, object);
+                const indexVar = emitSoaHandleToIndex(this, hdlVar, soaClassName);
                 const token = this.newTemp(ExternTypes.dataToken);
                 emitBoundedDataListGetItem(
                   this,
                   fieldList,
-                  hdlVar,
+                  indexVar,
                   token,
                   createSoaSentinelValue(this, untrackedPropType),
                   true,

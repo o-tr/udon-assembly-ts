@@ -755,4 +755,55 @@ describe("inline remaining bugs", () => {
       expect(result.tac).not.toMatch(/ = __t\d+$/m);
     });
   });
+
+  describe("SoA multi-class handle collision", () => {
+    it("two SoA classes via shared interface must have non-overlapping handles", () => {
+      // Alpha and Beta each implement IValue and are constructed in loops.
+      // Before the fix both classes used per-class counters starting at 1,
+      // so Alpha instance N and Beta instance N got the same handle value.
+      // The dispatch loop would always match the first candidate (Alpha),
+      // returning Alpha fields regardless of which class the receiver was.
+      const source = `
+        interface IValue {
+          getValue(): number;
+        }
+        class Alpha implements IValue {
+          x: number;
+          constructor(x: number) { this.x = x; }
+          getValue(): number { return this.x; }
+        }
+        class Beta implements IValue {
+          y: number;
+          constructor(y: number) { this.y = y; }
+          getValue(): number { return this.y; }
+        }
+        class Main {
+          Start(): void {
+            const values: IValue[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              values.push(new Alpha(i));
+              values.push(new Beta(i + 10));
+            }
+            Debug.Log(values[0].getValue());
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      const tac = result.tac;
+
+      // Both classes must be SoA (constructed in a loop → per-field DataLists).
+      expect(tac).toContain("__soa_Alpha_x");
+      expect(tac).toContain("__soa_Beta_y");
+
+      // Alpha is class 0 (offset=0) so its counter starts at 1 — unchanged.
+      // Beta is class 1 (offset=SOA_PARTITION_SIZE=1048576) so its counter
+      // starts at 1048577.  The TAC init block must assign that value.
+      expect(tac).toMatch(/__soa_Beta__counter = 1048577\b/);
+
+      // The handles must not overlap: a subtraction must be emitted before
+      // Beta's DataList is accessed (the index = handle - offset pattern).
+      // We verify by checking the TAC contains "- 1048576" somewhere.
+      expect(tac).toContain("- 1048576");
+    });
+  });
 });

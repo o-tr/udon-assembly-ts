@@ -331,6 +331,13 @@ export class ASTToTACConverter {
   /** Per-class runtime counter variable (Int32).
    *  Handle = counter value at construction time. */
   soaCounterVars: Map<string, VariableOperand> = new Map();
+  /**
+   * Compile-time partition offset per SoA class.
+   * Class i gets offset = i * SOA_PARTITION_SIZE (from soa_data_list.ts).
+   * Handles = offset + DataList_index, eliminating inter-class collisions.
+   * Class 0 has offset 0 so single-SoA-class programs are unchanged.
+   */
+  soaClassOffsets: Map<string, number> = new Map();
   /** Tracks whether SoA DataLists + counter have been initialized for each class. */
   soaInitialized: Set<string> = new Set();
   /**
@@ -669,6 +676,7 @@ export class ASTToTACConverter {
     this.soaFieldLists = new Map();
     this.soaFieldTypes = new Map();
     this.soaCounterVars = new Map();
+    this.soaClassOffsets = new Map();
     this.soaInitialized = new Set();
     this.soaConstructionPrefixes = new Set();
     this.implementorNamesCache = new Map();
@@ -830,6 +838,7 @@ export class ASTToTACConverter {
       [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
     );
     const soaClassesFromPass1 = new Set(this.soaClasses);
+    const soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
 
     // Compute outline candidates from pass-1 call info.
     const outlineCandidatesFromPass1 = new Set<string>();
@@ -871,6 +880,7 @@ export class ASTToTACConverter {
     this.outlineCandidates = outlineCandidatesFromPass1;
     this.interfaceClassIdMap = interfaceClassIdMapFromPass1;
     this.soaClasses = soaClassesFromPass1;
+    this.soaClassOffsets = soaClassOffsetsFromPass1;
     this.inlineStaticCallInfo = inlineStaticCallInfoFromPass1;
     this.inlineMethodSelfCallCount = inlineMethodSelfCallCountFromPass1;
     const result = this.convertImpl(program);
