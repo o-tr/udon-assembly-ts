@@ -209,7 +209,7 @@ The latest mahjong-t2 VM run confirms this issue's original symptom is fixed:
 
 - `tile_parse`, `tile_predicates`, `tile_sort_compare`, `tile_dora`,
   `tile_counts`, `dora_calculator`, and `lru_cache` now pass.
-- No listed failure reports
+- No listed failure report mentions
   `SystemMath.__Truncate__SystemDouble__SystemDouble`.
 - Overall suite improved from **33 failed / 5 passed** to
   **25 failed / 13 passed**.
@@ -219,3 +219,4 @@ Residual numeric-slot mismatches still exist in different lowering paths
 tracked separately in:
 
 - `issues/2026-05-09T013500-recursive-stack-numeric-datatoken-double.md`
+- `issues/2026-05-09T013502-recursive-structural-list-return-null.md`

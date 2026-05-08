@@ -5,6 +5,7 @@ status: open
 severity: high
 component: transpiler / recursive inline returns / DataList
 related_test: mahjong-t2 VM suite
+related_issue: 2026-05-08T123000-math-truncate-double-vm-crash.md
 ---
 
 # Recursive `extractAllMelds` return can leave DataList result null
@@ -86,4 +87,3 @@ DataList, including the base case (`return [[]]`) and no-result case
   `VRCSDK3DataDataList.__get_Count__SystemInt32` from a null recursive return.
 - Recursive inline methods returning arrays/DataLists initialise retVal on
   every return path.
-
