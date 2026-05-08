@@ -300,6 +300,25 @@ describe("TypeCheckerTypeResolver", () => {
       expect(coll.valueType).toBe(PrimitiveTypes.double);
     });
 
+    it("resolves lib Set<T> to CollectionTypeSymbol with elementType/keyType/valueType via the builtin shortcut", () => {
+      const filePath = "/virtual/type_resolver_lib_set.ts";
+      const source = "let s: Set<string> = new Set();";
+      const { context, resolver } = createResolverFromSource(source, filePath);
+      const sourceFile = context.getSourceFile(filePath);
+      expect(sourceFile).toBeDefined();
+      const declaration = findNode(
+        sourceFile as ts.SourceFile,
+        ts.isVariableDeclaration,
+      );
+      const resolved = resolver.resolveFromTsNode(declaration.name);
+      expect(resolved).toBeInstanceOf(CollectionTypeSymbol);
+      const coll = resolved as CollectionTypeSymbol;
+      expect(coll.name).toBe(ExternTypes.dataDictionary.name);
+      expect(coll.elementType).toBe(PrimitiveTypes.string);
+      expect(coll.keyType).toBe(PrimitiveTypes.string);
+      expect(coll.valueType).toBe(PrimitiveTypes.boolean);
+    });
+
     it("does NOT widen a user-defined interface that shares a lib-shortcut name", () => {
       // The file is a module (has `export`) so the user `interface Iterator`
       // is module-scoped and does NOT global-merge with lib.es2015.iterable's
