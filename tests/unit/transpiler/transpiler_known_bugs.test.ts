@@ -3274,8 +3274,41 @@ class Main extends UdonSharpBehaviour {
       expect(result.uasm).toContain(
         "SystemConvert.__ToDouble__SystemInt32__SystemDouble",
       );
-      // Confirm the slot is declared as Double, not Int32
-      expect(result.uasm).toContain("%SystemDouble");
+      // The "code" slot must be declared as Double, not Int32.
+      const dataSection = getDataSection(result.uasm);
+      expect(dataSection.some((l) => /\bcode\b.*%SystemDouble/.test(l))).toBe(
+        true,
+      );
+    });
+
+    it("number variable assigned from UdonFloat emits Convert.ToDouble (Single→Double lane)", () => {
+      // Exercises a different numeric-coercion lane: Single → Double.
+      // emitCopyWithTracking must insert Convert.ToDouble for this pair too.
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import type { UdonFloat } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          Start(): void {
+            const f: UdonFloat = 1.5 as UdonFloat;
+            let d: number;
+            d = f;
+            Debug.Log(d);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Single→Double coercion must be emitted before the COPY.
+      expect(result.uasm).toContain(
+        "SystemConvert.__ToDouble__SystemSingle__SystemDouble",
+      );
+      // The "d" slot must be declared as Double.
+      const dataSection = getDataSection(result.uasm);
+      expect(dataSection.some((l) => /\bd\b.*%SystemDouble/.test(l))).toBe(
+        true,
+      );
     });
   });
 });

@@ -4806,6 +4806,10 @@ export function emitCopyWithTracking(
   this.emit(new CopyInstruction(dest, actualSrc));
   const destName = operandTrackingKey(dest);
   if (!destName) return;
+  // Use the original src for tracking: when a CastInstruction was inserted
+  // above, the guards already excluded inline handles, so srcInfo will be
+  // undefined either way. Keeping src (not actualSrc) preserves tracking for
+  // the no-cast path.
   const srcName = operandTrackingKey(src);
   const srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (srcInfo) {
