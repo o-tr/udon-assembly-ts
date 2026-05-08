@@ -18,6 +18,41 @@ import type { ASTToTACConverter } from "../converter.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /**
+ * Number of handle slots reserved per SoA class.
+ * Class i occupies handles [i*SOA_PARTITION_SIZE+1 .. (i+1)*SOA_PARTITION_SIZE-1].
+ * 1<<20 = 1,048,576 — supports ~2000 SoA classes within Int32 range.
+ */
+export const SOA_PARTITION_SIZE = 1 << 20;
+
+/**
+ * Convert a runtime SoA handle to the DataList index for the given class.
+ * Each class has a compile-time offset so that handles from different classes
+ * never collide (class 0 offset=0, class 1 offset=SOA_PARTITION_SIZE, …).
+ * DataList indices are always sequential from 1, so index = handle − offset.
+ *
+ * When offset is 0 (class 0, or unknown class), returns hdlVar unchanged so
+ * no extra instruction is emitted.
+ */
+export function emitSoaHandleToIndex(
+  converter: ASTToTACConverter,
+  hdlVar: TACOperand,
+  className: string,
+): TACOperand {
+  const offset = converter.soaClassOffsets.get(className) ?? 0;
+  if (offset === 0) return hdlVar;
+  const indexVar = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(
+    new BinaryOpInstruction(
+      indexVar,
+      hdlVar,
+      "-",
+      createConstant(offset, PrimitiveTypes.int32),
+    ),
+  );
+  return indexVar;
+}
+
+/**
  * Emit `DataList.get_Item` with a bounds-guard TAC shape that matches
  * `detectIndexAwareGuardBeforeGetItem` in regression tests:
  * `Count` → `index < Count` → `ifFalse` → in-bounds `get_Item(index)`;

@@ -86,7 +86,10 @@ import {
   usesInlineNullSentinel,
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
-import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
+import {
+  emitBoundedDataListGetItem,
+  emitSoaHandleToIndex,
+} from "../helpers/soa_data_list.js";
 import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { PROF, profEnter, profExit } from "../profiling.js";
@@ -809,6 +812,9 @@ function trySoAMethodDispatch(
   const soaDispatchArgs = soaTypedArgs ?? evaluatedArgs;
 
   const hdlVar = normalizeOperandToInt32(converter, object);
+  // DataList index = handle − class_offset. For class 0 (offset=0) this is a
+  // no-op and indexVar aliases hdlVar directly.
+  const indexVar = emitSoaHandleToIndex(converter, hdlVar, soaClassName);
 
   // Sync the instance handle so that bare `this` references inside the
   // inlined method body read the correct runtime handle, not the stale
@@ -843,7 +849,7 @@ function trySoAMethodDispatch(
       emitBoundedDataListGetItem(
         converter,
         listVar,
-        hdlVar,
+        indexVar,
         token,
         () => createSoaSentinelValue(converter, scratchVar.type),
         true,
@@ -920,7 +926,7 @@ function trySoAMethodDispatch(
         const token = converter.wrapDataToken(scratchVar);
         converter.emit(
           new MethodCallInstruction(undefined, listVar, "set_Item", [
-            hdlVar,
+            indexVar,
             token,
           ]),
         );

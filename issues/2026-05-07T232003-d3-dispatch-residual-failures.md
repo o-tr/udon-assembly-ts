@@ -1,12 +1,13 @@
 ---
 created: 2026-05-07T23:20:03+09:00
-updated: 2026-05-08T01:00:00+09:00
-status: partially-fixed
+updated: 2026-05-08T13:30:00+09:00
+status: fixed
 severity: high
 component: transpiler / D3 method dispatch
-related_branch: master
+related_branch: d3-dispatch-residual-failures
 related_test: mahjong-t2 VM suite (post PR #217 / #218)
 related_issue: 2026-05-07T024001-d3-dispatch-miss-cascade-null-result.md (closed)
+sub_issue: 2026-05-08T010000-soa-handle-collision-wrong-class-dispatch.md (fixed)
 ---
 
 # D3 dispatch + DataToken-Double cascade still failing ~19 tests despite #024001 closure
@@ -137,8 +138,16 @@ wrong class. This doesn't produce a dispatch-miss log; it produces *wrong-class
 dispatch*. Fixing this requires a class discriminator or a global counter shared
 across all SoA classes. To be addressed as follow-up after VM run.
 
+## VM verification (2026-05-08)
+
+Full mahjong-t2 VM run after both fixes (SoA constant path guard + partition
+offsets) completed with **183/183 tests passed, 0 bad externs** (baseline:
+1042 bad externs, 16/38 zero-bad). All previously failing tests now pass.
+
 ## References
 
 - Closed predecessor: `issues/2026-05-07T024001-d3-dispatch-miss-cascade-null-result.md`
+- Sub-issue: `issues/2026-05-08T010000-soa-handle-collision-wrong-class-dispatch.md`
 - Merge commits: 93a008c (PR #217), daed404 (PR #218)
 - Test log timestamp: 2026-05-07 23:18:31 (post-merge)
+- VM verification timestamp: 2026-05-08 13:13–13:16 (all 183 tests green)

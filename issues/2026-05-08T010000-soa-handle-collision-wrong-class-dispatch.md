@@ -1,11 +1,12 @@
 ---
 created: 2026-05-08T01:00:00+09:00
-updated: 2026-05-08T01:00:00+09:00
-status: open
+updated: 2026-05-08T13:30:00+09:00
+status: fixed
 severity: high
 component: transpiler / D3 method dispatch / SoA
 related_branch: d3-dispatch-residual-failures
 related_issue: 2026-05-07T232003-d3-dispatch-residual-failures.md
+fix_approach: compile-time partition offsets per SoA class
 ---
 
 # SoA per-class counter collision causes wrong-class dispatch in D3 method dispatch loop
@@ -143,3 +144,39 @@ constructed in the same context (which is the common pattern in mahjong-t2
 yaku/scoring code). After #232003's fix eliminates the dispatch-miss errors, VM
 test failures caused by wrong-class dispatch will surface with different symptoms
 (incorrect return values, wrong boolean results from `check()` calls).
+
+## Fix applied (2026-05-08)
+
+Implemented compile-time partition offsets instead of the global counter
+approach from Option A (which would have broken DataList alignment). Each SoA
+class is assigned a unique offset `i * SOA_PARTITION_SIZE` (where
+`SOA_PARTITION_SIZE = 1 << 20 = 1,048,576`) when first registered in
+`ensureSoaOperands`. The counter for class `i` is initialised to `offset + 1`
+instead of `1`, so handles are non-overlapping across classes.
+
+On the DataList access side, `emitSoaHandleToIndex(converter, hdlVar, className)`
+subtracts the class offset before passing the index to `emitBoundedDataListGetItem`
+or `DataList.set_Item`. Class 0 (offset=0) emits no subtraction — single-SoA-class
+programs are bytecode-identical to before.
+
+Changed files:
+- `helpers/soa_data_list.ts` — added `SOA_PARTITION_SIZE` constant and
+  `emitSoaHandleToIndex` helper
+- `helpers/inline.ts` — offset assignment in `ensureSoaOperands`; counter init
+  to `offset + 1` in `emitSoaInitGuard`
+- `visitors/call.ts` — `trySoAMethodDispatch` prologue + epilogue use `indexVar`
+- `visitors/expression.ts` — `tryReadSoAField` and all-same-class property
+  dispatch use `indexVar`
+- `converter.ts` — `soaClassOffsets` field, cleared in `resetState`, saved/
+  restored across passes
+
+Regression test added:
+`tests/unit/transpiler/inline_remaining_bugs.test.ts` — "SoA multi-class handle
+collision" verifies Beta counter starts at 1048577 and TAC contains `- 1048576`.
+
+## VM verification (2026-05-08)
+
+Full mahjong-t2 VM run after this fix and the SoA constant path guard fix in
+#232003 completed with **183/183 tests passed, 0 bad externs** (baseline:
+1042 bad externs, 16/38 zero-bad). The partition-offset approach fully
+eliminates wrong-class dispatch across all test cases.
