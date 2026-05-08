@@ -3281,6 +3281,31 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    it("number variable assigned from BigInt literal constant-folds without emitting Convert.ToDouble", () => {
+      // Exercises the ConstantOperand branch in emitCopyWithTracking: a raw
+      // BigInt literal assigned to a Double-typed slot is folded at compile
+      // time, so no Convert.ToDouble extern should appear in the output.
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          Start(): void {
+            let x: number;
+            x = 42n;
+            Debug.Log(x);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+      // Constant should be folded; no runtime conversion extern emitted.
+      expect(result.uasm).not.toContain("SystemConvert.__ToDouble");
+      // The "x" slot must be declared as Double.
+      const dataSection = getDataSection(result.uasm);
+      expect(dataSection.some((l) => /\bx\b.*%SystemDouble/.test(l))).toBe(true);
+    });
+
     it("number variable assigned from UdonFloat emits Convert.ToDouble (Single→Double lane)", () => {
       // Exercises a different numeric-coercion lane: Single → Double.
       // emitCopyWithTracking must insert Convert.ToDouble for this pair too.
