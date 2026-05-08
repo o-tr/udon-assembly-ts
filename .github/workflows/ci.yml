@@ -3,8 +3,20 @@ name: CI
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - 'issues/**'
+      - 'unity/**'
+      - 'docs/**'
+      - 'z/**'
+      - '**.md'
   pull_request:
     branches: [master]
+    paths-ignore:
+      - 'issues/**'
+      - 'unity/**'
+      - 'docs/**'
+      - 'z/**'
+      - '**.md'
 
 jobs:
   typecheck:
