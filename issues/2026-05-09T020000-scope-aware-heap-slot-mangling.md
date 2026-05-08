@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T02:00:00+09:00
-updated: 2026-05-09T02:00:00+09:00
+updated: 2026-05-09T02:40:00+09:00
 status: open
 severity: medium
 component: transpiler / IR / inline expansion
@@ -85,8 +85,11 @@ expansion. Callers at depth 0 see unmangled names; each nested inline sees
 `name__d1`, `name__d2`, etc. Cheaper than full scope qualification but still
 prevents cross-method aliasing.
 
-Option A is the safest and most general; Option C is a minimal change that
-handles nested but not sibling inline expansions.
+Option A is the safest and most general. Option C only prevents collisions
+between inlines at *different nesting depths* — two sibling expansions at the
+same depth (e.g. `Tile.fromCode` and `Tile.sortThreeTiles` both inlined at
+depth 1) would both receive the same `__d1` suffix and still collide.
+Option C does not fix the stated problem.
 
 ## Investigation tasks
 
@@ -97,7 +100,9 @@ handles nested but not sibling inline expansions.
    `src/transpiler/ir/ast_to_tac/helpers/inline.ts` (`saveAndBindInlineParams`
    / local-variable declaration site) to locate where mangling should be
    inserted.
-3. Implement and test the chosen option (recommend A or C for safety).
+3. Implement and test the chosen option (recommend A; Option C does not prevent
+   sibling-inline collisions and would not fix the `Tile.fromCode`/`Tile.sortThreeTiles`
+   case described above).
 4. Verify that the mahjong-t2 `Tile.fromCode` / `Tile.sortThreeTiles` inline
    pattern no longer shares the `c` slot.
 
