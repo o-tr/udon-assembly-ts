@@ -238,11 +238,10 @@ class Main extends UdonSharpBehaviour {
 `);
   });
 
-  it("still emits D3DispatchFallback when receiver type is not a union (cannot narrow)", () => {
-    // When the receiver is typed as `any` (erased to ObjectType), there is no
-    // union type for TypeChecker to expose, so narrowing cannot help and the
-    // warning must still fire.  Both A and B have `.val`, so candidateClasses
-    // has 2 entries, and there is no proper-subset to dispatch to.
+  it("still emits D3DispatchFallback when receiver type is not a union (cannot narrow) — inline transpiler", () => {
+    // Inline transpiler baseline: no checkerContext, so the union-narrowing branch
+    // is short-circuited entirely.  Both A and B have `.val`, so candidateClasses
+    // has 2 entries and D3DispatchFallback fires via the existing full-fallback path.
     const source = `
 class Main {
   getAny(): any { return null; }
@@ -264,5 +263,64 @@ class B {
     const d3 =
       result.diagnostics?.filter((d) => d.code === "D3DispatchFallback") ?? [];
     expect(d3.length).toBeGreaterThan(0);
+  });
+
+  it("still emits D3DispatchFallback when receiver type is any — BatchTranspiler (checkerContext present)", () => {
+    // BatchTranspiler negative case: checkerContext IS populated, so the union-
+    // narrowing branch in expression.ts IS reached.  The receiver is typed `any`;
+    // getTypeAtLocation returns TypeFlags.Any (not Union), so
+    // resolveUnionMemberNamesFromAstNode returns null at the !Union check, leaving
+    // unionNarrowed=false and D3DispatchFallback fires.
+    // This verifies the new code path degrades correctly in the batch context when
+    // the receiver is not a union type.
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-src-"));
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "d3-union-out-"));
+    try {
+      fs.writeFileSync(path.join(srcDir, "stubs.ts"), STUBS_SRC);
+      fs.writeFileSync(
+        path.join(srcDir, "main.ts"),
+        `
+import { UdonBehaviour, UdonSharpBehaviour } from "./stubs";
+
+class C {
+  constructor(public readonly val: number) {}
+}
+class D {
+  constructor(public readonly val: number) {}
+}
+
+@UdonBehaviour()
+class Main extends UdonSharpBehaviour {
+  helper(): any { return null; }
+  Start(): void {
+    const _c = new C(1);
+    const _d = new D(2);
+    const x: any = this.helper();
+    (x as any).val;
+  }
+}
+`,
+      );
+      const result = new BatchTranspiler().transpile({
+        sourceDir: srcDir,
+        outputDir: outDir,
+        silent: true,
+        useOutputCache: false,
+      });
+      expect(
+        result.outputs.length,
+        "BatchTranspiler produced no output — test is vacuous",
+      ).toBeGreaterThan(0);
+      const d3 =
+        result.diagnostics?.filter(
+          (d) =>
+            d.code === "D3DispatchFallback" &&
+            d.location.filePath.includes("main.ts"),
+        ) ?? [];
+      expect(d3.length).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(srcDir, { recursive: true, force: true });
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
