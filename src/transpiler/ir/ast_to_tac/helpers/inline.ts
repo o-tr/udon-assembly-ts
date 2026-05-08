@@ -886,6 +886,16 @@ export function saveAndBindInlineParams(
             const savedEntry = saved.get(param.name);
             if (savedEntry) savedEntry.addedToUntrackedSet = true;
           }
+          // emitStructuralParamFieldCopies (called above) may have set
+          // inlineInstanceMap[param.name] via the copiedAny path, making the
+          // parameter appear tracked even though its argument is an untracked
+          // structural handle.  Remove that spurious entry so that `return p`
+          // inside the callee triggers returnTrackingInvalidated instead of
+          // silently propagating zeroed field-slot values through the tracked
+          // path.
+          if (converter.untrackedStructuralHandleVars.has(param.name)) {
+            converter.inlineInstanceMap.delete(param.name);
+          }
           continue;
         }
 
