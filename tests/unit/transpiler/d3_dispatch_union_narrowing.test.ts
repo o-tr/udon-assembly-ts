@@ -42,6 +42,13 @@ function assertNoBatchD3(src: string): void {
       silent: true,
       useOutputCache: false,
     });
+    // Guard: at least one output must be produced; if transpilation silently
+    // fails (e.g. internal crash caught by the batch loop), outputs is empty
+    // and the D3 filter below would vacuously pass.
+    expect(
+      result.outputs.length,
+      "BatchTranspiler produced no output — test is vacuous",
+    ).toBeGreaterThan(0);
     const d3 =
       result.diagnostics?.filter(
         (d) =>
