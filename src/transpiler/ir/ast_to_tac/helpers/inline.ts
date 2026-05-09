@@ -2351,16 +2351,16 @@ function visitInlineStaticMethodCallImpl(
             returnInstancePrefix !== undefined &&
             innerCtx.structuralPrefixPaths.length > 0
           ) {
-             const allPopulated = innerCtx.structuralPrefixPaths.every(
-               (p) => p.populated,
-             );
-             if (allPopulated) {
-               // Propagate structural fields from the inner method's return prefix.
-               // Field values are set on `${innerCtx.returnVar.name}_*` during
-               // execution (early returns of tracked variables copy instance
-               // fields to returnInstancePrefix which IS the return variable name).
-               // Use this name directly rather than srcKey from structuralPaths,
-               // which points to instance prefixes and misses intermediate copies.
+            const allPopulated = innerCtx.structuralPrefixPaths.every(
+              (p) => p.populated,
+            );
+            if (allPopulated) {
+              // Propagate structural fields from the inner method's return prefix.
+              // Field values are set on `${innerCtx.returnVar.name}_*` during
+              // execution (early returns of tracked variables copy instance
+              // fields to returnInstancePrefix which IS the return variable name).
+              // Use this name directly rather than srcKey from structuralPaths,
+              // which points to instance prefixes and misses intermediate copies.
               const srcPrefix = innerCtx.returnVar.name;
               const structType = structuralInterfaceForType(
                 this,
@@ -2376,8 +2376,8 @@ function visitInlineStaticMethodCallImpl(
                   new Set<string>(),
                 );
               }
-             }
-        }
+            }
+          }
         this.inlineReturnStack.pop();
       }
       if (addedInlineMethodKey) this.inlineMethodStack.delete(inlineKey);
@@ -2735,38 +2735,38 @@ function emitInlineRecursiveStaticMethod(
           converter.untrackedStructuralHandleVars.add(result.name);
         }
         // Path-sensitive boundary copy: propagate structural field prefixes
-        // from the inner method's return prefix into the outer result prefix.
-        if (
-          innerCtx.structuralPrefixPaths &&
-          innerCtx.returnInstancePrefix !== undefined &&
-          returnInstancePrefix !== undefined &&
-          innerCtx.structuralPrefixPaths.length > 0
-        ) {
-          const allPopulated = innerCtx.structuralPrefixPaths.every(
-            (p) => p.populated,
-          );
-          if (allPopulated) {
-            // Propagate structural fields from the inner method's return prefix.
-            // Field values are set on `${innerCtx.returnVar.name}_*` during
-            // execution (early returns of tracked variables copy instance
-            // fields to returnInstancePrefix which IS the return variable name).
-              const srcPrefix = innerCtx.returnVar.name;
-               const structType = structuralInterfaceForType(
+         // from the inner method's return prefix into the outer result prefix.
+         if (
+           innerCtx.structuralPrefixPaths &&
+           innerCtx.returnInstancePrefix !== undefined &&
+           returnInstancePrefix !== undefined &&
+           innerCtx.structuralPrefixPaths.length > 0
+         ) {
+           const allPopulated = innerCtx.structuralPrefixPaths.every(
+             (p) => p.populated,
+           );
+           if (allPopulated) {
+             // Propagate structural fields from the inner method's return prefix.
+             // Field values are set on `${innerCtx.returnVar.name}_*` during
+             // execution (early returns of tracked variables copy instance
+             // fields to returnInstancePrefix which IS the return variable name).
+             const srcPrefix = innerCtx.returnVar.name;
+             const structType = structuralInterfaceForType(
+               converter,
+               innerCtx.returnVar.type,
+             );
+             if (structType && srcPrefix !== returnInstancePrefix) {
+               emitNestedStructuralFieldCopies(
                  converter,
-                 innerCtx.returnVar.type,
+                 srcPrefix,
+                 returnInstancePrefix,
+                 structType,
+                 {},
+                 new Set<string>(),
                );
-               if (structType) {
-                 emitNestedStructuralFieldCopies(
-                   converter,
-                   srcPrefix,
-                   returnInstancePrefix,
-                   structType,
-                   {},
-                   new Set<string>(),
-                 );
-               }
              }
-        }
+           }
+         }
         converter.inlineReturnStack.pop();
       }
       if (converter.inlinedBodyStack.length > bodyStackDepth)
@@ -4098,44 +4098,42 @@ function emitInlineRecursiveInstanceMethod(
            converter.untrackedStructuralHandleVars.add(result.name);
          }
          // Path-sensitive boundary copy: propagate structural field prefixes
-         // from the inner method's return prefix into the outer result prefix.
-         // Only emit copies when every runtime path reaching this boundary has
-         // proven that it populated its source prefix (all entries in
-         // structuralPrefixPaths have populated=true). If any path did NOT
-         // populate, do not copy — D-3 dispatch handles the untracked handle.
-         if (
-            innerCtx.structuralPrefixPaths &&
-            innerCtx.returnInstancePrefix !== undefined &&
-            returnInstancePrefix !== undefined &&
-            innerCtx.structuralPrefixPaths.length > 0
-          ) {
-            const allPopulated = innerCtx.structuralPrefixPaths.every(
-              (p) => p.populated,
-            );
-           if (allPopulated) {
-               // Propagate structural fields from the inner method's return prefix.
-               // Field values are set on `${innerCtx.returnVar.name}_*` during
-               // execution (early returns of tracked variables copy instance
-               // fields to returnInstancePrefix which IS the return variable name).
-               // Use this name directly rather than srcKey from structuralPaths,
-               // which points to instance prefixes and misses intermediate copies.
-               const srcPrefix = innerCtx.returnVar.name;
-                const structType = structuralInterfaceForType(
-                  converter,
-                  innerCtx.returnVar.type,
-                );
-                if (structType) {
-                  emitNestedStructuralFieldCopies(
-                    converter,
-                    srcPrefix,
-                    returnInstancePrefix,
-                    structType,
-                    {},
-                    new Set<string>(),
-                  );
-                }
-              }
-         }
+          // from the inner method's return prefix into the outer result prefix.
+          // Only emit copies when every runtime path reaching this boundary has
+          // proven that it populated its source prefix (all entries in
+          // structuralPrefixPaths have populated=true). If any path did NOT
+          // populate, do not copy — D-3 dispatch handles the untracked handle.
+          if (
+             innerCtx.structuralPrefixPaths &&
+             innerCtx.returnInstancePrefix !== undefined &&
+             returnInstancePrefix !== undefined &&
+             innerCtx.structuralPrefixPaths.length > 0
+           ) {
+             const allPopulated = innerCtx.structuralPrefixPaths.every(
+               (p) => p.populated,
+             );
+            if (allPopulated) {
+              // Propagate structural fields from the inner method's return prefix.
+              // Field values are set on `${innerCtx.returnVar.name}_*` during
+              // execution (early returns of tracked variables copy instance
+              // fields to returnInstancePrefix which IS the return variable name).
+              const srcPrefix = innerCtx.returnVar.name;
+               const structType = structuralInterfaceForType(
+                 converter,
+                 innerCtx.returnVar.type,
+               );
+               if (structType && srcPrefix !== returnInstancePrefix) {
+                 emitNestedStructuralFieldCopies(
+                   converter,
+                   srcPrefix,
+                   returnInstancePrefix,
+                   structType,
+                   {},
+                   new Set<string>(),
+                 );
+               }
+            }
+          }
          converter.inlineReturnStack.pop();
        }
        if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
