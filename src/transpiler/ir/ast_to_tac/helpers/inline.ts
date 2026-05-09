@@ -2353,33 +2353,33 @@ function visitInlineStaticMethodCallImpl(
           ) {
             const allPopulated = innerCtx.structuralPrefixPaths.every(
               (p) => p.populated,
-            );
-           if (allPopulated) {
-              // Propagate structural fields from the inner method's return prefix.
-              // Field values are set on `${innerCtx.returnVar.name}_*` during
-              // execution (early returns of tracked variables copy instance
-              // fields to returnInstancePrefix which IS the return variable name).
-              // Use this name directly rather than srcKey from structuralPaths,
-              // which points to instance prefixes and misses intermediate copies.
-              const srcPrefix = innerCtx.returnVar.name;
-              const structType = structuralInterfaceForType(
-                this,
-                innerCtx.returnVar.type,
-              );
-              if (structType) {
-                for (const [propName] of structType.properties) {
-                  const srcField = createVariable(
-                    `${srcPrefix}_${propName}`,
-                    structType.properties.get(propName)! as TypeSymbol,
-                  );
-                  const dstField = createVariable(
-                    `${returnInstancePrefix}_${propName}`,
-                    structType.properties.get(propName)! as TypeSymbol,
-                  );
-                  this.emit(new CopyInstruction(dstField, srcField));
-                }
-              }
-            }
+          );
+             if (allPopulated) {
+               // Propagate structural fields from the inner method's return prefix.
+               // Field values are set on `${innerCtx.returnVar.name}_*` during
+               // execution (early returns of tracked variables copy instance
+               // fields to returnInstancePrefix which IS the return variable name).
+               // Use this name directly rather than srcKey from structuralPaths,
+               // which points to instance prefixes and misses intermediate copies.
+               const srcPrefix = innerCtx.returnVar.name;
+               const structType = structuralInterfaceForType(
+                 this,
+                 innerCtx.returnVar.type,
+               );
+               if (structType) {
+                 for (const [propName] of structType.properties) {
+                   const srcField = createVariable(
+                     `${srcPrefix}_${propName}`,
+                     structType.properties.get(propName)! as TypeSymbol,
+                   );
+                   const dstField = createVariable(
+                     `${returnInstancePrefix}_${propName}`,
+                     structType.properties.get(propName)! as TypeSymbol,
+                   );
+                   this.emit(new CopyInstruction(dstField, srcField));
+                 }
+               }
+             }
         }
         this.inlineReturnStack.pop();
       }
@@ -3354,7 +3354,7 @@ function emitInlineOutlinedBody(
         returnLabel: dispatchLabel,
         returnTrackingInvalidated: false,
         loopDepth: converter.loopContextStack.length,
-        returnInstancePrefix: returnInstancePrefix,
+        returnInstancePrefix,
         isErasedReturn,
       });
     converter.methodBodyConstructorIndex.set(method.body, 0);
