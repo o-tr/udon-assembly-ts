@@ -378,6 +378,7 @@ export function makeDefaultDataTokenForLocal(
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
   localType: TypeSymbol,
+  localVar?: TACVariable | null,
 ): TACOperand {
   const udonType = localType.udonType;
 
@@ -390,21 +391,26 @@ export function saveLocalAsSafeToken(
     case UdonType.Array:
     case UdonType.DataDictionary:
     case UdonType.String:
-      // These types use typed ctors in unwrapDataToken. If the local is
-      // currently null / uninitialized, wrapping it directly would produce
-      // a non-matching token. Emit a fresh default instead so every saved
-      // slot matches the later getter.
+      // These types use typed ctors in unwrapDataToken. Wrapping a potentially
+      // null localVar directly would produce a non-matching token and crash on
+      // __get_DataList__. Always emit defaults regardless of localVar presence.
       return makeDefaultDataTokenForLocal(converter, localType);
 
     default: {
       // Numeric, Boolean, and other reference types are safe to box via
-      // wrapDataToken with a zero/null constant — unwrapDataToken accepts
-      // the resulting token for these types. Return a type-correct default.
+      // wrapDataToken — unwrapDataToken accepts the resulting token for these
+      // types. Use the actual localVar when present so initialized values are
+      // preserved; fall through to defaults only when localVar is absent.
+      if (localVar) {
+        return converter.wrapDataToken(localVar);
+      }
       if (udonType === UdonType.Boolean) {
-        return converter.wrapDataToken(createConstant(false, PrimitiveTypes.boolean));
+        return converter.wrapDataToken(
+          createConstant(false, PrimitiveTypes.boolean),
+        );
       }
       if (isNumericUdonType(udonType)) {
-        return converter.wrapDataToken(createConstant(0, PrimitiveTypes.int32));
+        return makeDefaultDataTokenForLocal(converter, localType);
       }
       // Fallback reference types: use Object null.
       return converter.wrapDataToken(createConstant(null, ObjectType));
@@ -5662,7 +5668,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = saveLocalAsSafeToken(this, local.type);
+    const token = saveLocalAsSafeToken(this, local.type, localVar);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
@@ -6231,7 +6237,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = saveLocalAsSafeToken(this, local.type);
+    const token = saveLocalAsSafeToken(this, local.type, localVar);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,

@@ -336,4 +336,68 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
       "__ctor__VRCSDK3DataDataList",
     );
   });
+
+  it("push path: DataList locals use defaults (not boxed null) at set_Item time", () => {
+    // Verify that emitCallSitePush uses saveLocalAsSafeToken so the token
+    // written by set_Item(stackVar, sp, token) is a type-correct default
+    // for DataList-typed locals — not a boxed-null value from an
+    // uninitialized variable. The test matches set_Item calls and checks
+    // that the operand's token ctor matches makeDefaultDataTokenForLocal.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+      class PushPathTest {
+        static gather(items: DataList, depth: number): DataList {
+          const result: DataList = new DataList();
+          if (depth <= 0) return result;
+          const sub: DataList = PushPathTest.gather(items, depth - 1);
+          result.push(sub);
+          return result;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const list: DataList = new DataList();
+          PushPathTest.gather(list, 2);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+
+    const lines = tac.split("\n");
+    const prefix = "__inlineRec_PushPathTest_gather_stack_";
+
+    // Find set_Item calls and check the token operand used.
+    // TAC format: "<stackVar>.set_Item(sp, <token>)" where token was created
+    // by a previous line like "temp = call DataToken.__ctor__VRCSDK3DataDataList".
+    const setResultItemRe = new RegExp(`\\bcall ${prefix}[\\w]*\\.set_Item`);
+    let foundSetItemResult = false;
+    let hasDataListTokenInSetItem = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (setResultItemRe.test(line)) {
+        foundSetItemResult = true;
+        // Check this line and next few for the token ctor.
+        for (let j = 0; j <= 3 && i + j < lines.length; j++) {
+          const l = lines[i + j];
+          if (/VRCSDK3DataDataToken\.__ctor__VRCSDK3DataDataList/.test(l)) {
+            hasDataListTokenInSetItem = true;
+            break;
+          }
+        }
+      }
+    }
+
+    expect(foundSetItemResult).toBe(true);
+    // The push-time set_Item for 'result' (DataList local) must use a
+    // DataList default token — not a boxed-null from wrapDataToken(localVar).
+    expect(hasDataListTokenInSetItem).toBe(true);
+  });
 });
