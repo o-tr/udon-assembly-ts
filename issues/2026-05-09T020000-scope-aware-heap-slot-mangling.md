@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T02:00:00+09:00
-updated: 2026-05-09T02:40:00+09:00
+updated: 2026-05-09T17:20:00+09:00
 status: open
 severity: medium
 component: transpiler / IR / inline expansion
@@ -112,3 +112,12 @@ Option C does not fix the stated problem.
   the same caller, generate distinct heap slots.
 - No existing test regresses.
 - `pnpm typecheck` and `pnpm test` pass clean.
+
+## Audit update (2026-05-09 17:20 JST)
+
+Latest local HEAD is `f7c9393` (`Merge pull request #238 from
+o-tr/recursive-stack-datalist-token-restore`). The recent recursive-stack work
+does not implement scope-qualified local slot names or otherwise change the
+same-named local collision behavior described here. Keep this issue open as a
+latent inline-expansion correctness risk; it is not currently tied to the
+latest recorded mahjong-t2 VM failures.
