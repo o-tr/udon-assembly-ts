@@ -368,6 +368,51 @@ export function makeDefaultDataTokenForLocal(
 }
 
 /**
+ * Emit a null-safe DataToken for the given local at save (push) time.
+ * For types whose unwrap accessor rejects non-matching tokens (DataList,
+ * Array, DataDictionary, String), always emit a default token so that an
+ * uninitialized / branch-local slot never receives a boxed-null value.
+ * For all other types fall through to wrapDataToken which already handles
+ * implicit boxing correctly.
+ */
+export function saveLocalAsSafeToken(
+  converter: ASTToTACConverter,
+  localType: TypeSymbol,
+): TACOperand {
+  const udonType = localType.udonType;
+
+  if (isInlineHandleType(converter, localType)) {
+    return converter.wrapDataToken(createConstant(-1, PrimitiveTypes.int32));
+  }
+
+  switch (udonType) {
+    case UdonType.DataList:
+    case UdonType.Array:
+    case UdonType.DataDictionary:
+    case UdonType.String:
+      // These types use typed ctors in unwrapDataToken. If the local is
+      // currently null / uninitialized, wrapping it directly would produce
+      // a non-matching token. Emit a fresh default instead so every saved
+      // slot matches the later getter.
+      return makeDefaultDataTokenForLocal(converter, localType);
+
+    default: {
+      // Numeric, Boolean, and other reference types are safe to box via
+      // wrapDataToken with a zero/null constant — unwrapDataToken accepts
+      // the resulting token for these types. Return a type-correct default.
+      if (udonType === UdonType.Boolean) {
+        return converter.wrapDataToken(createConstant(false, PrimitiveTypes.boolean));
+      }
+      if (isNumericUdonType(udonType)) {
+        return converter.wrapDataToken(createConstant(0, PrimitiveTypes.int32));
+      }
+      // Fallback reference types: use Object null.
+      return converter.wrapDataToken(createConstant(null, ObjectType));
+    }
+  }
+}
+
+/**
  * If `type.name` resolves to a registered alias different from `type`
  * itself, return the alias. Otherwise return `type` unchanged. Handles
  * the edge case where a property type was captured before its alias was
@@ -5568,7 +5613,9 @@ function hasThisFieldMutation(method: { body: BlockStatementNode }): boolean {
 /**
  * Push all locals onto per-local DataList stacks at the current SP.
  * Used at each self-call site BEFORE the JUMP to the recursive method.
- * Increments SP first, then saves all locals at the new SP index.
+ * Increments SP first, then saves all locals at the new SP index. Uses
+ * saveLocalAsSafeToken so that branch-local arrays which have not yet been
+ * initialized do not write null tokens into DataList-typed stack slots.
  */
 export function emitCallSitePush(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
@@ -5605,7 +5652,9 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]
+  // Save each local at stack[SP]. Use saveLocalAsSafeToken to guard against
+  // writing null tokens into DataList-typed slots (branch-local arrays that
+  // have not yet been initialized).
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -5613,7 +5662,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = this.wrapDataToken(localVar);
+    const token = saveLocalAsSafeToken(this, local.type);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
@@ -6135,7 +6184,9 @@ export function countStaticSelfCalls(
 
 /**
  * Push all locals onto per-local DataList stacks for inline recursive context.
- * Same logic as emitCallSitePush but uses currentInlineRecursiveContext.
+ * Same logic as emitCallSitePush but uses currentInlineRecursiveContext. Uses
+ * saveLocalAsSafeToken so that branch-local arrays which have not yet been
+ * initialized do not write null tokens into DataList-typed stack slots.
  */
 export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   const context = this.currentInlineRecursiveContext;
@@ -6170,7 +6221,9 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]
+  // Save each local at stack[SP]. Use saveLocalAsSafeToken to guard against
+  // writing null tokens into DataList-typed slots (branch-local arrays that
+  // have not yet been initialized).
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -6178,7 +6231,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = this.wrapDataToken(localVar);
+    const token = saveLocalAsSafeToken(this, local.type);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,

@@ -242,4 +242,98 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
       ),
     ).toBe("__ctor__VRCSDK3DataDataList");
   });
+
+  it("branch-local arrays: self-call in one branch saves the other branch's uninitialized DataList", () => {
+    // Regression for the residual problem tracked by issue 2026-05-09T133000.
+    // The type-correct prefill fix (e8b4037) only handled never-written slots.
+    // This test covers actively written null tokens: when a self-call happens
+    // in branch A, collectRecursiveLocals still includes locals declared only
+    // in the opposite branch B. Without saveLocalAsSafeToken, the push path
+    // would box the uninitialized (null) DataList into a non-DataList token.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+      class BranchLocalTest {
+        static process(items: DataList, depth: number): DataList {
+          if (depth <= 0) return items;
+          const a: DataList = new DataList();
+          const b: DataList = new DataList();
+          if (depth > 1) {
+            // Branch A: self-call before 'b' is initialized in this branch.
+            const subA: DataList = BranchLocalTest.process(items, depth - 1);
+            a.push(subA);
+          } else {
+            // Branch B: only 'a' is used here; 'b' stays uninitialized at call time.
+            b.push(a);
+          }
+          return items;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const list: DataList = new DataList();
+          BranchLocalTest.process(list, 3);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+    const prefix = "__inlineRec_BranchLocalTest_process_stack_";
+
+    // Both branch-local arrays must be prefilled with DataList tokens.
+    expect(tokenCtorForStack(tac, prefix, "a")).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+    expect(tokenCtorForStack(tac, prefix, "b")).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+  });
+
+  it("inline recursive push: DataList locals save null-safe tokens (saveLocalAsSafeToken)", () => {
+    // Verify that emitCallSitePush / emitInlineRecursivePush use
+    // saveLocalAsSafeToken instead of raw wrapDataToken. The test checks
+    // that the stack slots are populated with type-correct default tokens,
+    // not boxed-null values from uninitialized locals.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+      class PushPathTest {
+        static gather(items: DataList, depth: number): DataList {
+          const result: DataList = new DataList();
+          if (depth <= 0) return result;
+          // Self-call with uninitialized 'result' in the recursive path.
+          const sub: DataList = PushPathTest.gather(items, depth - 1);
+          result.push(sub);
+          return result;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const list: DataList = new DataList();
+          PushPathTest.gather(list, 2);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+    const prefix = "__inlineRec_PushPathTest_gather_stack_";
+
+    // The 'result' local must use DataList-token prefill (not Double).
+    expect(tokenCtorForStack(tac, prefix, "result")).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+    expect(tokenCtorForStack(tac, prefix, "sub")).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+  });
 });
