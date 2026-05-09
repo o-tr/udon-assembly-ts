@@ -1906,7 +1906,10 @@ export function visitReturnStatement(
             const srcKey = operandTrackingKey(value);
             inlineContext.structuralPrefixPaths ??= [];
             if (srcKey) {
-              inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
+              inlineContext.structuralPrefixPaths.push({
+                srcKey,
+                populated: false,
+              });
             }
           }
         } else {
@@ -1914,7 +1917,10 @@ export function visitReturnStatement(
           const srcKey = operandTrackingKey(value);
           if (srcKey) {
             inlineContext.structuralPrefixPaths ??= [];
-            inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
+            inlineContext.structuralPrefixPaths.push({
+              srcKey,
+              populated: false,
+            });
           }
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;
