@@ -50,17 +50,18 @@ function tokenCtorForStack(tac: string, stackName: string): string | undefined {
     /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/;
   const startIdx = lines.findIndex((l) => stackInitRe.test(l));
   if (startIdx < 0) {
-    // CI-only failure debugging: print a window around the expected stack
-    // ctor line so we can see what the TAC actually looks like.
+    // CI-only failure debugging: dump every recursive-stack ctor line
+    // currently in the TAC so we can see WHICH stacks were emitted.
     if (process.env.CI) {
-      const probeIdx = lines.findIndex((l) => l.includes(stackName));
+      const stackCtors = lines.filter(
+        (l) =>
+          /__(?:inlineRec(?:Inst)?|recursionStack)_/.test(l) &&
+          l.includes("= call VRCSDK3DataDataList.__ctor"),
+      );
       console.log(
-        `[diag] tokenCtorForStack: stackInitRe MISS for ${stackName}. ` +
-          `First mention at line ${probeIdx}. Window:\n` +
-          lines
-            .slice(Math.max(0, probeIdx - 2), probeIdx + 8)
-            .map((l, i) => `  ${probeIdx - 2 + i}: ${l}`)
-            .join("\n"),
+        `[diag] tokenCtorForStack: MISS for ${stackName}. ` +
+          `All recursive-stack ctor lines in TAC:\n` +
+          stackCtors.map((l) => `  ${l}`).join("\n"),
       );
     }
     return undefined;
