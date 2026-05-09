@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:01+09:00
-updated: 2026-05-09T18:35:00+09:00
+updated: 2026-05-09T19:45:00+09:00
 status: open
 severity: high
 component: transpiler / structural union returns / D3 dispatch
@@ -264,25 +264,111 @@ to the outer return prefix. The final caller therefore receives only an erased
 `SystemObject` handle and property access falls through to the invalid extern
 instead of reading a structural prefix or using D3 dispatch.
 
-The existing variable-declaration assignment path already handles this shape by
-checking for named `${srcKey}_<prop>` slots even when `inlineInstanceMap` has no
-canonical mapping. The inline return path only handles `valueMapping`, so it
-misses synthetic inline return prefixes such as `__inline_ret_78943`.
+The inline return path only handles `valueMapping`, so it misses synthetic
+inline return prefixes such as `__inline_ret_78943`. However, simply copying
+`${srcKey}_<prop>` sibling slots at every nested return boundary is unsafe:
+some execution paths populate those slots and some do not, so an unconditional
+copy can propagate stale values from a different branch.
 
-### Fix task
+## Investigation update (2026-05-09 19:30 JST) — fix attempt rolled back
 
-Extend structural field propagation in `visitReturnStatement` for inline
-returns:
+The 18:35 JST proposal above was implemented, exposed silent-data-loss
+regressions in 4 unit tests, and rolled back. Findings:
 
-1. In the `returnInstancePrefix && value` block, if `valueMapping` is absent,
-   detect named structural source slots exactly like assignment does:
-   `symbolTable.lookup(`${srcKey}_${propName}`)`.
-2. When those slots exist, copy the full structural prefix chain from `srcKey`
-   to `returnInstancePrefix`, then copy the handle to `inlineContext.returnVar`.
-3. Preserve or seed `inlineInstanceMap` for the return var with
-   `{ prefix: returnInstancePrefix, className: structuralType.name }` when the
-   copied source slots represent the unified structural type.
-4. Add a regression where an inline method returns the result of another inline
-   method whose return type is a structural union, then the caller reads
-   `.isWin`. Assert no `SystemObject.__get_isWin__SystemBoolean` extern is
-   emitted and the outer return prefix gets `_isWin` copied.
+1. **`symbolTable.lookup(`${srcKey}_${propName}`)` is dead code.** No
+   `addSymbol` call in the codebase ever registers `${prefix}_<prop>` slot
+   names — the assignment helper's existing
+   `sourcePrefixFromNamedSlots` check at `visitors/statement.ts:570` is
+   already returning `undefined` for every call. Verified empirically: 18
+   slot lookups across the failing test sources, 0 hits. Step 1 of the
+   fix task above cannot be implemented as written.
+
+2. **`untrackedStructuralHandleVars.has(srcKey)` is the wrong gate.** That
+   set marks "this name holds an untracked handle" — it is populated in
+   many places (assignment helper else-if at `:619`, param binding,
+   inline expansion exit at `inline.ts:2340`, ternary visitors). Several
+   of those populators do NOT guarantee the slots were ever written
+   (e.g. `const t = f ? w : l` stores into a temp; the inline
+   `__inst_*_<prop>` writes happen on the constructed prefixes, not on
+   `t_<prop>`). Gating the boundary copy on this set propagates *stale*
+   slot values when the runtime takes an untracked path.
+
+3. **A populated-prefix tracking set added at reliable populator sites
+   (`visitReturnStatement` valueMapping branch, `assignment.ts`
+   structural-copy branch, `emitStructuralPrefixDefaults`) is also
+   insufficient.** It records "some path wrote the slots," not "every
+   path on this execution branch wrote the slots." The
+   `tenpai_param_return_batch_regression > D-3 dispatch (__uninst_prop_*)
+   appears in generated assembly` test is the canonical reproducer:
+   `passThrough(p)` has `if (p === null) return literal; return p;` —
+   the literal branch populates `__inline_ret_<passThrough>_<prop>`, the
+   `return p` branch does not. With the boundary copy gated on the
+   populated-prefix marker, the caller reads slots that contain stale
+   literal-branch values when `p !== null` was the runtime path. D-3
+   dispatch correctly reads the runtime handle in that case; the
+   boundary copy silently returns wrong values.
+
+4. **The naive boundary-copy fix would replace one bug
+   (`NotSupportedException` at runtime) with another (silent wrong
+   values from uninitialised slot reads).** Wrong values are harder to
+   diagnose than the original crash and may not surface in unit tests
+   that assert only on UASM shape, only in VM-level correctness checks.
+
+### Fix task (revised 2026-05-09 19:45 JST)
+
+Implement a path-sensitive fix. The required discriminator is:
+
+> every runtime path that can reach the nested inline return boundary must have
+> populated the source structural prefix on that same path.
+
+Do not implement the naive `${srcKey}_<prop>` boundary copy unless this
+condition is proven.
+
+Recommended implementation direction:
+
+1. Add per-return-site structural-prefix metadata to inline return state.
+   Each return site records whether it wrote the unified structural prefix for
+   its own path, and which prefix it wrote.
+2. Propagate that metadata through nested inline returns. A boundary may copy
+   `innerPrefix_<prop> -> outerPrefix_<prop>` only when the inner method's
+   reaching return site is known to have populated the prefix on that path.
+3. For `tryGet(x) ?? fallback` / ternary returns of structural unions, update
+   lowering so each branch either:
+   - copies concrete structural slots into the branch's return prefix, or
+   - explicitly marks the branch as untracked so the caller must use D-3
+     dispatch rather than sibling-prefix reads.
+4. Preserve D-3 dispatch as the fallback for reachable untracked handle paths.
+   Do not replace D-3 with sibling-prefix reads unless all paths are proven
+   populated.
+5. Keep or strengthen the dispatch-limit safety net so an untracked structural
+   handle never falls through to `SystemObject.__get_isWin__SystemBoolean`.
+   If the dispatch table cannot be emitted, return a diagnostic zero-init
+   result rather than an invalid extern.
+6. Unskip and satisfy
+   `tests/unit/transpiler/structural_union_iswin_dispatch.test.ts:232`
+   once the deeper fix lands. Add a second regression for the known bad
+   case from `tenpai_param_return_batch_regression`: `if (p === null) return
+   literal; return p;` must keep using D-3 dispatch for the `return p` path
+   and must not read stale literal-branch slots.
+
+Rejected implementation shortcuts:
+
+- `symbolTable.lookup(`${srcKey}_${propName}`)`: slot names are not registered
+  in `SymbolTable`, so this check has no signal.
+- `untrackedStructuralHandleVars.has(srcKey)`: this means "handle is
+  untracked", not "sibling slots are populated".
+- A global `populatedStructuralPrefixes` set: it records that some path wrote
+  slots, not that this runtime path wrote them.
+
+A skipped reproducer test was added at
+`tests/unit/transpiler/structural_union_iswin_dispatch.test.ts:232`
+(`it.skip`) to preserve the failing shape until the deeper fix lands.
+
+### Reverted fix attempt — diff summary
+
+No production-code changes from the 19:30 JST attempt remain. The
+2026-05-09 fix described under **"Fix (2026-05-09)"** above
+(dispatch-limit resolver + safety-net branch in `visitors/expression.ts`)
+is unaffected and stays in place. The full unit-test suite is back to
+996 passing / 1 newly skipped (the reproducer above) / 184 previously
+skipped.

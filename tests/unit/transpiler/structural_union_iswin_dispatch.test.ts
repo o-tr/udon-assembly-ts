@@ -215,4 +215,75 @@ describe("structural union isWin dispatch", () => {
     // diagnostic string so that a future silent removal is caught.
     expect(result.uasm).toMatch(/D3 dispatch miss \(limit exceeded\)/);
   });
+
+  // Skipped reproducer for the nested-inline-return boundary described in
+  // 2026-05-09T013501-structural-union-object-iswin-dispatch.md (18:35 JST).
+  //
+  // The naive boundary-copy fix proposed in the issue (gate on
+  // `untrackedStructuralHandleVars` or a populated-prefix marker) regresses
+  // tenpai_param_return_batch_regression and inline_erased_return: it
+  // propagates *stale* slot values past untracked execution paths — exactly
+  // the case D-3 dispatch is the safety net for. A correct fix needs
+  // per-path slot-population tracking (NC truthy branch must copy slots
+  // from the inner inline-ret, or the boundary must know which return path
+  // populated which prefix on its own branch).
+  //
+  // Left skipped to preserve the failing shape until the deeper fix lands.
+  it.skip("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      type StandardWin = { isWin: boolean; fu: number };
+      type ChiitoitsuWin = { isWin: boolean; han: number };
+      type WinResult = StandardWin | ChiitoitsuWin;
+
+      class Inner {
+        static maybeWin(x: number): WinResult | null {
+          return x > 100 ? { isWin: true, fu: x } : null;
+        }
+        static getWin(x: number): WinResult {
+          if (x > 0) {
+            // Tracked literal: populates __inline_ret_<getWin>_isWin
+            return { isWin: true, fu: x };
+          }
+          // NC with method-call LHS produces a temp:
+          // returnTrackingInvalidated → __inline_ret_<getWin> ends up
+          // in untrackedStructuralHandleVars on inline expansion exit.
+          return Inner.maybeWin(x) ?? { isWin: false, han: 0 };
+        }
+      }
+
+      class Middle {
+        static analyze(x: number): WinResult {
+          // value at this return is __inline_ret_<getWin> (Variable).
+          // valueMapping is undefined; the new untrackedStructuralHandleVars
+          // fallback uses the named handle as the source prefix and emits
+          // the per-field boundary copies into __inline_ret_<analyze>.
+          return Inner.getWin(x);
+        }
+      }
+
+      @UdonBehaviour()
+      export class IsWinNestedInlineReturnTest extends UdonSharpBehaviour {
+        Start(): void {
+          const r = Middle.analyze(50);
+          Debug.Log(r.isWin);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(/SystemObject\.__get_isWin__SystemBoolean/);
+    expect(result.uasm).not.toMatch(/__get_isWin/);
+    // Positive assertion: the TAC must contain a boundary slot copy from
+    // the inner inline-ret prefix to the outer one. Without the fix this
+    // copy is never emitted (only the handle copy goes through), and the
+    // outer __inline_ret_<n>_isWin slot stays uninitialised. Match a
+    // direct `__inline_ret_<a>_isWin = __inline_ret_<b>_isWin` line in TAC.
+    expect(result.tac).toMatch(
+      /__inline_ret_\d+_isWin\s*=\s*__inline_ret_\d+_isWin/,
+    );
+  });
 });
