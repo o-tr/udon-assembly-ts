@@ -243,12 +243,13 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     ).toBe("__ctor__VRCSDK3DataDataList");
   });
 
-  it("branch-local arrays: self-call in one branch saves the other branch's uninitialized DataList", () => {
+  it("branch-local arrays: prefill prevents crashes from uninitialized branch locals", () => {
     // Regression for the residual problem tracked by issue 2026-05-09T133000.
     // Both locals are declared inside separate branches so that at the recursive
     // call site, one local is truly absent/uninitialized depending on which
-    // branch was taken. Without saveLocalAsSafeToken, the push path would box
-    // the uninitialized (null) DataList into a non-DataList token and crash.
+    // branch was taken. Without prefill tokens (makeDefaultDataTokenForLocal),
+    // the stack would contain wrong-type tokens and unwrapDataToken would crash
+    // when accessing .DataList on a boxed-null token instead of a DataList token.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
@@ -293,11 +294,11 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     );
   });
 
-  it("inline recursive push: DataList locals save null-safe tokens (saveLocalAsSafeToken)", () => {
-    // Verify that emitCallSitePush / emitInlineRecursivePush use
-    // saveLocalAsSafeToken instead of raw wrapDataToken. The test checks
-    // that the stack slots are populated with type-correct default tokens,
-    // not boxed-null values from uninitialized locals.
+  it("prefill: all inline DataList locals get correct prefill regardless of init state", () => {
+    // Verify that makeDefaultDataTokenForLocal produces type-correct prefill
+    // tokens for every stack slot. This prevents unwrapDataToken from crashing
+    // when accessing .DataList on a boxed-null token (wrong TokenType) instead
+    // of a DataList-wrapped token with the correct __ctor__VRCSDK3DataDataList.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
