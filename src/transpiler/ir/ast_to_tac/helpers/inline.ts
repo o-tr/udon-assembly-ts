@@ -286,6 +286,14 @@ export function isTrackedInlineHandleType(
  * read sentinels"; defending against the aliasing case is out of scope
  * for this issue. Track with a separate task if a real consumer
  * surfaces.
+ *
+ * The `default` branch covers everything that maps to `.Reference` in
+ * `unwrapDataToken`'s switch — including `ClassTypeSymbol` with
+ * `udonType=Object` (UdonBehaviour references, DateTime) and
+ * non-tracked `InterfaceTypeSymbol`. `ObjectTypeSymbol` and
+ * `GenericTypeParameterSymbol` short-circuit at the top of
+ * `unwrapDataToken` and never reach the unwrap switch, so the prefill
+ * type for those is irrelevant.
  */
 export function makeDefaultDataTokenForLocal(
   converter: ASTToTACConverter,
@@ -342,12 +350,16 @@ export function makeDefaultDataTokenForLocal(
     case UdonType.String:
       return converter.wrapDataToken(createConstant("", PrimitiveTypes.string));
     default:
-      // Reference / Object / unknown: keep Double(0) as the historical
-      // fallback. unwrapDataToken's "Reference" path would still mismatch
-      // here, but those types fall outside this issue's scope and are
-      // already covered by ObjectTypeSymbol/GenericTypeParameterSymbol
-      // short-circuits in unwrapDataToken.
-      return converter.wrapDataToken(createConstant(0, PrimitiveTypes.double));
+      // Everything else maps to .Reference in unwrapDataToken's switch.
+      // ObjectTypeSymbol and GenericTypeParameterSymbol short-circuit
+      // at the top of unwrapDataToken (return token unchanged), but
+      // ClassTypeSymbol with udonType=Object (e.g. UdonBehaviour
+      // references, DateTime) and InterfaceTypeSymbol that is neither
+      // an inline handle nor in interfaceClassIdMap fall through to
+      // the `default → "Reference"` branch. To keep the prefill agreed
+      // with the unwrap accessor for those cases too, emit a
+      // Reference-typed token via DataToken.__ctor__SystemObject(null).
+      return converter.wrapDataToken(createConstant(null, ObjectType));
   }
 }
 
