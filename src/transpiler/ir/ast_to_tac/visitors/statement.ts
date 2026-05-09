@@ -1904,7 +1904,8 @@ export function visitReturnStatement(
             // Record that this return site did NOT populate its structural
             // field prefixes — the source variable has no tracked mapping.
             const srcKey = operandTrackingKey(value);
-            if (srcKey && inlineContext.structuralPrefixPaths) {
+            inlineContext.structuralPrefixPaths ??= [];
+            if (srcKey) {
               inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
             }
           }
@@ -1922,7 +1923,8 @@ export function visitReturnStatement(
     } else if (!inlineContext.returnTrackingInvalidated) {
       // Null return or other invalidation path — no prefix populated.
       const srcKey = value ? operandTrackingKey(value) : undefined;
-      if (srcKey && inlineContext.structuralPrefixPaths) {
+      inlineContext.structuralPrefixPaths ??= [];
+      if (srcKey) {
         inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
       }
       this.inlineInstanceMap.delete(inlineContext.returnVar.name);
