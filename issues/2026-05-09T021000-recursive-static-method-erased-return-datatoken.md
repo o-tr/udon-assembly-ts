@@ -1,10 +1,44 @@
 ---
 created: 2026-05-09T02:10:00+09:00
-updated: 2026-05-09T02:50:00+09:00
-status: open
+updated: 2026-05-09T03:30:00+09:00
+status: resolved
 severity: medium
 component: transpiler / IR / recursive inline
 ---
+
+## Resolution (2026-05-09)
+
+Three coordinated changes wire DataToken promotion through both recursive
+inline emitters and the recursive return path in `visitReturnStatement`.
+
+1. `emitInlineRecursiveStaticMethod` (`inline.ts:2522`) and
+   `emitInlineRecursiveInstanceMethod` (`inline.ts:3814`) now propagate
+   `isErasedReturn` into the `inlineReturnStack.push` entry so
+   `visitReturnStatement` can see the erased-return flag inside the body.
+2. `visitReturnStatement` (`statement.ts:1554`) — the recursive return
+   path (top inlineContext belongs to the current recursive method) now
+   wraps the return value via `wrapDataToken` when
+   `inlineContext.isErasedReturn` is true, mirroring the non-recursive
+   wrap at line ~1747. Without this, the early `return` in the recursive
+   branch directly copied a raw primitive into a DataToken-typed slot.
+3. The TODO + `InlineErasedReturnType` warning at the static call site
+   (`inline.ts:2063-2070`) is removed; the warning code is dropped from
+   `TranspileWarningCode`. The instance call site never had the warning,
+   and now needs none either — both paths handle erased returns correctly.
+
+`wrapDataToken` short-circuits on a DataToken-typed input
+(`assignment.ts:694-696`), so `return this.find(n - 1)` inside the body —
+where the self-call result is already typed `DataToken` — is a no-op
+re-wrap and does not produce a `DataToken(DataToken(x))`.
+
+The overflow handler still skips sentinel initialization for the
+DataToken-typed retVal (`inline.ts:2465`); on overflow the retVal slot
+is uninitialized and the caller's `as T` will throw, which is the
+documented behavior — overflow has already emitted `Debug.LogError`.
+
+Regression tests cover both the static and instance recursive paths in
+`tests/unit/transpiler/inline_erased_return.test.ts`.
+
 
 # Recursive static inline methods with erased return type skip DataToken promotion
 

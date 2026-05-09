@@ -1558,10 +1558,25 @@ export function visitReturnStatement(
   ) {
     emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
     if (value) {
+      // Mirror the non-recursive erased-return wrap below (line ~1747): when
+      // the return slot was promoted to DataToken, wrap the payload so the
+      // caller's `as T` branch in visitAsExpression sees a typed token rather
+      // than a raw primitive copied into a DataToken-typed slot.
+      let returnPayload = value;
+      if (inlineContext.isErasedReturn) {
+        if (isPlainObjectType(this.getOperandType(value))) {
+          this.warnAt(
+            node,
+            "ErasedReturnInline",
+            "erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
+          );
+        }
+        returnPayload = this.wrapDataToken(value);
+      }
       this.emit(
         new CopyInstruction(
           this.currentInlineRecursiveContext.returnVar,
-          value,
+          returnPayload,
         ),
       );
     }

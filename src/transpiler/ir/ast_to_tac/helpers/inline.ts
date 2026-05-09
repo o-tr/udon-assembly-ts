@@ -1033,9 +1033,6 @@ export function restoreInlineParams(
  * When the declared return type is erased (unknown/any/object), promotes the
  * return slot to DataToken so the caller's `as T` unwrap path can see the
  * concrete runtime type.
- *
- * NOTE: recursive paths are NOT handled here; see the TODO comment at
- * `emitInlineRecursiveStaticMethod` call sites.
  */
 function resolveInlineReturnType(returnType: TypeSymbol): {
   effectiveReturnType: TypeSymbol;
@@ -2060,15 +2057,6 @@ function visitInlineStaticMethodCallImpl(
     knownSelfCallCount ??
     countStaticSelfCalls(resolved.declaringClassName, methodName, method.body);
   if (selfCallCount > 0) {
-    // TODO: erased return types on recursive paths need separate analysis;
-    // DataToken promotion is not applied here.
-    if (isPlainObjectType(returnType)) {
-      this.warnAt(
-        undefined,
-        "InlineErasedReturnType",
-        `inline recursive static method ${resolved.declaringClassName}.${methodName} has erased return type — DataToken promotion not applied; caller \`as T\` may fail at runtime.`,
-      );
-    }
     return emitInlineRecursiveStaticMethod(
       this,
       methodName,
@@ -2525,6 +2513,7 @@ function emitInlineRecursiveStaticMethod(
         returnTrackingInvalidated: false,
         loopDepth: converter.loopContextStack.length,
         returnInstancePrefix: undefined,
+        isErasedReturn,
       });
       converter.methodBodyConstructorIndex.set(method.body, 0);
       converter.inlinedBodyStack.push(method.body);
@@ -3817,6 +3806,7 @@ function emitInlineRecursiveInstanceMethod(
         returnTrackingInvalidated: false,
         loopDepth: converter.loopContextStack.length,
         returnInstancePrefix: undefined,
+        isErasedReturn,
       });
       converter.methodBodyConstructorIndex.set(method.body, 0);
       converter.inlinedBodyStack.push(method.body);
