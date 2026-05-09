@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:02+09:00
-updated: 2026-05-09T14:32:00+09:00
+updated: 2026-05-09T14:35:00+09:00
 status: open
 severity: high
 component: transpiler / recursive inline returns / DataList
@@ -68,20 +68,19 @@ DataList, including the base case (`return [[]]`) and no-result case
 (`return []`). The generated slot
 `__inlineRecInst_..._retVal_79595` can still be null at the merge point.
 
-## Investigation tasks
+## Fix tasks
 
-1. Trace all return sites in the recursive lowering of
-   `extractAllMelds`: base case `return [[]]`, cache hit, no-first-kind
-   `return []`, koutsu/shuntsu result returns.
-2. Verify every recursive return site initialises the same retVal slot before
-   jumping to `inline_rec_done`.
-3. Check whether early return through cache/untracked structural union paths
-   bypasses the retVal assignment.
-4. Add a minimal recursive inline regression where a method returns `T[][]`
-   and the caller immediately iterates the result.
-5. Re-run `yaku_triplet` and `yaku_yakuman_extra`.
+1. Fix recursive inline return assignment so a `DataToken` source returned to a
+   `DataList`/array retVal is unwrapped with
+   `VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList`, not raw-copied.
+2. Apply the same typed return coercion to cache-hit and other early-return
+   sites in recursive inline methods before they write to the shared retVal.
+3. Add a focused regression where a recursive inline method returning `T[][]`
+   has a cache-hit branch stored as `DataToken`, then the caller immediately
+   iterates the returned list.
+4. Re-run `yaku_triplet` and `yaku_yakuman_extra`.
 
-## Root cause
+## Previous root cause (fixed)
 
 Both `emitInlineRecursiveInstanceMethod` and `emitInlineRecursiveStaticMethod`
 left the `retVal` slot uninitialised in the preamble. Two structural gaps meant
@@ -157,11 +156,52 @@ Local validation:
 
 Conclusion: the original uninitialised-preamble gap is covered by the merged
 fix, but the mahjong-t2 VM still observes a `DataList.__get_Count` crash at new
-PCs. The remaining work needs VM/UASM evidence around the current PCs:
+PCs. The current PC mapping below shows the remaining fix target is a cache-hit
+return path that raw-copies a `DataToken` into a `DataList` retVal.
 
-1. Map `PC: 0x004A72CC` in `YakuTripletTest.uasm` and `PC: 0x00497964` in
-   `YakuYakumanExtraTest.uasm`.
-2. Trace the value copied into the caller-visible recursive result before the
-   `.Count` read.
-3. Check for cache-hit, null-like, or structural-union early-return paths that
-   can write null into `retVal` after the preamble initialisation.
+## Current PC analysis (2026-05-09)
+
+`YakuTripletTest.uasm` at the current `PC: 0x004A72CC` maps to the caller's
+iteration over the recursive result:
+
+```text
+4878996 inline_rec_done46667:
+4878996     PUSH, __inlineRecInst_HandAnalyzerDecompositionService_extractAllMelds_retVal_79932
+4879004     PUSH, allMeldCombinations
+4879012     COPY
+4879036     PUSH, allMeldCombinations
+4879044     PUSH, __t80992
+4879052     EXTERN, VRCSDK3DataDataList.__get_Count__SystemInt32
+```
+
+`YakuYakumanExtraTest.uasm` at `PC: 0x00497964` has the same shape:
+
+```text
+4815148 inline_rec_done45675:
+4815148     PUSH, __inlineRecInst_HandAnalyzerDecompositionService_extractAllMelds_retVal_78769
+4815156     PUSH, allMeldCombinations
+4815164     COPY
+4815188     PUSH, allMeldCombinations
+4815196     PUSH, __t79829
+4815204     EXTERN, VRCSDK3DataDataList.__get_Count__SystemInt32
+```
+
+The remaining bad write is the cache-hit return path. `cached` is declared as
+`%VRCSDK3DataDataToken`, but the generated code copies it directly into a
+`%VRCSDK3DataDataList` temporary and then into retVal:
+
+```text
+cached: %VRCSDK3DataDataToken, null
+__t80015: %VRCSDK3DataDataList, null
+
+PUSH, cached
+PUSH, __t80015
+COPY
+PUSH, __t80015
+PUSH, __inlineRecInst_HandAnalyzerDecompositionService_extractAllMelds_retVal_79932
+COPY
+```
+
+That raw `DataToken -> DataList` copy bypasses the `DataToken.DataList`
+unwrap/coercion path. The fix should target recursive inline return assignment
+coercion for typed retVal writes, not additional return-site discovery.
