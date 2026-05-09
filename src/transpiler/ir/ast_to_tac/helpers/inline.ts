@@ -383,18 +383,28 @@ export function saveLocalAsSafeToken(
   const udonType = localType.udonType;
 
   if (isInlineHandleType(converter, localType)) {
+    // When localVar is present (initialized), preserve its value via wrapDataToken.
+    // Only emit the -1 default when localVar is absent/uninitialized.
+    if (localVar) {
+      return converter.wrapDataToken(localVar);
+    }
     return converter.wrapDataToken(createConstant(-1, PrimitiveTypes.int32));
   }
 
   switch (udonType) {
-    case UdonType.DataList:
-    case UdonType.Array:
-    case UdonType.DataDictionary:
-    case UdonType.String:
-      // These types use typed ctors in unwrapDataToken. Wrapping a potentially
-      // null localVar directly would produce a non-matching token and crash on
-      // __get_DataList__. Always emit defaults regardless of localVar presence.
-      return makeDefaultDataTokenForLocal(converter, localType);
+   case UdonType.DataList:
+      case UdonType.Array:
+      case UdonType.DataDictionary:
+      case UdonType.String:
+        // These types use typed ctors in unwrapDataToken. When localVar is
+        // present (initialized), preserve its value via wrapDataToken so the
+        // live DataList survives the recursive round-trip. Only emit defaults
+        // when localVar is absent/uninitialized, to prevent boxing null into a
+        // non-DataList token that crashes on __get_DataList__.
+        if (localVar) {
+          return converter.wrapDataToken(localVar);
+        }
+        return makeDefaultDataTokenForLocal(converter, localType);
 
     default: {
       // Numeric, Boolean, and other reference types are safe to box via
