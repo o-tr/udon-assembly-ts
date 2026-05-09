@@ -212,6 +212,18 @@ export class ASTToTACConverter {
   currentInlineContext:
     | { className: string; instancePrefix: string }
     | undefined;
+  /**
+   * Prefix applied to user-declared local variable names when inlining a
+   * method body into a caller. Each unique inlined method body sets this to
+   * something like `__inline_<ClassName>_<methodName>_` so that two
+   * inlined methods declaring a same-named local cannot collide on a single
+   * heap slot. Cleared (undefined) outside inline expansion.
+   *
+   * The prefix is recorded on `SymbolInfo.heapSlotName` and consulted by
+   * variable-creation sites in the visitors so that lookups by AST name
+   * still succeed while the underlying heap slot has a method-unique name.
+   */
+  currentInlineLocalPrefix: string | undefined;
   currentRecursiveContext:
     | {
         locals: Array<{ name: string; type: TypeSymbol }>;
@@ -638,6 +650,14 @@ export class ASTToTACConverter {
       if (stmt.kind === ASTNodeKind.VariableDeclaration) {
         const node = stmt as VariableDeclarationNode;
         if (!this.symbolTable.hasInCurrentScope(node.name)) {
+          // Mirror visitVariableDeclaration's mangling: when inlining a
+          // method body, the local's heap slot must use the inline-prefixed
+          // name so that two inlined methods declaring a same-named local
+          // don't collide. The symbol is still keyed by the bare AST name
+          // for identifier lookups; heapSlotName carries the slot binding.
+          const heapSlotName = this.currentInlineLocalPrefix
+            ? `${this.currentInlineLocalPrefix}${node.name}`
+            : undefined;
           this.symbolTable.addSymbol(
             node.name,
             node.type,
@@ -647,6 +667,7 @@ export class ASTToTACConverter {
             // inspect it when the symbol's declared type is generic
             // or unresolved
             node.initializer,
+            heapSlotName,
           );
         }
       }
@@ -711,6 +732,7 @@ export class ASTToTACConverter {
     this.currentClassName = undefined;
     this.currentMethodName = undefined;
     this.currentInlineContext = undefined;
+    this.currentInlineLocalPrefix = undefined;
     this.currentRecursiveContext = undefined;
     this.currentInlineRecursiveContext = undefined;
     this.currentThisOverride = null;

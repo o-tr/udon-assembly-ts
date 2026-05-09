@@ -780,9 +780,18 @@ export function saveAndBindInlineParams(
     // scope chain, not just the current scope. The heap slot is named, so a
     // parent-scope variable with the same name shares the slot and would be
     // clobbered by the binding COPY below.
+    //
+    // Caveat: with scope-aware heap slot mangling, a caller-visible local
+    // declared inside another inlined body has a `heapSlotName` distinct
+    // from its source AST name. In that case the param's heap slot
+    // (`param.name`) and the caller's slot (`heapSlotName`) are physically
+    // separate — there is no real collision and no backup is needed.
     const collidingCallerSymbol = converter.symbolTable.lookup(param.name);
     let valueBackup: InlineParamSaveEntry["valueBackup"];
-    if (collidingCallerSymbol !== undefined) {
+    const callerSlotName = collidingCallerSymbol?.heapSlotName ?? param.name;
+    const isRealCollision =
+      collidingCallerSymbol !== undefined && callerSlotName === param.name;
+    if (isRealCollision) {
       // Snapshot the slot's current value to a temp so restoreInlineParams
       // can put the caller's value back after the inlined body returns.
       // Use the colliding symbol's declared type so the temp slot type
@@ -1667,11 +1676,16 @@ export function inlineSuperConstructorFromArgs(
         ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries: InlineParamSave = new Map();
+      const savedInlineLocalPrefix = converter.currentInlineLocalPrefix;
       let enteredScope = false;
       let prologueComplete = false;
       try {
         converter.symbolTable.enterScope();
         enteredScope = true;
+        // Mangle constructor body locals so two inline expansions of the
+        // same (or different) constructor cannot collide on a single typed
+        // heap slot when each declares a same-named local.
+        converter.currentInlineLocalPrefix = `__inline_${baseClassNode.name}_constructor_`;
         saveAndBindInlineParams(
           converter,
           typedParams,
@@ -1695,6 +1709,7 @@ export function inlineSuperConstructorFromArgs(
         }
       } finally {
         if (prologueComplete) restoreInlineParams(converter, savedParamEntries);
+        converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
         if (enteredScope) converter.symbolTable.exitScope();
       }
       return;
@@ -1850,11 +1865,16 @@ export function visitInlineConstructor(
         ...(param.initializer ? { initializer: param.initializer } : {}),
       }));
       const savedParamEntries: InlineParamSave = new Map();
+      const savedInlineLocalPrefix = this.currentInlineLocalPrefix;
       let enteredScope = false;
       let prologueComplete = false;
       try {
         this.symbolTable.enterScope();
         enteredScope = true;
+        // Mangle constructor body locals so two inline expansions of the
+        // same constructor (or different constructors with same-named
+        // locals) cannot collide on a single typed heap slot.
+        this.currentInlineLocalPrefix = `__inline_${classNode.name}_constructor_`;
         saveAndBindInlineParams(this, typedParams, args, savedParamEntries);
         prologueComplete = true;
         if (!classNode.baseClass) {
@@ -1871,6 +1891,7 @@ export function visitInlineConstructor(
         }
       } finally {
         if (prologueComplete) restoreInlineParams(this, savedParamEntries);
+        this.currentInlineLocalPrefix = savedInlineLocalPrefix;
         if (enteredScope) this.symbolTable.exitScope();
       }
     } else if (classNode.baseClass) {
@@ -2125,6 +2146,7 @@ function visitInlineStaticMethodCallImpl(
   const savedParamExportReverseMap = this.currentParamExportReverseMap;
   const savedMethodLayout = this.currentMethodLayout;
   const savedInlineContext = this.currentInlineContext;
+  const savedInlineLocalPrefix = this.currentInlineLocalPrefix;
   const savedInlineCtorClass = this.currentInlineConstructorClassName;
   const savedThisOverride = this.currentThisOverride;
   const savedBaseClass = this.currentInlineBaseClass;
@@ -2141,6 +2163,12 @@ function visitInlineStaticMethodCallImpl(
       savedParamEntries = new Map();
       this.symbolTable.enterScope();
       enteredScope = true;
+      // Set the inline local prefix BEFORE binding params so that param
+      // collisions are resolved against the new prefix scope. The prefix
+      // applies to user-declared locals inside the inlined body; parameter
+      // names themselves still use saveAndBindInlineParams' shadow/restore
+      // mechanism.
+      this.currentInlineLocalPrefix = `__inline_${resolved.declaringClassName}_${methodName}_`;
       saveAndBindInlineParams(this, method.parameters, args, savedParamEntries);
       prologueComplete = true;
 
@@ -2219,6 +2247,7 @@ function visitInlineStaticMethodCallImpl(
         this.emit(new LabelInstruction(returnLabel));
         restoreInlineParams(this, savedParamEntries);
       }
+      this.currentInlineLocalPrefix = savedInlineLocalPrefix;
       if (enteredScope) this.symbolTable.exitScope();
     }
 
@@ -2254,11 +2283,18 @@ function emitInlineRecursiveStaticMethod(
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+    const inlineLocalPrefix = `__inline_${declaringClassName}_${methodName}_`;
     const { effectiveReturnType, isErasedReturn } =
       resolveInlineReturnType(returnType);
 
-    // Collect locals (parameters + declared variables)
-    const locals = collectRecursiveLocals.call(converter, method);
+    // Collect locals (parameters + declared variables). Pass the inline
+    // local prefix so the recursion-stack slots match the mangled heap
+    // slots emitted from inside the body.
+    const locals = collectRecursiveLocals.call(
+      converter,
+      method,
+      inlineLocalPrefix,
+    );
     // Add return site index
     locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
     // Add self-call result variables (void methods never read these)
@@ -2308,6 +2344,7 @@ function emitInlineRecursiveStaticMethod(
     const savedParamExportReverseMap = converter.currentParamExportReverseMap;
     const savedMethodLayout = converter.currentMethodLayout;
     const savedInlineContext = converter.currentInlineContext;
+    const savedInlineLocalPrefix = converter.currentInlineLocalPrefix;
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
@@ -2347,6 +2384,9 @@ function emitInlineRecursiveStaticMethod(
     try {
       converter.symbolTable.enterScope();
       enteredScope = true;
+      // Apply the inline local prefix BEFORE binding params; params keep
+      // their bare names (saveAndBindInlineParams does not mangle them).
+      converter.currentInlineLocalPrefix = inlineLocalPrefix;
       saveAndBindInlineParams(
         converter,
         method.parameters,
@@ -2539,6 +2579,7 @@ function emitInlineRecursiveStaticMethod(
       converter.currentInlineBaseClass = savedBaseClass;
       if (prologueComplete && savedInitialParams)
         restoreInlineParams(converter, savedInitialParams);
+      converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
       if (enteredScope) converter.symbolTable.exitScope();
       converter.currentInlineRecursiveContext = savedInlineRecCtx;
     }
@@ -3065,6 +3106,7 @@ function emitInlineOutlinedBody(
     const savedParamExportReverseMap = converter.currentParamExportReverseMap;
     const savedMethodLayout = converter.currentMethodLayout;
     const savedInlineContext = converter.currentInlineContext;
+    const savedInlineLocalPrefix = converter.currentInlineLocalPrefix;
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
@@ -3075,6 +3117,10 @@ function emitInlineOutlinedBody(
     converter.currentInlineContext = instancePrefix
       ? { className, instancePrefix }
       : undefined;
+    // Mangle user-declared locals inside the outlined body so two outlined
+    // methods that each declare a same-named local don't collide on a
+    // single typed heap slot.
+    converter.currentInlineLocalPrefix = `__inline_${declaringClassName}_${methodName}_`;
     converter.currentInlineConstructorClassName = undefined;
     converter.currentThisOverride = null;
     converter.currentInlineBaseClass = undefined;
@@ -3125,6 +3171,7 @@ function emitInlineOutlinedBody(
       converter.currentParamExportReverseMap = savedParamExportReverseMap;
       converter.currentMethodLayout = savedMethodLayout;
       converter.currentInlineContext = savedInlineContext;
+      converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
@@ -3551,10 +3598,15 @@ function emitInlineRecursiveInstanceMethod(
     const depthVar = `${prefix}_depth`;
     const spVar = `${prefix}_sp`;
     const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
+    const inlineLocalPrefix = `__inline_${declaringClassName}_${methodName}_`;
     const { effectiveReturnType, isErasedReturn } =
       resolveInlineReturnType(returnType);
 
-    const locals = collectRecursiveLocals.call(converter, method);
+    const locals = collectRecursiveLocals.call(
+      converter,
+      method,
+      inlineLocalPrefix,
+    );
     locals.push({ name: returnSiteIdxVarName, type: PrimitiveTypes.int32 });
     if (returnType.udonType !== UdonType.Void) {
       for (let i = 0; i < selfCallCount; i++) {
@@ -3605,6 +3657,7 @@ function emitInlineRecursiveInstanceMethod(
     const savedParamExportReverseMap = converter.currentParamExportReverseMap;
     const savedMethodLayout = converter.currentMethodLayout;
     const savedInlineContext = converter.currentInlineContext;
+    const savedInlineLocalPrefix = converter.currentInlineLocalPrefix;
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
@@ -3640,6 +3693,7 @@ function emitInlineRecursiveInstanceMethod(
     try {
       converter.symbolTable.enterScope();
       enteredScope = true;
+      converter.currentInlineLocalPrefix = inlineLocalPrefix;
       saveAndBindInlineParams(
         converter,
         method.parameters,
@@ -3832,6 +3886,7 @@ function emitInlineRecursiveInstanceMethod(
       converter.currentInlineBaseClass = savedBaseClass;
       if (prologueComplete && savedInitialParams)
         restoreInlineParams(converter, savedInitialParams);
+      converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
       if (enteredScope) converter.symbolTable.exitScope();
       converter.currentInlineRecursiveContext = savedInlineRecCtx;
     }
@@ -4412,6 +4467,7 @@ function inlineResolvedMethodBodyImpl(
     const savedParamExportReverseMap = converter.currentParamExportReverseMap;
     const savedMethodLayout = converter.currentMethodLayout;
     const savedInlineContext = converter.currentInlineContext;
+    const savedInlineLocalPrefix = converter.currentInlineLocalPrefix;
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
@@ -4426,6 +4482,10 @@ function inlineResolvedMethodBodyImpl(
     try {
       converter.symbolTable.enterScope();
       enteredScope = true;
+      // Mangle user-declared locals inside the inlined body so two
+      // resolved-method inline expansions cannot collide on a single typed
+      // heap slot when each declares a same-named local.
+      converter.currentInlineLocalPrefix = `__inline_${declaringClassName}_${methodName}_`;
       saveAndBindInlineParams(
         converter,
         method.parameters,
@@ -4507,6 +4567,7 @@ function inlineResolvedMethodBodyImpl(
         converter.emit(new LabelInstruction(returnLabel));
         restoreInlineParams(converter, savedParamEntries);
       }
+      converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
       if (enteredScope) converter.symbolTable.exitScope();
     }
 
@@ -4998,17 +5059,34 @@ export function collectRecursiveLocals(
     parameters: Array<{ name: string; type: TypeSymbol }>;
     body: BlockStatementNode;
   },
+  localPrefix?: string,
 ): Array<{ name: string; type: TypeSymbol }> {
+  // Known gap (pre-existing): the AST walk below covers VariableDeclaration,
+  // ForOfStatement loop vars, and TryCatch catch variables, but it does not
+  // descend into FunctionExpression bodies passed as call arguments.
+  // Set.forEach / Map.forEach callback parameters (handled by
+  // visitSetMethodCall / visitMapMethodCall) are therefore missing from the
+  // per-frame push/pop stack. A recursive self-call from inside such a
+  // callback would not save/restore those slots — currently very rare in
+  // practice, but worth fixing if the shape ever appears in user code.
   const locals = new Map<string, TypeSymbol>();
+  // Parameters keep their bare names — saveAndBindInlineParams binds the
+  // inlined body's params using the source name without the prefix.
   for (const param of method.parameters) {
     locals.set(param.name, param.type);
   }
+  // Apply the inline local prefix to user-declared locals so the
+  // recursion-stack push/pop reads/writes the same heap slot the body uses
+  // (visitVariableDeclaration mangles the slot name when currentInlineLocalPrefix
+  // is set; collectRecursiveLocals must mangle in lockstep).
+  const mangle = (name: string): string =>
+    localPrefix ? `${localPrefix}${name}` : name;
 
   const visitNode = (node: ASTNode): void => {
     switch (node.kind) {
       case ASTNodeKind.VariableDeclaration: {
         const varNode = node as VariableDeclarationNode;
-        locals.set(varNode.name, varNode.type);
+        locals.set(mangle(varNode.name), varNode.type);
         if (varNode.initializer) visitNode(varNode.initializer);
         break;
       }
@@ -5050,14 +5128,17 @@ export function collectRecursiveLocals(
         const forOfNode = node as ForOfStatementNode;
         if (Array.isArray(forOfNode.variable)) {
           for (const name of forOfNode.variable) {
-            locals.set(name, ObjectType);
+            locals.set(mangle(name), ObjectType);
           }
         } else {
-          locals.set(forOfNode.variable, forOfNode.variableType ?? ObjectType);
+          locals.set(
+            mangle(forOfNode.variable),
+            forOfNode.variableType ?? ObjectType,
+          );
         }
         if (forOfNode.destructureProperties) {
           for (const entry of forOfNode.destructureProperties) {
-            locals.set(entry.name, ObjectType);
+            locals.set(mangle(entry.name), ObjectType);
           }
         }
         visitNode(forOfNode.iterable);
@@ -5083,7 +5164,7 @@ export function collectRecursiveLocals(
         const tryNode = node as TryCatchStatementNode;
         visitNode(tryNode.tryBody);
         if (tryNode.catchVariable) {
-          locals.set(tryNode.catchVariable, ObjectType);
+          locals.set(mangle(tryNode.catchVariable), ObjectType);
         }
         if (tryNode.catchBody) visitNode(tryNode.catchBody);
         if (tryNode.finallyBody) visitNode(tryNode.finallyBody);

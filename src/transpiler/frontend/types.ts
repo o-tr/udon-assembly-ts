@@ -80,6 +80,14 @@ export interface SymbolInfo {
   isParameter?: boolean;
   isConstant?: boolean;
   initialValue?: unknown;
+  /**
+   * Mangled heap slot name used for variables inlined from another method.
+   * The symbol table is keyed by the original AST name (so identifier
+   * lookups still find the symbol), but variable operands and `.data`
+   * declarations must use this mangled name to avoid colliding with a
+   * same-named local declared in a different inlined method body.
+   */
+  heapSlotName?: string;
 }
 
 /**
