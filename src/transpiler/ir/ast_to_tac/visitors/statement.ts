@@ -1753,6 +1753,14 @@ export function visitReturnStatement(
           this.emit(new CopyInstruction(dstField, srcField));
         }
         this.emit(new CopyInstruction(inlineContext.returnVar, value));
+        // Record that this return site populated its structural field prefixes
+        // from the tracked value mapping. Used at nested inline boundaries to
+        // gate field-copy propagation: only copy `${srcKey}_<prop>` →
+        // `${outerPrefix}_<prop>` when every runtime path reaching this boundary
+        // has a proven-populated source prefix.
+        const srcKey = valueMapping.prefix;
+        inlineContext.structuralPrefixPaths ??= [];
+        inlineContext.structuralPrefixPaths.push({ srcKey, populated: true });
         // Track returnTrackingInvalidated: if a previous return path used a
         // different interface name, the stable prefix is ambiguous.
         if (!inlineContext.returnTrackingInvalidated) {
@@ -1893,13 +1901,30 @@ export function visitReturnStatement(
             )
           ) {
             inlineContext.returnTrackingInvalidated = true;
+            // Record that this return site did NOT populate its structural
+            // field prefixes — the source variable has no tracked mapping.
+            const srcKey = operandTrackingKey(value);
+            if (srcKey && inlineContext.structuralPrefixPaths) {
+              inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
+            }
           }
         } else {
+          // Complex-expression return (Temporary or unknown): no prefix populated.
+          const srcKey = operandTrackingKey(value);
+          if (srcKey) {
+            inlineContext.structuralPrefixPaths ??= [];
+            inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
+          }
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;
         }
       }
     } else if (!inlineContext.returnTrackingInvalidated) {
+      // Null return or other invalidation path — no prefix populated.
+      const srcKey = value ? operandTrackingKey(value) : undefined;
+      if (srcKey && inlineContext.structuralPrefixPaths) {
+        inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
+      }
       this.inlineInstanceMap.delete(inlineContext.returnVar.name);
       inlineContext.returnTrackingInvalidated = true;
     }

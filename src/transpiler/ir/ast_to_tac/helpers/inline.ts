@@ -2267,6 +2267,11 @@ function visitInlineStaticMethodCallImpl(
   let enteredScope = false;
   let prologueComplete = false;
   let addedInlineMethodKey = false;
+  const returnInstancePrefix =
+    returnType instanceof InterfaceTypeSymbol &&
+    returnType.properties.size > 0
+      ? result.name
+      : undefined;
   try {
     try {
       savedParamEntries = new Map();
@@ -2295,11 +2300,6 @@ function visitInlineStaticMethodCallImpl(
       // For concrete ClassTypeSymbol returns, direct tracking is preserved so
       // that property writes (e.g. compound assignments) reach the original
       // inline instance fields rather than a one-shot copy.
-      const returnInstancePrefix =
-        returnType instanceof InterfaceTypeSymbol &&
-        returnType.properties.size > 0
-          ? result.name
-          : undefined;
       this.inlineReturnStack.push({
         returnVar: result,
         returnLabel,
@@ -2338,6 +2338,47 @@ function visitInlineStaticMethodCallImpl(
           innerCtx.returnInstancePrefix !== undefined
         ) {
           this.untrackedStructuralHandleVars.add(result.name);
+        }
+        // Path-sensitive boundary copy: propagate structural field prefixes
+        // from the inner method's return prefix into the outer result prefix.
+        // Only emit copies when every runtime path reaching this boundary has
+        // proven that it populated its source prefix (all entries in
+        // structuralPrefixPaths have populated=true). If any path did NOT
+        // populate, do not copy — D-3 dispatch handles the untracked handle.
+        if (
+          innerCtx.structuralPrefixPaths &&
+          innerCtx.returnInstancePrefix !== undefined &&
+          returnInstancePrefix !== undefined
+        ) {
+          const allPopulated = innerCtx.structuralPrefixPaths.every(
+            (p) => p.populated,
+          );
+          if (allPopulated) {
+            // Propagate structural fields from the inner method's return prefix.
+            // Field values are set on `${innerCtx.returnVar.name}_*` during
+            // execution (early returns of tracked variables copy instance
+            // fields to returnInstancePrefix which IS the return variable name).
+            // Use this name directly rather than srcKey from structuralPaths,
+            // which points to instance prefixes and misses intermediate copies.
+            const srcPrefix = innerCtx.returnVar.name;
+            const structType = structuralInterfaceForType(
+              this,
+              innerCtx.returnVar.type,
+            );
+            if (structType) {
+              for (const [propName] of structType.properties) {
+                const srcField = createVariable(
+                  `${srcPrefix}_${propName}`,
+                  structType.properties.get(propName)! as TypeSymbol,
+                );
+                const dstField = createVariable(
+                  `${returnInstancePrefix}_${propName}`,
+                  structType.properties.get(propName)! as TypeSymbol,
+                );
+                this.emit(new CopyInstruction(dstField, srcField));
+              }
+            }
+          }
         }
         this.inlineReturnStack.pop();
       }
@@ -2442,6 +2483,12 @@ function emitInlineRecursiveStaticMethod(
       effectiveReturnType,
       { isLocal: true, isInlineReturn: true },
     );
+    // Only apply the stable-prefix strategy for interface return types.
+    const returnInstancePrefix =
+      returnType instanceof InterfaceTypeSymbol &&
+      returnType.properties.size > 0
+        ? result.name
+        : undefined;
     const entryLabel = converter.newLabel("inline_rec_entry");
     const dispatchLabel = converter.newLabel("inline_rec_dispatch");
     const overflowLabel = converter.newLabel("inline_rec_overflow");
@@ -3253,18 +3300,18 @@ function emitInlineOutlinedBody(
       });
     }
     // returnLabel routes to a body-local label so that early returns land
-    // here first; from there we unconditionally jump to the deferred dispatch
-    // label.  This keeps dispatchLabel exclusively inside the deferred lambda
-    // and avoids duplicate label definitions if visitReturnStatement ever
-    // starts emitting a return label inline.
-    converter.inlineReturnStack.push({
-      returnVar: result,
-      returnLabel: bodyReturnLabel,
-      returnTrackingInvalidated: false,
-      loopDepth: converter.loopContextStack.length,
-      returnInstancePrefix,
-      isErasedReturn,
-    });
+      // here first; from there we unconditionally jump to the deferred dispatch
+      // label.  This keeps dispatchLabel exclusively inside the deferred lambda
+      // and avoids duplicate label definitions if visitReturnStatement ever
+      // starts emitting a return label inline.
+       converter.inlineReturnStack.push({
+         returnVar: result,
+         returnLabel: dispatchLabel,
+         returnTrackingInvalidated: false,
+         loopDepth: converter.loopContextStack.length,
+         returnInstancePrefix,
+         isErasedReturn,
+       });
     converter.methodBodyConstructorIndex.set(method.body, 0);
     converter.inlinedBodyStack.push(method.body);
     const savedNativeIneligible = converter.nativeArrayIneligible;
@@ -3762,6 +3809,12 @@ function emitInlineRecursiveInstanceMethod(
       effectiveReturnType,
       { isLocal: true, isInlineReturn: true },
     );
+    // Only apply the stable-prefix strategy for interface return types.
+    const returnInstancePrefix =
+      returnType instanceof InterfaceTypeSymbol &&
+      returnType.properties.size > 0
+        ? result.name
+        : undefined;
     const entryLabel = converter.newLabel("inline_rec_entry");
     const dispatchLabel = converter.newLabel("inline_rec_dispatch");
     const overflowLabel = converter.newLabel("inline_rec_overflow");
@@ -3988,13 +4041,64 @@ function emitInlineRecursiveInstanceMethod(
       converter.currentNativeArrayVarName = null;
       converter.visitBlockStatement(method.body);
     } finally {
+      // If the inner expansion's return tracking was invalidated AND the
+      // method has a structural (interface) return type, the return variable
+      // holds an untracked structural handle. Add it to the set so that any
+      // outer `return <result>` (or `const x = <result>` via the else-if
+      // branch in visitVariableDeclaration) also triggers
+      // returnTrackingInvalidated rather than relying on a
+      // sibling-populated prefix that may never be written at runtime.
+       if (converter.inlineReturnStack.length > returnStackDepth) {
+         const innerCtx =
+           converter.inlineReturnStack[converter.inlineReturnStack.length - 1];
+         if (
+           innerCtx.returnTrackingInvalidated &&
+           innerCtx.returnInstancePrefix !== undefined
+         ) {
+           converter.untrackedStructuralHandleVars.add(result.name);
+         }
+         // Path-sensitive boundary copy: propagate structural field prefixes
+         // from the inner method's return prefix into the outer result prefix.
+         // Only emit copies when every runtime path reaching this boundary has
+         // proven that it populated its source prefix (all entries in
+         // structuralPrefixPaths have populated=true). If any path did NOT
+         // populate, do not copy — D-3 dispatch handles the untracked handle.
+         if (
+           innerCtx.structuralPrefixPaths &&
+           innerCtx.returnInstancePrefix !== undefined &&
+           returnInstancePrefix !== undefined
+         ) {
+           const allPopulated = innerCtx.structuralPrefixPaths.every(
+             (p) => p.populated,
+           );
+           if (allPopulated) {
+             const srcPrefix = innerCtx.structuralPrefixPaths[innerCtx.structuralPrefixPaths.length - 1].srcKey;
+             const structType = structuralInterfaceForType(
+               converter,
+               innerCtx.returnVar.type,
+             );
+             if (structType) {
+               for (const [propName] of structType.properties) {
+                 const srcField = createVariable(
+                   `${srcPrefix}_${propName}`,
+                   structType.properties.get(propName)! as TypeSymbol,
+                 );
+                 const dstField = createVariable(
+                   `${returnInstancePrefix}_${propName}`,
+                   structType.properties.get(propName)! as TypeSymbol,
+                 );
+                 converter.emit(new CopyInstruction(dstField, srcField));
+               }
+             }
+           }
+         }
+         converter.inlineReturnStack.pop();
+       }
+       if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
       converter.nativeArrayIneligible = savedRecNativeIneligible;
       converter.currentNativeArrayVarName = savedRecNativeVarName;
       if (converter.inlinedBodyStack.length > bodyStackDepth)
         converter.inlinedBodyStack.pop();
-      if (converter.inlineReturnStack.length > returnStackDepth)
-        converter.inlineReturnStack.pop();
-      if (addedInlineMethodKey) converter.inlineMethodStack.delete(inlineKey);
       converter.currentParamExportMap = savedParamExportMap;
       converter.currentParamExportReverseMap = savedParamExportReverseMap;
       converter.currentMethodLayout = savedMethodLayout;

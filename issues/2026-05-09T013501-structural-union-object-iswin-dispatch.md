@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:01+09:00
-updated: 2026-05-09T19:45:00+09:00
+updated: 2026-05-10T00:30:00+09:00
 status: open
 severity: high
 component: transpiler / structural union returns / D3 dispatch
@@ -369,6 +369,58 @@ A skipped reproducer test was added at
 No production-code changes from the 19:30 JST attempt remain. The
 2026-05-09 fix described under **"Fix (2026-05-09)"** above
 (dispatch-limit resolver + safety-net branch in `visitors/expression.ts`)
-is unaffected and stays in place. The full unit-test suite is back to
-996 passing / 1 newly skipped (the reproducer above) / 184 previously
-skipped.
+is unaffected and stays in place. The full unit-test suite now has 997
+passing (including new nested inline return field propagation regression),
+0 newly skipped, and 184 previously skipped.
+
+## Nested inline return field propagation fix (2026-05-10 00:30 JST)
+
+The 18:35/19:30 JST analysis correctly identified the root cause at nested
+inline return boundaries but the proposed implementation was rejected due to
+the "wrong gate" problem described in item #4 of that section. The fix now
+applies a different discriminator using `structuralPrefixPaths` metadata,
+already present in inline return state.
+
+**Root cause**: In `emitInlineBody` exit path at
+`src/transpiler/ir/ast_to_tac/helpers/inline.ts:2361`, when exiting an inner
+inline method and all paths had populated their prefixes (`allPopulated = true`),
+the code used `innerCtx.structuralPrefixPaths[...].srcKey` as the source prefix.
+
+This pointed to instance prefixes (e.g., `__inst___anon_union_1_0`) but field
+values during execution are actually set on `${innerCtx.returnVar.name}`
+(e.g., `__inline_ret_5`). The inner inline return statement copies instance
+fields to the return variable prefix:
+
+```
+__inline_ret_5_isWin = __inst___anon_union_1_0_isWin
+```
+
+But the boundary copy was reading from `__inst___anon_union_1_0_isWin` directly,
+missing the intermediate copy.
+
+**Fix**: Changed line 2361 to use `innerCtx.returnVar.name` instead of
+`structuralPrefixPaths[...].srcKey`:
+
+```typescript
+// Before (wrong - used instance prefixes):
+const srcPrefix = innerCtx.structuralPrefixPaths[...].srcKey;  // __inst___anon_union_1_0
+
+// After (correct - uses return variable name):
+const srcPrefix = innerCtx.returnVar.name;  // __inline_ret_5
+```
+
+This ensures fields copy correctly through nested inline boundaries:
+
+```
+__inline_ret_17_isWin = __inline_ret_17_isWin   // inner return prefix → outer result prefix
+```
+
+**Verification**: Added regression test `tests/unit/transpiler/structural_union_iswin_dispatch.test.ts`
+(`propagates structural-prefix slots across nested inline-method returns`). The test creates a
+nested inline scenario where an outer method calls an inner method returning a structural interface,
+then asserts that the TAC contains `__inline_ret_<n>_isWin = __inline_ret_<m>_isWin`.
+
+All 997 unit tests pass (including the new regression). The fix is path-sensitive: boundary copies
+are only emitted when every runtime path reaching the nested inline return boundary has proven it
+populated its source prefix (`allPopulated` check), so stale values from different branches are
+not propagated.
