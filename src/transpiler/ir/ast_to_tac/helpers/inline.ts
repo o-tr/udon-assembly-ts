@@ -788,8 +788,7 @@ export function saveAndBindInlineParams(
     // separate — there is no real collision and no backup is needed.
     const collidingCallerSymbol = converter.symbolTable.lookup(param.name);
     let valueBackup: InlineParamSaveEntry["valueBackup"];
-    const callerSlotName =
-      collidingCallerSymbol?.heapSlotName ?? param.name;
+    const callerSlotName = collidingCallerSymbol?.heapSlotName ?? param.name;
     const isRealCollision =
       collidingCallerSymbol !== undefined && callerSlotName === param.name;
     if (isRealCollision) {
@@ -2260,8 +2259,6 @@ function visitInlineStaticMethodCallImpl(
         this.emit(new LabelInstruction(returnLabel));
         restoreInlineParams(this, savedParamEntries);
       }
-      // Restore prefix AFTER restoreInlineParams so the param-restore COPYs
-      // emit using the same prefix that was active during the body.
       this.currentInlineLocalPrefix = savedInlineLocalPrefix;
       if (enteredScope) this.symbolTable.exitScope();
     }
@@ -5074,6 +5071,14 @@ export function collectRecursiveLocals(
   },
   localPrefix?: string,
 ): Array<{ name: string; type: TypeSymbol }> {
+  // Known gap (pre-existing): the AST walk below covers VariableDeclaration,
+  // ForOfStatement loop vars, and TryCatch catch variables, but it does not
+  // descend into FunctionExpression bodies passed as call arguments.
+  // Set.forEach / Map.forEach callback parameters (handled by
+  // visitSetMethodCall / visitMapMethodCall) are therefore missing from the
+  // per-frame push/pop stack. A recursive self-call from inside such a
+  // callback would not save/restore those slots — currently very rare in
+  // practice, but worth fixing if the shape ever appears in user code.
   const locals = new Map<string, TypeSymbol>();
   // Parameters keep their bare names — saveAndBindInlineParams binds the
   // inlined body's params using the source name without the prefix.
