@@ -336,19 +336,19 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     );
   });
 
-  it("push path: uninitialized DataList locals use fresh temps, initialized use their variable", () => {
-    // This test verifies that saveLocalAsSafeToken correctly distinguishes
-    // between initialized and uninitialized locals at push time. For
-    // uninitialized DataList locals (declared after the call site or in
-    // branches not yet taken), makeDefaultDataTokenForLocal should be used,
-    // producing a fresh temp created by newTemp(ExternTypes.dataList) as the
-    // ctor argument. For initialized locals, wrapDataToken(localVar) preserves
-    // the original variable reference.
+  it("push path: all inline locals use wrapDataToken(localVar) since they are synthesized upfront", () => {
+    // This test verifies that saveLocalAsSafeToken uses wrapDataToken(localVar)
+    // for both initialized and uninitialized DataList locals at push time. In
+    // inline recursion, all context locals (params, self-call results, try/catch
+    // vars) are synthesized during context setup before any body execution, so
+    // they are always present regardless of initialization state. There is no
+    // distinction between initialized and uninitialized — every local gets
+    // wrapped via wrapDataToken(localVar).
     //
-    // The source uses a branch-local pattern where 'uninit' is declared only
-    // in the else-branch (after the recursive call), so at push time it is
-    // uninitialized. 'result' is initialized before the call, so its token
-    // argument should be the variable name itself.
+    // The source uses a branch-local pattern where 'uninit' is declared only in
+    // the else-branch (after the recursive call) and 'result' is initialized
+    // before the call. Both should produce set_Item calls whose token ctor args
+    // reference their respective variable names, confirming wrapDataToken was used.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
@@ -385,12 +385,10 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     const lines = tac.split("\n");
     const prefix = "__inlineRec_PushPathTest_gather_stack_";
 
-    // Find set_Item calls for the 'result' stack (initialized local) and
-    // verify its token ctor argument is the variable name "result" itself.
-    // Then find set_Item for 'uninit' stack and check that its token ctor
-    // argument is NOT a known variable — it should be a fresh temp from
-    // makeDefaultDataTokenForLocal (newTemp), which gets a synthetic name
-    // like "__inline_PushPathTest_gather___" or similar.
+    // Find set_Item calls for the 'result' stack and verify its token ctor
+    // argument references "result". Then find set_Item for 'uninit' stack and
+    // check that its token ctor arg also references "uninit" — both use
+    // wrapDataToken(localVar) since all inline context locals are synthesized.
     const inlinePrefix = "__inline_PushPathTest_gather_";
     const resultSetItemRe = new RegExp(
       `\\bcall ${prefix}${inlinePrefix}result\\.set_Item`,
