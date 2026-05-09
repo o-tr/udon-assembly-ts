@@ -391,7 +391,7 @@ values during execution are actually set on `${innerCtx.returnVar.name}`
 (e.g., `__inline_ret_5`). The inner inline return statement copies instance
 fields to the return variable prefix:
 
-```
+```text
 __inline_ret_5_isWin = __inst___anon_union_1_0_isWin
 ```
 
@@ -411,7 +411,7 @@ const srcPrefix = innerCtx.returnVar.name;  // __inline_ret_5
 
 This ensures fields copy correctly through nested inline boundaries:
 
-```
+```text
 __inline_ret_17_isWin = __inline_ret_17_isWin   // inner return prefix → outer result prefix
 ```
 

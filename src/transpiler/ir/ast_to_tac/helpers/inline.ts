@@ -2361,24 +2361,21 @@ function visitInlineStaticMethodCallImpl(
                // fields to returnInstancePrefix which IS the return variable name).
                // Use this name directly rather than srcKey from structuralPaths,
                // which points to instance prefixes and misses intermediate copies.
-               const srcPrefix = innerCtx.returnVar.name;
+              const srcPrefix = innerCtx.returnVar.name;
               const structType = structuralInterfaceForType(
-                 converter,
-                 innerCtx.returnVar.type,
-               );
-               if (structType) {
-                 for (const [propName] of structType.properties) {
-                   const srcField = createVariable(
-                     `${srcPrefix}_${propName}`,
-                     structType.properties.get(propName)! as TypeSymbol,
-                   );
-                   const dstField = createVariable(
-                     `${returnInstancePrefix}_${propName}`,
-                     structType.properties.get(propName)! as TypeSymbol,
-                   );
-                   this.emit(new CopyInstruction(dstField, srcField));
-                 }
-               }
+                this,
+                innerCtx.returnVar.type,
+              );
+              if (structType) {
+                emitNestedStructuralFieldCopies(
+                  this,
+                  srcPrefix,
+                  returnInstancePrefix,
+                  structType,
+                  {},
+                  new Set<string>(),
+                );
+              }
              }
         }
         this.inlineReturnStack.pop();
@@ -2759,17 +2756,14 @@ function emitInlineRecursiveStaticMethod(
                  innerCtx.returnVar.type,
                );
                if (structType) {
-                 for (const [propName] of structType.properties) {
-                   const srcField = createVariable(
-                     `${srcPrefix}_${propName}`,
-                     structType.properties.get(propName)! as TypeSymbol,
-                   );
-                   const dstField = createVariable(
-                     `${returnInstancePrefix}_${propName}`,
-                     structType.properties.get(propName)! as TypeSymbol,
-                   );
-                   converter.emit(new CopyInstruction(dstField, srcField));
-                 }
+                 emitNestedStructuralFieldCopies(
+                   converter,
+                   srcPrefix,
+                   returnInstancePrefix,
+                   structType,
+                   {},
+                   new Set<string>(),
+                 );
                }
              }
         }
@@ -3345,18 +3339,19 @@ function emitInlineOutlinedBody(
         className: returnType.name,
       });
     }
-    // returnLabel points directly at the deferred dispatch label so that
-    // early returns inside the outlined body jump straight to it.
-    // Note: bodyReturnLabel (emitted at fallthrough below) is still the
-    // fall-through target for the end-of-body path.
+   // returnLabel points to bodyReturnLabel so that early returns inside the
+   // outlined body land there; the fallthrough jump at bodyReturnJumpIdx then
+   // routes either to dispatchLabel (multi-site) or is patched to a single
+   // call site's label (single-site).  Note: bodyReturnLabel is also the
+   // target for all early returns inside the outlined body.
      converter.inlineReturnStack.push({
-         returnVar: result,
-         returnLabel: dispatchLabel,
-         returnTrackingInvalidated: false,
-         loopDepth: converter.loopContextStack.length,
-         returnInstancePrefix,
-         isErasedReturn,
-       });
+        returnVar: result,
+        returnLabel: bodyReturnLabel,
+        returnTrackingInvalidated: false,
+        loopDepth: converter.loopContextStack.length,
+        returnInstancePrefix,
+        isErasedReturn,
+      });
     converter.methodBodyConstructorIndex.set(method.body, 0);
     converter.inlinedBodyStack.push(method.body);
     const savedNativeIneligible = converter.nativeArrayIneligible;
@@ -4118,31 +4113,28 @@ function emitInlineRecursiveInstanceMethod(
               (p) => p.populated,
             );
            if (allPopulated) {
-              // Propagate structural fields from the inner method's return prefix.
-              // Field values are set on `${innerCtx.returnVar.name}_*` during
-              // execution (early returns of tracked variables copy instance
-              // fields to returnInstancePrefix which IS the return variable name).
-              // Use this name directly rather than srcKey from structuralPaths,
-              // which points to instance prefixes and misses intermediate copies.
-              const srcPrefix = innerCtx.returnVar.name;
-               const structType = structuralInterfaceForType(
-                 converter,
-                 innerCtx.returnVar.type,
-               );
-               if (structType) {
-                 for (const [propName] of structType.properties) {
-                   const srcField = createVariable(
-                     `${srcPrefix}_${propName}`,
-                     structType.properties.get(propName)! as TypeSymbol,
-                   );
-                   const dstField = createVariable(
-                     `${returnInstancePrefix}_${propName}`,
-                     structType.properties.get(propName)! as TypeSymbol,
-                   );
-                   converter.emit(new CopyInstruction(dstField, srcField));
-                 }
-               }
-             }
+               // Propagate structural fields from the inner method's return prefix.
+               // Field values are set on `${innerCtx.returnVar.name}_*` during
+               // execution (early returns of tracked variables copy instance
+               // fields to returnInstancePrefix which IS the return variable name).
+               // Use this name directly rather than srcKey from structuralPaths,
+               // which points to instance prefixes and misses intermediate copies.
+               const srcPrefix = innerCtx.returnVar.name;
+                const structType = structuralInterfaceForType(
+                  converter,
+                  innerCtx.returnVar.type,
+                );
+                if (structType) {
+                  emitNestedStructuralFieldCopies(
+                    converter,
+                    srcPrefix,
+                    returnInstancePrefix,
+                    structType,
+                    {},
+                    new Set<string>(),
+                  );
+                }
+              }
          }
          converter.inlineReturnStack.pop();
        }
