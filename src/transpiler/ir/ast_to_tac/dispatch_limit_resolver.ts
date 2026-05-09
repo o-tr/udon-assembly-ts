@@ -5,6 +5,16 @@
 export interface DispatchLimitContext {
   property: string;
   usedErasedFallback: boolean;
+  /**
+   * True when the operand type is a structural union (`type R = A | B` resolved
+   * to `__anon_union_N`) and at least one dispatch candidate was found.
+   * Candidates may come from instances whose className equals the anon-union
+   * type name directly, or from concrete variant classes matched via
+   * `hasCompatibleUnionProperty`. Either way, the dispatch table can grow large
+   * in programs with many union instances and needs the wider
+   * LARGE_ERASED_DISPATCH_LIMIT rather than the default 100.
+   */
+  isStructuralUnionDispatch?: boolean;
 }
 
 export interface DispatchLimitResolver {
@@ -32,7 +42,14 @@ const LARGE_ERASED_DISPATCH_LIMIT = 512;
 
 export function createDefaultDispatchLimitResolver(): DispatchLimitResolver {
   return {
-    getLimit({ property, usedErasedFallback }) {
+    getLimit({ property, usedErasedFallback, isStructuralUnionDispatch }) {
+      // Structural union dispatch (anonUnionIface path): widen unconditionally.
+      // Programs with many inline instances of union types (e.g. mahjong) can
+      // easily exceed 100 instances, causing silent fallthrough to an invalid
+      // SystemObject EXTERN that Unity rejects at runtime.
+      if (isStructuralUnionDispatch) {
+        return LARGE_ERASED_DISPATCH_LIMIT;
+      }
       // Only widen the limit when the erased fallback path is active; for
       // statically-resolved dispatch the default 100 cap is always sufficient.
       // Without this guard, properties such as "isWin" would incorrectly
