@@ -1,7 +1,7 @@
 ---
 created: 2026-05-09T01:35:02+09:00
-updated: 2026-05-09T04:05:00+09:00
-status: fix-applied-pending-vm
+updated: 2026-05-09T13:30:00+09:00
+status: open
 severity: high
 component: transpiler / recursive inline returns / DataList
 related_test: mahjong-t2 VM suite
@@ -116,3 +116,20 @@ Files changed:
   `VRCSDK3DataDataList.__get_Count__SystemInt32` from a null recursive return.
 - Recursive inline methods returning arrays/DataLists initialise retVal on
   every return path.
+
+## Latest verification (2026-05-09 13:30 JST)
+
+The latest mahjong-t2 VM run still has two failures on
+`VRCSDK3DataDataList.__get_Count__SystemInt32`:
+
+- `yaku_triplet`: `PC: 0x004A72CC`
+- `yaku_yakuman_extra`: `PC: 0x00497964`
+
+The earlier fix moved the PCs but did not eliminate this failure family. Keep
+this issue open until the Count failures disappear.
+
+The broader recursive stack now also fails when restoring DataList locals via
+`DataToken.__get_DataList__VRCSDK3DataDataList`; that separate stack
+save/restore path is tracked in:
+
+- `issues/2026-05-09T133000-recursive-stack-datalist-token-restore.md`

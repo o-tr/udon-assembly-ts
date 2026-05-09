@@ -1,7 +1,7 @@
 ---
 created: 2026-05-09T01:35:01+09:00
-updated: 2026-05-09T04:14:00+09:00
-status: pending-vm-verification
+updated: 2026-05-09T13:30:00+09:00
+status: open
 severity: high
 component: transpiler / structural union returns / D3 dispatch
 related_test: mahjong-t2 VM suite
@@ -169,12 +169,25 @@ Two changes in `src/transpiler/ir/ast_to_tac/`:
   safety-net branch that emits `Debug.LogError` + zero-init result and returns instead
   of falling through to `PropertyGetInstruction`
 
+## Latest verification (2026-05-09 13:30 JST)
+
+The latest mahjong-t2 VM run still reports `SystemObject.__get_isWin` failures:
+
+- `yaku_yakuman`: `NotSupportedException: Function '__get_isWin__SystemBoolean' is not implemented yet`, `PC: 0x00761E7C`
+- `win_chiitoitsu`: same `__get_isWin` failure, `PC: 0x00761D14`
+- `scoring_fu`: same `__get_isWin` failure, `PC: 0x007639E4`
+
+The attempted dispatch-limit fix moved the PCs but did not eliminate the
+fallback to `SystemObject.__get_isWin__SystemBoolean`. Keep this issue open.
+
 **Tests added** (`tests/unit/transpiler/structural_union_iswin_dispatch.test.ts`):
 - 3-case regression test covering: NC method-call-LHS untracked path, param-forwarding
   path, and limit-exceeded path (tiny `dispatchLimitResolver.getLimit = () => 1`).
   All 3 assert no `__get_isWin` extern.
 
-All 978 unit tests pass. VM test results pending (yaku_yakuman, win_chiitoitsu, scoring_fu).
+All 978 unit tests pass. Latest VM verification above shows the mahjong-t2 VM
+path still falls back to `SystemObject.__get_isWin__SystemBoolean`, so this
+issue remains open.
 
 ## Known caveat
 

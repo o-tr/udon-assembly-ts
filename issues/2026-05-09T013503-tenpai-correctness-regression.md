@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:03+09:00
-updated: 2026-05-09T01:35:03+09:00
+updated: 2026-05-09T13:30:00+09:00
 status: open
 severity: high
 component: transpiler / structural union correctness
@@ -78,3 +78,20 @@ an untracked structural-union return is treated as a sibling-prefix return.
 - `VM: tenpai_edge` logs
   `["TENPAI:YES","2","TENPAI:NO","TENPAI:YES","13"]`.
 - The fix does not reintroduce D3 dispatch miss cascades.
+
+## Latest verification (2026-05-09 13:30 JST)
+
+The latest mahjong-t2 VM run still reaches the tenpai tests but produces the
+same wrong logs:
+
+```text
+VM: hand_tenpai
+Expected: ["TENPAI:YES","2","TENPAI:YES","1"]
+Captured: ["TENPAI:YES","2","TENPAI:YES","2"]
+
+VM: tenpai_edge
+Expected: ["TENPAI:YES","2","TENPAI:NO","TENPAI:YES","13"]
+Captured: ["TENPAI:YES","2","TENPAI:NO","TENPAI:NO","0"]
+```
+
+Keep this issue open.

@@ -1,7 +1,7 @@
 ---
 created: 2026-05-09T01:35:00+09:00
-updated: 2026-05-09T01:35:00+09:00
-status: open
+updated: 2026-05-09T13:30:00+09:00
+status: fixed
 severity: critical
 component: transpiler / numeric coercion / recursive inline stack
 related_test: mahjong-t2 VM suite
@@ -145,3 +145,19 @@ Int32 slot and later pass that slot to an Int32 extern.
   `SystemInt32.__op_LessThan__SystemInt32_SystemInt32__SystemBoolean`.
 - Generated UASM does not raw-copy Double values into Int32 slots, nor
   Int32-backed values into Double slots before Double-only externs.
+
+## Latest verification (2026-05-09 13:30 JST)
+
+The latest mahjong-t2 VM run improved from **25 failed / 13 passed** to
+**24 failed / 14 passed**.
+
+This issue's listed VM symptoms are no longer present:
+
+- No failed test report mentions
+  `VRCSDK3DataDataToken.__op_Implicit__SystemDouble__VRCSDK3DataDataToken`.
+- `VM: hand_operations` now passes.
+
+The remaining recursive stack failures now crash in a different DataList
+restore path and are tracked separately in:
+
+- `issues/2026-05-09T133000-recursive-stack-datalist-token-restore.md`
