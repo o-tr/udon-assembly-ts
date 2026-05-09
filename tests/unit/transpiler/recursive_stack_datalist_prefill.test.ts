@@ -82,9 +82,9 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_items")).toBe(
       "__ctor__VRCSDK3DataDataList",
     );
-    expect(
-      tokenCtorForStack("__inlineRec_Helper_recurse_stack_subTiles"),
-    ).toBe("__ctor__VRCSDK3DataDataList");
+    expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_subTiles")).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
     expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_r")).toBe(
       "__ctor__VRCSDK3DataDataList",
     );
@@ -156,6 +156,75 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     expect(
       tokenCtorForStack(
         "__inlineRecInst_Walker_walk_stack___inlineRecInst_Walker_walk_selfCallResult_0",
+      ),
+    ).toBe("__ctor__VRCSDK3DataDataList");
+  });
+
+  it("@RecursiveMethod: per-local prefill matches each local's type", () => {
+    // Third recursion path: @RecursiveMethod compiles the method as a
+    // standalone UdonBehaviour entry-point with its own stack init in
+    // visitors/statement.ts. The same shared-default bug existed there
+    // (Single(0) for every stack) and the same per-local fix was applied.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+      function RecursiveMethod(_t: object, _k: string, d: PropertyDescriptor): PropertyDescriptor { return d; }
+
+      @UdonBehaviour()
+      export class RecMethodWithDataList extends UdonSharpBehaviour {
+        @RecursiveMethod
+        walk(items: DataList, depth: number): DataList {
+          const collected: DataList = new DataList();
+          if (depth <= 0) return collected;
+          const sub: DataList = this.walk(items, depth - 1);
+          return collected;
+        }
+
+        Start(): void {
+          this.walk(new DataList(), 3);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+
+    // @RecursiveMethod stacks live under the `__recursionStack_<Class>_<method>_<local>`
+    // prefix in statement.ts, distinct from the inline paths above.
+    function tokenCtorForStack(stackName: string): string | undefined {
+      const stackLine = `${stackName} = call VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList()`;
+      const stackIdx = tac.indexOf(stackLine);
+      if (stackIdx < 0) return undefined;
+      const after = tac.slice(stackIdx + stackLine.length);
+      const m =
+        /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/.exec(
+          after.slice(0, after.indexOf(`call ${stackName}.Add(`)),
+        );
+      return m?.[1];
+    }
+
+    const base = "__recursionStack_RecMethodWithDataList_walk";
+    // Parameters use the `___0_<name>__param` suffix in the @RecursiveMethod path.
+    expect(tokenCtorForStack(`${base}___0_items__param`)).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+    // `number` parameter → Double op_Implicit (mirrors the inline cases).
+    expect(tokenCtorForStack(`${base}___0_depth__param`)).toBe(
+      "__op_Implicit__SystemDouble",
+    );
+    // Declared DataList locals.
+    expect(tokenCtorForStack(`${base}_collected`)).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+    expect(tokenCtorForStack(`${base}_sub`)).toBe(
+      "__ctor__VRCSDK3DataDataList",
+    );
+    // Synthesized selfCallResult slot for the recursive call's DataList return.
+    expect(
+      tokenCtorForStack(
+        `${base}___selfCallResult_RecMethodWithDataList_walk_0`,
       ),
     ).toBe("__ctor__VRCSDK3DataDataList");
   });

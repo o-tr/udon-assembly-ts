@@ -271,10 +271,21 @@ export function isTrackedInlineHandleType(
  * the type→accessor switch in `unwrapDataToken` so prefill agrees with
  * unwrap.
  *
- * The returned operand is a single token reused across all
- * MAX_RECURSION_STACK_DEPTH slots — fine because the prefill is a
- * sentinel that should not be actually consumed under correct push/pop
- * pairing; it just has to be unwrap-safe if it ever is.
+ * SCOPE OF GUARANTEE: this helper closes the type-mismatch crash hole
+ * only. The returned operand is a single token reused across all
+ * MAX_RECURSION_STACK_DEPTH slots, so for `DataList` / `DataDictionary`
+ * locals every uninitialised depth slot points at the SAME underlying
+ * collection instance. Under correct push/pop pairing the sentinel is
+ * never consumed and aliasing is harmless. If a future bug ever does
+ * consume a sentinel and the caller mutates the returned collection
+ * (e.g. `list.Add(...)` on a popped value), the mutation is visible
+ * through every other still-uninitialised slot for that local. We do
+ * not allocate one collection per slot because (a) the prefill runs
+ * once per UB session and an extra 16 ctor calls per DataList stack
+ * widens the heap budget, and (b) the documented contract is "do not
+ * read sentinels"; defending against the aliasing case is out of scope
+ * for this issue. Track with a separate task if a real consumer
+ * surfaces.
  */
 export function makeDefaultDataTokenForLocal(
   converter: ASTToTACConverter,
@@ -2480,42 +2491,40 @@ function emitInlineRecursiveStaticMethod(
       converter.emit(
         new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
       );
-      {
-        converter.emitCopyWithTracking(
-          stackInitFlag,
-          createConstant(true, PrimitiveTypes.boolean),
+      converter.emitCopyWithTracking(
+        stackInitFlag,
+        createConstant(true, PrimitiveTypes.boolean),
+      );
+      // Per-local prefill: each stack[i] is filled with a token whose
+      // TokenType matches `locals[i].type`'s unwrap accessor. Without
+      // this, a never-pushed slot would carry e.g. a Double(0) token
+      // and `.DataList` on it would crash the VM. See issue
+      // 2026-05-09T133000-recursive-stack-datalist-token-restore.md.
+      for (let i = 0; i < stackVars.length; i++) {
+        const stackVarInfo = stackVars[i];
+        const localInfo = locals[i];
+        const stackVar = createVariable(
+          stackVarInfo.name,
+          ExternTypes.dataList,
         );
-        // Per-local prefill: each stack[i] is filled with a token whose
-        // TokenType matches `locals[i].type`'s unwrap accessor. Without
-        // this, a never-pushed slot would carry e.g. a Double(0) token
-        // and `.DataList` on it would crash the VM. See issue
-        // 2026-05-09T133000-recursive-stack-datalist-token-restore.md.
-        for (let i = 0; i < stackVars.length; i++) {
-          const stackVarInfo = stackVars[i];
-          const localInfo = locals[i];
-          const stackVar = createVariable(
-            stackVarInfo.name,
-            ExternTypes.dataList,
+        const externSig = converter.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
+        converter.emit(new CallInstruction(stackVar, externSig, []));
+        const defaultToken = makeDefaultDataTokenForLocal(
+          converter,
+          localInfo.type,
+        );
+        for (let d = 0; d < MAX_RECURSION_STACK_DEPTH; d++) {
+          converter.emit(
+            new MethodCallInstruction(undefined, stackVar, "Add", [
+              defaultToken,
+            ]),
           );
-          const externSig = converter.requireExternSignature(
-            "DataList",
-            "ctor",
-            "method",
-            [],
-            "DataList",
-          );
-          converter.emit(new CallInstruction(stackVar, externSig, []));
-          const defaultToken = makeDefaultDataTokenForLocal(
-            converter,
-            localInfo.type,
-          );
-          for (let d = 0; d < MAX_RECURSION_STACK_DEPTH; d++) {
-            converter.emit(
-              new MethodCallInstruction(undefined, stackVar, "Add", [
-                defaultToken,
-              ]),
-            );
-          }
         }
       }
       converter.emit(new LabelInstruction(skipAllocLabel));
@@ -3779,39 +3788,37 @@ function emitInlineRecursiveInstanceMethod(
       converter.emit(
         new ConditionalJumpInstruction(notInitialized, skipAllocLabel),
       );
-      {
-        converter.emitCopyWithTracking(
-          stackInitFlag,
-          createConstant(true, PrimitiveTypes.boolean),
+      converter.emitCopyWithTracking(
+        stackInitFlag,
+        createConstant(true, PrimitiveTypes.boolean),
+      );
+      // Per-local prefill: see the matching block in
+      // emitInlineRecursiveStaticMethod for rationale.
+      for (let i = 0; i < stackVars.length; i++) {
+        const stackVarInfo = stackVars[i];
+        const localInfo = locals[i];
+        const stackVar = createVariable(
+          stackVarInfo.name,
+          ExternTypes.dataList,
         );
-        // Per-local prefill: see the matching block in
-        // emitInlineRecursiveStaticMethod for rationale.
-        for (let i = 0; i < stackVars.length; i++) {
-          const stackVarInfo = stackVars[i];
-          const localInfo = locals[i];
-          const stackVar = createVariable(
-            stackVarInfo.name,
-            ExternTypes.dataList,
+        const externSig = converter.requireExternSignature(
+          "DataList",
+          "ctor",
+          "method",
+          [],
+          "DataList",
+        );
+        converter.emit(new CallInstruction(stackVar, externSig, []));
+        const defaultToken = makeDefaultDataTokenForLocal(
+          converter,
+          localInfo.type,
+        );
+        for (let d = 0; d < MAX_RECURSION_STACK_DEPTH; d++) {
+          converter.emit(
+            new MethodCallInstruction(undefined, stackVar, "Add", [
+              defaultToken,
+            ]),
           );
-          const externSig = converter.requireExternSignature(
-            "DataList",
-            "ctor",
-            "method",
-            [],
-            "DataList",
-          );
-          converter.emit(new CallInstruction(stackVar, externSig, []));
-          const defaultToken = makeDefaultDataTokenForLocal(
-            converter,
-            localInfo.type,
-          );
-          for (let d = 0; d < MAX_RECURSION_STACK_DEPTH; d++) {
-            converter.emit(
-              new MethodCallInstruction(undefined, stackVar, "Add", [
-                defaultToken,
-              ]),
-            );
-          }
         }
       }
       converter.emit(new LabelInstruction(skipAllocLabel));
