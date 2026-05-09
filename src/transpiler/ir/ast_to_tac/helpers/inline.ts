@@ -2362,8 +2362,8 @@ function visitInlineStaticMethodCallImpl(
                // Use this name directly rather than srcKey from structuralPaths,
                // which points to instance prefixes and misses intermediate copies.
                const srcPrefix = innerCtx.returnVar.name;
-               const structType = structuralInterfaceForType(
-                 this,
+              const structType = structuralInterfaceForType(
+                 converter,
                  innerCtx.returnVar.type,
                );
                if (structType) {
