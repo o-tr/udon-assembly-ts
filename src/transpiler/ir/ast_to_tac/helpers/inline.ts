@@ -378,7 +378,7 @@ export function makeDefaultDataTokenForLocal(
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
   localType: TypeSymbol,
-  localVar?: TACVariable | null,
+  localVar?: VariableOperand | null,
 ): TACOperand {
   const udonType = localType.udonType;
 

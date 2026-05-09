@@ -245,11 +245,10 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
 
   it("branch-local arrays: self-call in one branch saves the other branch's uninitialized DataList", () => {
     // Regression for the residual problem tracked by issue 2026-05-09T133000.
-    // The type-correct prefill fix (e8b4037) only handled never-written slots.
-    // This test covers actively written null tokens: when a self-call happens
-    // in branch A, collectRecursiveLocals still includes locals declared only
-    // in the opposite branch B. Without saveLocalAsSafeToken, the push path
-    // would box the uninitialized (null) DataList into a non-DataList token.
+    // Both locals are declared inside separate branches so that at the recursive
+    // call site, one local is truly absent/uninitialized depending on which
+    // branch was taken. Without saveLocalAsSafeToken, the push path would box
+    // the uninitialized (null) DataList into a non-DataList token and crash.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
@@ -257,15 +256,15 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
       class BranchLocalTest {
         static process(items: DataList, depth: number): DataList {
           if (depth <= 0) return items;
-          const a: DataList = new DataList();
-          const b: DataList = new DataList();
           if (depth > 1) {
-            // Branch A: self-call before 'b' is initialized in this branch.
+            // Branch A: self-call happens here; 'a' is initialized but 'b' does not exist.
+            const a: DataList = new DataList();
             const subA: DataList = BranchLocalTest.process(items, depth - 1);
             a.push(subA);
           } else {
-            // Branch B: only 'a' is used here; 'b' stays uninitialized at call time.
-            b.push(a);
+            // Branch B: 'b' is initialized here; no self-call in this branch.
+            const b: DataList = new DataList();
+            b.push(items);
           }
           return items;
         }
@@ -384,9 +383,12 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
       const line = lines[i];
       if (setResultItemRe.test(line)) {
         foundSetItemResult = true;
-        // Check this line and next few for the token ctor.
-        for (let j = 0; j <= 3 && i + j < lines.length; j++) {
-          const l = lines[i + j];
+        // The DataToken ctor is emitted on a previous line:
+        //   temp = call DataToken.__ctor__VRCSDK3DataDataList(...)  <- i-2 or i-1
+        //   stackVar.set_Item(sp, temp)                               <- i
+        // Scan backward (i-1, i-2) to find the token ctor.
+        for (let j = 1; j <= 3 && i - j >= 0; j++) {
+          const l = lines[i - j];
           if (/VRCSDK3DataDataToken\.__ctor__VRCSDK3DataDataList/.test(l)) {
             hasDataListTokenInSetItem = true;
             break;
