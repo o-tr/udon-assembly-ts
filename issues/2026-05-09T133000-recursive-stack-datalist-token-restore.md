@@ -159,9 +159,15 @@ the type→accessor switch in `unwrapDataToken`:
 - `String` → `DataToken.__ctor__SystemString("")`.
 - Inline class handle → `DataToken.__ctor__SystemInt32(-1)` (matches the
   `-1` null sentinel selected by `unwrapDataToken` for inline handles).
-- Reference / Object / unknown → fallback to `Double(0)` (out of scope of
-  this issue; `unwrapDataToken` short-circuits `ObjectTypeSymbol` and
-  `GenericTypeParameterSymbol` before reaching the `Reference` branch).
+- `default` (everything that reaches `unwrapDataToken`'s
+  `default → "Reference"` arm — `ClassTypeSymbol(udonType=Object)` like
+  UdonBehaviour references and DateTime, non-tracked
+  `InterfaceTypeSymbol`, Unity struct types) →
+  `DataToken.__ctor__SystemObject(null)` so the prefill agrees with the
+  `.Reference` getter. `ObjectTypeSymbol` and
+  `GenericTypeParameterSymbol` short-circuit at the top of
+  `unwrapDataToken` and never reach the unwrap switch, so the prefill
+  type for those is irrelevant.
 
 Both inline-recursive prefills (`emitInlineRecursive{Static,Instance}Method`)
 and `@RecursiveMethod`'s prefill in `statement.ts` now construct the
