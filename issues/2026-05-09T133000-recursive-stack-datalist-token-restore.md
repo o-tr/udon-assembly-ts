@@ -338,3 +338,43 @@ Add a typed stack-save helper for recursive push paths:
    arrays and the self-call in one branch occurs before the other branch local
    is initialised. Assert that the save path cannot write a null DataToken
    into the other branch's DataList stack.
+
+## Full failing PC inventory (2026-05-09 18:00 JST run)
+
+For reference when verifying the fix lands:
+
+| Test | Baseline PC | Post-prefill-fix PC | Failure |
+|------|-------------|---------------------|---------|
+| hand_win_detection | 0x001A44F8 | 0x001C33D4 | __get_DataList__ |
+| yaku_tanyao        | 0x001A1AB0 | 0x001B704C | __get_DataList__ |
+| yaku_pinfu         | 0x001A1AC4 | 0x001B7060 | __get_DataList__ |
+| scoring_mangan     | 0x001A21E4 | 0x001B7780 | __get_DataList__ |
+| scoring_tsumo      | 0x001A21E4 | 0x001B7780 | __get_DataList__ |
+| wait_types         | 0x001A7630 | 0x001D2F8C | __get_DataList__ |
+| yaku_kuisagari     | -          | 0x001BCF68 | __get_DataList__ |
+| score_distribution | -          | 0x001B705C | __get_DataList__ |
+| yaku_yakuhai       | -          | 0x001B013C | __get_DataList__ |
+| yaku_combination   | -          | 0x001BE768 | __get_DataList__ |
+| yaku_sequence      | -          | 0x001C326C | __get_DataList__ |
+| yaku_triplet       | -          | 0x001C1DE4 | __get_DataList__ |
+| yaku_terminal      | -          | 0x001C326C | __get_DataList__ |
+| yaku_suit          | -          | 0x001B704C | __get_DataList__ |
+| yaku_situational   | -          | 0x001B693C | __get_DataList__ |
+| yaku_yakuman_extra | -          | 0x001BF6D4 | __get_DataList__ |
+| scoring_tiers      | -          | 0x001B4264 | __get_DataList__ |
+| scoring_dealer     | -          | 0x001B705C | __get_DataList__ |
+| scoring_honba      | -          | 0x001B705C | __get_DataList__ |
+
+PC clustering (`yaku_tanyao`/`yaku_suit` at the same byte offset
+0x001B704C; three scoring tests at 0x001B705C; etc.) confirms the bug
+is in shared recursive scaffolding (the `extractAllMelds` save path),
+not in test-specific code — consistent with the root cause identified
+above.
+
+Distinct failure modes in the same run, tracked by other issues:
+
+- `yaku_yakuman`, `scoring_fu`, `win_chiitoitsu`: `NotSupportedException:
+  Function '__get_isWin__SystemBoolean' is not implemented yet` — covered
+  by `2026-05-09T013501-structural-union-object-iswin-dispatch.md`.
+- `hand_tenpai`, `tenpai_edge`: log-equality mismatches (correctness),
+  covered by `2026-05-09T013503-tenpai-correctness-regression.md`.
