@@ -75,6 +75,7 @@ import {
   countSelfCalls,
   countTryCatchBlocks,
   createSoaSentinelValue,
+  makeDefaultDataTokenForLocal,
   MAX_RECURSION_STACK_DEPTH,
   operandTrackingKey,
   STRUCTURAL_RECURSION_DEPTH_CAP,
@@ -2105,13 +2106,15 @@ export function visitClassDeclaration(
           createConstant(true, PrimitiveTypes.boolean),
         );
         const maxRecursionDepth = MAX_RECURSION_STACK_DEPTH;
-        // Default token is Single-typed regardless of each stack's actual local type.
-        // This is safe because emitCallSitePush always overwrites slots via set_Item
-        // before emitCallSitePop reads them; the defaults are never consumed at runtime.
-        const defaultToken = this.wrapDataToken(
-          createConstant(0, PrimitiveTypes.single),
-        );
-        for (const stackVarInfo of stackVars) {
+        // Per-local prefill: each stack[i] is filled with a token whose
+        // VRC TokenType matches `locals[i].type`'s unwrap accessor.
+        // Even though emitCallSitePush is expected to overwrite the slot
+        // before emitCallSitePop reads it, mirroring the inline-recursion
+        // fix (issue 2026-05-09T133000) keeps the prefill defensively
+        // safe against any push/pop imbalance.
+        for (let i = 0; i < stackVars.length; i++) {
+          const stackVarInfo = stackVars[i];
+          const localInfo = locals[i];
           const stackVar = createVariable(
             stackVarInfo.name,
             ExternTypes.dataList,
@@ -2124,8 +2127,11 @@ export function visitClassDeclaration(
             "DataList",
           );
           this.emit(new CallInstruction(stackVar, externSig, []));
-          // Pre-populate with default tokens for indexed set_Item access
-          for (let i = 0; i < maxRecursionDepth; i++) {
+          const defaultToken = makeDefaultDataTokenForLocal(
+            this,
+            localInfo.type,
+          );
+          for (let d = 0; d < maxRecursionDepth; d++) {
             this.emit(
               new MethodCallInstruction(undefined, stackVar, "Add", [
                 defaultToken,

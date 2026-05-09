@@ -259,6 +259,88 @@ export function isTrackedInlineHandleType(
 }
 
 /**
+ * Build a type-appropriate default DataToken for pre-filling a per-local
+ * recursive stack slot. The token's runtime TokenType must match the
+ * accessor that `unwrapDataToken` selects for `localType` (DataList →
+ * .DataList, Int32 → .Int, etc.) so a never-pushed slot does not crash
+ * the VM with a wrong-type token (e.g. `.DataList` on a Double token).
+ *
+ * Acceptance criterion from issue 2026-05-09T133000: "Recursive inline
+ * stack restore only unwraps DataList tokens from slots that were
+ * initialised or saved as DataList tokens for the active frame." Mirror
+ * the type→accessor switch in `unwrapDataToken` so prefill agrees with
+ * unwrap.
+ *
+ * The returned operand is a single token reused across all
+ * MAX_RECURSION_STACK_DEPTH slots — fine because the prefill is a
+ * sentinel that should not be actually consumed under correct push/pop
+ * pairing; it just has to be unwrap-safe if it ever is.
+ */
+export function makeDefaultDataTokenForLocal(
+  converter: ASTToTACConverter,
+  localType: TypeSymbol,
+): TACOperand {
+  if (isInlineHandleType(converter, localType)) {
+    // unwrapDataToken uses .Int with -1 null fallback for inline handles.
+    return converter.wrapDataToken(createConstant(-1, PrimitiveTypes.int32));
+  }
+  switch (localType.udonType) {
+    case UdonType.DataList:
+    case UdonType.Array: {
+      const listTemp = converter.newTemp(ExternTypes.dataList);
+      const ctor = converter.requireExternSignature(
+        "DataList",
+        "ctor",
+        "method",
+        [],
+        "DataList",
+      );
+      converter.emit(new CallInstruction(listTemp, ctor, []));
+      return converter.wrapDataToken(listTemp);
+    }
+    case UdonType.DataDictionary: {
+      const dictTemp = converter.newTemp(ExternTypes.dataDictionary);
+      const ctor = converter.requireExternSignature(
+        "DataDictionary",
+        "ctor",
+        "method",
+        [],
+        "DataDictionary",
+      );
+      converter.emit(new CallInstruction(dictTemp, ctor, []));
+      return converter.wrapDataToken(dictTemp);
+    }
+    case UdonType.Boolean:
+      return converter.wrapDataToken(
+        createConstant(false, PrimitiveTypes.boolean),
+      );
+    case UdonType.Int32:
+    case UdonType.Int16:
+    case UdonType.UInt16:
+    case UdonType.UInt32:
+    case UdonType.Byte:
+    case UdonType.SByte:
+      return converter.wrapDataToken(createConstant(0, PrimitiveTypes.int32));
+    case UdonType.Int64:
+    case UdonType.UInt64:
+      return converter.wrapDataToken(createConstant(0n, PrimitiveTypes.int64));
+    case UdonType.Single:
+      return converter.wrapDataToken(createConstant(0, PrimitiveTypes.single));
+    case UdonType.Double:
+      return converter.wrapDataToken(createConstant(0, PrimitiveTypes.double));
+    case UdonType.String:
+      return converter.wrapDataToken(createConstant("", PrimitiveTypes.string));
+    default:
+      // Reference / Object / unknown: keep Double(0) as the historical
+      // fallback. unwrapDataToken's "Reference" path would still mismatch
+      // here, but those types fall outside this issue's scope and are
+      // already covered by ObjectTypeSymbol/GenericTypeParameterSymbol
+      // short-circuits in unwrapDataToken.
+      return converter.wrapDataToken(createConstant(0, PrimitiveTypes.double));
+  }
+}
+
+/**
  * If `type.name` resolves to a registered alias different from `type`
  * itself, return the alias. Otherwise return `type` unchanged. Handles
  * the edge case where a property type was captured before its alias was
@@ -2403,10 +2485,14 @@ function emitInlineRecursiveStaticMethod(
           stackInitFlag,
           createConstant(true, PrimitiveTypes.boolean),
         );
-        const defaultToken = converter.wrapDataToken(
-          createConstant(0, PrimitiveTypes.double),
-        );
-        for (const stackVarInfo of stackVars) {
+        // Per-local prefill: each stack[i] is filled with a token whose
+        // TokenType matches `locals[i].type`'s unwrap accessor. Without
+        // this, a never-pushed slot would carry e.g. a Double(0) token
+        // and `.DataList` on it would crash the VM. See issue
+        // 2026-05-09T133000-recursive-stack-datalist-token-restore.md.
+        for (let i = 0; i < stackVars.length; i++) {
+          const stackVarInfo = stackVars[i];
+          const localInfo = locals[i];
           const stackVar = createVariable(
             stackVarInfo.name,
             ExternTypes.dataList,
@@ -2419,7 +2505,11 @@ function emitInlineRecursiveStaticMethod(
             "DataList",
           );
           converter.emit(new CallInstruction(stackVar, externSig, []));
-          for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
+          const defaultToken = makeDefaultDataTokenForLocal(
+            converter,
+            localInfo.type,
+          );
+          for (let d = 0; d < MAX_RECURSION_STACK_DEPTH; d++) {
             converter.emit(
               new MethodCallInstruction(undefined, stackVar, "Add", [
                 defaultToken,
@@ -3694,10 +3784,11 @@ function emitInlineRecursiveInstanceMethod(
           stackInitFlag,
           createConstant(true, PrimitiveTypes.boolean),
         );
-        const defaultToken = converter.wrapDataToken(
-          createConstant(0, PrimitiveTypes.double),
-        );
-        for (const stackVarInfo of stackVars) {
+        // Per-local prefill: see the matching block in
+        // emitInlineRecursiveStaticMethod for rationale.
+        for (let i = 0; i < stackVars.length; i++) {
+          const stackVarInfo = stackVars[i];
+          const localInfo = locals[i];
           const stackVar = createVariable(
             stackVarInfo.name,
             ExternTypes.dataList,
@@ -3710,7 +3801,11 @@ function emitInlineRecursiveInstanceMethod(
             "DataList",
           );
           converter.emit(new CallInstruction(stackVar, externSig, []));
-          for (let i = 0; i < MAX_RECURSION_STACK_DEPTH; i++) {
+          const defaultToken = makeDefaultDataTokenForLocal(
+            converter,
+            localInfo.type,
+          );
+          for (let d = 0; d < MAX_RECURSION_STACK_DEPTH; d++) {
             converter.emit(
               new MethodCallInstruction(undefined, stackVar, "Add", [
                 defaultToken,
