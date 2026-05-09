@@ -287,13 +287,17 @@ export function isTrackedInlineHandleType(
  * for this issue. Track with a separate task if a real consumer
  * surfaces.
  *
- * The `default` branch covers everything that maps to `.Reference` in
- * `unwrapDataToken`'s switch — including `ClassTypeSymbol` with
- * `udonType=Object` (UdonBehaviour references, DateTime) and
- * non-tracked `InterfaceTypeSymbol`. `ObjectTypeSymbol` and
+ * The `default` branch covers every UdonType not enumerated above —
+ * `.Reference` is what `unwrapDataToken`'s default arm selects for
+ * those. This includes `ClassTypeSymbol` with `udonType=Object`
+ * (UdonBehaviour references, DateTime), non-tracked
+ * `InterfaceTypeSymbol`, and Unity struct types (Vector3, Transform,
+ * GameObject, etc.). `ObjectTypeSymbol` and
  * `GenericTypeParameterSymbol` short-circuit at the top of
  * `unwrapDataToken` and never reach the unwrap switch, so the prefill
- * type for those is irrelevant.
+ * type for those is irrelevant. The `null Object` token reused here
+ * is immutable, so the per-slot aliasing concern called out for
+ * DataList/DataDictionary above does not apply to this branch.
  */
 export function makeDefaultDataTokenForLocal(
   converter: ASTToTACConverter,
