@@ -26,12 +26,47 @@ beforeAll(() => {
   buildExternRegistryFromFiles([]);
 });
 
+/**
+ * Walk the generated TAC line-by-line, find the line that creates the
+ * named stack DataList (`<stackName> = call VRCSDK3DataDataList.__ctor*`),
+ * then look forward through the next few lines until the first
+ * `<stackName>.Add(...)` for the matching DataToken ctor (or op_Implicit)
+ * extern that produced the prefill token. Returns the captured ctor name
+ * fragment (e.g. `__ctor__VRCSDK3DataDataList`,
+ * `__op_Implicit__SystemDouble`) so the assertion can check it directly.
+ *
+ * Uses line-based scanning with whitespace-tolerant matching to remain
+ * robust against formatter changes or platform-specific TAC dumping.
+ */
+function tokenCtorForStack(tac: string, stackName: string): string | undefined {
+  const lines = tac.split("\n");
+  const stackInitRe = new RegExp(
+    `^\\s*${stackName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")} = call VRCSDK3DataDataList\\.__ctor`,
+  );
+  const addRe = new RegExp(
+    `\\bcall ${stackName.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\.Add\\(`,
+  );
+  const ctorRe =
+    /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/;
+  const startIdx = lines.findIndex((l) => stackInitRe.test(l));
+  if (startIdx < 0) return undefined;
+  // Look at the next ~10 lines for the wrap-token ctor. Stop at the first
+  // Add(...) on this stack — anything past that is the prefill loop body
+  // and contains no new ctor information.
+  for (let i = startIdx + 1; i < Math.min(startIdx + 12, lines.length); i++) {
+    if (addRe.test(lines[i])) return undefined;
+    const m = ctorRe.exec(lines[i]);
+    if (m) return m[1];
+  }
+  return undefined;
+}
+
 describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)", () => {
   it("static recursion: each DataList-typed stack gets a DataList-wrapped prefill token", () => {
     // Static inline recursion with a DataList parameter and a DataList
     // local. Each per-local stack should be prefilled with a token whose
-    // TokenType matches the local's TypeSymbol — DataList for items and
-    // subTiles, Int32 for depth.
+    // TokenType matches the local's TypeSymbol — DataList for items,
+    // subTiles, r; Double for depth.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
@@ -58,42 +93,21 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     });
     const tac = result.tac;
 
-    // Per-local prefill: each stack's first Add() must reference a token
-    // built from the type-correct constructor. Match the line that creates
-    // the wrapping token and assert the right ctor was used.
-    function tokenCtorForStack(stackName: string): string | undefined {
-      // Find the line that creates the stack DataList itself …
-      const stackLine = `${stackName} = call VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList()`;
-      const stackIdx = tac.indexOf(stackLine);
-      if (stackIdx < 0) return undefined;
-      // … then look at the next ctor lines until the first Add(). The
-      // wrap-token line names a fresh temp via DataToken.<ctor or
-      // op_Implicit>(...). Capture the extern name.
-      const after = tac.slice(stackIdx + stackLine.length);
-      // TAC ctor lines are `VRCSDK3DataDataToken.__ctor__<Param>__VRCSDK3DataDataToken(...)`
-      // Capture just the `__ctor__<Param>` / `__op_Implicit__<Param>` portion.
-      const m =
-        /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/.exec(
-          after.slice(0, after.indexOf(`call ${stackName}.Add(`)),
-        );
-      return m?.[1];
-    }
-
-    expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_items")).toBe(
-      "__ctor__VRCSDK3DataDataList",
-    );
-    expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_subTiles")).toBe(
-      "__ctor__VRCSDK3DataDataList",
-    );
-    expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_r")).toBe(
+    expect(
+      tokenCtorForStack(tac, "__inlineRec_Helper_recurse_stack_items"),
+    ).toBe("__ctor__VRCSDK3DataDataList");
+    expect(
+      tokenCtorForStack(tac, "__inlineRec_Helper_recurse_stack_subTiles"),
+    ).toBe("__ctor__VRCSDK3DataDataList");
+    expect(tokenCtorForStack(tac, "__inlineRec_Helper_recurse_stack_r")).toBe(
       "__ctor__VRCSDK3DataDataList",
     );
     // `number` parameter maps to Double; prefill goes via op_Implicit
     // (UdonSharp ships a registered-but-broken Single ctor, so wrapDataToken
     // routes both Single/Double through op_Implicit).
-    expect(tokenCtorForStack("__inlineRec_Helper_recurse_stack_depth")).toBe(
-      "__op_Implicit__SystemDouble",
-    );
+    expect(
+      tokenCtorForStack(tac, "__inlineRec_Helper_recurse_stack_depth"),
+    ).toBe("__op_Implicit__SystemDouble");
   });
 
   it("instance recursion: DataList local stack prefilled with DataList token", () => {
@@ -125,36 +139,21 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     });
     const tac = result.tac;
 
-    // Verify the prefill ctor for each declared DataList local on the
-    // instance-method recursion path.
-    function tokenCtorForStack(stackName: string): string | undefined {
-      const stackLine = `${stackName} = call VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList()`;
-      const stackIdx = tac.indexOf(stackLine);
-      if (stackIdx < 0) return undefined;
-      const after = tac.slice(stackIdx + stackLine.length);
-      // TAC ctor lines are `VRCSDK3DataDataToken.__ctor__<Param>__VRCSDK3DataDataToken(...)`
-      // Capture just the `__ctor__<Param>` / `__op_Implicit__<Param>` portion.
-      const m =
-        /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/.exec(
-          after.slice(0, after.indexOf(`call ${stackName}.Add(`)),
-        );
-      return m?.[1];
-    }
-
-    expect(tokenCtorForStack("__inlineRecInst_Walker_walk_stack_items")).toBe(
-      "__ctor__VRCSDK3DataDataList",
-    );
     expect(
-      tokenCtorForStack("__inlineRecInst_Walker_walk_stack_collected"),
+      tokenCtorForStack(tac, "__inlineRecInst_Walker_walk_stack_items"),
     ).toBe("__ctor__VRCSDK3DataDataList");
-    expect(tokenCtorForStack("__inlineRecInst_Walker_walk_stack_sub")).toBe(
-      "__ctor__VRCSDK3DataDataList",
-    );
+    expect(
+      tokenCtorForStack(tac, "__inlineRecInst_Walker_walk_stack_collected"),
+    ).toBe("__ctor__VRCSDK3DataDataList");
+    expect(
+      tokenCtorForStack(tac, "__inlineRecInst_Walker_walk_stack_sub"),
+    ).toBe("__ctor__VRCSDK3DataDataList");
     // The synthesized `selfCallResult_0` slot has the method's return
     // type (DataList) — its prefill must also be a DataList token, since
     // emitInlineRecursivePop unwraps it via .DataList.
     expect(
       tokenCtorForStack(
+        tac,
         "__inlineRecInst_Walker_walk_stack___inlineRecInst_Walker_walk_selfCallResult_0",
       ),
     ).toBe("__ctor__VRCSDK3DataDataList");
@@ -191,39 +190,26 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     });
     const tac = result.tac;
 
-    // @RecursiveMethod stacks live under the `__recursionStack_<Class>_<method>_<local>`
-    // prefix in statement.ts, distinct from the inline paths above.
-    function tokenCtorForStack(stackName: string): string | undefined {
-      const stackLine = `${stackName} = call VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList()`;
-      const stackIdx = tac.indexOf(stackLine);
-      if (stackIdx < 0) return undefined;
-      const after = tac.slice(stackIdx + stackLine.length);
-      const m =
-        /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/.exec(
-          after.slice(0, after.indexOf(`call ${stackName}.Add(`)),
-        );
-      return m?.[1];
-    }
-
     const base = "__recursionStack_RecMethodWithDataList_walk";
     // Parameters use the `___0_<name>__param` suffix in the @RecursiveMethod path.
-    expect(tokenCtorForStack(`${base}___0_items__param`)).toBe(
+    expect(tokenCtorForStack(tac, `${base}___0_items__param`)).toBe(
       "__ctor__VRCSDK3DataDataList",
     );
     // `number` parameter → Double op_Implicit (mirrors the inline cases).
-    expect(tokenCtorForStack(`${base}___0_depth__param`)).toBe(
+    expect(tokenCtorForStack(tac, `${base}___0_depth__param`)).toBe(
       "__op_Implicit__SystemDouble",
     );
     // Declared DataList locals.
-    expect(tokenCtorForStack(`${base}_collected`)).toBe(
+    expect(tokenCtorForStack(tac, `${base}_collected`)).toBe(
       "__ctor__VRCSDK3DataDataList",
     );
-    expect(tokenCtorForStack(`${base}_sub`)).toBe(
+    expect(tokenCtorForStack(tac, `${base}_sub`)).toBe(
       "__ctor__VRCSDK3DataDataList",
     );
     // Synthesized selfCallResult slot for the recursive call's DataList return.
     expect(
       tokenCtorForStack(
+        tac,
         `${base}___selfCallResult_RecMethodWithDataList_walk_0`,
       ),
     ).toBe("__ctor__VRCSDK3DataDataList");
