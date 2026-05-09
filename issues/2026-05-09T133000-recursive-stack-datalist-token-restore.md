@@ -1,7 +1,7 @@
 ---
 created: 2026-05-09T13:30:00+09:00
 updated: 2026-05-09T18:30:00+09:00
-status: handed-off
+status: resolved
 severity: critical
 component: transpiler / recursive inline stack / DataList restore
 related_test: mahjong-t2 VM suite
