@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:02+09:00
-updated: 2026-05-09T13:30:00+09:00
+updated: 2026-05-09T14:32:00+09:00
 status: open
 severity: high
 component: transpiler / recursive inline returns / DataList
@@ -133,3 +133,35 @@ The broader recursive stack now also fails when restoring DataList locals via
 save/restore path is tracked in:
 
 - `issues/2026-05-09T133000-recursive-stack-datalist-token-restore.md`
+
+## Static follow-up investigation (2026-05-09)
+
+The retVal preamble fix from PR #231 is present on `master`:
+
+- `emitInlineRecursiveStaticMethod` initialises `retVal` after SP reset and
+  before the overflow handler.
+- `emitInlineRecursiveInstanceMethod` applies the same initialisation.
+- Self-calls jump directly to `entryLabel`, so this preamble only affects the
+  outermost invocation as intended.
+
+Local validation:
+
+- `pnpm test` passed for 102 files / 989 tests.
+- The `inline_outline.test.ts` recursive `T[][]` regression passes for both
+  static and instance methods.
+- A direct `Solver.solve(): number[][]` transpile shows `retVal_1 =
+  DataList.ctor()` in the preamble and writes to `retVal_1` on each return
+  path.
+- No nested-inline guard was found that would skip emitting the preamble inside
+  `emitInlineRecursive*Method`.
+
+Conclusion: the original uninitialised-preamble gap is covered by the merged
+fix, but the mahjong-t2 VM still observes a `DataList.__get_Count` crash at new
+PCs. The remaining work needs VM/UASM evidence around the current PCs:
+
+1. Map `PC: 0x004A72CC` in `YakuTripletTest.uasm` and `PC: 0x00497964` in
+   `YakuYakumanExtraTest.uasm`.
+2. Trace the value copied into the caller-visible recursive result before the
+   `.Count` read.
+3. Check for cache-hit, null-like, or structural-union early-return paths that
+   can write null into `retVal` after the preamble initialisation.
