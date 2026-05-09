@@ -662,4 +662,63 @@ describe("inline erased return handling", () => {
     expect(erased).toBeDefined();
     expect(result.tac).toContain("DataToken");
   });
+
+  it("promotes return slot to DataToken for recursive static method with unknown return type", () => {
+    const source = `
+      class Finder {
+        static find(n: number): unknown {
+          if (n <= 0) return "found";
+          return Finder.find(n - 1);
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const result = Finder.find(3) as string;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(
+      result.diagnostics?.find((d) => d.code === "ErasedReturnInline"),
+    ).toBeUndefined();
+    // Base-case `return "found"` wraps the string into a DataToken via ctor.
+    expect(result.tac).toContain(
+      "VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken",
+    );
+    // Caller's `as string` unwraps via the typed DataToken.String accessor.
+    expect(result.tac).toMatch(/__inlineRec_Finder_find_retVal_\d+\.String/);
+  });
+
+  it("promotes return slot to DataToken for recursive instance method with unknown return type", () => {
+    const source = `
+      class Finder {
+        find(n: number): unknown {
+          if (n <= 0) return "found";
+          return this.find(n - 1);
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        private finder: Finder = new Finder();
+        Start(): void {
+          const result = this.finder.find(3) as string;
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(
+      result.diagnostics?.find((d) => d.code === "ErasedReturnInline"),
+    ).toBeUndefined();
+    expect(result.tac).toContain(
+      "VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken",
+    );
+    expect(result.tac).toMatch(
+      /__inlineRecInst_Finder_find_retVal_\d+\.String/,
+    );
+  });
 });

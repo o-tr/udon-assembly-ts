@@ -478,7 +478,15 @@ export function visitVariableDeclaration(
   }
 
   const isLocal = this.symbolTable.getCurrentScope() > 0;
-  const dest = createVariable(node.name, destType, { isLocal });
+  // When inlining a method body, mangle the local's heap slot name with a
+  // method-unique prefix so two inlined methods declaring a same-named local
+  // (e.g. `let c`) cannot collide on a single typed heap slot. The symbol
+  // table is still keyed by the original AST name so identifier lookups in
+  // the inlined body resolve correctly.
+  const heapSlotName = this.currentInlineLocalPrefix
+    ? `${this.currentInlineLocalPrefix}${node.name}`
+    : undefined;
+  const dest = createVariable(heapSlotName ?? node.name, destType, { isLocal });
 
   if (!this.symbolTable.hasInCurrentScope(node.name)) {
     this.symbolTable.addSymbol(
@@ -487,6 +495,7 @@ export function visitVariableDeclaration(
       false,
       node.isConst,
       node.initializer,
+      heapSlotName,
     );
   } else {
     this.symbolTable.updateTypeInCurrentScope(node.name, destType);
@@ -753,10 +762,22 @@ export function visitForOfStatement(
           "this is a bug in analyzeNativeArrayIneligibility. Please file an issue.",
       );
     } else {
+      const elemSlotName = this.currentInlineLocalPrefix
+        ? `${this.currentInlineLocalPrefix}${variableName}`
+        : undefined;
       if (!this.symbolTable.hasInCurrentScope(variableName)) {
-        this.symbolTable.addSymbol(variableName, elemType, false, false);
+        this.symbolTable.addSymbol(
+          variableName,
+          elemType,
+          false,
+          false,
+          undefined,
+          elemSlotName,
+        );
       }
-      const elemVar = createVariable(variableName, elemType, { isLocal: true });
+      const elemVar = createVariable(elemSlotName ?? variableName, elemType, {
+        isLocal: true,
+      });
       const idxVar = this.newTemp(PrimitiveTypes.int32);
       const lenVar = this.newTemp(PrimitiveTypes.int32);
 
@@ -877,10 +898,22 @@ export function visitForOfStatement(
     elementVar = this.newTemp(elementType);
   } else {
     const variableName = node.variable as string;
+    const elemSlotName = this.currentInlineLocalPrefix
+      ? `${this.currentInlineLocalPrefix}${variableName}`
+      : undefined;
     if (!this.symbolTable.hasInCurrentScope(variableName)) {
-      this.symbolTable.addSymbol(variableName, elementType, false, false);
+      this.symbolTable.addSymbol(
+        variableName,
+        elementType,
+        false,
+        false,
+        undefined,
+        elemSlotName,
+      );
     }
-    elementVar = createVariable(variableName, elementType, { isLocal: true });
+    elementVar = createVariable(elemSlotName ?? variableName, elementType, {
+      isLocal: true,
+    });
   }
 
   this.emit(
@@ -926,10 +959,20 @@ export function visitForOfStatement(
     const destructuredType = ExternTypes.dataToken;
     for (let i = 0; i < names.length; i += 1) {
       const name = names[i];
+      const slotName = this.currentInlineLocalPrefix
+        ? `${this.currentInlineLocalPrefix}${name}`
+        : undefined;
       if (!this.symbolTable.hasInCurrentScope(name)) {
-        this.symbolTable.addSymbol(name, destructuredType, false, false);
+        this.symbolTable.addSymbol(
+          name,
+          destructuredType,
+          false,
+          false,
+          undefined,
+          slotName,
+        );
       }
-      const targetVar = createVariable(name, destructuredType, {
+      const targetVar = createVariable(slotName ?? name, destructuredType, {
         isLocal: true,
       });
       const elementValue = this.newTemp(destructuredType);
@@ -943,10 +986,20 @@ export function visitForOfStatement(
   }
   if (isObjectDestructured && node.destructureProperties) {
     for (const entry of node.destructureProperties) {
+      const slotName = this.currentInlineLocalPrefix
+        ? `${this.currentInlineLocalPrefix}${entry.name}`
+        : undefined;
       if (!this.symbolTable.hasInCurrentScope(entry.name)) {
-        this.symbolTable.addSymbol(entry.name, ObjectType, false, false);
+        this.symbolTable.addSymbol(
+          entry.name,
+          ObjectType,
+          false,
+          false,
+          undefined,
+          slotName,
+        );
       }
-      const targetVar = createVariable(entry.name, ObjectType, {
+      const targetVar = createVariable(slotName ?? entry.name, ObjectType, {
         isLocal: true,
       });
       const propValue = this.newTemp(ObjectType);
@@ -1559,10 +1612,25 @@ export function visitReturnStatement(
   ) {
     emitLoopExitEpiloguesSinceDepth(this, inlineContext.loopDepth);
     if (value) {
+      // Mirror the non-recursive erased-return wrap below (line ~1747): when
+      // the return slot was promoted to DataToken, wrap the payload so the
+      // caller's `as T` branch in visitAsExpression sees a typed token rather
+      // than a raw primitive copied into a DataToken-typed slot.
+      let returnPayload = value;
+      if (inlineContext.isErasedReturn) {
+        if (isPlainObjectType(this.getOperandType(value))) {
+          this.warnAt(
+            node,
+            "ErasedReturnInline",
+            "erased-return inline method — value at return site still has ObjectType; wrapping as Reference DataToken. Caller `as T` may throw at runtime.",
+          );
+        }
+        returnPayload = this.wrapDataToken(value);
+      }
       this.emit(
         new CopyInstruction(
           this.currentInlineRecursiveContext.returnVar,
-          value,
+          returnPayload,
         ),
       );
     }
@@ -2440,17 +2508,26 @@ export function visitTryCatchStatement(
     if (node.catchBody) {
       this.symbolTable.enterScope();
       if (node.catchVariable) {
+        const catchSlotName = this.currentInlineLocalPrefix
+          ? `${this.currentInlineLocalPrefix}${node.catchVariable}`
+          : undefined;
         if (!this.symbolTable.hasInCurrentScope(node.catchVariable)) {
           this.symbolTable.addSymbol(
             node.catchVariable,
             ObjectType,
             false,
             false,
+            undefined,
+            catchSlotName,
           );
         }
-        const catchVar = createVariable(node.catchVariable, ObjectType, {
-          isLocal: true,
-        });
+        const catchVar = createVariable(
+          catchSlotName ?? node.catchVariable,
+          ObjectType,
+          {
+            isLocal: true,
+          },
+        );
         // Plain copy: the error slot may receive values from multiple throw
         // paths — tracking would leak single-path inline provenance.
         this.emit(new CopyInstruction(catchVar, errorValueVar));

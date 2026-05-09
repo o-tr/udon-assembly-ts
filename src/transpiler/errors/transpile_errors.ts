@@ -12,7 +12,6 @@ export type TranspileWarningCode =
   | "ErasedReturnInline"
   | "InlineSoAEpilogue"
   | "InlineRecursiveReentry"
-  | "InlineErasedReturnType"
   | "AllInlineInterfaceFallback"
   | "D3DispatchFallback"
   | "D3DispatchReturnTypeMismatch"
