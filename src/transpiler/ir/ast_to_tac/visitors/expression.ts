@@ -2564,7 +2564,13 @@ export function visitIdentifier(
   const isParameter = symbol.isParameter === true;
   const isExported = !!exportName;
   const isLocal = !isParameter && (symbol.scope ?? 0) > 0;
-  const variableName = exportName ?? node.name;
+  // Locals declared inside an inlined method body have a mangled heap slot
+  // name (set on the symbol at declaration time) so that two inlined
+  // methods declaring a same-named local don't collide on a single typed
+  // heap slot. Identifier lookups in the inlined body still find the
+  // symbol by its original AST name; only the emitted variable operand
+  // uses the mangled slot name.
+  const variableName = exportName ?? symbol.heapSlotName ?? node.name;
   return createVariable(variableName, symbol.type, {
     isLocal,
     isParameter,

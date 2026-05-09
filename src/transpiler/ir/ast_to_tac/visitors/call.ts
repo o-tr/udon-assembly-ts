@@ -4700,10 +4700,26 @@ function visitSetMethodCall(
         } else if (index === 2) {
           paramType = setType;
         }
+        // Mangle the callback's parameter slot when this Set.forEach is
+        // itself emitted inside an inlined method body, so two inline
+        // expansions of the surrounding method don't collide on a single
+        // typed slot for the callback parameter.
+        const slotName = converter.currentInlineLocalPrefix
+          ? `${converter.currentInlineLocalPrefix}${param.name}`
+          : undefined;
         if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-          converter.symbolTable.addSymbol(param.name, paramType, false, false);
+          converter.symbolTable.addSymbol(
+            param.name,
+            paramType,
+            false,
+            false,
+            undefined,
+            slotName,
+          );
         }
-        return createVariable(param.name, paramType, { isLocal: true });
+        return createVariable(slotName ?? param.name, paramType, {
+          isLocal: true,
+        });
       });
 
       converter.emit(new LabelInstruction(loopStart));
@@ -5024,10 +5040,24 @@ function visitMapMethodCall(
         } else if (index === 2) {
           paramType = mapType;
         }
+        // Same callback-param mangling rationale as the Set.forEach branch
+        // above — see comment there.
+        const slotName = converter.currentInlineLocalPrefix
+          ? `${converter.currentInlineLocalPrefix}${param.name}`
+          : undefined;
         if (!converter.symbolTable.hasInCurrentScope(param.name)) {
-          converter.symbolTable.addSymbol(param.name, paramType, false, false);
+          converter.symbolTable.addSymbol(
+            param.name,
+            paramType,
+            false,
+            false,
+            undefined,
+            slotName,
+          );
         }
-        return createVariable(param.name, paramType, { isLocal: true });
+        return createVariable(slotName ?? param.name, paramType, {
+          isLocal: true,
+        });
       });
 
       converter.emit(new LabelInstruction(loopStart));
