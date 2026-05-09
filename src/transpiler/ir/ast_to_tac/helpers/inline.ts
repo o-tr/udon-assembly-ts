@@ -2753,25 +2753,25 @@ function emitInlineRecursiveStaticMethod(
             // Field values are set on `${innerCtx.returnVar.name}_*` during
             // execution (early returns of tracked variables copy instance
             // fields to returnInstancePrefix which IS the return variable name).
-            const srcPrefix = innerCtx.returnVar.name;
-            const structType = structuralInterfaceForType(
-              converter,
-              innerCtx.returnVar.type,
-            );
-            if (structType) {
-              for (const [propName] of structType.properties) {
-                const srcField = createVariable(
-                  `${srcPrefix}_${propName}`,
-                  structType.properties.get(propName)! as TypeSymbol,
-                );
-                const dstField = createVariable(
-                  `${returnInstancePrefix}_${propName}`,
-                  structType.properties.get(propName)! as TypeSymbol,
-                );
-                converter.emit(new CopyInstruction(dstField, srcField));
-              }
-            }
-          }
+              const srcPrefix = innerCtx.returnVar.name;
+               const structType = structuralInterfaceForType(
+                 converter,
+                 innerCtx.returnVar.type,
+               );
+               if (structType) {
+                 for (const [propName] of structType.properties) {
+                   const srcField = createVariable(
+                     `${srcPrefix}_${propName}`,
+                     structType.properties.get(propName)! as TypeSymbol,
+                   );
+                   const dstField = createVariable(
+                     `${returnInstancePrefix}_${propName}`,
+                     structType.properties.get(propName)! as TypeSymbol,
+                   );
+                   converter.emit(new CopyInstruction(dstField, srcField));
+                 }
+               }
+             }
         }
         converter.inlineReturnStack.pop();
       }
@@ -4117,7 +4117,7 @@ function emitInlineRecursiveInstanceMethod(
             const allPopulated = innerCtx.structuralPrefixPaths.every(
               (p) => p.populated,
             );
-            if (allPopulated) {
+           if (allPopulated) {
               // Propagate structural fields from the inner method's return prefix.
               // Field values are set on `${innerCtx.returnVar.name}_*` during
               // execution (early returns of tracked variables copy instance
@@ -4125,24 +4125,24 @@ function emitInlineRecursiveInstanceMethod(
               // Use this name directly rather than srcKey from structuralPaths,
               // which points to instance prefixes and misses intermediate copies.
               const srcPrefix = innerCtx.returnVar.name;
-             const structType = structuralInterfaceForType(
-               converter,
-               innerCtx.returnVar.type,
-             );
-             if (structType) {
-               for (const [propName] of structType.properties) {
-                 const srcField = createVariable(
-                   `${srcPrefix}_${propName}`,
-                   structType.properties.get(propName)! as TypeSymbol,
-                 );
-                 const dstField = createVariable(
-                   `${returnInstancePrefix}_${propName}`,
-                   structType.properties.get(propName)! as TypeSymbol,
-                 );
-                 converter.emit(new CopyInstruction(dstField, srcField));
+               const structType = structuralInterfaceForType(
+                 converter,
+                 innerCtx.returnVar.type,
+               );
+               if (structType) {
+                 for (const [propName] of structType.properties) {
+                   const srcField = createVariable(
+                     `${srcPrefix}_${propName}`,
+                     structType.properties.get(propName)! as TypeSymbol,
+                   );
+                   const dstField = createVariable(
+                     `${returnInstancePrefix}_${propName}`,
+                     structType.properties.get(propName)! as TypeSymbol,
+                   );
+                   converter.emit(new CopyInstruction(dstField, srcField));
+                 }
                }
              }
-           }
          }
          converter.inlineReturnStack.pop();
        }
