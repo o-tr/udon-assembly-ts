@@ -1791,12 +1791,26 @@ export function visitReturnStatement(
         ? structuralInterfaceForType(this, inlineContext.returnVar.type)
         : undefined;
     if (nullReturnValue && isNullableUdonType(inlineContext.returnVar.type)) {
+      inlineContext.structuralPrefixPaths ??= [];
       if (returnInstancePrefix && returnStructuralType) {
         emitStructuralPrefixDefaults(
           this,
           returnInstancePrefix,
           returnStructuralType,
         );
+        inlineContext.structuralPrefixPaths.push({
+          srcKey: returnInstancePrefix,
+          populated: true,
+        });
+      } else {
+        // No structural prefix to populate — defaults are zero-init.
+        // Push a sentinel entry so allPopulated fires even though no fields
+        // were written; the outer boundary-copy will be skipped because
+        // returnTrackingInvalidated is also set (untrackedStructuralHandleVars).
+        inlineContext.structuralPrefixPaths.push({
+          srcKey: returnInstancePrefix ?? "",
+          populated: true,
+        });
       }
       // Interface-typed inline handles use the -1 Int32 sentinel, not an
       // Object null, so that callers comparing against `null` via
