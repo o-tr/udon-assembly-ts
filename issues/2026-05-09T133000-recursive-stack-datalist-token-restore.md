@@ -1,11 +1,12 @@
 ---
 created: 2026-05-09T13:30:00+09:00
-updated: 2026-05-09T16:30:00+09:00
-status: open
+updated: 2026-05-09T18:30:00+09:00
+status: handed-off
 severity: critical
 component: transpiler / recursive inline stack / DataList restore
 related_test: mahjong-t2 VM suite
 related_issue: 2026-05-09T013500-recursive-stack-numeric-datatoken-double.md
+follow_up_issue: 2026-05-09T183000-recursive-stack-datalist-restore-sp-desync.md
 ---
 
 # Recursive inline stack restores DataList locals from non-DataList DataTokens
@@ -235,3 +236,69 @@ out-of-scope of this fix run and remains for the next VM batch.
   persist after the next mahjong-t2 VM run, that is the signal for a real
   push/pop SP-desync (issue investigation tasks #1 and #3) — separate
   scope from this prefill correctness fix.
+
+## VM run 2026-05-09 18:00 JST (post-fix)
+
+```text
+Tests: 24 failed | 14 passed (38)
+```
+
+Failure count is unchanged from the 2026-05-09 13:30 baseline. The
+dominant failure mode is still `__get_DataList__`, but PCs have shifted
+(consistent with intervening codegen changes since the baseline):
+
+| Test | Baseline PC | Post-fix PC | Failure |
+|------|-------------|-------------|---------|
+| hand_win_detection | 0x001A44F8 | 0x001C33D4 | __get_DataList__ |
+| yaku_tanyao        | 0x001A1AB0 | 0x001B704C | __get_DataList__ |
+| yaku_pinfu         | 0x001A1AC4 | 0x001B7060 | __get_DataList__ |
+| scoring_mangan     | 0x001A21E4 | 0x001B7780 | __get_DataList__ |
+| scoring_tsumo      | 0x001A21E4 | 0x001B7780 | __get_DataList__ |
+| wait_types         | 0x001A7630 | 0x001D2F8C | __get_DataList__ |
+| yaku_kuisagari     | -          | 0x001BCF68 | __get_DataList__ |
+| score_distribution | -          | 0x001B705C | __get_DataList__ |
+| yaku_yakuhai       | -          | 0x001B013C | __get_DataList__ |
+| yaku_combination   | -          | 0x001BE768 | __get_DataList__ |
+| yaku_sequence      | -          | 0x001C326C | __get_DataList__ |
+| yaku_triplet       | -          | 0x001C1DE4 | __get_DataList__ |
+| yaku_terminal      | -          | 0x001C326C | __get_DataList__ |
+| yaku_suit          | -          | 0x001B704C | __get_DataList__ |
+| yaku_situational   | -          | 0x001B693C | __get_DataList__ |
+| yaku_yakuman_extra | -          | 0x001BF6D4 | __get_DataList__ |
+| scoring_tiers      | -          | 0x001B4264 | __get_DataList__ |
+| scoring_dealer     | -          | 0x001B705C | __get_DataList__ |
+| scoring_honba      | -          | 0x001B705C | __get_DataList__ |
+
+Distinct (separate-issue) failures observed in the same run:
+
+- `yaku_yakuman`, `scoring_fu`, `win_chiitoitsu`: `NotSupportedException:
+  Function '__get_isWin__SystemBoolean' is not implemented yet` — covered
+  by `2026-05-09T013501-structural-union-object-iswin-dispatch.md`.
+- `hand_tenpai`, `tenpai_edge`: log-equality mismatches (correctness),
+  covered by `2026-05-09T013503-tenpai-correctness-regression.md`.
+
+### Acceptance criterion 1 status
+
+> No mahjong-t2 VM test fails with
+> `VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList`.
+
+**Not met.** The prefill fix (`e8b4037`) is necessary but not sufficient.
+Per the speculative residual note above, this confirms the failure mode
+is push/pop SP-desync, cross-stack contamination, or stale-`sp` reads —
+not prefill type correctness.
+
+### Next investigation handoff
+
+The residual `__get_DataList__` failures are a **separate bug class** —
+push/pop SP-desync, save-path bypass, or stale-`sp` read — and have
+been split into a dedicated issue:
+
+- `2026-05-09T183000-recursive-stack-datalist-restore-sp-desync.md`
+
+This prefill-correctness issue's structural fix (`e8b4037`) is
+**necessary but not sufficient**: without it every unread DataList slot
+would crash on `__get_DataList__` because the shared `Double(0)`
+prefill made the slot's token non-DataList by construction. With it,
+prefilled slots return an empty DataList correctly; the residual
+crashes happen on slots whose **save** stored a non-DataList token.
+That save-path bug is what the follow-up issue tracks.
