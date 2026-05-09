@@ -228,8 +228,7 @@ describe("structural union isWin dispatch", () => {
   // from the inner inline-ret, or the boundary must know which return path
   // populated which prefix on its own branch).
   //
-  // Left skipped to preserve the failing shape until the deeper fix lands.
-  it.skip("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
+  it("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";

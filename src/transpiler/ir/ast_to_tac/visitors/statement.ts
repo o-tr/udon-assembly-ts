@@ -1753,6 +1753,14 @@ export function visitReturnStatement(
           this.emit(new CopyInstruction(dstField, srcField));
         }
         this.emit(new CopyInstruction(inlineContext.returnVar, value));
+        // Record that this return site populated its structural field prefixes
+        // from the tracked value mapping. Used at nested inline boundaries to
+        // gate field-copy propagation: only copy `${srcKey}_<prop>` →
+        // `${outerPrefix}_<prop>` when every runtime path reaching this boundary
+        // has a proven-populated source prefix.
+        const srcKey = valueMapping.prefix;
+        inlineContext.structuralPrefixPaths ??= [];
+        inlineContext.structuralPrefixPaths.push({ srcKey, populated: true });
         // Track returnTrackingInvalidated: if a previous return path used a
         // different interface name, the stable prefix is ambiguous.
         if (!inlineContext.returnTrackingInvalidated) {
@@ -1783,12 +1791,26 @@ export function visitReturnStatement(
         ? structuralInterfaceForType(this, inlineContext.returnVar.type)
         : undefined;
     if (nullReturnValue && isNullableUdonType(inlineContext.returnVar.type)) {
+      inlineContext.structuralPrefixPaths ??= [];
       if (returnInstancePrefix && returnStructuralType) {
         emitStructuralPrefixDefaults(
           this,
           returnInstancePrefix,
           returnStructuralType,
         );
+        inlineContext.structuralPrefixPaths.push({
+          srcKey: returnInstancePrefix,
+          populated: true,
+        });
+      } else {
+        // No structural prefix to populate — defaults are zero-init.
+        // Push a sentinel entry so allPopulated fires even though no fields
+        // were written; the outer boundary-copy will be skipped because
+        // returnTrackingInvalidated is also set (untrackedStructuralHandleVars).
+        inlineContext.structuralPrefixPaths.push({
+          srcKey: returnInstancePrefix ?? "",
+          populated: true,
+        });
       }
       // Interface-typed inline handles use the -1 Int32 sentinel, not an
       // Object null, so that callers comparing against `null` via
@@ -1893,13 +1915,38 @@ export function visitReturnStatement(
             )
           ) {
             inlineContext.returnTrackingInvalidated = true;
+            // Record that this return site did NOT populate its structural
+            // field prefixes — the source variable has no tracked mapping.
+            const srcKey = operandTrackingKey(value);
+            inlineContext.structuralPrefixPaths ??= [];
+            if (srcKey) {
+              inlineContext.structuralPrefixPaths.push({
+                srcKey,
+                populated: false,
+              });
+            }
           }
         } else {
+          // Complex-expression return (Temporary or unknown): no prefix populated.
+          const srcKey = operandTrackingKey(value);
+          if (srcKey) {
+            inlineContext.structuralPrefixPaths ??= [];
+            inlineContext.structuralPrefixPaths.push({
+              srcKey,
+              populated: false,
+            });
+          }
           this.inlineInstanceMap.delete(inlineContext.returnVar.name);
           inlineContext.returnTrackingInvalidated = true;
         }
       }
     } else if (!inlineContext.returnTrackingInvalidated) {
+      // Null return or other invalidation path — no prefix populated.
+      const srcKey = value ? operandTrackingKey(value) : undefined;
+      inlineContext.structuralPrefixPaths ??= [];
+      if (srcKey) {
+        inlineContext.structuralPrefixPaths.push({ srcKey, populated: false });
+      }
       this.inlineInstanceMap.delete(inlineContext.returnVar.name);
       inlineContext.returnTrackingInvalidated = true;
     }
