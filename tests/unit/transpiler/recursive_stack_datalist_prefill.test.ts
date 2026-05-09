@@ -49,14 +49,51 @@ function tokenCtorForStack(tac: string, stackName: string): string | undefined {
   const ctorRe =
     /VRCSDK3DataDataToken\.(__ctor__[A-Za-z0-9]+|__op_Implicit__[A-Za-z0-9]+)__VRCSDK3DataDataToken/;
   const startIdx = lines.findIndex((l) => stackInitRe.test(l));
-  if (startIdx < 0) return undefined;
+  if (startIdx < 0) {
+    // CI-only failure debugging: print a window around the expected stack
+    // ctor line so we can see what the TAC actually looks like.
+    if (process.env.CI) {
+      const probeIdx = lines.findIndex((l) => l.includes(stackName));
+      console.log(
+        `[diag] tokenCtorForStack: stackInitRe MISS for ${stackName}. ` +
+          `First mention at line ${probeIdx}. Window:\n` +
+          lines
+            .slice(Math.max(0, probeIdx - 2), probeIdx + 8)
+            .map((l, i) => `  ${probeIdx - 2 + i}: ${l}`)
+            .join("\n"),
+      );
+    }
+    return undefined;
+  }
   // Look at the next ~10 lines for the wrap-token ctor. Stop at the first
   // Add(...) on this stack — anything past that is the prefill loop body
   // and contains no new ctor information.
   for (let i = startIdx + 1; i < Math.min(startIdx + 12, lines.length); i++) {
-    if (addRe.test(lines[i])) return undefined;
+    if (addRe.test(lines[i])) {
+      if (process.env.CI) {
+        console.log(
+          `[diag] tokenCtorForStack: hit Add before ctor for ${stackName}. ` +
+            `startIdx=${startIdx}, i=${i}. Window:\n` +
+            lines
+              .slice(startIdx, i + 1)
+              .map((l, j) => `  ${startIdx + j}: ${l}`)
+              .join("\n"),
+        );
+      }
+      return undefined;
+    }
     const m = ctorRe.exec(lines[i]);
     if (m) return m[1];
+  }
+  if (process.env.CI) {
+    console.log(
+      `[diag] tokenCtorForStack: exhausted 12-line window for ${stackName}. ` +
+        `startIdx=${startIdx}. Window:\n` +
+        lines
+          .slice(startIdx, startIdx + 12)
+          .map((l, j) => `  ${startIdx + j}: ${l}`)
+          .join("\n"),
+    );
   }
   return undefined;
 }
