@@ -1,6 +1,6 @@
 ---
 created: 2026-05-08T00:30:00+09:00
-updated: 2026-05-08T00:30:00+09:00
+updated: 2026-05-09T17:20:00+09:00
 status: open
 severity: low
 component: transpiler / codegen
@@ -55,3 +55,11 @@ without going through Int64.
 ## Impact
 
 Minor assembly bloat only — two extra extern calls per affected site. No correctness risk.
+
+## Audit update (2026-05-09 17:20 JST)
+
+Latest local HEAD is `f7c9393` (`Merge pull request #238 from
+o-tr/recursive-stack-datalist-token-restore`). No recent diff or merge in the
+recursive-stack / mahjong VM fix series touches this optimisation. Keep this
+issue open as a low-priority codegen cleanup; it is not a blocker for the
+current mahjong-t2 VM correctness work.

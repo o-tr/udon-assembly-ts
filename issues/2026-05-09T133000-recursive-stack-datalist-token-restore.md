@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T13:30:00+09:00
-updated: 2026-05-09T16:30:00+09:00
+updated: 2026-05-09T18:35:00+09:00
 status: open
 severity: critical
 component: transpiler / recursive inline stack / DataList restore
@@ -235,3 +235,106 @@ out-of-scope of this fix run and remains for the next VM batch.
   persist after the next mahjong-t2 VM run, that is the signal for a real
   push/pop SP-desync (issue investigation tasks #1 and #3) — separate
   scope from this prefill correctness fix.
+
+## Audit update (2026-05-09 17:20 JST)
+
+Latest local HEAD is `f7c9393` (`Merge pull request #238 from
+o-tr/recursive-stack-datalist-token-restore`). The code fix from `e8b4037`
+is merged, and follow-up commit `7af99c5` intentionally keeps this issue open
+until the mahjong-t2 VM suite verifies that `DataToken.__get_DataList__`
+failures are gone. No newer VM run is recorded in the repository, so the
+current state is: fix landed, unit/static verification complete, VM acceptance
+still pending.
+
+## Latest VM verification (2026-05-09 17:59 JST)
+
+The latest mahjong-t2 VM run confirms the issue is still open:
+
+```text
+Tests: 24 failed | 14 passed (38)
+Transpile warnings: 186 warning(s) (116 unique)
+```
+
+The dominant hard failure remains:
+
+```text
+VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList
+```
+
+Representative current PCs:
+
+- `hand_win_detection`: `PC: 0x001C33D4`
+- `yaku_tanyao`: `PC: 0x001B704C`
+- `yaku_pinfu`: `PC: 0x001B7060`
+- `yaku_yakuhai`: `PC: 0x001B013C`
+- `yaku_combination`: `PC: 0x001BE768`
+- `yaku_kuisagari`: `PC: 0x001BCF68`
+- `scoring_mangan` / `scoring_tsumo`: `PC: 0x001B7780`
+- `wait_types`: `PC: 0x001D2F8C`
+- `yaku_triplet`: `PC: 0x001C1DE4`
+- `yaku_yakuman_extra`: `PC: 0x001BF6D4`
+
+This supersedes the earlier "VM acceptance still pending" state: acceptance
+has now failed. The type-correct prefill fix removed the known static mismatch
+but did not eliminate VM reads of non-DataList/null tokens. The next
+investigation should prioritize stack pointer save/restore correctness and
+whether a non-DataList token is being actively saved into DataList-typed stack
+slots, rather than only never-written prefill slots.
+
+## Investigation result (2026-05-09 18:35 JST)
+
+The failing `yaku_tanyao` PC maps to the pop of the branch-local
+`shuntsuTiles` slot:
+
+```text
+PC 0x001B704C:
+PUSH, __inlineRecInst_..._stack___inline_..._shuntsuTiles
+PUSH, __inlineRecInst_..._sp
+PUSH, __t30578
+EXTERN, VRCSDK3DataDataList.__get_Item__SystemInt32__VRCSDK3DataDataToken
+PUSH, __t30578
+PUSH, __t30579
+EXTERN, VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList
+```
+
+The corresponding save site stores every collected local, including locals
+declared only in the opposite branch:
+
+```text
+PUSH, __inline_..._shuntsuTiles
+PUSH, __t29964
+EXTERN, VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken
+PUSH, __inlineRecInst_..._stack___inline_..._shuntsuTiles
+PUSH, __inlineRecInst_..._sp
+PUSH, __t29964
+EXTERN, VRCSDK3DataDataList.__set_Item__SystemInt32_VRCSDK3DataDataToken__SystemVoid
+```
+
+At the first self-call in the koutsu branch, `shuntsuTiles` has not been
+initialised yet. `collectRecursiveLocals` still includes it because it scans
+the whole method body. Saving that null DataList local via
+`DataToken.__ctor__VRCSDK3DataDataList(null)` stores a token that is not safe
+for a later `.DataList` getter. The prefill fix only handled never-written
+slots; this failure is an actively written null token.
+
+A minimal reproducer with two mutually exclusive branch-local arrays confirms
+the same TAC shape: the self-call in branch A saves branch B's array local into
+its per-local stack before branch B has assigned it.
+
+### Fix task
+
+Add a typed stack-save helper for recursive push paths:
+
+1. Replace `wrapDataToken(localVar)` in `emitCallSitePush` and
+   `emitInlineRecursivePush` with a helper that emits a token compatible with
+   the local's later `unwrapDataToken(local.type)` accessor.
+2. For DataList/Array and DataDictionary locals, guard null values at save
+   time and write the same type-correct default token used by
+   `makeDefaultDataTokenForLocal` instead of boxing null.
+3. Consider applying the same null-safe save rule to String and Reference
+   locals only if VM evidence shows their getters reject null tokens; the
+   current blocker is specifically DataList/Array.
+4. Add a regression where an inline-recursive method has two branch-local
+   arrays and the self-call in one branch occurs before the other branch local
+   is initialised. Assert that the save path cannot write a null DataToken
+   into the other branch's DataList stack.

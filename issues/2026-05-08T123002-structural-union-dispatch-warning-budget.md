@@ -1,6 +1,6 @@
 ---
 created: 2026-05-08T12:30:02+09:00
-updated: 2026-05-09T01:35:00+09:00
+updated: 2026-05-09T18:07:00+09:00
 status: resolved
 severity: medium
 component: transpiler / structural unions and D3 dispatch
@@ -193,3 +193,22 @@ correctness tasks:
 
 - `issues/2026-05-09T013501-structural-union-object-iswin-dispatch.md`
 - `issues/2026-05-09T013503-tenpai-correctness-regression.md`
+
+## Latest verification (2026-05-09 17:59 JST)
+
+The latest mahjong-t2 VM run reports `186 warning(s) (116 unique)`. This is a
+further volume drop from the prior `518 warning(s) (116 unique)` run, while the
+unique warning set remains the same size.
+
+The visible warning list is still dominated by `UntrackedStructuralUnionReturn`
+at the same shared source sites:
+
+- `HandAnalyzer.ts:229:12`
+- `HandAnalyzer.ts:872:12`
+- `FirstTurnTsumoYaku.ts:45:26`
+- test fixture return sites under `tests/vm/cases/**`
+
+The VM still fails with structural-union correctness symptoms (`__get_isWin`
+externs / D3 dispatch miss diagnostics) and tenpai wrong logs, so the warning
+budget issue remains resolved only for the D3 fallback-noise reduction. The
+remaining warnings continue to belong to the linked correctness issues above.

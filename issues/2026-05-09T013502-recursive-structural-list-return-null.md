@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:02+09:00
-updated: 2026-05-09T14:35:00+09:00
+updated: 2026-05-09T18:07:00+09:00
 status: open
 severity: high
 component: transpiler / recursive inline returns / DataList
@@ -205,3 +205,29 @@ COPY
 That raw `DataToken -> DataList` copy bypasses the `DataToken.DataList`
 unwrap/coercion path. The fix should target recursive inline return assignment
 coercion for typed retVal writes, not additional return-site discovery.
+
+## Audit update (2026-05-09 17:20 JST)
+
+Latest local HEAD is `f7c9393` (`Merge pull request #238 from
+o-tr/recursive-stack-datalist-token-restore`). PR #238 fixed type-correct
+recursive stack prefill, which is adjacent but not the cache-hit return
+assignment path identified here. No newer mahjong-t2 VM run is recorded after
+the 2026-05-09 13:30 JST failures, so keep this issue open. Next fix target is
+still typed recursive inline retVal writes when the returned source is a
+`DataToken` and the effective return type is `DataList` / array.
+
+## Latest verification (2026-05-09 17:59 JST)
+
+The latest mahjong-t2 VM run no longer reports
+`VRCSDK3DataDataList.__get_Count__SystemInt32` in the visible failure list.
+The formerly Count-failing fixtures now fail earlier or differently with
+`VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList`:
+
+- `yaku_triplet`: `PC: 0x001C1DE4`
+- `yaku_yakuman_extra`: `PC: 0x001BF6D4`
+
+This does not prove the Count-path issue is fixed; it is currently masked by
+the broader recursive stack restore failure tracked in
+`2026-05-09T133000-recursive-stack-datalist-token-restore.md`. Keep this issue
+open until the DataToken/DataList restore crash is gone and `yaku_triplet` /
+`yaku_yakuman_extra` can reach the recursive return iteration path again.

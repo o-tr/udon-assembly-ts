@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:01+09:00
-updated: 2026-05-09T13:30:00+09:00
+updated: 2026-05-09T18:35:00+09:00
 status: open
 severity: high
 component: transpiler / structural union returns / D3 dispatch
@@ -197,3 +197,92 @@ actual union member. In programs with many unrelated classes sharing a property 
 and type, the 512-instance dispatch table could still be exhausted. The safety-net
 `else if` branch prevents the invalid EXTERN in that case, but returns a zero-init
 value and emits a runtime diagnostic.
+
+## Audit update (2026-05-09 17:20 JST)
+
+Latest local HEAD is `f7c9393` (`Merge pull request #238 from
+o-tr/recursive-stack-datalist-token-restore`). The latest merged changes only
+address recursive stack DataToken prefill and issue documentation; they do not
+touch the structural-union `isWin` fallback path. No newer VM run is recorded
+after the 2026-05-09 13:30 JST result above, so this issue remains open with
+the same acceptance criteria.
+
+## Latest verification (2026-05-09 17:59 JST)
+
+The latest mahjong-t2 VM run still reports `__get_isWin__SystemBoolean`
+failures, now at lower PCs than the 13:30 JST run:
+
+- `yaku_yakuman`: `NotSupportedException: Function '__get_isWin__SystemBoolean' is not implemented yet`, `PC: 0x004CBB34`
+- `win_chiitoitsu`: same `__get_isWin` failure, `PC: 0x004CB9CC`
+- `scoring_fu`: same `__get_isWin` failure, `PC: 0x004D1168`
+
+Each failing test also emits repeated runtime diagnostics:
+
+```text
+[Error] [udon-assembly-ts] D3 method dispatch miss: check on untracked instance
+```
+
+The latest run therefore confirms this issue is still open. The remaining
+failure is not the dispatch-limit safety-net case previously fixed; generated
+code still reaches an invalid property extern after D3 miss diagnostics.
+
+## Investigation result (2026-05-09 18:35 JST)
+
+`YakuYakumanTest.uasm` at `PC: 0x004CBB34` maps to a plain property read:
+
+```text
+inline_return46785:
+    PUSH, __inline_ret_78943
+    PUSH, __inline_ret_6645
+    COPY
+inline_return3775:
+    PUSH, __inline_ret_6645
+    PUSH, result1
+    COPY
+    PUSH, result1
+    PUSH, __t78988
+    EXTERN, SystemObject.__get_isWin__SystemBoolean
+```
+
+Immediately before that, the callee return path did populate the structural
+sibling fields for `__inline_ret_78943`:
+
+```text
+PUSH, __inst___anon_union_1_634_isWin
+PUSH, __inline_ret_78943_isWin
+COPY
+...
+PUSH, __inst___anon_union_1_634__handle
+PUSH, __inline_ret_78943
+COPY
+```
+
+The loss happens at the nested inline return boundary:
+`__inline_ret_78943` is copied to `__inline_ret_6645`, but the sibling slots
+(`__inline_ret_78943_isWin`, `__inline_ret_78943_yaku`, etc.) are not copied
+to the outer return prefix. The final caller therefore receives only an erased
+`SystemObject` handle and property access falls through to the invalid extern
+instead of reading a structural prefix or using D3 dispatch.
+
+The existing variable-declaration assignment path already handles this shape by
+checking for named `${srcKey}_<prop>` slots even when `inlineInstanceMap` has no
+canonical mapping. The inline return path only handles `valueMapping`, so it
+misses synthetic inline return prefixes such as `__inline_ret_78943`.
+
+### Fix task
+
+Extend structural field propagation in `visitReturnStatement` for inline
+returns:
+
+1. In the `returnInstancePrefix && value` block, if `valueMapping` is absent,
+   detect named structural source slots exactly like assignment does:
+   `symbolTable.lookup(`${srcKey}_${propName}`)`.
+2. When those slots exist, copy the full structural prefix chain from `srcKey`
+   to `returnInstancePrefix`, then copy the handle to `inlineContext.returnVar`.
+3. Preserve or seed `inlineInstanceMap` for the return var with
+   `{ prefix: returnInstancePrefix, className: structuralType.name }` when the
+   copied source slots represent the unified structural type.
+4. Add a regression where an inline method returns the result of another inline
+   method whose return type is a structural union, then the caller reads
+   `.isWin`. Assert no `SystemObject.__get_isWin__SystemBoolean` extern is
+   emitted and the outer return prefix gets `_isWin` copied.

@@ -1,6 +1,6 @@
 ---
 created: 2026-05-09T01:35:03+09:00
-updated: 2026-05-09T13:30:00+09:00
+updated: 2026-05-09T18:35:00+09:00
 status: open
 severity: high
 component: transpiler / structural union correctness
@@ -95,3 +95,75 @@ Captured: ["TENPAI:YES","2","TENPAI:NO","TENPAI:NO","0"]
 ```
 
 Keep this issue open.
+
+## Audit update (2026-05-09 17:20 JST)
+
+Latest local HEAD is `f7c9393` (`Merge pull request #238 from
+o-tr/recursive-stack-datalist-token-restore`). The latest recursive-stack
+prefill fix does not address the tenpai structural-union correctness path, and
+no newer VM output supersedes the 2026-05-09 13:30 JST wrong-log result above.
+Keep this issue open until the mahjong-t2 `hand_tenpai` and `tenpai_edge`
+fixtures produce the expected logs in VM.
+
+## Latest verification (2026-05-09 17:59 JST)
+
+The latest mahjong-t2 VM run still reaches both tenpai tests and produces the
+same wrong logs:
+
+```text
+VM: hand_tenpai
+Expected: ["TENPAI:YES","2","TENPAI:YES","1"]
+Captured: ["TENPAI:YES","2","TENPAI:YES","2"]
+
+VM: tenpai_edge
+Expected: ["TENPAI:YES","2","TENPAI:NO","TENPAI:YES","13"]
+Captured: ["TENPAI:YES","2","TENPAI:NO","TENPAI:NO","0"]
+```
+
+This confirms the issue is unchanged by the recursive-stack prefill work.
+
+## Investigation result (2026-05-09 18:35 JST)
+
+The latest wrong logs have a cache-reuse shape:
+
+- `hand_tenpai` test 2 captures `TENPAI:YES, 2`, exactly matching test 1's
+  result shape, instead of the expected tanki single wait.
+- `tenpai_edge` test 3 captures `TENPAI:NO, 0`, matching the immediately
+  preceding non-tenpai test 2 result shape, instead of kokushi 13-wait tenpai.
+
+`HandAnalyzer.checkTenpai` delegates to
+`HandAnalyzerDecompositionService.checkTenpai`, which checks
+`this.tenpaiCache.get(cacheKey)` before recomputing:
+
+```ts
+const cacheKey = this.generateTenpaiCacheKey(hand);
+const cached = this.tenpaiCache.get(cacheKey);
+if (cached !== undefined) {
+  return cached as TenpaiResult;
+}
+```
+
+The symptom is therefore consistent with either:
+
+1. different `Hand` values producing the same transpiled `cacheKey`; or
+2. cached `TenpaiResult` structural data being returned through an erased
+   `unknown`/`DataToken` path without rebuilding the `{ isTenpai, waits }`
+   sibling prefix correctly.
+
+This is adjacent to the structural-union return issues, but the immediate
+runtime symptom is stale cached result reuse rather than a direct
+`SystemObject.__get_*` extern.
+
+### Fix task
+
+Add a focused VM/transpile regression around `checkTenpai` cache behavior:
+
+1. Log or assert the generated `Hand.getCacheKey()` / `generateTenpaiCacheKey`
+   for the three failing fixture hands and prove they are distinct in VM.
+2. Add a fixture that calls `checkTenpai` twice on one `HandAnalyzer` instance
+   with two distinct hands where expected wait counts differ; assert the second
+   call is recomputed and does not return the first cached `TenpaiResult`.
+3. If keys collide, fix the string-building / cached `_cacheKey` lowering path.
+4. If keys are distinct, fix cached structural return reconstruction for
+   `return cached as TenpaiResult` so `isTenpai` and `waits` are read from the
+   returned value, not from a stale sibling prefix.
