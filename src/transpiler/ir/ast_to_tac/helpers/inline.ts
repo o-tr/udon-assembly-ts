@@ -378,52 +378,32 @@ export function makeDefaultDataTokenForLocal(
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
   localType: TypeSymbol,
-  localVar?: VariableOperand | null,
+  localVar: VariableOperand,
 ): TACOperand {
   const udonType = localType.udonType;
 
   if (isInlineHandleType(converter, localType)) {
-    // When localVar is present (initialized), preserve its value via wrapDataToken.
-    // Only emit the -1 default when localVar is absent/uninitialized.
-    if (localVar) {
-      return converter.wrapDataToken(localVar);
-    }
-    return converter.wrapDataToken(createConstant(-1, PrimitiveTypes.int32));
+    // Inline handle types are boxed via wrapDataToken which handles implicit
+    // boxing correctly. The localVar is always present because both call
+    // sites unconditionally create it before passing to this function.
+    return converter.wrapDataToken(localVar);
   }
 
   switch (udonType) {
-   case UdonType.DataList:
-      case UdonType.Array:
-      case UdonType.DataDictionary:
-      case UdonType.String:
-        // These types use typed ctors in unwrapDataToken. When localVar is
-        // present (initialized), preserve its value via wrapDataToken so the
-        // live DataList survives the recursive round-trip. Only emit defaults
-        // when localVar is absent/uninitialized, to prevent boxing null into a
-        // non-DataList token that crashes on __get_DataList__.
-        if (localVar) {
-          return converter.wrapDataToken(localVar);
-        }
-        return makeDefaultDataTokenForLocal(converter, localType);
+    case UdonType.DataList:
+    case UdonType.Array:
+    case UdonType.DataDictionary:
+    case UdonType.String:
+      // These types use typed ctors in unwrapDataToken. Wrap the localVar
+      // via wrapDataToken so the live DataList survives the recursive
+      // round-trip. The localVar is always present; no default token needed.
+      return converter.wrapDataToken(localVar);
 
     default: {
       // Numeric, Boolean, and other reference types are safe to box via
       // wrapDataToken — unwrapDataToken accepts the resulting token for these
-      // types. Use the actual localVar when present so initialized values are
-      // preserved; fall through to defaults only when localVar is absent.
-      if (localVar) {
-        return converter.wrapDataToken(localVar);
-      }
-      if (udonType === UdonType.Boolean) {
-        return converter.wrapDataToken(
-          createConstant(false, PrimitiveTypes.boolean),
-        );
-      }
-      if (isNumericUdonType(udonType)) {
-        return makeDefaultDataTokenForLocal(converter, localType);
-      }
-      // Fallback reference types: use Object null.
-      return converter.wrapDataToken(createConstant(null, ObjectType));
+      // types. The localVar is always present; use it directly.
+      return converter.wrapDataToken(localVar);
     }
   }
 }
