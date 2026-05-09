@@ -2351,9 +2351,9 @@ function visitInlineStaticMethodCallImpl(
             returnInstancePrefix !== undefined &&
             innerCtx.structuralPrefixPaths.length > 0
           ) {
-            const allPopulated = innerCtx.structuralPrefixPaths.every(
-              (p) => p.populated,
-          );
+             const allPopulated = innerCtx.structuralPrefixPaths.every(
+               (p) => p.populated,
+             );
              if (allPopulated) {
                // Propagate structural fields from the inner method's return prefix.
                // Field values are set on `${innerCtx.returnVar.name}_*` during
@@ -2715,7 +2715,7 @@ function emitInlineRecursiveStaticMethod(
         returnLabel: dispatchLabel,
         returnTrackingInvalidated: false,
         loopDepth: converter.loopContextStack.length,
-        returnInstancePrefix: undefined,
+        returnInstancePrefix,
         isErasedReturn,
       });
       converter.methodBodyConstructorIndex.set(method.body, 0);
@@ -3350,13 +3350,13 @@ function emitInlineOutlinedBody(
     // Note: bodyReturnLabel (emitted at fallthrough below) is still the
     // fall-through target for the end-of-body path.
      converter.inlineReturnStack.push({
-        returnVar: result,
-        returnLabel: dispatchLabel,
-        returnTrackingInvalidated: false,
-        loopDepth: converter.loopContextStack.length,
-        returnInstancePrefix,
-        isErasedReturn,
-      });
+         returnVar: result,
+         returnLabel: dispatchLabel,
+         returnTrackingInvalidated: false,
+         loopDepth: converter.loopContextStack.length,
+         returnInstancePrefix,
+         isErasedReturn,
+       });
     converter.methodBodyConstructorIndex.set(method.body, 0);
     converter.inlinedBodyStack.push(method.body);
     const savedNativeIneligible = converter.nativeArrayIneligible;
@@ -4075,7 +4075,7 @@ function emitInlineRecursiveInstanceMethod(
         returnLabel: dispatchLabel,
         returnTrackingInvalidated: false,
         loopDepth: converter.loopContextStack.length,
-        returnInstancePrefix: undefined,
+        returnInstancePrefix,
         isErasedReturn,
       });
       converter.methodBodyConstructorIndex.set(method.body, 0);
