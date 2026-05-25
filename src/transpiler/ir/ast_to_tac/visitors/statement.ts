@@ -1004,7 +1004,11 @@ export function visitForOfStatement(
   if (isDestructured) {
     elementType = ExternTypes.dataList;
   } else if (isObjectDestructured) {
-    elementType = inferredElementType ?? node.variableType ?? ObjectType;
+    const operandElemType = this.getArrayElementType(iterableOperand);
+    elementType =
+      operandElemType && operandElemType !== ObjectType
+        ? operandElemType
+        : (inferredElementType ?? node.variableType ?? ObjectType);
   } else {
     const operandElemType = this.getArrayElementType(iterableOperand);
     if (operandElemType && operandElemType !== ObjectType) {
@@ -1127,23 +1131,42 @@ export function visitForOfStatement(
       const slotName = this.currentInlineLocalPrefix
         ? `${this.currentInlineLocalPrefix}${entry.name}`
         : undefined;
+      let propValue: TACOperand;
+      if (elementVar.kind === TACOperandKind.Variable) {
+        const elementVariable = elementVar as VariableOperand;
+        propValue = this.visitExpression({
+          kind: ASTNodeKind.PropertyAccessExpression,
+          object: {
+            kind: ASTNodeKind.Identifier,
+            name:
+              typeof node.variable === "string"
+                ? node.variable
+                : elementVariable.name,
+          },
+          property: entry.property,
+        } as PropertyAccessExpressionNode);
+      } else {
+        propValue = this.newTemp(ObjectType);
+        this.emit(
+          new PropertyGetInstruction(propValue, elementVar, entry.property),
+        );
+      }
+      const propType = this.getOperandType(propValue);
       if (!this.symbolTable.hasInCurrentScope(entry.name)) {
         this.symbolTable.addSymbol(
           entry.name,
-          ObjectType,
+          propType,
           false,
           false,
           undefined,
           slotName,
         );
+      } else {
+        this.symbolTable.updateTypeInCurrentScope(entry.name, propType);
       }
-      const targetVar = createVariable(slotName ?? entry.name, ObjectType, {
+      const targetVar = createVariable(slotName ?? entry.name, propType, {
         isLocal: true,
       });
-      const propValue = this.newTemp(ObjectType);
-      this.emit(
-        new PropertyGetInstruction(propValue, elementVar, entry.property),
-      );
       this.emitCopyWithTracking(targetVar, propValue, true);
     }
   }

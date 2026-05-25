@@ -984,19 +984,23 @@ export function saveAndBindInlineParams(
     const arg = args[i];
     const argConcreteType = arg ? converter.getOperandType(arg) : undefined;
     // When the declared param type is erased (unknown/any/object) and the
-    // argument carries a concrete scalar type (String/Bool/numeric), promote
-    // the local to that concrete type so wrapDataToken uses the correct
-    // DataToken.ctor overload (e.g. ctor(SystemString) not ctor(SystemObject))
-    // at every body use of the parameter (map.set, return, etc.).
-    // Using the concrete scalar (not DataToken) preserves normal body semantics
-    // such as equality comparisons (v === "hello" keeps StringType on both sides).
+    // argument carries a concrete runtime type, promote the local to that
+    // concrete type so wrapDataToken uses the correct DataToken.ctor overload
+    // (e.g. ctor(SystemString) / ctor(DataList), not ctor(SystemObject)) at
+    // every body use of the parameter (map.set, return, etc.).
+    // Using the concrete type preserves normal body semantics such as equality
+    // comparisons (v === "hello" keeps StringType on both sides) and lets
+    // arrays round-trip through Map<string, unknown> as DataList tokens.
     let effectiveParamType = param.type;
     if (
       argConcreteType !== undefined &&
       isPlainObjectType(param.type) &&
       (isNumericUdonType(argConcreteType.udonType) ||
         argConcreteType.udonType === UdonType.Boolean ||
-        argConcreteType.udonType === UdonType.String)
+        argConcreteType.udonType === UdonType.String ||
+        argConcreteType.udonType === UdonType.Array ||
+        argConcreteType.udonType === UdonType.DataList ||
+        argConcreteType.udonType === UdonType.DataDictionary)
     ) {
       effectiveParamType = argConcreteType;
     }

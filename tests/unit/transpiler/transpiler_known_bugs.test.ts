@@ -1124,6 +1124,45 @@ describe("known transpiler bugs", () => {
       );
     });
 
+    it("inline unknown parameter stores array values as DataList tokens", () => {
+      const source = `
+        class Cache {
+          private cache: Map<string, unknown> = new Map<string, unknown>();
+
+          set(key: string, value: unknown): void {
+            this.cache.set(key, value);
+          }
+
+          get(key: string): unknown {
+            return this.cache.get(key);
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const cache = new Cache();
+            const values: number[] = [];
+            values.push(1);
+            cache.set("values", values);
+            const cached = cache.get("values");
+            const nums = cached as number[];
+            Debug.Log(nums.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList",
+      );
+      expect(result.tac).toContain(
+        "call VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken(value)",
+      );
+    });
+
     it("Map<string, unknown>.keys().next().value should not use get_Reference", () => {
       const source = `
         class Main {
@@ -1537,6 +1576,36 @@ describe("known transpiler bugs", () => {
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
       );
       expect(result.uasm).not.toContain("dispatch miss");
+    });
+
+    it("for-of object destructuring over structural arrays avoids SystemObject getters", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const estimated: Array<{
+              decomposition: number[];
+              estimate: { minHan: number; maxHan: number };
+            }> = [];
+            const decomposition: number[] = [];
+            estimated.push({
+              decomposition,
+              estimate: { minHan: 1, maxHan: 2 },
+            });
+            for (const { decomposition, estimate } of estimated) {
+              Debug.Log(decomposition.length);
+              Debug.Log(estimate.maxHan);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_decomposition__SystemObject",
+      );
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_estimate__SystemObject",
+      );
     });
   });
 
