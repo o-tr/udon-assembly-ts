@@ -182,18 +182,34 @@ export function isInlineHandleType(
     if (converter.interfaceClassIdMap.has(type.name)) {
       return true;
     }
+    const alias = converter.typeMapper.getAlias(type.name);
+    if (
+      alias instanceof InterfaceTypeSymbol &&
+      alias.methods.size > 0 &&
+      !isAnonymousInterfaceName(type.name)
+    ) {
+      return true;
+    }
     // Anonymous structural object literals are also represented by
     // InterfaceTypeSymbol and visitObjectLiteralExpression stores them as
     // Int32 handles. They do not get interfaceClassIdMap entries because they
     // are not real polymorphic interfaces, so detect the allocated instance
     // metadata directly.
-    if (
-      isAnonymousInterfaceName(type.name) &&
-      converter.anonymousInlineClassNames.has(type.name)
-    ) {
+    if (isAnonymousInterfaceName(type.name)) {
       return true;
     }
     return false;
+  }
+  if (
+    type instanceof ClassTypeSymbol &&
+    type.udonType === UdonType.Int32 &&
+    (converter.interfaceClassIdMap.has(type.name) ||
+      (converter.typeMapper.getAlias(type.name) instanceof InterfaceTypeSymbol &&
+        (
+          converter.typeMapper.getAlias(type.name) as InterfaceTypeSymbol
+        ).methods.size > 0))
+  ) {
+    return true;
   }
   return (
     type instanceof ClassTypeSymbol &&
@@ -365,6 +381,59 @@ export function makeDefaultDataTokenForLocal(
       // Reference-typed token via DataToken.__ctor__SystemObject(null).
       return converter.wrapDataToken(createConstant(null, ObjectType));
   }
+}
+
+function needsNullSafeRecursiveStackToken(
+  converter: ASTToTACConverter,
+  localType: TypeSymbol,
+): boolean {
+  if (isInlineHandleType(converter, localType)) {
+    return true;
+  }
+  switch (localType.udonType) {
+    case UdonType.Array:
+    case UdonType.DataList:
+    case UdonType.DataDictionary:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function wrapRecursiveStackLocal(
+  converter: ASTToTACConverter,
+  localVar: TACOperand,
+  localType: TypeSymbol,
+): TACOperand {
+  if (!needsNullSafeRecursiveStackToken(converter, localType)) {
+    return converter.wrapDataToken(localVar);
+  }
+
+  const isNull = converter.newTemp(PrimitiveTypes.boolean);
+  const nonNullLabel = converter.newLabel("rec_stack_local_non_null");
+  const doneLabel = converter.newLabel("rec_stack_local_done");
+  const token = converter.newTemp(ExternTypes.dataToken);
+
+  converter.emit(
+    new BinaryOpInstruction(
+      isNull,
+      localVar,
+      "==",
+      createConstant(null, ObjectType),
+    ),
+  );
+  converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
+
+  const defaultToken = makeDefaultDataTokenForLocal(converter, localType);
+  converter.emit(new CopyInstruction(token, defaultToken));
+  converter.emit(new UnconditionalJumpInstruction(doneLabel));
+
+  converter.emit(new LabelInstruction(nonNullLabel));
+  const wrapped = converter.wrapDataToken(localVar);
+  converter.emit(new CopyInstruction(token, wrapped));
+
+  converter.emit(new LabelInstruction(doneLabel));
+  return token;
 }
 
 /**
@@ -562,6 +631,13 @@ export function resolveInlineClassType(
   converter: ASTToTACConverter,
   type: TypeSymbol,
 ): TypeSymbol {
+  if (
+    type instanceof InterfaceTypeSymbol &&
+    type.udonType === UdonType.Object &&
+    usesInlineNullSentinel(converter, type)
+  ) {
+    return new ClassTypeSymbol(type.name, UdonType.Int32);
+  }
   if (!(type instanceof ClassTypeSymbol) || type.udonType !== UdonType.Object) {
     return type;
   }
@@ -688,6 +764,7 @@ function emitNestedStructuralFieldCopies(
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
+  converter.structuralFieldPrefixes.add(targetPrefix);
 
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
     const propertyType = resolvedStructuralPropertyType(
@@ -799,6 +876,7 @@ export function emitStructuralFieldCopies(
   }
 
   if (copiedAny) {
+    converter.structuralFieldPrefixes.add(targetPrefix);
     converter.inlineInstanceMap.set(targetPrefix, {
       prefix: targetPrefix,
       className: targetInterface.name,
@@ -921,6 +999,9 @@ export function saveAndBindInlineParams(
         effectiveParamType,
         true,
         false,
+        undefined,
+        undefined,
+        param.type,
       );
     }
     saved.set(param.name, {
@@ -1213,11 +1294,40 @@ function collectAllInstanceFields(
   const chain = buildInheritanceChain(converter, classNode);
   const fields: Array<{ name: string; type: TypeSymbol }> = [];
   const seen = new Set<string>();
+  const collectNestedStructuralFields = (
+    prefix: string,
+    structuralType: InterfaceTypeSymbol,
+    depth = 0,
+  ): void => {
+    if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+    for (const [propertyName, rawPropertyType] of structuralType.properties) {
+      const propertyType = resolvedStructuralPropertyType(
+        converter,
+        rawPropertyType,
+      );
+      const fieldName = `${prefix}_${propertyName}`;
+      if (!seen.has(fieldName)) {
+        seen.add(fieldName);
+        fields.push({ name: fieldName, type: propertyType });
+      }
+      const nestedInterface = structuralInterfaceForType(
+        converter,
+        propertyType,
+      );
+      if (nestedInterface) {
+        collectNestedStructuralFields(fieldName, nestedInterface, depth + 1);
+      }
+    }
+  };
   for (const cls of chain) {
     for (const prop of cls.properties) {
       if (prop.isStatic || prop.isGetter || seen.has(prop.name)) continue;
       seen.add(prop.name);
       fields.push({ name: prop.name, type: prop.type });
+      const structuralType = structuralInterfaceForType(converter, prop.type);
+      if (structuralType) {
+        collectNestedStructuralFields(prop.name, structuralType);
+      }
     }
   }
   return fields;
@@ -2028,13 +2138,15 @@ export function visitInlineConstructor(
   // must not be corrupted by a partially-constructed instance.
   if (isSoA) {
     const fieldLists = this.soaFieldLists.get(className);
+    const fieldTypes = this.soaFieldTypes.get(className);
     if (fieldLists) {
       for (const [fieldName, listVar] of fieldLists) {
-        const scratchVar = this.mapInlineProperty(
-          className,
-          instancePrefix,
-          fieldName,
-        );
+        const scratchVar =
+          this.mapInlineProperty(className, instancePrefix, fieldName) ??
+          createVariable(
+            `${instancePrefix}_${fieldName}`,
+            fieldTypes?.get(fieldName) ?? ObjectType,
+          );
         if (scratchVar) {
           const token = this.wrapDataToken(scratchVar);
           this.emit(
@@ -2202,8 +2314,8 @@ function visitInlineStaticMethodCallImpl(
   // NOTE: the inlineMethodStack recursion guard lives in the caller
   // (visitInlineStaticMethodCall) so it does not need to be repeated here.
 
-  // --- Outline check (pass 2 only) ---
-  if (!this.metadataOnlyMode) {
+  // --- Outline check (pass 2 and the post-selection metadata pass) ---
+  if (!this.metadataOnlyMode || this.collectOutlineMetadataMode) {
     const outlineKey = outlineMapKey(
       "static",
       resolved.declaringClassName,
@@ -2819,6 +2931,7 @@ function hasInlineClassParamDependentUse(
   params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
   body: BlockStatementNode,
 ): boolean {
+  const paramNames = new Set(params.map((param) => param.name));
   const inlineParamNames = new Set<string>();
   for (const param of params) {
     if (isInlineHandleType(converter, param.type)) {
@@ -2842,7 +2955,7 @@ function hasInlineClassParamDependentUse(
         const pa = node as PropertyAccessExpressionNode;
         if (
           pa.object.kind === ASTNodeKind.Identifier &&
-          inlineParamNames.has((pa.object as IdentifierNode).name)
+          paramNames.has((pa.object as IdentifierNode).name)
         ) {
           found = true;
           return;
@@ -3213,6 +3326,9 @@ function emitInlineOutlinedBody(
           effectiveParamType,
           true,
           false,
+          undefined,
+          undefined,
+          param.type,
         );
       }
     }
@@ -4498,8 +4614,8 @@ function inlineResolvedMethodBody(
     // still collected.
   }
 
-  // --- Pass-2 outline check ---
-  if (!converter.metadataOnlyMode) {
+  // --- Pass-2 outline check, plus the post-selection metadata pass. ---
+  if (!converter.metadataOnlyMode || converter.collectOutlineMetadataMode) {
     const outlineKey = outlineMapKey(
       "inst",
       declaringClassName,
@@ -5613,7 +5729,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = this.wrapDataToken(localVar);
+    const token = wrapRecursiveStackLocal(this, localVar, local.type);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
@@ -6178,7 +6294,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = this.wrapDataToken(localVar);
+    const token = wrapRecursiveStackLocal(this, localVar, local.type);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,

@@ -274,7 +274,12 @@ export function mapTypeWithGenerics(
           resolveArg(1),
         );
       case "Record":
-        return ExternTypes.dataDictionary;
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          undefined,
+          resolveArg(0),
+          resolveArg(1),
+        );
       case "Map":
       case "ReadonlyMap":
         return new CollectionTypeSymbol(
@@ -458,8 +463,16 @@ export function inferType(
       } else if (ts.isPropertyAccessExpression(access.expression)) {
         baseType = this.inferType(access.expression);
       }
-      if (baseType instanceof InterfaceTypeSymbol) {
-        return baseType.properties.get(access.name.getText()) ?? ObjectType;
+      const resolvedBaseType =
+        baseType?.name && !(baseType instanceof InterfaceTypeSymbol)
+          ? (this.typeMapper.getAlias(baseType.name) ?? baseType)
+          : baseType;
+      if (resolvedBaseType instanceof InterfaceTypeSymbol) {
+        const rawType =
+          resolvedBaseType.properties.get(access.name.getText()) ?? ObjectType;
+        return rawType.name
+          ? (this.typeMapper.getAlias(rawType.name) ?? rawType)
+          : rawType;
       }
       return ObjectType;
     }

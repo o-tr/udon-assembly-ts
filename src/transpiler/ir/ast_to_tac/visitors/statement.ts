@@ -78,6 +78,7 @@ import {
   MAX_RECURSION_STACK_DEPTH,
   makeDefaultDataTokenForLocal,
   operandTrackingKey,
+  resolveInlineClassType,
   STRUCTURAL_RECURSION_DEPTH_CAP,
   usesInlineNullSentinel,
 } from "../helpers/inline.js";
@@ -90,6 +91,37 @@ function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
   for (let i = converter.loopContextStack.length - 1; i >= 0; i -= 1) {
     converter.loopContextStack[i].emitExitEpilogue?.();
   }
+}
+
+function ensureDataListForCount(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+): TACOperand {
+  const safeList = converter.newTemp(ExternTypes.dataList);
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.emit(new CallInstruction(safeList, listCtorSig, []));
+  const boxedList = converter.newTemp(ObjectType);
+  converter.emit(new CopyInstruction(boxedList, operand));
+  const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
+  const listReady = converter.newLabel("forof_list_ready");
+  converter.emit(
+    new BinaryOpInstruction(
+      listIsNotNull,
+      boxedList,
+      "!=",
+      createConstant(null, ObjectType),
+    ),
+  );
+  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listReady));
+  converter.emit(new CopyInstruction(safeList, operand));
+  converter.emit(new LabelInstruction(listReady));
+  return safeList;
 }
 
 function structuralInterfaceForType(
@@ -111,6 +143,38 @@ function resolvedStructuralPropertyType(
   type: TypeSymbol,
 ): TypeSymbol {
   return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
+}
+
+function hasConcreteListElementType(type: TypeSymbol): boolean {
+  if (type instanceof ArrayTypeSymbol) {
+    return !isPlainObjectType(type.elementType);
+  }
+  if (type instanceof DataListTypeSymbol) {
+    return !isPlainObjectType(type.elementType);
+  }
+  return false;
+}
+
+function preferResolvedListType(
+  inferredType: TypeSymbol,
+  resolvedType: TypeSymbol | null | undefined,
+): TypeSymbol {
+  if (
+    resolvedType &&
+    (resolvedType instanceof ArrayTypeSymbol ||
+      resolvedType instanceof DataListTypeSymbol) &&
+    hasConcreteListElementType(resolvedType)
+  ) {
+    if (
+      inferredType.name === ExternTypes.dataList.name ||
+      inferredType.udonType === UdonType.DataList ||
+      inferredType.udonType === UdonType.Array ||
+      !hasConcreteListElementType(inferredType)
+    ) {
+      return resolvedType;
+    }
+  }
+  return inferredType;
 }
 
 function isNullConstantOperand(
@@ -148,6 +212,7 @@ function emitVarDeclStructuralFieldCopies(
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
+  converter.structuralFieldPrefixes.add(targetPrefix);
 
   for (const [propName, propTypeRaw] of structuralType.properties) {
     const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
@@ -185,6 +250,7 @@ function emitStructuralPrefixDefaults(
   const seenKey = `${prefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
+  converter.structuralFieldPrefixes.add(prefix);
 
   for (const [propName, propTypeRaw] of structuralType.properties) {
     const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
@@ -366,10 +432,11 @@ export function visitVariableDeclaration(
 
   const isObjectTypeSymbol = (type: TypeSymbol): boolean =>
     type.name === ObjectType.name && type.udonType === ObjectType.udonType;
-  let destType: TypeSymbol = node.type;
+  let destType: TypeSymbol = resolveInlineClassType(this, node.type);
   let src: TACOperand | null = null;
 
   if (node.initializer) {
+    let resolvedInitializerType: TypeSymbol | null | undefined;
     if (
       node.initializer.kind === ASTNodeKind.ObjectLiteralExpression &&
       node.type instanceof InterfaceTypeSymbol &&
@@ -425,6 +492,10 @@ export function visitVariableDeclaration(
     ) {
       const inferredType = this.getOperandType(src);
       if (!isObjectTypeSymbol(inferredType)) {
+        resolvedInitializerType ??= resolveTypeFromNode(
+          this,
+          node.initializer,
+        );
         // Do not narrow a float-declared variable to an integer type.
         // collectRecursiveLocals records the declared AST type (Double for
         // TypeScript `number`). If we narrow Double→Int here the heap slot
@@ -439,10 +510,16 @@ export function visitVariableDeclaration(
           inferredType.udonType !== UdonType.Single &&
           inferredType.udonType !== UdonType.Double;
         if (!(destIsFloat && inferredIsInteger)) {
-          destType = inferredType;
+          destType = preferResolvedListType(
+            inferredType,
+            resolvedInitializerType,
+          );
         }
       } else {
-        const resolvedType = resolveTypeFromNode(this, node.initializer);
+        const resolvedType =
+          resolvedInitializerType ??
+          resolveTypeFromNode(this, node.initializer);
+        resolvedInitializerType = resolvedType;
         if (resolvedType && !isObjectTypeSymbol(resolvedType)) {
           const destIsFloat =
             destType.udonType === UdonType.Single ||
@@ -475,6 +552,28 @@ export function visitVariableDeclaration(
         destType = inferredType;
       }
     }
+    if (
+      destType.udonType === UdonType.DataList &&
+      !(destType instanceof ArrayTypeSymbol) &&
+      !(destType instanceof DataListTypeSymbol)
+    ) {
+      const inferredType = this.getOperandType(src);
+      resolvedInitializerType ??= resolveTypeFromNode(this, node.initializer);
+      if (
+        inferredType instanceof ArrayTypeSymbol ||
+        inferredType instanceof DataListTypeSymbol
+      ) {
+        destType = preferResolvedListType(
+          inferredType,
+          resolvedInitializerType,
+        );
+      } else if (
+        resolvedInitializerType instanceof ArrayTypeSymbol ||
+        resolvedInitializerType instanceof DataListTypeSymbol
+      ) {
+        destType = resolvedInitializerType;
+      }
+    }
   }
 
   const isLocal = this.symbolTable.getCurrentScope() > 0;
@@ -496,6 +595,7 @@ export function visitVariableDeclaration(
       node.isConst,
       node.initializer,
       heapSlotName,
+      node.type,
     );
   } else {
     this.symbolTable.updateTypeInCurrentScope(node.name, destType);
@@ -573,11 +673,17 @@ export function visitVariableDeclaration(
             this.symbolTable.lookup(`${srcKey}_${propName}`),
           )
         : false;
+    const sourcePrefixFromStructuralProperty =
+      structuralType &&
+      srcKey &&
+      node.initializer?.kind === ASTNodeKind.PropertyAccessExpression;
     const sourcePrefix = srcMapping
       ? srcMapping.prefix
       : sourcePrefixFromNamedSlots
         ? srcKey
-        : undefined;
+        : sourcePrefixFromStructuralProperty
+          ? srcKey
+          : undefined;
     if (structuralType && srcKey && destKey && sourcePrefix) {
       // Resolve to the canonical inline-instance prefix so per-field copies
       // read from the underlying `__inst_*_<prop>` slots rather than
@@ -833,7 +939,7 @@ export function visitForOfStatement(
   let inferredElementType: TypeSymbol | null = null;
   for (const t of [iterableType, inferredIterableType]) {
     if (t instanceof ArrayTypeSymbol) {
-      inferredElementType = t.elementType;
+      inferredElementType = t.peelOneDimension();
       break;
     }
     if (t instanceof DataListTypeSymbol) {
@@ -891,6 +997,8 @@ export function visitForOfStatement(
     !(iterableType instanceof ArrayTypeSymbol)
   ) {
     elementType = ExternTypes.dataToken;
+  } else if (!isDestructured && !isObjectDestructured) {
+    elementType = resolveInlineClassType(this, elementType);
   }
 
   let elementVar: TACOperand;
@@ -922,8 +1030,10 @@ export function visitForOfStatement(
       createConstant(0, PrimitiveTypes.int32),
     ),
   );
-  // All arrays use DataList Count at runtime.
-  this.emit(new PropertyGetInstruction(lengthVar, iterableOperand, "Count"));
+  // All arrays use DataList Count at runtime. Guard against erased or
+  // recursive-return paths that can carry a null DataList at runtime.
+  const countOperand = ensureDataListForCount(this, iterableOperand);
+  this.emit(new PropertyGetInstruction(lengthVar, countOperand, "Count"));
 
   const loopStart = this.newLabel("forof_start");
   const loopContinue = this.newLabel("forof_continue");
@@ -1027,6 +1137,47 @@ export function visitForOfStatement(
   const getAllClassProps = (
     className: string,
   ): Array<{ name: string; type: TypeSymbol }> => {
+    const expandStructuralProps = (
+      props: Array<{ name: string; type: TypeSymbol }>,
+    ): Array<{ name: string; type: TypeSymbol }> => {
+      const expanded: Array<{ name: string; type: TypeSymbol }> = [];
+      const seen = new Set<string>();
+      const collectNested = (
+        prefix: string,
+        structuralType: InterfaceTypeSymbol,
+        depth = 0,
+      ): void => {
+        if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+        for (const [propertyName, rawPropertyType] of structuralType.properties) {
+          const propertyType = resolvedStructuralPropertyType(
+            this,
+            rawPropertyType,
+          );
+          const fieldName = `${prefix}_${propertyName}`;
+          if (!seen.has(fieldName)) {
+            seen.add(fieldName);
+            expanded.push({ name: fieldName, type: propertyType });
+          }
+          const nestedType = structuralInterfaceForType(this, propertyType);
+          if (nestedType) {
+            collectNested(fieldName, nestedType, depth + 1);
+          }
+        }
+      };
+
+      for (const prop of props) {
+        if (!seen.has(prop.name)) {
+          seen.add(prop.name);
+          expanded.push(prop);
+        }
+        const structuralType = structuralInterfaceForType(this, prop.type);
+        if (structuralType) {
+          collectNested(prop.name, structuralType);
+        }
+      }
+      return expanded;
+    };
+
     // Getters are filtered from both branches — the virtual-interface
     // dispatch pass copies to/from `${prefix}_${propName}`, which has no
     // backing storage for a getter and would re-introduce the phantom-slot
@@ -1036,23 +1187,85 @@ export function visitForOfStatement(
       // Always use getMergedProperties when available — it walks the full
       // inheritance chain. An empty result means the class genuinely has no
       // properties (not that registration is incomplete).
-      return this.classRegistry
+      return expandStructuralProps(this.classRegistry
         .getMergedProperties(className)
         .filter((p) => !p.node.isGetter)
         .map((p) => ({
           name: p.name,
           type: p.type,
-        }));
+        })));
     }
     const classNode = this.classMap.get(className);
-    return (
+    return expandStructuralProps(
       classNode?.properties
         .filter((p) => !p.isGetter)
         .map((p) => ({
           name: p.name,
           type: p.type,
-        })) ?? []
+      })) ?? [],
     );
+  };
+  const emitVirtualInterfaceMatchCondition = (
+    handle: TACOperand,
+    instanceId: number,
+    info: { prefix: string; className: string },
+  ): TACOperand => {
+    const cond = this.newTemp(PrimitiveTypes.boolean);
+    if (this.soaClasses.has(info.className)) {
+      const dynamicMissLabel = this.newLabel("viface_match_static");
+      const matchEndLabel = this.newLabel("viface_match_end");
+      this.emit(
+        new BinaryOpInstruction(
+          cond,
+          handle,
+          "==",
+          createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+        ),
+      );
+      const staticIdCond = this.newTemp(PrimitiveTypes.boolean);
+      const combinedCond = this.newTemp(PrimitiveTypes.boolean);
+      this.emit(
+        new AssignmentInstruction(
+          combinedCond,
+          createConstant(false, PrimitiveTypes.boolean),
+        ),
+      );
+      this.emit(new ConditionalJumpInstruction(cond, dynamicMissLabel));
+      this.emit(
+        new AssignmentInstruction(
+          combinedCond,
+          createConstant(true, PrimitiveTypes.boolean),
+        ),
+      );
+      this.emit(new UnconditionalJumpInstruction(matchEndLabel));
+      this.emit(new LabelInstruction(dynamicMissLabel));
+      this.emit(
+        new BinaryOpInstruction(
+          staticIdCond,
+          handle,
+          "==",
+          createConstant(instanceId, PrimitiveTypes.int32),
+        ),
+      );
+      this.emit(new ConditionalJumpInstruction(staticIdCond, matchEndLabel));
+      this.emit(
+        new AssignmentInstruction(
+          combinedCond,
+          createConstant(true, PrimitiveTypes.boolean),
+        ),
+      );
+      this.emit(new LabelInstruction(matchEndLabel));
+      return combinedCond;
+    }
+    this.emit(
+      new BinaryOpInstruction(
+        cond,
+        handle,
+        "==",
+        createConstant(instanceId, PrimitiveTypes.int32),
+      ),
+    );
+    return cond;
   };
   // Note: this closure may be called multiple times at compile time — once
   // per early-exit path (return/throw via emitLoopExitEpilogues) and once
@@ -1073,14 +1286,10 @@ export function visitForOfStatement(
       const writebackEndLabel = this.newLabel("viface_wb_end");
       for (const [instanceId, info] of vifaceRelevantInstances) {
         const nextLabel = this.newLabel("viface_wb_next");
-        const cond = this.newTemp(PrimitiveTypes.boolean);
-        this.emit(
-          new BinaryOpInstruction(
-            cond,
-            vifaceHandleVar,
-            "==",
-            createConstant(instanceId, PrimitiveTypes.int32),
-          ),
+        const cond = emitVirtualInterfaceMatchCondition(
+          vifaceHandleVar,
+          instanceId,
+          info,
         );
         this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
@@ -1211,14 +1420,10 @@ export function visitForOfStatement(
         // Generate instanceId-based if-else dispatch
         for (const [instanceId, info] of relevantInstances) {
           const nextLabel = this.newLabel("viface_next");
-          const cond = this.newTemp(PrimitiveTypes.boolean);
-          this.emit(
-            new BinaryOpInstruction(
-              cond,
-              handleVar,
-              "==",
-              createConstant(instanceId, PrimitiveTypes.int32),
-            ),
+          const cond = emitVirtualInterfaceMatchCondition(
+            handleVar,
+            instanceId,
+            info,
           );
           this.emit(new ConditionalJumpInstruction(cond, nextLabel));
 
@@ -2010,7 +2215,15 @@ export function visitClassDeclaration(
     }
     for (const param of method.parameters) {
       if (!this.symbolTable.hasInCurrentScope(param.name)) {
-        this.symbolTable.addSymbol(param.name, param.type, true, false);
+        this.symbolTable.addSymbol(
+          param.name,
+          param.type,
+          true,
+          false,
+          undefined,
+          undefined,
+          param.type,
+        );
       }
     }
     if (this.currentMethodLayout) {

@@ -566,7 +566,7 @@ export function getArrayElementType(
       operand as VariableOperand | TemporaryOperand | ConstantOperand
     ).type;
     if (type instanceof ArrayTypeSymbol) {
-      return type.elementType;
+      return type.peelOneDimension();
     }
     if (type instanceof NativeArrayTypeSymbol) {
       return type.elementType;
@@ -731,6 +731,13 @@ export function wrapDataToken(
       }
     }
   }
+  const trackedInlineInfo = valueKey
+    ? this.resolveInlineInstance(valueKey)
+    : undefined;
+  if (trackedInlineInfo) {
+    value = normalizeOperandToInt32(this, value);
+    valueType = PrimitiveTypes.int32;
+  }
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.
   if (isInlineHandleType(this, valueType)) {
@@ -815,7 +822,10 @@ export function unwrapDataToken(
   // guard would always return false and incorrectly pick a 0 fallback
   // instead of the -1 sentinel for inline handles.
   let isInlineHandle = false;
-  if (isInlineHandleType(this, targetType)) {
+  if (
+    isInlineHandleType(this, targetType) ||
+    isStructuralTypeAliasDataTokenHandle(this, targetType)
+  ) {
     property = "Int";
     isInlineHandle = true;
     // InterfaceTypeSymbol maps to %SystemObject in newTemp, but
@@ -883,8 +893,35 @@ export function unwrapDataToken(
     this.emit(new LabelInstruction(doneLabel));
     return result;
   }
+  if (property !== "Reference") {
+    const isNull = this.newTemp(PrimitiveTypes.boolean);
+    const nonNullLabel = this.newLabel("token_non_null");
+    const doneLabel = this.newLabel("token_done");
+    this.emit(new PropertyGetInstruction(isNull, token, "IsNull"));
+    // ConditionalJumpInstruction jumps when condition is false.
+    this.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
+    this.emit(
+      new AssignmentInstruction(result, createSoaSentinelValue(this, targetType)),
+    );
+    this.emit(new UnconditionalJumpInstruction(doneLabel));
+    this.emit(new LabelInstruction(nonNullLabel));
+    this.emit(new PropertyGetInstruction(result, token, property));
+    this.emit(new LabelInstruction(doneLabel));
+    return result;
+  }
   this.emit(new PropertyGetInstruction(result, token, property));
   return result;
+}
+
+function isStructuralTypeAliasDataTokenHandle(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  if (!(type instanceof InterfaceTypeSymbol) || type.properties.size === 0) {
+    return false;
+  }
+  const alias = converter.typeMapper.getAlias(type.name);
+  return alias instanceof InterfaceTypeSymbol && alias.properties.size > 0;
 }
 
 export function getOperandType(

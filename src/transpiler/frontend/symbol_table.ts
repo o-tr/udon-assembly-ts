@@ -49,6 +49,7 @@ export class SymbolTable {
     isConstant = false,
     initialValue?: unknown,
     heapSlotName?: string,
+    declaredType?: TypeSymbol,
   ): void {
     const currentScopeMap = this.scopes[this.currentScope];
     if (currentScopeMap.has(name)) {
@@ -65,6 +66,7 @@ export class SymbolTable {
       isConstant,
       initialValue,
       heapSlotName,
+      declaredType,
     });
   }
 

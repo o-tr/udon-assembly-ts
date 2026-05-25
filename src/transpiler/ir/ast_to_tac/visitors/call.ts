@@ -89,6 +89,7 @@ import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import {
   emitBoundedDataListGetItem,
   emitSoaHandleToIndex,
+  SOA_PARTITION_SIZE,
 } from "../helpers/soa_data_list.js";
 import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
@@ -828,21 +829,28 @@ function trySoAMethodDispatch(
 
   const fieldScratchVars = new Map<string, VariableOperand>();
   const scratchNameToField = new Map<string, string>();
+  const fieldTypes = converter.soaFieldTypes.get(soaClassName);
   for (const [fieldName] of fieldLists) {
-    const scratchVar = converter.mapInlineProperty(
-      soaClassName,
-      scratchPrefix,
-      fieldName,
-    );
-    if (scratchVar) {
-      fieldScratchVars.set(fieldName, scratchVar);
-      scratchNameToField.set(scratchVar.name, fieldName);
-    }
+    const scratchVar =
+      converter.mapInlineProperty(soaClassName, scratchPrefix, fieldName) ??
+      createVariable(
+        `${scratchPrefix}_${fieldName}`,
+        fieldTypes?.get(fieldName) ?? ObjectType,
+      );
+    fieldScratchVars.set(fieldName, scratchVar);
+    scratchNameToField.set(scratchVar.name, fieldName);
   }
 
   // Prologue: load only the SoA fields referenced by the inlined body.
   for (const [fieldName, listVar] of fieldLists) {
-    if (!fieldsToLoad.has(fieldName)) continue;
+    if (
+      !fieldsToLoad.has(fieldName) &&
+      !Array.from(fieldsToLoad).some((readName) =>
+        fieldName.startsWith(`${readName}_`),
+      )
+    ) {
+      continue;
+    }
     const scratchVar = fieldScratchVars.get(fieldName);
     if (scratchVar) {
       const token = converter.newTemp(ExternTypes.dataToken);
@@ -1109,7 +1117,6 @@ function tryUntrackedInlineDispatch(
 
   for (const [, info] of candidateInstances) {
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
-    const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
     const nextLabel = converter.newLabel("untracked_call_next");
     const cond = converter.newTemp(PrimitiveTypes.boolean);
     // Compare against the live __handle variable rather than a compile-time
@@ -1171,7 +1178,6 @@ function tryUntrackedInlineDispatch(
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
-    converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
   if (!dispatchFailed && dispatchResult) {
@@ -1187,7 +1193,6 @@ function tryUntrackedInlineDispatch(
   // For erased owners, that would generate invalid EXTERN signatures
   // (e.g. SystemObject.__inc__) and fail VM load.
   converter.inlineInstanceMap = savedInlineInstanceMap;
-  converter.restoreInlineInstanceState(savedAllInlineInstances);
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -1485,21 +1490,84 @@ function tryD3MethodDispatch(
   const flagKey = dispatchResult
     ? operandTrackingKey(dispatchResult)
     : undefined;
-  for (const [instId, info] of dispInstances) {
-    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
-    const branchAllInlineSnapshot = new Map(converter.allInlineInstances);
-    const nextLabel = converter.newLabel("d3_method_next");
+  const emitD3MethodMatchCondition = (
+    instId: number,
+    info: { prefix: string; className: string },
+  ): TACOperand => {
     const cond = converter.newTemp(PrimitiveTypes.boolean);
-    // SoA handles are dynamic counters, not static instanceIds — use variable
-    const instanceHandle =
-      useInterfaceInstanceIdDispatch &&
-      !converter.soaClasses.has(info.className)
+    if (!converter.soaClasses.has(info.className)) {
+      const instanceHandle = useInterfaceInstanceIdDispatch
         ? createConstant(instId, PrimitiveTypes.int32)
         : createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32);
+      converter.emit(
+        new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
+      );
+      return cond;
+    }
+
+    const offset = converter.soaClassOffsets.get(info.className);
+    if (offset === undefined) {
+      converter.emit(
+        new BinaryOpInstruction(
+          cond,
+          handleVar,
+          "==",
+          createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+        ),
+      );
+      return cond;
+    }
+
+    const matchEndLabel = converter.newLabel("d3_method_match_end");
+    const lowerCond = converter.newTemp(PrimitiveTypes.boolean);
+    const upperCond = converter.newTemp(PrimitiveTypes.boolean);
+    const combinedCond = converter.newTemp(PrimitiveTypes.boolean);
     converter.emit(
-      new BinaryOpInstruction(cond, handleVar, "==", instanceHandle),
+      new AssignmentInstruction(
+        combinedCond,
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
     );
-    converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
+    converter.emit(
+      new BinaryOpInstruction(
+        lowerCond,
+        handleVar,
+        ">=",
+        createConstant(offset + 1, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(lowerCond, matchEndLabel));
+    converter.emit(
+      new BinaryOpInstruction(
+        upperCond,
+        handleVar,
+        "<",
+        createConstant(offset + SOA_PARTITION_SIZE, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(upperCond, matchEndLabel));
+    converter.emit(
+      new AssignmentInstruction(
+        combinedCond,
+        createConstant(true, PrimitiveTypes.boolean),
+      ),
+    );
+    converter.emit(new LabelInstruction(matchEndLabel));
+    return combinedCond;
+  };
+  for (const [instId, info] of dispInstances) {
+    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+    const nextLabel = converter.newLabel("d3_method_next");
+    const branchCond = emitD3MethodMatchCondition(instId, info);
+    converter.emit(new ConditionalJumpInstruction(branchCond, nextLabel));
+    if (converter.soaClasses.has(info.className)) {
+      converter.emit(
+        new CopyInstruction(
+          createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+          handleVar,
+        ),
+      );
+    }
 
     const inlineRes = converter.withInlineCallSite(propAccess, () =>
       converter.visitInlineInstanceMethodCallWithContext(
@@ -1553,7 +1621,6 @@ function tryD3MethodDispatch(
     converter.emit(new UnconditionalJumpInstruction(endLabel));
     converter.emit(new LabelInstruction(nextLabel));
     converter.inlineInstanceMap = branchMapSnapshot;
-    converter.restoreInlineInstanceState(branchAllInlineSnapshot);
   }
 
   if (!dispatchFailed && dispatchResult) {
@@ -1569,7 +1636,6 @@ function tryD3MethodDispatch(
   // produces a visible diagnostic instead of silently returning an
   // uninitialized zero/null result.
   converter.inlineInstanceMap = savedInlineInstanceMap;
-  converter.restoreInlineInstanceState(savedAllInlineInstances);
   const logExtern = converter.requireExternSignature(
     "Debug",
     "LogError",
@@ -3456,12 +3522,10 @@ export function visitCallExpression(
             | undefined;
 
           for (const [className, classId] of classIds) {
-            // Snapshot inlineInstanceMap and allInlineInstances before each
-            // branch so side-effects from one implementor's inlined body
-            // (e.g. temporaries tracked as inline instances) don't leak into
-            // subsequent branches.
+            // Snapshot inlineInstanceMap before each branch so temporary
+            // operand tracking from one implementor's inlined body does not
+            // leak into subsequent branches.
             const branchMapSnapshot = new Map(this.inlineInstanceMap);
-            const branchAllInlineSnapshot = new Map(this.allInlineInstances);
 
             const nextLabel = this.newLabel("iface_dispatch_next");
             const cond = this.newTemp(PrimitiveTypes.boolean);
@@ -3627,11 +3691,10 @@ export function visitCallExpression(
             this.emit(new UnconditionalJumpInstruction(endLabel));
             this.emit(new LabelInstruction(nextLabel));
 
-            // Restore maps INSIDE the loop (not after) so each branch starts
-            // from the pre-dispatch state. After the loop, resultInlineMapping
-            // is re-inserted for result.name if all branches agreed.
+            // Restore inline operand tracking inside the loop so each branch
+            // starts from the pre-dispatch state. allInlineInstances is global
+            // metadata and remains an over-approximation across branches.
             this.inlineInstanceMap = branchMapSnapshot;
-            this.restoreInlineInstanceState(branchAllInlineSnapshot);
           }
 
           if (!dispatchFailed) {
@@ -4136,11 +4199,14 @@ export function visitCallExpression(
     // If `isNotNull` is false (object is null), jump to `nullLabel` to set the result to null.
     this.emit(new ConditionalJumpInstruction(isNotNull, nullLabel));
 
+    const optBaseStorageType = resolveInlineClassType(this, optBaseType);
     const optBaseName = `__opt_call_base_${this.tempCounter++}`;
-    const optBase = createVariable(optBaseName, optBaseType, { isLocal: true });
+    const optBase = createVariable(optBaseName, optBaseStorageType, {
+      isLocal: true,
+    });
     this.symbolTable.enterScope();
     try {
-      this.symbolTable.addSymbol(optBaseName, optBaseType);
+      this.symbolTable.addSymbol(optBaseName, optBaseStorageType);
       this.emit(new CopyInstruction(optBase, objTemp));
       this.maybeTrackInlineInstanceAssignment(optBase, objTemp, false);
       const propCallResult = this.visitCallExpression({

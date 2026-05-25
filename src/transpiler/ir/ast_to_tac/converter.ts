@@ -322,6 +322,12 @@ export class ASTToTACConverter {
    * prefix from a sibling tracked return.
    */
   untrackedStructuralHandleVars: Set<string> = new Set();
+  /**
+   * Prefixes whose structural `${prefix}_<prop>` slots have been populated
+   * by explicit field-copy/default emission. Property reads may use these
+   * slots directly without falling back to D-3 handle dispatch.
+   */
+  structuralFieldPrefixes: Set<string> = new Set();
   /** Dispatch success tracking per dispatch result temp key.
    *  Key: operand tracking key (e.g., "__tmpN") → boolean (true=matched, false=miss).
    *  Used by wrapDataToken to short-circuit on undispatched results and prevent
@@ -493,6 +499,8 @@ export class ASTToTACConverter {
   /** Set of method keys eligible for outlining. Computed between passes from
    *  inlineStaticCallInfo and survives resetState(). */
   outlineCandidates: Set<string> = new Set();
+  /** Metadata pass after outline selection, used to collect outlined body instances. */
+  collectOutlineMetadataMode = false;
   /** Pass-2 only: tracks outlined methods whose body has already been emitted. */
   outlinedMethods: Map<string, OutlinedMethodState> = new Map();
   /** Deferred dispatch-table emitters executed after convertImpl finishes. */
@@ -705,6 +713,7 @@ export class ASTToTACConverter {
     this.allInlineInterfaceCache = new Map();
     this.anonymousInlineClassNames = new Set();
     this.untrackedStructuralHandleVars = new Set();
+    this.structuralFieldPrefixes = new Set();
     this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();
@@ -745,6 +754,7 @@ export class ASTToTACConverter {
     this.inlineStaticCallInfo = new Map();
     this.inlineMethodSelfCallCount = new Map();
     // outlineCandidates intentionally NOT cleared — survives between passes
+    this.collectOutlineMetadataMode = false;
     this.outlinedMethods = new Map();
     this.pendingOutlineDispatches = [];
     this.outlineIneligibleCache = new WeakMap();
@@ -855,16 +865,16 @@ export class ASTToTACConverter {
       }
     }
 
-    const allInstancesFromPass1 = new Map(this.allInlineInstances);
-    const interfaceClassIdMapFromPass1 = new Map(
+    let allInstancesFromPass1 = new Map(this.allInlineInstances);
+    let interfaceClassIdMapFromPass1 = new Map(
       [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
     );
-    const soaClassesFromPass1 = new Set(this.soaClasses);
+    let soaClassesFromPass1 = new Set(this.soaClasses);
     // Snapshot offsets from pass 1 so pass 2 reuses the same assignments.
     // If a SoA class somehow appears only in pass 2, ensureSoaOperands will
     // assign it a new slot; this is safe but unexpected in normal operation
     // since pass 1 is a full codegen sweep.
-    const soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
+    let soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
 
     // Compute outline candidates from pass-1 call info.
     const outlineCandidatesFromPass1 = new Set<string>();
@@ -897,10 +907,29 @@ export class ASTToTACConverter {
       );
     }
 
-    // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
-    // resetState() already clears metadataOnlyMode, so no explicit reset here.
     const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
     const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
+    if (outlineCandidatesFromPass1.size > 0) {
+      this.resetState();
+      this.metadataOnlyMode = true;
+      this.collectOutlineMetadataMode = true;
+      this.outlineCandidates = outlineCandidatesFromPass1;
+      this.inlineStaticCallInfo = inlineStaticCallInfoFromPass1;
+      this.inlineMethodSelfCallCount = inlineMethodSelfCallCountFromPass1;
+      this.convertImpl(program);
+      allInstancesFromPass1 = new Map(this.allInlineInstances);
+      interfaceClassIdMapFromPass1 = new Map(
+        [...this.interfaceClassIdMap.entries()].map(([k, v]) => [
+          k,
+          new Map(v),
+        ]),
+      );
+      soaClassesFromPass1 = new Set(this.soaClasses);
+      soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
+    }
+
+    // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
+    // resetState() already clears metadataOnlyMode, so no explicit reset here.
     this.resetState();
     this.restoreInlineInstanceState(allInstancesFromPass1);
     this.outlineCandidates = outlineCandidatesFromPass1;

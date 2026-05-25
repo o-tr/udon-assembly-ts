@@ -80,6 +80,7 @@ export interface SymbolInfo {
   isParameter?: boolean;
   isConstant?: boolean;
   initialValue?: unknown;
+  declaredType?: TypeSymbol;
   /**
    * Mangled heap slot name used for variables inlined from another method.
    * The symbol table is keyed by the original AST name (so identifier
