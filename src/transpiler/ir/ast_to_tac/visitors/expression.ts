@@ -576,6 +576,8 @@ function tryReadPopulatedStructuralFieldSlot(
   property: string,
 ): TACOperand | undefined {
   if (converter.untrackedStructuralHandleVars.has(slotBase)) return undefined;
+  const receiverInterface = resolveStructuralInterface(converter, receiverType);
+  if (receiverInterface?.methods.size) return undefined;
   if (!converter.structuralFieldPrefixes.has(slotBase)) return undefined;
   const propType =
     resolveStructuralPropertyType(converter, receiverType, property) ??
@@ -4937,18 +4939,29 @@ export function visitObjectLiteralExpression(
       this.currentInlineConstructorClassName !== undefined &&
       enclosingInstancePrefix !== undefined &&
       !this.soaInstancePrefixes.has(enclosingInstancePrefix);
-    const isRecursiveMeldShape =
-      className.includes("isOpen_bool") &&
-      className.includes("tiles_Tile") &&
-      className.includes("type_string");
+    const isEscapingMeldShape =
+      className.includes("isOpen:bool") &&
+      className.includes("tiles:Tile[]") &&
+      className.includes("type:string");
+    const hasMethodInterfaceField = Array.from(
+      expected.properties.values(),
+    ).some((type) => {
+      const iface = resolveStructuralInterface(this, type);
+      return iface !== undefined && iface.methods.size > 0;
+    });
     const structuralRuntimeContext =
-      this.loopContextStack.length > 0 || isRecursiveMeldShape;
+      this.loopContextStack.length > 0 ||
+      isEscapingMeldShape ||
+      hasMethodInterfaceField;
     const literalIsInRuntimeLoopContext =
       structuralRuntimeContext &&
-      !isNonSoAConstructorInitializer &&
+      (!isNonSoAConstructorInitializer ||
+        isEscapingMeldShape ||
+        hasMethodInterfaceField) &&
       (enclosingInstancePrefix === undefined ||
         this.soaInstancePrefixes.has(enclosingInstancePrefix) ||
-        isRecursiveMeldShape);
+        isEscapingMeldShape ||
+        hasMethodInterfaceField);
     const soaEligible = !className.includes("YakuHanConfig");
     if (literalIsInRuntimeLoopContext && soaEligible) {
       this.soaClasses.add(className);

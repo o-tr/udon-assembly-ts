@@ -1493,6 +1493,21 @@ export function visitForOfStatement(
         ),
       );
       this.emit(new ConditionalJumpInstruction(staticIdCond, matchEndLabel));
+      const initializedStaticHandleCond = this.newTemp(PrimitiveTypes.boolean);
+      this.emit(
+        new BinaryOpInstruction(
+          initializedStaticHandleCond,
+          createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+          "!=",
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      this.emit(
+        new ConditionalJumpInstruction(
+          initializedStaticHandleCond,
+          matchEndLabel,
+        ),
+      );
       this.emit(
         new AssignmentInstruction(
           combinedCond,

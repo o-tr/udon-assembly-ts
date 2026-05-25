@@ -1652,8 +1652,9 @@ describe("known transpiler bugs", () => {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      expect(result.tac).toContain("item_name = __inst_ConcreteItem_0_name");
-      expect(result.tac).toContain("__inst___anon_1_1_item_name = item_name");
+      expect(result.tac).toMatch(
+        /__uninst_prop_\d+ = __inst_ConcreteItem_0_name/,
+      );
       expect(result.tac).not.toContain("SystemObject.__get_name");
     });
 
@@ -1688,8 +1689,8 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       expect(result.tac).not.toContain("_yaku_name = yaku_name");
-      expect(result.tac).toContain(
-        "__uninst_prop_24 = __inst_ConcreteYaku_0_name",
+      expect(result.tac).toMatch(
+        /__uninst_prop_\d+ = __inst_ConcreteYaku_0_name/,
       );
     });
 
