@@ -301,6 +301,38 @@ describe("inline instance tracking across method boundaries", () => {
     );
   });
 
+  it("reads optional-chain properties from copied structural parameter slots", () => {
+    const source = `
+      type Win = { isWin: boolean; yaku: string[]; han: number };
+      type Lose = { isWin: boolean };
+      type Result = Win | Lose;
+      class Maker {
+        static make(): Result | null {
+          return { isWin: true, yaku: ["A"], han: 1 };
+        }
+      }
+      class Helper {
+        static select(standardWin: Result | null, other: Result | null): Result {
+          if (standardWin?.isWin) return standardWin;
+          if (other?.isWin) return other;
+          return { isWin: false };
+        }
+      }
+      class Main {
+        Start(): void {
+          const standardWin = Maker.make();
+          const r = Helper.select(standardWin, null);
+          if (r.isWin) Debug.Log(r.yaku.length);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/standardWin_isWin = __inline_ret_\d+_isWin/);
+    expect(result.tac).toMatch(/__opt_base_\d+_isWin = __tmp\d+_isWin/);
+    expect(result.tac).not.toContain("d3_prop_next");
+  });
+
   it("tracks inline instance parameter through copy", () => {
     const source = `
       type Config = { x: number; y: number };

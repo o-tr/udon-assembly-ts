@@ -358,7 +358,7 @@ function tryReadPopulatedStructuralFieldSlot(
     converter,
     receiverType,
     property,
-  );
+  ) ?? converter.structuralFieldPrefixTypes.get(slotBase)?.get(property);
   if (!propType) return undefined;
   return createVariable(`${slotBase}_${property}`, propType, { isLocal: true });
 }
@@ -4705,6 +4705,12 @@ export function visitOptionalChainingExpression(
       this.fieldTypeRegistry.getStructuralFieldType(node.property);
     if (structuralPropertyType) {
       propResult =
+        tryReadPopulatedStructuralFieldSlot(
+          this,
+          optBaseName,
+          optBaseType,
+          node.property,
+        ) ??
         tryReadInlineFieldByHandle(
           this,
           optBase,

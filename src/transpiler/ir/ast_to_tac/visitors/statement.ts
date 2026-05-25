@@ -213,9 +213,14 @@ function emitVarDeclStructuralFieldCopies(
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
   converter.structuralFieldPrefixes.add(targetPrefix);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
 
   for (const [propName, propTypeRaw] of structuralType.properties) {
     const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
+    targetFieldTypes.set(propName, propType);
     converter.emit(
       new CopyInstruction(
         createVariable(`${targetPrefix}_${propName}`, propType),
@@ -251,9 +256,14 @@ function emitStructuralPrefixDefaults(
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
   converter.structuralFieldPrefixes.add(prefix);
+  const fieldTypes =
+    converter.structuralFieldPrefixTypes.get(prefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(prefix, fieldTypes);
 
   for (const [propName, propTypeRaw] of structuralType.properties) {
     const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
+    fieldTypes.set(propName, propType);
     const propVar = createVariable(`${prefix}_${propName}`, propType);
     const defaultValue = createSoaSentinelValue(converter, propType);
     converter.emit(new AssignmentInstruction(propVar, defaultValue));
@@ -718,6 +728,26 @@ export function visitVariableDeclaration(
       // dispatch rather than reading a sibling-populated prefix that was
       // never written on this execution path.
       this.untrackedStructuralHandleVars.add(destKey);
+    } else if (!structuralType && srcKey && destKey) {
+      const sourceFieldTypes = this.structuralFieldPrefixTypes.get(srcKey);
+      if (sourceFieldTypes) {
+        const targetFieldTypes =
+          this.structuralFieldPrefixTypes.get(destKey) ??
+          new Map<string, TypeSymbol>();
+        this.structuralFieldPrefixTypes.set(destKey, targetFieldTypes);
+        this.structuralFieldPrefixes.add(destKey);
+        for (const [propertyName, propertyType] of sourceFieldTypes) {
+          targetFieldTypes.set(propertyName, propertyType);
+          this.emit(
+            new CopyInstruction(
+              createVariable(`${destKey}_${propertyName}`, propertyType, {
+                isLocal,
+              }),
+              createVariable(`${srcKey}_${propertyName}`, propertyType),
+            ),
+          );
+        }
+      }
     }
   }
 }

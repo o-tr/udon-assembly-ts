@@ -765,12 +765,17 @@ function emitNestedStructuralFieldCopies(
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
   converter.structuralFieldPrefixes.add(targetPrefix);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
 
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
     const propertyType = resolvedStructuralPropertyType(
       converter,
       rawPropertyType,
     );
+    targetFieldTypes.set(propertyName, propertyType);
     converter.emitCopyWithTracking(
       createVariable(
         `${targetPrefix}_${propertyName}`,
@@ -803,12 +808,35 @@ export function emitStructuralFieldCopies(
   forceSourceStructuralSlots = false,
 ): void {
   const targetInterface = structuralInterfaceForType(converter, targetType);
-  if (!targetInterface) return;
-
   const sourceName = operandTrackingKey(arg);
   if (!sourceName) return;
+  if (!targetInterface) {
+    const sourceFieldTypes =
+      converter.structuralFieldPrefixTypes.get(sourceName);
+    if (!sourceFieldTypes) return;
+    const targetFieldTypes =
+      converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+      new Map<string, TypeSymbol>();
+    converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+    for (const [propertyName, propertyType] of sourceFieldTypes) {
+      targetFieldTypes.set(propertyName, propertyType);
+      converter.emitCopyWithTracking(
+        createVariable(
+          `${targetPrefix}_${propertyName}`,
+          propertyType,
+          targetOptions,
+        ),
+        createVariable(`${sourceName}_${propertyName}`, propertyType),
+      );
+    }
+    converter.structuralFieldPrefixes.add(targetPrefix);
+    return;
+  }
 
   const sourceInfo = converter.resolveInlineInstance(sourceName);
+  const sourceHasKnownStructuralPrefix =
+    converter.structuralFieldPrefixes.has(sourceName) ||
+    converter.structuralFieldPrefixTypes.has(sourceName);
   const sourceHasNamedStructuralSlots = Array.from(
     targetInterface.properties.keys(),
   ).some((propertyName) =>
@@ -824,6 +852,7 @@ export function emitStructuralFieldCopies(
   );
   const sourceHasStructuralSlots =
     forceSourceStructuralSlots ||
+    sourceHasKnownStructuralPrefix ||
     sourceInfo !== undefined ||
     structuralInterfaceForType(converter, converter.getOperandType(arg)) !==
       null ||
@@ -843,10 +872,12 @@ export function emitStructuralFieldCopies(
       converter,
       rawPropertyType,
     );
-    const sourceProperty = sourceInfo
-      ? converter.mapInlineProperty(
-          sourceInfo.className,
-          sourceInfo.prefix,
+    const sourceProperty = sourceHasKnownStructuralPrefix
+      ? createVariable(`${sourceName}_${propertyName}`, propertyType)
+      : sourceInfo
+        ? converter.mapInlineProperty(
+            sourceInfo.className,
+            sourceInfo.prefix,
           propertyName,
         )
       : createVariable(`${sourceName}_${propertyName}`, propertyType);
@@ -877,6 +908,16 @@ export function emitStructuralFieldCopies(
 
   if (copiedAny) {
     converter.structuralFieldPrefixes.add(targetPrefix);
+    const targetFieldTypes =
+      converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+      new Map<string, TypeSymbol>();
+    converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+    for (const [propertyName, rawPropertyType] of targetInterface.properties) {
+      targetFieldTypes.set(
+        propertyName,
+        resolvedStructuralPropertyType(converter, rawPropertyType),
+      );
+    }
     converter.inlineInstanceMap.set(targetPrefix, {
       prefix: targetPrefix,
       className: targetInterface.name,

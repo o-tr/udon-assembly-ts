@@ -328,6 +328,7 @@ export class ASTToTACConverter {
    * slots directly without falling back to D-3 handle dispatch.
    */
   structuralFieldPrefixes: Set<string> = new Set();
+  structuralFieldPrefixTypes: Map<string, Map<string, TypeSymbol>> = new Map();
   /** Dispatch success tracking per dispatch result temp key.
    *  Key: operand tracking key (e.g., "__tmpN") → boolean (true=matched, false=miss).
    *  Used by wrapDataToken to short-circuit on undispatched results and prevent
@@ -714,6 +715,7 @@ export class ASTToTACConverter {
     this.anonymousInlineClassNames = new Set();
     this.untrackedStructuralHandleVars = new Set();
     this.structuralFieldPrefixes = new Set();
+    this.structuralFieldPrefixTypes = new Map();
     this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();
