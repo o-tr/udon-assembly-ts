@@ -366,6 +366,10 @@ export function dispatchExtern(
       return args[0] === null || args[0] === undefined || args[0] === "";
     case "SystemInt32.__Parse__SystemString__SystemInt32":
       return castInt(args[0]);
+    case "SystemMath.__Max__SystemDouble_SystemDouble__SystemDouble":
+      return Math.max(castFloat(args[0]), castFloat(args[1]));
+    case "SystemMath.__Ceiling__SystemDouble__SystemDouble":
+      return Math.ceil(castFloat(args[0]));
     default:
       throw runtimeError(`Unknown extern '${extern}'`, externCtx);
   }
@@ -423,6 +427,9 @@ export function callMethod(
       case "set_Item":
         dataListSet(object, args[0], args[1], ctx);
         return undefined;
+      case "pop":
+      case "Pop":
+        return object.items.pop();
       default:
         throw runtimeError(`Unsupported DataList method '${method}'`, ctx);
     }
@@ -698,15 +705,12 @@ export function runTacProgram(
         break;
       }
       case "pg":
-        heap[String(instruction[1])] = getProperty(
-          readEncodedOperand(
-            instruction[2] as EncodedOperand,
-            heap,
-            ctx,
-            slotDefaults,
-          ),
+        heap[String(instruction[1])] = getEncodedProperty(
+          instruction[2] as EncodedOperand,
           String(instruction[3]),
+          heap,
           ctx,
+          slotDefaults,
         );
         pc += 1;
         break;
@@ -828,6 +832,26 @@ function readEncodedOperands(
   return operands.map((operand) =>
     readEncodedOperand(operand as EncodedOperand, heap, ctx, slotDefaults),
   );
+}
+
+function getEncodedProperty(
+  operand: EncodedOperand,
+  property: string,
+  heap: Record<string, unknown>,
+  ctx: TsIrContext,
+  slotDefaults: Readonly<Record<string, string>>,
+): unknown {
+  const value = readEncodedOperand(operand, heap, ctx, slotDefaults);
+  if (operand[0] === "s" && Number.isFinite(Number(value))) {
+    const resolved = resolveInlineFieldSlot(
+      `${String(operand[1])}_${property}`,
+      heap,
+    );
+    if (resolved.found) {
+      return readSlot(resolved.value, `${String(operand[1])}_${property}`, ctx);
+    }
+  }
+  return getProperty(value, property, ctx);
 }
 
 function readEncodedOperand(

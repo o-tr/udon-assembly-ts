@@ -4815,9 +4815,14 @@ export function visitAsExpression(
       srcType.udonType === UdonType.DataToken &&
       (NUMERIC_UDON_TYPES.has(targetTypeSymbol.udonType) ||
         targetTypeSymbol.udonType === UdonType.Boolean ||
-        targetTypeSymbol.udonType === UdonType.String)
+        targetTypeSymbol.udonType === UdonType.String ||
+        targetTypeSymbol.udonType === UdonType.DataList ||
+        targetTypeSymbol.udonType === UdonType.Array ||
+        targetTypeSymbol.udonType === UdonType.DataDictionary)
     ) {
-      // DataToken assertions to primitive/string use typed token accessors.
+      // DataToken assertions to concrete targets use typed token accessors.
+      // This includes erased Map<string, unknown> values that are asserted back
+      // to arrays/DataLists after leaving a generic cache.
       const unwrapped = this.unwrapDataToken(operand, targetTypeSymbol);
       if (unwrapped !== operand) {
         this.emitCopyWithTracking(result, unwrapped);

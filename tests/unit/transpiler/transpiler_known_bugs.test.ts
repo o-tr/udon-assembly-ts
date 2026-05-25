@@ -1100,6 +1100,30 @@ describe("known transpiler bugs", () => {
       );
     });
 
+    it("Map<string, unknown>.get() cast to array should unwrap via DataList", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, unknown> = new Map<string, unknown>();
+            const values: number[] = [];
+            values.push(1);
+            m.set("values", values);
+            const cached = m.get("values");
+            const nums = cached as number[];
+            Debug.Log(nums.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
     it("Map<string, unknown>.keys().next().value should not use get_Reference", () => {
       const source = `
         class Main {

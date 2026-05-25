@@ -973,7 +973,7 @@ export function visitForOfStatement(
   if (isDestructured) {
     elementType = ExternTypes.dataList;
   } else if (isObjectDestructured) {
-    elementType = ObjectType;
+    elementType = inferredElementType ?? node.variableType ?? ObjectType;
   } else {
     const operandElemType = this.getArrayElementType(iterableOperand);
     if (operandElemType && operandElemType !== ObjectType) {

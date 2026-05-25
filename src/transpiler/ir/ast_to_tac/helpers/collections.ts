@@ -193,7 +193,14 @@ export function emitDataListGetRangeLoop(
   const coercedStart = normalizeToInt32(converter, start);
   const coercedCount = normalizeToInt32(converter, count);
 
-  // Loop: for i in 0..countVar, copy source.get_Item(start + i) → result.Add(token)
+  // Snapshot source length too. JS slice clamps end to the source length;
+  // DataList.get_Item does not, so the loop must stop before source.Count even
+  // when the requested count is larger than the available tail.
+  const sourceCount = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new PropertyGetInstruction(sourceCount, source, "Count"));
+
+  // Loop: for i in 0..countVar while start+i < source.Count,
+  // copy source.get_Item(start + i) → result.Add(token)
   const idx = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(
     new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
@@ -212,6 +219,12 @@ export function emitDataListGetRangeLoop(
   // srcIdx = start + idx
   const srcIdx = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(new BinaryOpInstruction(srcIdx, coercedStart, "+", idx));
+
+  const inSourceBounds = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(
+    new BinaryOpInstruction(inSourceBounds, srcIdx, "<", sourceCount),
+  );
+  converter.emit(new ConditionalJumpInstruction(inSourceBounds, loopEnd));
 
   // token = source.get_Item(srcIdx)
   const token = converter.newTemp(ExternTypes.dataToken);
