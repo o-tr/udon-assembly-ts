@@ -666,7 +666,8 @@ export function visitVariableDeclaration(
       structuralType && srcKey ? this.resolveInlineInstance(srcKey) : undefined;
     const sourcePrefixFromNamedSlots =
       structuralType && srcKey
-        ? Array.from(structuralType.properties.keys()).some((propName) =>
+        ? this.structuralFieldPrefixes.has(srcKey) ||
+          Array.from(structuralType.properties.keys()).some((propName) =>
             this.symbolTable.lookup(`${srcKey}_${propName}`),
           )
         : false;
@@ -674,10 +675,10 @@ export function visitVariableDeclaration(
       structuralType &&
       srcKey &&
       node.initializer?.kind === ASTNodeKind.PropertyAccessExpression;
-    const sourcePrefix = srcMapping
-      ? srcMapping.prefix
-      : sourcePrefixFromNamedSlots
-        ? srcKey
+    const sourcePrefix = sourcePrefixFromNamedSlots
+      ? srcKey
+      : srcMapping
+        ? srcMapping.prefix
         : sourcePrefixFromStructuralProperty
           ? srcKey
           : undefined;

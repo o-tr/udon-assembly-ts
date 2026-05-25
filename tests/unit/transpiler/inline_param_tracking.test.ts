@@ -268,6 +268,39 @@ describe("inline instance tracking across method boundaries", () => {
     expect(result.uasm).not.toMatch(/Result\.__get_/);
   });
 
+  it("destructures from the currently bound structural parameter slots", () => {
+    const source = `
+      type OuterCtx = { hand: number };
+      type InnerCtx = { hand: number };
+      class Yaku {
+        static check(context: InnerCtx): number {
+          const { hand } = context;
+          return hand;
+        }
+      }
+      class Analyzer {
+        static outer(context: OuterCtx): number {
+          const inner: InnerCtx = { hand: 2 };
+          return Yaku.check(inner);
+        }
+      }
+      class Main {
+        Start(): void {
+          const context: OuterCtx = { hand: 1 };
+          Debug.Log(Analyzer.outer(context));
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(
+      /__inline_Yaku_check___destructure_\d+_hand = context_hand/,
+    );
+    expect(result.tac).not.toMatch(
+      /__inline_Yaku_check___destructure_\d+_hand = __inst_OuterCtx_\d+_hand/,
+    );
+  });
+
   it("tracks inline instance parameter through copy", () => {
     const source = `
       type Config = { x: number; y: number };
