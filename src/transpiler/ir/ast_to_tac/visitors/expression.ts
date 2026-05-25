@@ -359,8 +359,50 @@ function resolveStructuralPropertyType(
     registryType ??
     (rawType?.name
       ? (converter.typeMapper.getAlias(rawType.name) ?? rawType)
-      : rawType)
+    : rawType)
   );
+}
+
+function emitKnownStructuralFieldCopies(
+  converter: ASTToTACConverter,
+  sourcePrefix: string,
+  targetPrefix: string,
+  seen: Set<string> = new Set(),
+  depth = 0,
+): boolean {
+  if (depth >= 8) return false;
+  const sourceFieldTypes =
+    converter.structuralFieldPrefixTypes.get(sourcePrefix);
+  if (!sourceFieldTypes || sourceFieldTypes.size === 0) return false;
+  const seenKey = `${sourcePrefix}:${targetPrefix}`;
+  if (seen.has(seenKey)) return false;
+  seen.add(seenKey);
+
+  converter.structuralFieldPrefixes.add(targetPrefix);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+
+  for (const [propertyName, propertyType] of sourceFieldTypes) {
+    targetFieldTypes.set(propertyName, propertyType);
+    converter.emit(
+      new CopyInstruction(
+        createVariable(`${targetPrefix}_${propertyName}`, propertyType, {
+          isLocal: true,
+        }),
+        createVariable(`${sourcePrefix}_${propertyName}`, propertyType),
+      ),
+    );
+    emitKnownStructuralFieldCopies(
+      converter,
+      `${sourcePrefix}_${propertyName}`,
+      `${targetPrefix}_${propertyName}`,
+      seen,
+      depth + 1,
+    );
+  }
+  return true;
 }
 
 function identifierSlotName(
@@ -4299,6 +4341,10 @@ export function visitPropertyAccessExpression(
                   } else {
                     this.emitCopyWithTracking(dispResult, pv);
                     const dispKey = operandTrackingKey(dispResult);
+                    const pvKey = operandTrackingKey(pv);
+                    if (dispKey && pvKey) {
+                      emitKnownStructuralFieldCopies(this, pvKey, dispKey);
+                    }
                     if (dispKey && shouldCopyDispatchStructuralFields) {
                       emitStructuralFieldCopies(
                         this,

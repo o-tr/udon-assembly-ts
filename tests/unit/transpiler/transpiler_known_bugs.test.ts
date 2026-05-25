@@ -3912,9 +3912,8 @@ class Main extends UdonSharpBehaviour {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      expect(result.tac).toContain(
-        "[udon-assembly-ts] D3 dispatch miss: count on untracked instance",
-      );
+      expect(result.uasm).not.toContain("SystemObject.__get_count");
+      expect(result.tac).toMatch(/__uninst_prop_\d+ = __inst_Child_\d+_count/);
       expect(result.tac).not.toContain("__inst_Candidate_1_child_count");
     });
 
