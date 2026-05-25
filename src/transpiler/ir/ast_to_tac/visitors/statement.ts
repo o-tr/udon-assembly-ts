@@ -1088,7 +1088,12 @@ export function visitForOfStatement(
   // type when the operand's stored type is erased (e.g. ObjectType) but
   // the AST still carries the declared type.
   let inferredElementType: TypeSymbol | null = null;
-  for (const t of [iterableType, inferredIterableType]) {
+  const declaredIterableType =
+    node.iterable.kind === ASTNodeKind.Identifier
+      ? this.symbolTable.lookup((node.iterable as IdentifierNode).name)
+          ?.declaredType
+      : undefined;
+  for (const t of [iterableType, inferredIterableType, declaredIterableType]) {
     if (t instanceof ArrayTypeSymbol) {
       inferredElementType = t.peelOneDimension();
       break;
@@ -1118,6 +1123,14 @@ export function visitForOfStatement(
     iterableType instanceof ArrayTypeSymbol ||
     iterableType.name === ExternTypes.dataList.name ||
     iterableType.udonType === UdonType.DataList;
+  const typedIterableType =
+    iterableType instanceof DataListTypeSymbol ||
+    iterableType instanceof ArrayTypeSymbol
+      ? iterableType
+      : declaredIterableType instanceof DataListTypeSymbol ||
+          declaredIterableType instanceof ArrayTypeSymbol
+        ? declaredIterableType
+        : undefined;
   const indexVar = this.newTemp(PrimitiveTypes.int32);
   const lengthVar = this.newTemp(PrimitiveTypes.int32);
 
@@ -1152,8 +1165,7 @@ export function visitForOfStatement(
   // elementType info.
   if (
     isDataList &&
-    !(iterableType instanceof DataListTypeSymbol) &&
-    !(iterableType instanceof ArrayTypeSymbol)
+    !typedIterableType
   ) {
     elementType = ExternTypes.dataToken;
   } else if (!isDestructured && !isObjectDestructured) {
@@ -1211,8 +1223,7 @@ export function visitForOfStatement(
       ]),
     );
     const hasTypedElements =
-      (iterableType instanceof DataListTypeSymbol ||
-        iterableType instanceof ArrayTypeSymbol) &&
+      !!typedIterableType &&
       elementType.name !== ExternTypes.dataToken.name;
     const resolvedValue = hasTypedElements
       ? this.unwrapDataToken(tokenValue, elementType)
@@ -2301,6 +2312,39 @@ export function visitReturnStatement(
               ),
             ),
           );
+        }
+      }
+      if (returnKey && valueKey && !valueFieldTypes) {
+        const sourceSymbol = this.symbolTable
+          .getAllSymbols()
+          .find((symbol) => (symbol.heapSlotName ?? symbol.name) === valueKey);
+        const sourceStructuralType = sourceSymbol
+          ? structuralInterfaceForType(this, sourceSymbol.type)
+          : undefined;
+        const returnFieldTypes =
+          this.structuralFieldPrefixTypes.get(returnKey) ??
+          (sourceStructuralType
+            ? new Map<string, TypeSymbol>(sourceStructuralType.properties)
+            : undefined);
+        if (returnFieldTypes && sourceSymbol) {
+          this.structuralFieldPrefixTypes.set(returnKey, returnFieldTypes);
+          this.structuralFieldPrefixes.add(returnKey);
+          for (const [propertyName, propertyType] of returnFieldTypes) {
+            const propertyValue = this.visitExpression({
+              kind: ASTNodeKind.PropertyAccessExpression,
+              object: {
+                kind: ASTNodeKind.Identifier,
+                name: sourceSymbol.name,
+              } as IdentifierNode,
+              property: propertyName,
+            } as PropertyAccessExpressionNode);
+            this.emit(
+              new CopyInstruction(
+                createVariable(`${returnKey}_${propertyName}`, propertyType),
+                propertyValue,
+              ),
+            );
+          }
         }
       }
       this.emit(new CopyInstruction(inlineContext.returnVar, returnPayload));

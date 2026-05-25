@@ -2804,11 +2804,8 @@ function visitInlineStaticMethodCallImpl(
       // For concrete ClassTypeSymbol returns, direct tracking is preserved so
       // that property writes (e.g. compound assignments) reach the original
       // inline instance fields rather than a one-shot copy.
-      const returnInstancePrefix =
-        returnType instanceof InterfaceTypeSymbol &&
-        returnType.properties.size > 0
-          ? result.name
-          : undefined;
+      const structuralReturnType = structuralInterfaceForType(this, returnType);
+      const returnInstancePrefix = structuralReturnType ? result.name : undefined;
       this.inlineReturnStack.push({
         returnVar: result,
         returnLabel,
@@ -3765,15 +3762,15 @@ function emitInlineOutlinedBody(
     converter.currentInlineBaseClass = undefined;
 
     converter.inlineMethodStack.add(inlineKey);
-    const returnInstancePrefix =
-      returnType instanceof InterfaceTypeSymbol &&
-      returnType.properties.size > 0
-        ? result.name
-        : undefined;
-    if (returnInstancePrefix !== undefined) {
+    const structuralReturnType = structuralInterfaceForType(
+      converter,
+      returnType,
+    );
+    const returnInstancePrefix = structuralReturnType ? result.name : undefined;
+    if (structuralReturnType) {
       converter.inlineInstanceMap.set(result.name, {
-        prefix: returnInstancePrefix,
-        className: returnType.name,
+        prefix: result.name,
+        className: structuralReturnType.name,
       });
     }
     // returnLabel routes to a body-local label so that early returns land
@@ -5152,11 +5149,13 @@ function inlineResolvedMethodBodyImpl(
       // For concrete ClassTypeSymbol returns, direct tracking is preserved so
       // that property writes (e.g. compound assignments) reach the original
       // inline instance fields rather than a one-shot copy.
-      const returnInstancePrefix =
-        returnType instanceof InterfaceTypeSymbol &&
-        returnType.properties.size > 0
-          ? result.name
-          : undefined;
+      const structuralReturnType = structuralInterfaceForType(
+        converter,
+        returnType,
+      );
+      const returnInstancePrefix = structuralReturnType
+        ? result.name
+        : undefined;
       converter.inlineReturnStack.push({
         returnVar: result,
         returnLabel,
