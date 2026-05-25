@@ -11,12 +11,19 @@ export const NULL_HANDLE = 0 as NullHandle;
 export type DataToken<T = unknown> = {
   readonly __kind: "DataToken";
   readonly value: T;
+  readonly __inlineSnapshot?: InlineHandleSnapshot;
 };
 
 export type TsIrContext = {
   readonly pc?: number;
   readonly instruction?: string;
   readonly extern?: string;
+  readonly heap?: Record<string, unknown>;
+};
+
+type InlineHandleSnapshot = {
+  readonly prefix: string;
+  readonly fields: Readonly<Record<string, unknown>>;
 };
 
 export class UdonVMRuntimeError extends Error {
@@ -51,6 +58,7 @@ export class DataDictionary<K = unknown, V = unknown> {
     if (!found) {
       throw runtimeError("DataDictionary key was not found", ctx);
     }
+    restoreInlineSnapshot(found.value, ctx);
     return found.value;
   }
 
@@ -135,8 +143,14 @@ export function readSlot<T>(
   return value;
 }
 
-export function dataToken<T = unknown>(value: T): DataToken<T> {
-  return { __kind: "DataToken", value };
+export function dataToken<T = unknown>(
+  value: T,
+  ctx: TsIrContext = {},
+): DataToken<T> {
+  const snapshot = snapshotInlineHandle(value, ctx.heap);
+  return snapshot
+    ? { __kind: "DataToken", value, __inlineSnapshot: snapshot }
+    : { __kind: "DataToken", value };
 }
 
 export function unwrapDataToken<T = unknown>(
@@ -169,11 +183,20 @@ export function castFloat(value: unknown): number {
 }
 
 export function objectEquals(left: unknown, right: unknown): boolean {
+  if (isJsNullish(left) && isJsNullish(right)) return true;
   return left === right;
 }
 
 export function nullEquals(value: unknown): boolean {
-  return value === null || value === NULL_HANDLE;
+  return isNullishRuntimeValue(value);
+}
+
+function isJsNullish(value: unknown): boolean {
+  return value === null || value === undefined;
+}
+
+function isNullishRuntimeValue(value: unknown): boolean {
+  return value === null || value === undefined || value === NULL_HANDLE;
 }
 
 export function binaryOp(
@@ -288,7 +311,9 @@ export function dataListGet<T>(
   if (i < 0 || i >= list.items.length) {
     throw runtimeError(`DataList index ${i} is out of range`, ctx);
   }
-  return list.items[i] as T;
+  const item = list.items[i] as T;
+  restoreInlineSnapshot(item, ctx);
+  return item;
 }
 
 export function dataListSet<T>(
@@ -346,7 +371,7 @@ export function dispatchExtern(
     case "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken":
     case "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken":
     case "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataDictionary__VRCSDK3DataDataToken":
-      return dataToken(args[0]);
+      return dataToken(args[0], externCtx);
     case "VRCSDK3DataDataToken.__get_Double__SystemDouble":
     case "VRCSDK3DataDataToken.__get_Int__SystemInt32":
     case "VRCSDK3DataDataToken.__get_Boolean__SystemBoolean":
@@ -370,6 +395,47 @@ export function dispatchExtern(
       return Math.max(castFloat(args[0]), castFloat(args[1]));
     case "SystemMath.__Ceiling__SystemDouble__SystemDouble":
       return Math.ceil(castFloat(args[0]));
+    case "UnityEngineMathf.__Abs__SystemSingle__SystemSingle":
+      return Math.abs(castFloat(args[0]));
+    case "UnityEngineMathf.__Ceil__SystemSingle__SystemSingle":
+      return Math.ceil(castFloat(args[0]));
+    case "UnityEngineMathf.__CeilToInt__SystemSingle__SystemInt32":
+      return Math.ceil(castFloat(args[0]));
+    case "UnityEngineMathf.__Clamp__SystemSingle_SystemSingle_SystemSingle__SystemSingle":
+      return Math.min(
+        Math.max(castFloat(args[0]), castFloat(args[1])),
+        castFloat(args[2]),
+      );
+    case "UnityEngineMathf.__Clamp01__SystemSingle__SystemSingle":
+      return Math.min(Math.max(castFloat(args[0]), 0), 1);
+    case "UnityEngineMathf.__Floor__SystemSingle__SystemSingle":
+      return Math.floor(castFloat(args[0]));
+    case "UnityEngineMathf.__FloorToInt__SystemSingle__SystemInt32":
+      return Math.floor(castFloat(args[0]));
+    case "UnityEngineMathf.__Lerp__SystemSingle_SystemSingle_SystemSingle__SystemSingle":
+      return (
+        castFloat(args[0]) +
+        (castFloat(args[1]) - castFloat(args[0])) *
+          Math.min(Math.max(castFloat(args[2]), 0), 1)
+      );
+    case "UnityEngineMathf.__Max__SystemSingle_SystemSingle__SystemSingle":
+      return Math.max(castFloat(args[0]), castFloat(args[1]));
+    case "UnityEngineMathf.__Min__SystemSingle_SystemSingle__SystemSingle":
+      return Math.min(castFloat(args[0]), castFloat(args[1]));
+    case "UnityEngineMathf.__Pow__SystemSingle_SystemSingle__SystemSingle":
+      return castFloat(args[0]) ** castFloat(args[1]);
+    case "UnityEngineMathf.__Round__SystemSingle__SystemSingle":
+      return Math.round(castFloat(args[0]));
+    case "UnityEngineMathf.__RoundToInt__SystemSingle__SystemInt32":
+      return Math.round(castFloat(args[0]));
+    case "UnityEngineMathf.__Sin__SystemSingle__SystemSingle":
+      return Math.sin(castFloat(args[0]));
+    case "UnityEngineMathf.__Cos__SystemSingle__SystemSingle":
+      return Math.cos(castFloat(args[0]));
+    case "UnityEngineMathf.__Sqrt__SystemSingle__SystemSingle":
+      return Math.sqrt(castFloat(args[0]));
+    case "UnityEngineMathf.__Tan__SystemSingle__SystemSingle":
+      return Math.tan(castFloat(args[0]));
     default:
       throw runtimeError(`Unknown extern '${extern}'`, externCtx);
   }
@@ -590,7 +656,7 @@ export function runTacProgram(
       throw runtimeError(`Missing TS IR instruction at pc ${pc}`, { pc });
     }
     const op = String(instruction[0]);
-    const ctx = { pc };
+    const ctx = { pc, heap };
     switch (op) {
       case "a": {
         const dest = String(instruction[1]);
@@ -865,12 +931,18 @@ function readEncodedOperand(
   switch (operand[0]) {
     case "s": {
       const slot = String(operand[1]);
+      if (Object.hasOwn(heap, slot)) {
+        return heap[slot];
+      }
       if (heap[slot] === undefined && slot.endsWith("__inited")) {
         return 0;
       }
       if (heap[slot] === undefined) {
         const resolved = resolveInlineFieldSlot(slot, heap);
         if (resolved.found) return resolved.value;
+      }
+      if (isInlineInstanceFieldSlot(slot)) {
+        return undefined;
       }
       if (heap[slot] === undefined && slot in slotDefaults) {
         return defaultValueForCode(slotDefaults[slot]);
@@ -944,16 +1016,11 @@ function resolveInlineFieldSlot(
     if (tempId === undefined || suffix === undefined) {
       return { found: false };
     }
-    const resolved = resolveInlineFieldFromParent(
-      `__t${tempId}`,
-      suffix,
-      heap,
-    );
+    const resolved = resolveInlineFieldFromParent(`__t${tempId}`, suffix, heap);
     if (resolved.found) return resolved;
   }
 
   let bestParent = "";
-  let bestHandle: unknown;
   for (const [name, value] of Object.entries(heap)) {
     if (
       !slot.startsWith(`${name}_`) ||
@@ -966,7 +1033,6 @@ function resolveInlineFieldSlot(
     }
     if (name.length > bestParent.length) {
       bestParent = name;
-      bestHandle = value;
     }
   }
   if (!bestParent) return { found: false };
@@ -986,7 +1052,7 @@ function resolveInlineFieldFromParent(
   nextSeen.add(parent);
 
   const directAlias = `${parent}_${suffix}`;
-  if (Object.prototype.hasOwnProperty.call(heap, directAlias)) {
+  if (Object.hasOwn(heap, directAlias)) {
     return { found: true, value: heap[directAlias] };
   }
 
@@ -1015,7 +1081,7 @@ function resolveInlineFieldFromParent(
     if (!name.endsWith("__handle") || value !== bestHandle) continue;
     const prefix = name.slice(0, -"__handle".length);
     const candidate = `${prefix}_${suffix}`;
-    if (Object.prototype.hasOwnProperty.call(heap, candidate)) {
+    if (Object.hasOwn(heap, candidate)) {
       return { found: true, value: heap[candidate] };
     }
   }
@@ -1024,6 +1090,70 @@ function resolveInlineFieldFromParent(
 
 function aliasSlot(slot: string): string {
   return `__tsir_alias_${slot}`;
+}
+
+function isInlineInstanceFieldSlot(slot: string): boolean {
+  return slot.startsWith("__inst_") && !slot.endsWith("__handle");
+}
+
+function snapshotInlineHandle(
+  value: unknown,
+  heap: Record<string, unknown> | undefined,
+): InlineHandleSnapshot | undefined {
+  if (typeof value !== "number" || value === NULL_HANDLE || !heap) {
+    return undefined;
+  }
+  for (const [slot, slotValue] of Object.entries(heap)) {
+    if (!slot.endsWith("__handle") || slotValue !== value) continue;
+    const prefix = slot.slice(0, -"__handle".length);
+    if (!prefix.startsWith("__inst_")) continue;
+    const fields: Record<string, unknown> = {};
+    const fieldPrefix = `${prefix}_`;
+    for (const [fieldSlot, fieldValue] of Object.entries(heap)) {
+      if (fieldSlot.startsWith(fieldPrefix) && fieldSlot !== slot) {
+        fields[fieldSlot] = cloneSnapshotValue(fieldValue);
+      }
+    }
+    if (Object.keys(fields).length === 0) return undefined;
+    return { prefix, fields };
+  }
+  return undefined;
+}
+
+function restoreInlineSnapshot(value: unknown, ctx: TsIrContext): void {
+  if (!ctx.heap || !isDataToken(value) || !value.__inlineSnapshot) return;
+  for (const [fieldSlot, fieldValue] of Object.entries(
+    value.__inlineSnapshot.fields,
+  )) {
+    ctx.heap[fieldSlot] = cloneSnapshotValue(fieldValue);
+  }
+}
+
+function cloneSnapshotValue<T>(value: T): T {
+  if (value instanceof DataDictionary) {
+    return value;
+  }
+  if (value instanceof DataList) {
+    return new DataList(
+      value.items.map((item) => cloneSnapshotValue(item)),
+    ) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneSnapshotValue(item)) as T;
+  }
+  if (isDataToken(value)) {
+    return {
+      __kind: "DataToken",
+      value: cloneSnapshotValue(value.value),
+      ...(value.__inlineSnapshot
+        ? { __inlineSnapshot: value.__inlineSnapshot }
+        : {}),
+    } as T;
+  }
+  if (value && typeof value === "object") {
+    return { ...(value as Record<string, unknown>) } as T;
+  }
+  return value;
 }
 
 function isDataToken(value: unknown): value is DataToken<unknown> {

@@ -4,6 +4,7 @@ import {
   dataListCount,
   dataToken,
   getProperty,
+  objectEquals,
   runTacProgram,
   UdonVMRuntimeError,
   unwrapDataToken,
@@ -28,6 +29,12 @@ describe("TS IR runtime shim", () => {
   it("unwraps typed DataToken values and rejects null tokens", () => {
     expect(unwrapDataToken(dataToken(42))).toBe(42);
     expect(() => unwrapDataToken(null, { pc: 7 })).toThrow(UdonVMRuntimeError);
+  });
+
+  it("treats undefined and null as equal for TAC loose equality", () => {
+    expect(objectEquals(undefined, null)).toBe(true);
+    expect(objectEquals(null, undefined)).toBe(true);
+    expect(objectEquals(undefined, 0)).toBe(false);
   });
 
   it("keeps null collection property access loud", () => {
@@ -80,5 +87,35 @@ describe("TS IR runtime shim", () => {
     );
 
     expect(result.heap.actual).toBe(true);
+  });
+
+  it("restores inline handle field snapshots when reading DataList items", () => {
+    const result = runTacProgram([
+      ["call", "list", "VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList", []],
+      ["a", "__inst_Item_0__handle", ["k", 1]],
+      ["a", "__inst_Item_0_name", ["k", "A"]],
+      [
+        "call",
+        "tokenA",
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+        [["s", "__inst_Item_0__handle"]],
+      ],
+      ["m", null, ["s", "list"], "Add", [["s", "tokenA"]]],
+      ["a", "__inst_Item_0_name", ["k", "B"]],
+      [
+        "call",
+        "tokenB",
+        "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken",
+        [["s", "__inst_Item_0__handle"]],
+      ],
+      ["m", null, ["s", "list"], "Add", [["s", "tokenB"]]],
+      ["m", "item0", ["s", "list"], "get_Item", [["k", 0]]],
+      ["a", "name0", ["s", "__inst_Item_0_name"]],
+      ["m", "item1", ["s", "list"], "get_Item", [["k", 1]]],
+      ["a", "name1", ["s", "__inst_Item_0_name"]],
+    ]);
+
+    expect(result.heap.name0).toBe("A");
+    expect(result.heap.name1).toBe("B");
   });
 });

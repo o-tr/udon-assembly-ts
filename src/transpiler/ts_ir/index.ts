@@ -2,9 +2,9 @@ import fs from "node:fs";
 import type { TypeSymbol } from "../frontend/type_symbols.js";
 import { UdonType } from "../frontend/types.js";
 import {
-  type AssignmentInstruction,
   type ArrayAccessInstruction,
   type ArrayAssignmentInstruction,
+  type AssignmentInstruction,
   type BinaryOpInstruction,
   type CallInstruction,
   type CastInstruction,
@@ -12,9 +12,9 @@ import {
   type CopyInstruction,
   type LabelInstruction,
   type MethodCallInstruction,
+  type PhiInstruction,
   type PropertyGetInstruction,
   type PropertySetInstruction,
-  type PhiInstruction,
   type ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
@@ -273,8 +273,8 @@ class TsIrEmitter {
       "",
       `export function ${this.functionName}(): TsIrResult {`,
       "  runtime.clearDebugLogs();",
-      "  const ctx = {};",
       "  const heap: Heap = {};",
+      "  const ctx = { heap };",
       ...this.linearSlotDeclarationLines(),
       "  let pc = 0;",
       "  while (true) {",
@@ -862,9 +862,9 @@ class TsIrEmitter {
 
   private contextLiteral(pc: number, instruction: TACInstruction): string {
     if (this.compact) {
-      return `{ pc: ${pc} }`;
+      return `{ pc: ${pc}, heap }`;
     }
-    return `{ pc: ${pc}, instruction: ${JSON.stringify(instruction.toString())} }`;
+    return `{ pc: ${pc}, instruction: ${JSON.stringify(instruction.toString())}, heap }`;
   }
 
   private slotName(operand: TACOperand): string {
