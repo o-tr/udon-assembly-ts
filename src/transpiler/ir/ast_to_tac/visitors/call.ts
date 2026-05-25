@@ -102,6 +102,51 @@ const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // stricter limit than property dispatch to avoid excessive code bloat.
 const MAX_D3_METHOD_DISPATCH_CANDIDATES = 100;
 
+function emitDataListPop(
+  converter: ASTToTACConverter,
+  listObject: TACOperand,
+  elementType: TypeSymbol,
+): TACOperand {
+  const resultToken = converter.newTemp(ExternTypes.dataToken);
+  const nullToken = converter.wrapDataToken(createConstant(null, ObjectType));
+  converter.emit(new AssignmentInstruction(resultToken, nullToken));
+
+  const count = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new PropertyGetInstruction(count, listObject, "Count"));
+  const hasItem = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(
+    new BinaryOpInstruction(
+      hasItem,
+      count,
+      ">",
+      createConstant(0, PrimitiveTypes.int32),
+    ),
+  );
+  const done = converter.newLabel("pop_done");
+  converter.emit(new ConditionalJumpInstruction(hasItem, done));
+
+  const lastIndex = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(
+    new BinaryOpInstruction(
+      lastIndex,
+      count,
+      "-",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  const itemToken = converter.newTemp(ExternTypes.dataToken);
+  converter.emit(
+    new MethodCallInstruction(itemToken, listObject, "get_Item", [lastIndex]),
+  );
+  converter.emit(new AssignmentInstruction(resultToken, itemToken));
+  converter.emit(
+    new MethodCallInstruction(undefined, listObject, "RemoveAt", [lastIndex]),
+  );
+  converter.emit(new LabelInstruction(done));
+
+  return converter.unwrapDataToken(resultToken, elementType);
+}
+
 /**
  * Build a fallback IPC method layout from interface metadata when the
  * layout wasn't pre-built (e.g. implementing class is in another file).
@@ -2803,6 +2848,13 @@ export function visitCallExpression(
         this.emit(new PropertyGetInstruction(countResult, listObject, "Count"));
         return countResult;
       }
+      if (propAccess.property === "pop" && evaluatedArgs.length === 0) {
+        const elementType =
+          listObjectType instanceof DataListTypeSymbol
+            ? listObjectType.elementType
+            : ObjectType;
+        return emitDataListPop(this, listObject, elementType);
+      }
       if (propAccess.property === "Remove" && evaluatedArgs.length === 1) {
         const token = this.wrapDataToken(evaluatedArgs[0]);
         const removeResult = this.newTemp(PrimitiveTypes.boolean);
@@ -3225,6 +3277,15 @@ export function visitCallExpression(
           const newLen = this.newTemp(PrimitiveTypes.int32);
           this.emit(new PropertyGetInstruction(newLen, object, "Count"));
           return newLen;
+        }
+        case "pop": {
+          const elementType =
+            objectType instanceof ArrayTypeSymbol
+              ? objectType.peelOneDimension()
+              : objectType instanceof DataListTypeSymbol
+                ? objectType.elementType
+                : ObjectType;
+          return emitDataListPop(this, object, elementType);
         }
         case "splice": {
           // splice(start, deleteCount, ...items) → remove and optionally insert

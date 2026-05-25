@@ -1607,6 +1607,26 @@ describe("known transpiler bugs", () => {
         "SystemObject.__get_estimate__SystemObject",
       );
     });
+
+    it("array pop lowers to DataList RemoveAt instead of unsupported pop extern", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const values: number[] = [];
+            values.push(1);
+            values.push(2);
+            const last = values.pop();
+            Debug.Log(last);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(".__pop__");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__RemoveAt__SystemInt32__SystemVoid",
+      );
+    });
   });
 
   describe("tile-like DataToken accessor mismatch regressions", () => {
