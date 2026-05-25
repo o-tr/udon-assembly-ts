@@ -850,12 +850,16 @@ export function emitStructuralFieldCopies(
   const isRecursiveReturnSlot = /^__inlineRec(Inst)?_.+_retVal_\d+$/.test(
     sourceName,
   );
+  const sourceStructuralType = structuralInterfaceForType(
+    converter,
+    converter.getOperandType(arg),
+  );
   const sourceHasStructuralSlots =
     forceSourceStructuralSlots ||
     sourceHasKnownStructuralPrefix ||
     sourceInfo !== undefined ||
-    structuralInterfaceForType(converter, converter.getOperandType(arg)) !==
-      null ||
+    (sourceStructuralType !== null &&
+      sourceStructuralType.methods.size === 0) ||
     sourceHasNamedStructuralSlots ||
     sourceName.startsWith("__inline_ret_") ||
     isRecursiveReturnSlot;

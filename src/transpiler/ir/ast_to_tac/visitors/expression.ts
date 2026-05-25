@@ -2892,8 +2892,20 @@ export function visitArrayAccessExpression(
     const keyToken = this.wrapDataToken(index);
     const tokenResult = this.newTemp(ExternTypes.dataToken);
     const hasKey = this.newTemp(PrimitiveTypes.boolean);
+    const keyIsNull = this.newTemp(PrimitiveTypes.boolean);
+    const keyNotNull = this.newTemp(PrimitiveTypes.boolean);
     const missingLabel = this.newLabel("dict_read_missing");
     const doneLabel = this.newLabel("dict_read_done");
+    this.emit(new PropertyGetInstruction(keyIsNull, keyToken, "IsNull"));
+    this.emit(
+      new BinaryOpInstruction(
+        keyNotNull,
+        keyIsNull,
+        "==",
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
+    );
+    this.emit(new ConditionalJumpInstruction(keyNotNull, missingLabel));
     this.emit(
       new MethodCallInstruction(hasKey, array, "ContainsKey", [keyToken]),
     );
@@ -4494,7 +4506,7 @@ export function visitObjectLiteralExpression(
       ) {
         const propKey = operandTrackingKey(propVar);
         if (propKey) {
-          emitStructuralFieldCopies(this, propKey, propType, value, {}, true);
+          emitStructuralFieldCopies(this, propKey, propType, value);
         }
       }
     }

@@ -1627,6 +1627,90 @@ describe("known transpiler bugs", () => {
         "VRCSDK3DataDataList.__RemoveAt__SystemInt32__SystemVoid",
       );
     });
+
+    it("nested interface fields in structural array items read through handle dispatch", () => {
+      const source = `
+        type IItem = {
+          readonly name: string;
+        };
+
+        class ConcreteItem implements IItem {
+          readonly name = "Concrete";
+        }
+
+        class Main {
+          Start(): void {
+            const item: IItem = new ConcreteItem();
+            const rows: Array<{ item: IItem; han: number }> = [];
+            rows.push({ item, han: 1 });
+            for (const row of rows) {
+              const key = row.item.name;
+              Debug.Log(key);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("item_name = __inst_ConcreteItem_0_name");
+      expect(result.tac).toContain("__inst___anon_1_1_item_name = item_name");
+      expect(result.tac).not.toContain("SystemObject.__get_name");
+    });
+
+    it("method-bearing interface handles do not seed phantom structural fields", () => {
+      const source = `
+        type IYaku = {
+          readonly name: string;
+          getHan(): number;
+        };
+
+        class ConcreteYaku implements IYaku {
+          readonly name = "Concrete";
+          getHan(): number {
+            return 1;
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const yakus: IYaku[] = [];
+            yakus.push(new ConcreteYaku());
+            const yaku = yakus[0];
+            const rows: Array<{ yaku: IYaku; han: number }> = [];
+            rows.push({ yaku, han: 1 });
+            for (const row of rows) {
+              const key = row.yaku.name;
+              Debug.Log(key);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toContain("_yaku_name = yaku_name");
+      expect(result.tac).toContain(
+        "__uninst_prop_24 = __inst_ConcreteYaku_0_name",
+      );
+    });
+
+    it("dictionary reads guard null DataToken keys before ContainsKey", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const names: Record<string, string> = { ok: "value" };
+            const key = null as any;
+            const value = names[key] || "fallback";
+            Debug.Log(value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("IsNull");
+      expect(result.tac.indexOf("IsNull")).toBeLessThan(
+        result.tac.indexOf("ContainsKey"),
+      );
+    });
   });
 
   describe("tile-like DataToken accessor mismatch regressions", () => {
