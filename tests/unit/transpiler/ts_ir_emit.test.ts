@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  PrimitiveTypes,
   ExternTypes,
+  PrimitiveTypes,
 } from "../../../src/transpiler/frontend/type_symbols.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import {
   AssignmentInstruction,
   BinaryOpInstruction,
@@ -18,7 +19,6 @@ import {
   createTemporary,
   createVariable,
 } from "../../../src/transpiler/ir/tac_operand.js";
-import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { emitTsIr } from "../../../src/transpiler/ts_ir/index.js";
 
 describe("TS IR emitter", () => {

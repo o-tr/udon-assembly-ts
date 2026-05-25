@@ -100,9 +100,13 @@ describe("structural union isWin dispatch", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
     expect(result.uasm).toMatch(/VRCSDK3DataDataToken\.__get_Int__SystemInt32/);
-    expect(result.uasm).toMatch(/SystemInt32\.__op_Equality__SystemInt32_SystemInt32__SystemBoolean/);
+    expect(result.uasm).toMatch(
+      /SystemInt32\.__op_Equality__SystemInt32_SystemInt32__SystemBoolean/,
+    );
     expect(result.uasm).not.toMatch(/SystemDataDictionary/);
-    expect(result.uasm).not.toMatch(/SystemConvert\.__ToInt32__SystemObject__SystemInt32/);
+    expect(result.uasm).not.toMatch(
+      /SystemConvert\.__ToInt32__SystemObject__SystemInt32/,
+    );
   });
 
   it("keeps optional calls on nullable structural map values as Int32 inline handles", () => {
@@ -138,8 +142,12 @@ describe("structural union isWin dispatch", () => {
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
     expect(result.uasm).toMatch(/__opt_call_base_\d+: %SystemInt32/);
-    expect(result.uasm).toMatch(/SystemInt32\.__op_Inequality__SystemInt32_SystemInt32__SystemBoolean/);
-    expect(result.uasm).not.toMatch(/SystemConvert\.__ToInt32__SystemObject__SystemInt32/);
+    expect(result.uasm).toMatch(
+      /SystemInt32\.__op_Inequality__SystemInt32_SystemInt32__SystemBoolean/,
+    );
+    expect(result.uasm).not.toMatch(
+      /SystemConvert\.__ToInt32__SystemObject__SystemInt32/,
+    );
   });
 
   it("matches virtual interface for-of elements against SoA handles", () => {
@@ -243,7 +251,9 @@ describe("structural union isWin dispatch", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    expect(result.uasm).not.toMatch(/D3 dispatch miss: hand on untracked instance/);
+    expect(result.uasm).not.toMatch(
+      /D3 dispatch miss: hand on untracked instance/,
+    );
     expect(result.uasm).not.toMatch(/SystemObject\.__get_hand/);
   });
 

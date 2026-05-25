@@ -1,3 +1,4 @@
+//biome-ignore lint/correctness/noUnusedVariables: test
 class Demo {
   Start(): void {
     const list: DataList = new DataList();

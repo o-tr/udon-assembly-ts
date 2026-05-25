@@ -204,10 +204,10 @@ export function isInlineHandleType(
     type instanceof ClassTypeSymbol &&
     type.udonType === UdonType.Int32 &&
     (converter.interfaceClassIdMap.has(type.name) ||
-      (converter.typeMapper.getAlias(type.name) instanceof InterfaceTypeSymbol &&
-        (
-          converter.typeMapper.getAlias(type.name) as InterfaceTypeSymbol
-        ).methods.size > 0))
+      (converter.typeMapper.getAlias(type.name) instanceof
+        InterfaceTypeSymbol &&
+        (converter.typeMapper.getAlias(type.name) as InterfaceTypeSymbol)
+          .methods.size > 0))
   ) {
     return true;
   }

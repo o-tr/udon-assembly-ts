@@ -216,15 +216,14 @@ export function visitVariableStatement(
         ? element.propertyName.getText()
         : varName;
       let propType =
-        this.checkerTypeResolver?.resolveFromTsNode(element.name) ??
-        ObjectType;
+        this.checkerTypeResolver?.resolveFromTsNode(element.name) ?? ObjectType;
       if (propType === ObjectType && tempInterfaceType) {
         propType = (() => {
-            const rawType = tempInterfaceType.properties.get(propName);
-            return rawType?.name
-              ? (this.typeMapper.getAlias(rawType.name) ?? rawType)
-              : (rawType ?? ObjectType);
-          })();
+          const rawType = tempInterfaceType.properties.get(propName);
+          return rawType?.name
+            ? (this.typeMapper.getAlias(rawType.name) ?? rawType)
+            : (rawType ?? ObjectType);
+        })();
       }
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, propType, false, isConst);

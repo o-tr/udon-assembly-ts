@@ -492,10 +492,7 @@ export function visitVariableDeclaration(
     ) {
       const inferredType = this.getOperandType(src);
       if (!isObjectTypeSymbol(inferredType)) {
-        resolvedInitializerType ??= resolveTypeFromNode(
-          this,
-          node.initializer,
-        );
+        resolvedInitializerType ??= resolveTypeFromNode(this, node.initializer);
         // Do not narrow a float-declared variable to an integer type.
         // collectRecursiveLocals records the declared AST type (Double for
         // TypeScript `number`). If we narrow Double→Int here the heap slot
@@ -1148,7 +1145,10 @@ export function visitForOfStatement(
         depth = 0,
       ): void => {
         if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
-        for (const [propertyName, rawPropertyType] of structuralType.properties) {
+        for (const [
+          propertyName,
+          rawPropertyType,
+        ] of structuralType.properties) {
           const propertyType = resolvedStructuralPropertyType(
             this,
             rawPropertyType,
@@ -1187,13 +1187,15 @@ export function visitForOfStatement(
       // Always use getMergedProperties when available — it walks the full
       // inheritance chain. An empty result means the class genuinely has no
       // properties (not that registration is incomplete).
-      return expandStructuralProps(this.classRegistry
-        .getMergedProperties(className)
-        .filter((p) => !p.node.isGetter)
-        .map((p) => ({
-          name: p.name,
-          type: p.type,
-        })));
+      return expandStructuralProps(
+        this.classRegistry
+          .getMergedProperties(className)
+          .filter((p) => !p.node.isGetter)
+          .map((p) => ({
+            name: p.name,
+            type: p.type,
+          })),
+      );
     }
     const classNode = this.classMap.get(className);
     return expandStructuralProps(
@@ -1202,7 +1204,7 @@ export function visitForOfStatement(
         .map((p) => ({
           name: p.name,
           type: p.type,
-      })) ?? [],
+        })) ?? [],
     );
   };
   const emitVirtualInterfaceMatchCondition = (

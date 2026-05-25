@@ -901,7 +901,10 @@ export function unwrapDataToken(
     // ConditionalJumpInstruction jumps when condition is false.
     this.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
     this.emit(
-      new AssignmentInstruction(result, createSoaSentinelValue(this, targetType)),
+      new AssignmentInstruction(
+        result,
+        createSoaSentinelValue(this, targetType),
+      ),
     );
     this.emit(new UnconditionalJumpInstruction(doneLabel));
     this.emit(new LabelInstruction(nonNullLabel));

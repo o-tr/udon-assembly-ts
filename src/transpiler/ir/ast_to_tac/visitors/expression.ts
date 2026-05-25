@@ -301,7 +301,9 @@ function resolveStructuralInterface(
   type: TypeSymbol | undefined,
 ): InterfaceTypeSymbol | undefined {
   if (type instanceof InterfaceTypeSymbol) return type;
-  const alias = type?.name ? converter.typeMapper.getAlias(type.name) : undefined;
+  const alias = type?.name
+    ? converter.typeMapper.getAlias(type.name)
+    : undefined;
   return alias instanceof InterfaceTypeSymbol ? alias : undefined;
 }
 
@@ -312,9 +314,8 @@ function resolveStructuralPropertyType(
 ): TypeSymbol | undefined {
   const iface = resolveStructuralInterface(converter, receiverType);
   if (!iface || !iface.properties.has(property)) {
-    const registryType = converter.fieldTypeRegistry.getStructuralFieldType(
-      property,
-    );
+    const registryType =
+      converter.fieldTypeRegistry.getStructuralFieldType(property);
     return registryType
       ? (inferInlineStructuralPropertyType(converter, property) ?? registryType)
       : undefined;
@@ -341,7 +342,9 @@ function identifierSlotName(
   name: string,
   symbol?: SymbolInfo,
 ): string {
-  return converter.currentParamExportMap.get(name) ?? symbol?.heapSlotName ?? name;
+  return (
+    converter.currentParamExportMap.get(name) ?? symbol?.heapSlotName ?? name
+  );
 }
 
 function tryReadPopulatedStructuralFieldSlot(
@@ -479,9 +482,9 @@ function tryInlineGetter(
   return inlined ?? undefined;
 }
 
-function resolveSimpleGetterBackingField(
-  getter: { getterBody?: ASTNode },
-): string | null {
+function resolveSimpleGetterBackingField(getter: {
+  getterBody?: ASTNode;
+}): string | null {
   const body = getter.getterBody;
   if (body?.kind !== ASTNodeKind.BlockStatement) return null;
   const statements = (body as BlockStatementNode).statements;
@@ -4045,7 +4048,10 @@ export function visitPropertyAccessExpression(
               if (this.soaClasses.has(info.className)) {
                 this.emit(
                   new CopyInstruction(
-                    createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+                    createVariable(
+                      `${info.prefix}__handle`,
+                      PrimitiveTypes.int32,
+                    ),
                     hdlVar,
                   ),
                 );
