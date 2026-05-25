@@ -3207,6 +3207,7 @@ export function visitPropertyAccessExpression(
       );
       if (directSlot) return directSlot;
       const instanceInfo = this.resolveInlineInstance(objectName);
+      let mappedPropertyIsUntrackedStructuralHandle = false;
       if (instanceInfo) {
         const soaClass = resolveConcreteClassName(this, instanceInfo);
         if (!this.soaClasses.has(soaClass)) {
@@ -3215,7 +3216,13 @@ export function visitPropertyAccessExpression(
             instanceInfo,
             node.property,
           );
-          if (mapped) return mapped;
+          const mappedKey = mapped ? operandTrackingKey(mapped) : undefined;
+          if (mapped && !this.untrackedStructuralHandleVars.has(mappedKey ?? "")) {
+            return mapped;
+          }
+          if (mappedKey && this.untrackedStructuralHandleVars.has(mappedKey)) {
+            mappedPropertyIsUntrackedStructuralHandle = true;
+          }
         }
       }
       if (
@@ -3225,6 +3232,7 @@ export function visitPropertyAccessExpression(
         // Without `instanceInfo` the slot was never written — falling through
         // to D-3 untracked-handle dispatch is the only way to read the value.
         instanceInfo &&
+        !mappedPropertyIsUntrackedStructuralHandle &&
         objectSymbol?.type instanceof InterfaceTypeSymbol &&
         objectSymbol.type.properties.has(node.property)
       ) {
@@ -3268,6 +3276,7 @@ export function visitPropertyAccessExpression(
         // was never written and falling through to D-3 untracked-handle
         // dispatch is the only way to read a real value.
         instanceInfo &&
+        !mappedPropertyIsUntrackedStructuralHandle &&
         structuralPropertyType &&
         registryStructuralField !== undefined &&
         objectSymbol &&
@@ -4053,6 +4062,9 @@ export function visitPropertyAccessExpression(
               untrackedPropType,
               { isLocal: true },
             );
+            const shouldCopyDispatchStructuralFields = !(
+              usedErasedFallback || usedAnonUnionIface
+            );
             this.emit(
               new AssignmentInstruction(
                 dispResult,
@@ -4174,7 +4186,7 @@ export function visitPropertyAccessExpression(
               if (armGetter !== undefined) {
                 this.emitCopyWithTracking(dispResult, armGetter);
                 const dispKey = operandTrackingKey(dispResult);
-                if (dispKey) {
+                if (dispKey && shouldCopyDispatchStructuralFields) {
                   emitStructuralFieldCopies(
                     this,
                     dispKey,
@@ -4230,7 +4242,7 @@ export function visitPropertyAccessExpression(
                     );
                     this.emitCopyWithTracking(dispResult, unwrapped);
                     const dispKey = operandTrackingKey(dispResult);
-                    if (dispKey) {
+                    if (dispKey && shouldCopyDispatchStructuralFields) {
                       emitStructuralFieldCopies(
                         this,
                         dispKey,
@@ -4242,7 +4254,7 @@ export function visitPropertyAccessExpression(
                   } else {
                     this.emitCopyWithTracking(dispResult, pv);
                     const dispKey = operandTrackingKey(dispResult);
-                    if (dispKey) {
+                    if (dispKey && shouldCopyDispatchStructuralFields) {
                       emitStructuralFieldCopies(
                         this,
                         dispKey,

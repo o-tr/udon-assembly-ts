@@ -864,6 +864,21 @@ function emitNestedStructuralFieldCopies(
     );
     return;
   }
+  const sourceIsPopulated =
+    converter.structuralFieldPrefixes.has(sourcePrefix) ||
+    converter.structuralFieldPrefixTypes.has(sourcePrefix) ||
+    converter.resolveInlineInstance(sourcePrefix) !== undefined;
+  if (!sourceIsPopulated) {
+    converter.inlineInstanceMap.delete(targetPrefix);
+    converter.structuralFieldPrefixes.delete(targetPrefix);
+    converter.structuralFieldPrefixTypes.delete(targetPrefix);
+    markUntrackedStructuralHandlePrefixes(
+      converter,
+      targetPrefix,
+      structuralType,
+    );
+    return;
+  }
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -1101,6 +1116,53 @@ export function markUntrackedStructuralHandlePrefixes(
   }
 }
 
+function markNestedStructuralPropertyPrefixes(
+  converter: ASTToTACConverter,
+  prefix: string,
+  type: TypeSymbol,
+): void {
+  const structuralType = structuralInterfaceForType(converter, type);
+  if (!structuralType || structuralType.methods.size > 0) return;
+  for (const [propertyName, rawPropertyType] of structuralType.properties) {
+    const propertyType = resolvedStructuralPropertyType(
+      converter,
+      rawPropertyType,
+    );
+    if (structuralInterfaceForType(converter, propertyType)) {
+      markUntrackedStructuralHandlePrefixes(
+        converter,
+        `${prefix}_${propertyName}`,
+        propertyType,
+      );
+    }
+  }
+}
+
+function propagateNestedUntrackedStructuralProperties(
+  converter: ASTToTACConverter,
+  sourcePrefix: string,
+  targetPrefix: string,
+  type: TypeSymbol,
+): void {
+  const structuralType = structuralInterfaceForType(converter, type);
+  if (!structuralType || structuralType.methods.size > 0) return;
+  for (const [propertyName, rawPropertyType] of structuralType.properties) {
+    const propertyType = resolvedStructuralPropertyType(
+      converter,
+      rawPropertyType,
+    );
+    if (!structuralInterfaceForType(converter, propertyType)) continue;
+    const sourceNestedPrefix = `${sourcePrefix}_${propertyName}`;
+    if (converter.untrackedStructuralHandleVars.has(sourceNestedPrefix)) {
+      markUntrackedStructuralHandlePrefixes(
+        converter,
+        `${targetPrefix}_${propertyName}`,
+        propertyType,
+      );
+    }
+  }
+}
+
 function emitStructuralParamFieldCopies(
   converter: ASTToTACConverter,
   paramName: string,
@@ -1286,6 +1348,15 @@ export function saveAndBindInlineParams(
         param.type,
         argToUse,
       );
+      const argToUseKey = operandTrackingKey(argToUse);
+      if (argToUseKey) {
+        propagateNestedUntrackedStructuralProperties(
+          converter,
+          argToUseKey,
+          param.name,
+          param.type,
+        );
+      }
       const argInfo = argInlineInfos[i];
       if (argInfo) {
         converter.inlineInstanceMap.set(param.name, argInfo);
@@ -2764,18 +2835,16 @@ function visitInlineStaticMethodCallImpl(
       if (this.inlineReturnStack.length > returnStackDepth) {
         const innerCtx =
           this.inlineReturnStack[this.inlineReturnStack.length - 1];
-        // If the inner expansion's return tracking was invalidated AND the
-        // method has a structural (interface) return type, the return variable
-        // holds an untracked structural handle. Add it to the set so that any
-        // outer `return <result>` (or `const x = <result>` via the else-if
-        // branch in visitVariableDeclaration) also triggers
-        // returnTrackingInvalidated rather than relying on a
-        // sibling-populated prefix that may never be written at runtime.
+        // Keep top-level return fields readable through their stable sibling
+        // slots, but mark nested structural properties as handle-only when the
+        // callee invalidated return tracking. This preserves scalar union
+        // fields like `isWin` while avoiding stale nested slots such as
+        // `result_decomposition_waitType`.
         if (
           innerCtx.returnTrackingInvalidated &&
           innerCtx.returnInstancePrefix !== undefined
         ) {
-          this.untrackedStructuralHandleVars.add(result.name);
+          markNestedStructuralPropertyPrefixes(this, result.name, returnType);
         }
         this.inlineReturnStack.pop();
       }
@@ -3532,6 +3601,19 @@ function checkOutlineIneligible(
   // a gap here.
   if (isInlineHandleType(converter, returnType)) {
     return true;
+  }
+  for (const param of params) {
+    const structuralParam = structuralInterfaceForType(converter, param.type);
+    if (!structuralParam || structuralParam.methods.size > 0) continue;
+    for (const rawPropertyType of structuralParam.properties.values()) {
+      const propertyType = resolvedStructuralPropertyType(
+        converter,
+        rawPropertyType,
+      );
+      if (structuralInterfaceForType(converter, propertyType)) {
+        return true;
+      }
+    }
   }
   const cached = converter.outlineIneligibleCache.get(body);
   if (cached !== undefined) return cached;
@@ -5101,16 +5183,18 @@ function inlineResolvedMethodBodyImpl(
       if (pushedInlineReturn) {
         const innerCtx =
           converter.inlineReturnStack[converter.inlineReturnStack.length - 1];
-        // Mirror the static-method propagation: if the inner expansion's return
-        // tracking was invalidated for a structural (interface) return type, the
-        // result variable holds an untracked structural handle. Adding it to the
-        // set ensures that any enclosing `return obj.method(…)` or
-        // `const x = obj.method(…)` also triggers returnTrackingInvalidated.
+        // Mirror the static-method propagation: preserve top-level return
+        // fields, but treat nested structural properties as handle-only when
+        // the callee invalidated return tracking.
         if (
           innerCtx.returnTrackingInvalidated &&
           innerCtx.returnInstancePrefix !== undefined
         ) {
-          converter.untrackedStructuralHandleVars.add(result.name);
+          markNestedStructuralPropertyPrefixes(
+            converter,
+            result.name,
+            returnType,
+          );
         }
         converter.inlineReturnStack.pop();
       }

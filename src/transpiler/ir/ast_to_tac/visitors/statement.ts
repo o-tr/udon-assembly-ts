@@ -242,6 +242,21 @@ function emitVarDeclStructuralFieldCopies(
     );
     return;
   }
+  const sourceIsPopulated =
+    converter.structuralFieldPrefixes.has(sourcePrefix) ||
+    converter.structuralFieldPrefixTypes.has(sourcePrefix) ||
+    converter.resolveInlineInstance(sourcePrefix) !== undefined;
+  if (!sourceIsPopulated) {
+    converter.inlineInstanceMap.delete(targetPrefix);
+    converter.structuralFieldPrefixes.delete(targetPrefix);
+    converter.structuralFieldPrefixTypes.delete(targetPrefix);
+    markUntrackedStructuralHandlePrefixes(
+      converter,
+      targetPrefix,
+      structuralType,
+    );
+    return;
+  }
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -2089,7 +2104,16 @@ export function visitReturnStatement(
       }
 
       if (fieldsToCopy && fieldsToCopy.length > 0) {
+        const returnFieldTypes =
+          this.structuralFieldPrefixTypes.get(returnInstancePrefix) ??
+          new Map<string, TypeSymbol>();
+        this.structuralFieldPrefixTypes.set(
+          returnInstancePrefix,
+          returnFieldTypes,
+        );
+        this.structuralFieldPrefixes.add(returnInstancePrefix);
         for (const [propName, propType] of fieldsToCopy) {
+          returnFieldTypes.set(propName, propType);
           const srcField = createVariable(
             `${valueMapping.prefix}_${propName}`,
             propType,
@@ -2099,6 +2123,15 @@ export function visitReturnStatement(
             propType,
           );
           this.emit(new CopyInstruction(dstField, srcField));
+          if (structuralInterfaceForType(this, propType)) {
+            emitStructuralFieldCopies(
+              this,
+              `${returnInstancePrefix}_${propName}`,
+              propType,
+              srcField,
+              { isLocal: true },
+            );
+          }
         }
         this.emit(new CopyInstruction(inlineContext.returnVar, value));
         // Track returnTrackingInvalidated: if a previous return path used a
