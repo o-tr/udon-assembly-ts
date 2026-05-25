@@ -304,6 +304,33 @@ function emitStructuralPrefixDefaults(
   }
 }
 
+function markUntrackedStructuralHandlePrefixes(
+  converter: ASTToTACConverter,
+  prefix: string,
+  type: TypeSymbol,
+  seen = new Set<string>(),
+  depth = 0,
+): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  const structuralType = structuralInterfaceForType(converter, type);
+  if (!structuralType) return;
+  if (structuralType.methods.size > 0) return;
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+  converter.untrackedStructuralHandleVars.add(prefix);
+
+  for (const [propertyName, rawPropertyType] of structuralType.properties) {
+    markUntrackedStructuralHandlePrefixes(
+      converter,
+      `${prefix}_${propertyName}`,
+      resolvedStructuralPropertyType(converter, rawPropertyType),
+      seen,
+      depth + 1,
+    );
+  }
+}
+
 function emitLoopExitEpiloguesSinceDepth(
   converter: ASTToTACConverter,
   depth: number,
@@ -1129,6 +1156,12 @@ export function visitForOfStatement(
       ? this.unwrapDataToken(tokenValue, elementType)
       : tokenValue;
     this.emitCopyWithTracking(elementVar, resolvedValue, true);
+    if (!isDestructured && !isObjectDestructured) {
+      const elementKey = operandTrackingKey(elementVar);
+      if (elementKey) {
+        markUntrackedStructuralHandlePrefixes(this, elementKey, elementType);
+      }
+    }
   }
   if (isDestructured) {
     const names = node.variable as string[];

@@ -4574,7 +4574,7 @@ export function visitObjectLiteralExpression(
       }
       const value = this.visitExpression(prop.value);
       this.currentExpectedType = prev;
-      this.emit(new AssignmentInstruction(propVar, value));
+      this.emitCopyWithTracking(propVar, value);
       this.maybeTrackInlineInstanceAssignment(propVar, value);
       if (
         propType instanceof InterfaceTypeSymbol &&

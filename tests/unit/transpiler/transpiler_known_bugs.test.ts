@@ -3657,6 +3657,50 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    it("structural object literal fields cast enum Int32 values before Double slot copies", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        enum PlayerCount {
+          Three = 3 as UdonInt,
+          Four = 4 as UdonInt,
+        }
+
+        type CheckWinContext = {
+          playerCount: number;
+        };
+
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          Start(): void {
+            const context: CheckWinContext = {
+              playerCount: PlayerCount.Four,
+            };
+            Debug.Log(context.playerCount === 4);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      const dataSection = getDataSection(result.uasm);
+      expect(
+        dataSection.some((line) =>
+          /\b__inst_CheckWinContext_\d+_playerCount\b.*%SystemDouble/.test(
+            line,
+          ),
+        ),
+      ).toBe(true);
+      expect(result.uasm).not.toMatch(
+        /PUSH, __const_\d+_SystemInt32\s+PUSH, __inst_CheckWinContext_\d+_playerCount\s+COPY/,
+      );
+      expect(result.uasm).toMatch(
+        /PUSH, __const_\d+_SystemDouble\s+PUSH, __inst_CheckWinContext_\d+_playerCount\s+COPY/,
+      );
+    });
+
     it("structural subset params dispatch nested object fields through handles", () => {
       const source = `
         type Estimate = { minHan: number; maxHan: number };
@@ -3719,6 +3763,32 @@ class Main extends UdonSharpBehaviour {
       expect(result.tac).toContain("__forof_destructure_");
       expect(result.tac).toContain("__inst_Candidate_0_decomposition");
       expect(result.tac).toContain("__inst_Candidate_0_estimate_maxHan");
+    });
+
+    it("for-of structural array elements populate nested field slots", () => {
+      const source = `
+        type Estimate = { minHan: number; maxHan: number };
+        type Candidate = { decomposition: string; estimate: Estimate };
+
+        class Main {
+          Start(): void {
+            const candidates: Candidate[] = [];
+            candidates.push({
+              decomposition: "ok",
+              estimate: { minHan: 1, maxHan: 7 },
+            });
+            for (const candidate of candidates) {
+              Debug.Log(candidate.estimate.maxHan);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__inst_Candidate_0_estimate_maxHan");
+      expect(result.tac).not.toContain(
+        "[udon-assembly-ts] D3 dispatch miss: maxHan on untracked instance",
+      );
     });
 
     it("anonymous Array<T> structural destructuring avoids raw SystemObject property externs", () => {
