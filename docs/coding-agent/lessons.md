@@ -1,5 +1,13 @@
 # Coding Agent Lessons
 
+## 2026-05-25 - Build package before consumer-style UASM validation
+
+- tags: validation/verification, tooling/environment, assumptions/interpretation
+- symptom: UdonVM validation was started from source-driven generation without first confirming `pnpm install`, `pnpm build`, and regenerated UASM artifacts.
+- root cause: The check mixed local source execution with consumer-style package validation, so the generated UASM was not clearly tied to the built package state.
+- fix: Re-run dependency installation/build before regenerating UASM for UdonVM verification.
+- prevention: Before UdonVM or downstream-project validation, use a turn checklist: install/build first, regenerate artifacts second, execute VM third, then report evidence.
+
 ## 2026-05-25 - Do not overinterpret expected long optimizer runs
 
 - tags: tooling/environment, assumptions/interpretation, validation/verification

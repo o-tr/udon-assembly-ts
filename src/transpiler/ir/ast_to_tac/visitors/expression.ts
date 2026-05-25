@@ -187,6 +187,7 @@ function tryReadSoAField(
     token,
     () => createSoaSentinelValue(converter, fieldType),
     true,
+    className,
   );
   return converter.unwrapDataToken(token, fieldType);
 }
@@ -3511,6 +3512,7 @@ export function visitPropertyAccessExpression(
               token,
               createSoaSentinelValue(this, fieldType),
               true,
+              directSoaTypeName,
             );
             return this.unwrapDataToken(token, fieldType);
           }
@@ -3930,6 +3932,7 @@ export function visitPropertyAccessExpression(
                   token,
                   createSoaSentinelValue(this, untrackedPropType),
                   true,
+                  soaClassName,
                 );
                 return this.unwrapDataToken(token, untrackedPropType);
               }
@@ -4111,6 +4114,7 @@ export function visitPropertyAccessExpression(
                       token,
                       createSoaSentinelValue(this, untrackedPropType),
                       true,
+                      info.className,
                     );
                     const unwrapped = this.unwrapDataToken(
                       token,
@@ -4337,8 +4341,7 @@ export function visitPropertyAccessExpression(
       isMapCollectionType(objectType) || isMapCollectionType(resolvedBaseType);
     if ((isSet || isMap) && node.property === "size") {
       const result = this.newTemp(PrimitiveTypes.int32);
-      const countObject = ensureDataListForCount(this, object);
-      this.emit(new PropertyGetInstruction(result, countObject, "Count"));
+      this.emit(new PropertyGetInstruction(result, object, "Count"));
       return result;
     }
     let resultType: TypeSymbol | undefined;

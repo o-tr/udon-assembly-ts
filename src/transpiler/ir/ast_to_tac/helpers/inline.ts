@@ -1572,19 +1572,22 @@ function emitSoaInitGuard(
     `__soa_${className}__inited`,
     PrimitiveTypes.int32,
   );
-  const notYetInited = converter.newTemp(PrimitiveTypes.boolean);
+  const alreadyInited = converter.newTemp(PrimitiveTypes.boolean);
+  const runInitLabel = converter.newLabel("soa_init_run");
   const skipInitLabel = converter.newLabel("soa_init_skip");
   converter.emit(
     new BinaryOpInstruction(
-      notYetInited,
+      alreadyInited,
       initedVar,
       "==",
-      createConstant(0, PrimitiveTypes.int32),
+      createConstant(1, PrimitiveTypes.int32),
     ),
   );
-  // ConditionalJump uses JUMP_IF_FALSE: jumps when notYetInited is false
-  // (i.e. already initialized) — skips the init block.
-  converter.emit(new ConditionalJumpInstruction(notYetInited, skipInitLabel));
+  // ConditionalJump uses JUMP_IF_FALSE: only a literal initialized flag (1)
+  // skips the init block; null/unset numeric slots must still initialize.
+  converter.emit(new ConditionalJumpInstruction(alreadyInited, runInitLabel));
+  converter.emit(new UnconditionalJumpInstruction(skipInitLabel));
+  converter.emit(new LabelInstruction(runInitLabel));
 
   converter.emit(
     new AssignmentInstruction(

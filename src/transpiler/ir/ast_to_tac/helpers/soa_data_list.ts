@@ -11,6 +11,7 @@ import {
 } from "../../tac_instruction.js";
 import {
   createConstant,
+  createVariable,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
@@ -75,6 +76,7 @@ export function emitBoundedDataListGetItem(
   sentinelValue: TACOperand | (() => TACOperand) = () =>
     createConstant(null, ObjectType),
   guardListNotNull = false,
+  guardClassName?: string,
 ): void {
   if (guardListNotNull) {
     if (listVar.kind !== TACOperandKind.Variable) {
@@ -100,19 +102,39 @@ export function emitBoundedDataListGetItem(
     // overwrite / clear the pre-existing DataList before skipping.
     const resolvedSentinelValue =
       typeof sentinelValue === "function" ? sentinelValue() : sentinelValue;
-    const boxedList = converter.newTemp(ObjectType);
-    converter.emit(new CopyInstruction(boxedList, listVar));
-    const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
     const listReady = converter.newLabel("soa_list_ready");
-    converter.emit(
-      new BinaryOpInstruction(
-        listIsNull,
-        boxedList,
-        "==",
-        createConstant(null, ObjectType),
-      ),
-    );
-    converter.emit(new ConditionalJumpInstruction(listIsNull, listReady));
+    if (guardClassName) {
+      const initedVar = createVariable(
+        `__soa_${guardClassName}__inited`,
+        PrimitiveTypes.int32,
+      );
+      const alreadyInited = converter.newTemp(PrimitiveTypes.boolean);
+      const seedList = converter.newLabel("soa_seed_list");
+      converter.emit(
+        new BinaryOpInstruction(
+          alreadyInited,
+          initedVar,
+          "==",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emit(new ConditionalJumpInstruction(alreadyInited, seedList));
+      converter.emit(new UnconditionalJumpInstruction(listReady));
+      converter.emit(new LabelInstruction(seedList));
+    } else {
+      const boxedList = converter.newTemp(ObjectType);
+      converter.emit(new CopyInstruction(boxedList, listVar));
+      const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          listIsNull,
+          boxedList,
+          "==",
+          createConstant(null, ObjectType),
+        ),
+      );
+      converter.emit(new ConditionalJumpInstruction(listIsNull, listReady));
+    }
     const listCtorSig = converter.requireExternSignature(
       "DataList",
       "ctor",

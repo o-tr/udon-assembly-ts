@@ -861,6 +861,7 @@ function trySoAMethodDispatch(
         token,
         () => createSoaSentinelValue(converter, scratchVar.type),
         true,
+        soaClassName,
       );
       const unwrapped = converter.unwrapDataToken(token, scratchVar.type);
       converter.emit(new CopyInstruction(scratchVar, unwrapped));
