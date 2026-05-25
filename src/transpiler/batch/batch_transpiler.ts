@@ -67,6 +67,7 @@ import type { EntryProfile } from "../ir/ast_to_tac/profiling.js";
 import { extractProfileData } from "../ir/ast_to_tac/profiling.js";
 import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
+import { emitTsIrToFile } from "../ts_ir/index.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import { discoverTypeScriptFiles } from "./file_discovery.js";
 
@@ -178,6 +179,8 @@ export interface BatchTranspilerOptions {
   allowCircular?: boolean;
   includeExternalDependencies?: boolean;
   outputExtension?: string;
+  /** Optional entry point class names to compile. Defaults to all entry points. */
+  entryPointNames?: string[];
   heapLimit?: number;
   dispatchLimitResolver?: DispatchLimitResolver;
   /**
@@ -271,8 +274,17 @@ export class BatchTranspiler {
     pend("parse-initial", _profParseStart, `files=${sourceFileCount}`);
 
     // Derive entry files from registry instead of discoverEntryFilesUsingTS
+    const entryPointNameFilter =
+      options.entryPointNames && options.entryPointNames.length > 0
+        ? new Set(options.entryPointNames)
+        : null;
+    const selectedEntryPoints = entryPointNameFilter
+      ? registry
+          .getEntryPoints()
+          .filter((ep) => entryPointNameFilter.has(ep.name))
+      : registry.getEntryPoints();
     const entryFiles = [
-      ...new Set(registry.getEntryPoints().map((ep) => ep.filePath)),
+      ...new Set(selectedEntryPoints.map((ep) => ep.filePath)),
     ];
 
     const resolver = new DependencyResolver(options.sourceDir, {
@@ -420,12 +432,24 @@ export class BatchTranspiler {
         for (const f of ep.usedFiles) trackedFiles.add(f);
       }
     }
+    const rawExt = options.outputExtension ?? "tasm";
+    const normalized = rawExt.trim().toLowerCase();
+    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const ext = sanitized.length > 0 ? sanitized : "tasm";
+    if (ext !== "tasm" && ext !== "uasm" && ext !== "ir.ts") {
+      pend("transpile-total", _profTopStart, "error=outputExtension");
+      throw new Error(
+        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm", "ir.ts".`,
+      );
+    }
+
+    const useOutputCache = options.useOutputCache !== false;
     const { changed: changedFiles, computedHashes } = this.getChangedFiles(
       Array.from(trackedFiles),
       cache,
     );
     const entryFilesToCompile = new Set<string>(entryFiles);
-    if (cache) {
+    if (cache && useOutputCache) {
       entryFilesToCompile.clear();
       for (const entryFile of entryFiles) {
         // Tier 3: Use recorded usedFiles when available (faster, avoids full
@@ -485,21 +509,10 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
-    const rawExt = options.outputExtension ?? "tasm";
-    const normalized = rawExt.trim().toLowerCase();
-    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
-    const ext = sanitized.length > 0 ? sanitized : "tasm";
-    if (ext !== "tasm" && ext !== "uasm") {
-      pend("transpile-total", _profTopStart, "error=outputExtension");
-      throw new Error(
-        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
-      );
-    }
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
-    const useOutputCache = options.useOutputCache !== false;
     // Sweep stale output-cache entries when there is no prior cache or when the
     // transpiler hash changed (including v2→v3 upgrades where loadCache injects
     // the current hash but old optcache entries still carry the prior version's).
@@ -519,7 +532,7 @@ export class BatchTranspiler {
     // sweepUnusedSlotFiles does not delete cache files for cached entries.
     const activeSlotFiles = new Set<string>();
     if (useOutputCache) {
-      for (const ep of registry.getEntryPoints()) {
+      for (const ep of selectedEntryPoints) {
         activeSlotFiles.add(
           this.outputCacheFilePath(
             optCacheDir,
@@ -545,7 +558,7 @@ export class BatchTranspiler {
       // re-adds them; this no-op early-return has no other source.
       if (useOutputCache) {
         const currentTranspilerHash = getTranspilerHash();
-        for (const entry of registry.getEntryPoints()) {
+        for (const entry of selectedEntryPoints) {
           const slot = this.outputCacheFilePath(
             optCacheDir,
             entry.name,
@@ -648,7 +661,7 @@ export class BatchTranspiler {
       ...(cache?.entryPoints ?? {}),
     };
 
-    for (const entryPoint of registry.getEntryPoints()) {
+    for (const entryPoint of selectedEntryPoints) {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
         continue;
       }
@@ -896,6 +909,34 @@ export class BatchTranspiler {
             _profOpt,
             `instr=${tacInstructions.length}`,
           );
+        }
+
+        if (ext === "ir.ts") {
+          const outPath = path.join(
+            options.outputDir,
+            `${entryPoint.name}.${ext}`,
+          );
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          emitTsIrToFile(tacInstructions, outPath, {
+            moduleImportPath: "../runtime/index.js",
+            compact: true,
+            mode: "data",
+          });
+          outputs.push({
+            className: entryPoint.name,
+            outputPath: outPath,
+          });
+          entryPointsCache[entryPoint.name] = {
+            usedFiles: this.collectUsedFiles(
+              entryPoint.filePath,
+              entryPoint.name,
+              filteredInlineClassNames,
+              registry,
+              entryCompilationOrder,
+            ),
+          };
+          pend(`entry-${entryPoint.name}`, _profEntryStart, "ts-ir");
+          continue;
         }
 
         const _profCodegen = pmark();

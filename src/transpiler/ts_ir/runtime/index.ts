@@ -192,6 +192,12 @@ export function binaryOp(
       return Number(left) << Number(right);
     case ">>":
       return Number(left) >> Number(right);
+    case "|":
+      return Number(left) | Number(right);
+    case "&":
+      return Number(left) & Number(right);
+    case "^":
+      return Number(left) ^ Number(right);
     case "&&":
       return coerceBool(left) && coerceBool(right);
     case "||":
@@ -214,6 +220,25 @@ export function binaryOp(
       return Number(left) >= Number(right);
     default:
       throw runtimeError(`Unsupported binary operator '${operator}'`, ctx);
+  }
+}
+
+export function unaryOp(
+  operator: string,
+  operand: unknown,
+  ctx: TsIrContext = {},
+): unknown {
+  switch (operator) {
+    case "-":
+      return -Number(operand);
+    case "+":
+      return Number(operand);
+    case "!":
+      return !coerceBool(operand);
+    case "~":
+      return ~Number(operand);
+    default:
+      throw runtimeError(`Unsupported unary operator '${operator}'`, ctx);
   }
 }
 
@@ -291,6 +316,9 @@ export function dispatchExtern(
   ctx: TsIrContext = {},
 ): unknown {
   const externCtx = { ...ctx, extern };
+  if (/Array\.__ctor__SystemInt32__/.test(extern)) {
+    return new Array(castInt(args[0])).fill(undefined);
+  }
   switch (extern) {
     case "VRCSDK3DataDataList.__ctor____VRCSDK3DataDataList":
       return new DataList();
@@ -301,6 +329,15 @@ export function dispatchExtern(
     case "VRCSDK3DataDataToken.__op_Implicit__SystemBoolean__VRCSDK3DataDataToken":
     case "VRCSDK3DataDataToken.__op_Implicit__SystemString__VRCSDK3DataDataToken":
     case "VRCSDK3DataDataToken.__op_Implicit__SystemObject__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__op_Implicit__VRCSDK3DataDataDictionary__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__SystemDouble__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__SystemInt32__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__SystemBoolean__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__SystemString__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__SystemObject__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken":
+    case "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataDictionary__VRCSDK3DataDataToken":
       return dataToken(args[0]);
     case "VRCSDK3DataDataToken.__get_Double__SystemDouble":
     case "VRCSDK3DataDataToken.__get_Int__SystemInt32":
@@ -314,6 +351,13 @@ export function dispatchExtern(
     case "UnityEngineDebug.__LogError__SystemObject__SystemVoid":
       debugLogError(args[0], externCtx);
       return undefined;
+    case "SystemString.__Concat__SystemString_SystemString__SystemString":
+    case "SystemString.__Concat__SystemObject_SystemObject__SystemString":
+      return `${String(args[0])}${String(args[1])}`;
+    case "SystemString.__IsNullOrEmpty__SystemString__SystemBoolean":
+      return args[0] === null || args[0] === undefined || args[0] === "";
+    case "SystemInt32.__Parse__SystemString__SystemInt32":
+      return castInt(args[0]);
     default:
       throw runtimeError(`Unknown extern '${extern}'`, externCtx);
   }
@@ -325,6 +369,41 @@ export function callMethod(
   args: readonly unknown[],
   ctx: TsIrContext = {},
 ): unknown {
+  if (typeof object === "string") {
+    switch (method) {
+      case "Substring": {
+        const start = castInt(args[0]);
+        if (args.length >= 2) {
+          const length = castInt(args[1]);
+          return object.substring(start, start + length);
+        }
+        return object.substring(start);
+      }
+      case "IndexOf":
+      case "indexOf":
+        return object.indexOf(String(args[0]));
+      case "Contains":
+      case "includes":
+        return object.includes(String(args[0]));
+      case "StartsWith":
+      case "startsWith":
+        return object.startsWith(String(args[0]));
+      case "EndsWith":
+      case "endsWith":
+        return object.endsWith(String(args[0]));
+      case "ToString":
+      case "toString":
+        return object;
+      default:
+        throw runtimeError(`Unsupported string method '${method}'`, ctx);
+    }
+  }
+  if (method === "ToString" || method === "toString") {
+    if (object === null || object === undefined || object === NULL_HANDLE) {
+      return "";
+    }
+    return String(object);
+  }
   if (object instanceof DataList) {
     switch (method) {
       case "Add":
@@ -373,6 +452,14 @@ export function getProperty(
   property: string,
   ctx: TsIrContext = {},
 ): unknown {
+  if (Array.isArray(object)) {
+    if (property === "Length") return object.length;
+    throw runtimeError(`Unsupported array property '${property}'`, ctx);
+  }
+  if (typeof object === "string") {
+    if (property === "Length") return object.length;
+    throw runtimeError(`Unsupported string property '${property}'`, ctx);
+  }
   if (object instanceof DataList) {
     if (property === "Count") return dataListCount(object, ctx);
     throw runtimeError(`Unsupported DataList property '${property}'`, ctx);
@@ -423,6 +510,290 @@ export function setProperty(
     return;
   }
   throw runtimeError(`Unsupported property set '${property}'`, ctx);
+}
+
+type EncodedOperand = readonly [string, unknown?];
+type EncodedInstruction = readonly unknown[];
+
+export function runTacProgram(program: readonly EncodedInstruction[]): {
+  readonly heap: Record<string, unknown>;
+  readonly logs: readonly DebugLogEntry[];
+} {
+  clearDebugLogs();
+  const heap: Record<string, unknown> = {};
+  let pc = 0;
+  while (true) {
+    if (pc < 0 || pc > program.length) {
+      throw runtimeError(`Invalid TS IR pc ${pc}`, { pc });
+    }
+    if (pc === program.length) {
+      return { heap, logs: [...debugLogs] };
+    }
+    const instruction = program[pc];
+    if (instruction === undefined) {
+      throw runtimeError(`Missing TS IR instruction at pc ${pc}`, { pc });
+    }
+    const op = String(instruction[0]);
+    const ctx = { pc };
+    switch (op) {
+      case "a": {
+        heap[String(instruction[1])] = readEncodedOperand(
+          instruction[2] as EncodedOperand,
+          heap,
+          ctx,
+        );
+        pc += 1;
+        break;
+      }
+      case "b": {
+        heap[String(instruction[1])] = binaryOp(
+          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          String(instruction[2]),
+          readEncodedOperand(instruction[4] as EncodedOperand, heap, ctx),
+          ctx,
+        );
+        pc += 1;
+        break;
+      }
+      case "u": {
+        heap[String(instruction[1])] = unaryOp(
+          String(instruction[2]),
+          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          ctx,
+        );
+        pc += 1;
+        break;
+      }
+      case "c": {
+        const value = readEncodedOperand(
+          instruction[3] as EncodedOperand,
+          heap,
+          ctx,
+        );
+        switch (instruction[2]) {
+          case "i":
+            heap[String(instruction[1])] = castInt(value);
+            break;
+          case "f":
+            heap[String(instruction[1])] = castFloat(value);
+            break;
+          case "b":
+            heap[String(instruction[1])] = coerceBool(value);
+            break;
+          default:
+            heap[String(instruction[1])] = value;
+            break;
+        }
+        pc += 1;
+        break;
+      }
+      case "cj":
+        pc = coerceBool(
+          readEncodedOperand(instruction[1] as EncodedOperand, heap, ctx),
+        )
+          ? pc + 1
+          : Number(instruction[2]);
+        break;
+      case "j":
+        pc = Number(instruction[1]);
+        break;
+      case "l":
+        pc += 1;
+        break;
+      case "call": {
+        const value = dispatchExtern(
+          String(instruction[2]),
+          readEncodedOperands(instruction[3], heap, ctx),
+          ctx,
+        );
+        if (instruction[1] !== null) heap[String(instruction[1])] = value;
+        pc += 1;
+        break;
+      }
+      case "m": {
+        const value = callMethod(
+          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
+          String(instruction[3]),
+          readEncodedOperands(instruction[4], heap, ctx),
+          ctx,
+        );
+        if (instruction[1] !== null) heap[String(instruction[1])] = value;
+        pc += 1;
+        break;
+      }
+      case "pg":
+        heap[String(instruction[1])] = getProperty(
+          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
+          String(instruction[3]),
+          ctx,
+        );
+        pc += 1;
+        break;
+      case "ag":
+        heap[String(instruction[1])] = getArrayItem(
+          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
+          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          ctx,
+        );
+        pc += 1;
+        break;
+      case "aa":
+        setArrayItem(
+          readEncodedOperand(instruction[1] as EncodedOperand, heap, ctx),
+          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
+          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          ctx,
+        );
+        pc += 1;
+        break;
+      case "ps":
+        setProperty(
+          readEncodedOperand(instruction[1] as EncodedOperand, heap, ctx),
+          String(instruction[2]),
+          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          ctx,
+        );
+        pc += 1;
+        break;
+      case "r": {
+        if (instruction[1] !== null && instruction[2] !== null) {
+          heap[String(instruction[2])] = readEncodedOperand(
+            instruction[1] as EncodedOperand,
+            heap,
+            ctx,
+          );
+        }
+        return { heap, logs: [...debugLogs] };
+      }
+      case "unsupported":
+        throw runtimeError(
+          `Unsupported TAC instruction kind '${String(instruction[1])}'`,
+          ctx,
+        );
+      default:
+        throw runtimeError(`Unsupported encoded TAC op '${op}'`, ctx);
+    }
+  }
+}
+
+function getArrayItem(array: unknown, index: unknown, ctx: TsIrContext): unknown {
+  if (!Array.isArray(array)) {
+    throw runtimeError("Array access target is not an array", ctx);
+  }
+  return array[castInt(index)];
+}
+
+function setArrayItem(
+  array: unknown,
+  index: unknown,
+  value: unknown,
+  ctx: TsIrContext,
+): void {
+  if (!Array.isArray(array)) {
+    throw runtimeError("Array assignment target is not an array", ctx);
+  }
+  array[castInt(index)] = value;
+}
+
+function readEncodedOperands(
+  operands: unknown,
+  heap: Record<string, unknown>,
+  ctx: TsIrContext,
+): unknown[] {
+  if (!Array.isArray(operands)) {
+    throw runtimeError("Encoded TAC operands are not an array", ctx);
+  }
+  return operands.map((operand) =>
+    readEncodedOperand(operand as EncodedOperand, heap, ctx),
+  );
+}
+
+function readEncodedOperand(
+  operand: EncodedOperand,
+  heap: Record<string, unknown>,
+  ctx: TsIrContext,
+): unknown {
+  switch (operand[0]) {
+    case "s": {
+      const slot = String(operand[1]);
+      if (heap[slot] === undefined && slot.endsWith("__inited")) {
+        return 0;
+      }
+      if (heap[slot] === undefined && slot.endsWith("_stackInit")) {
+        return false;
+      }
+      if (heap[slot] === undefined && slot === "options") {
+        return null;
+      }
+      if (heap[slot] === undefined && slot.startsWith("options_")) {
+        return 0;
+      }
+      if (heap[slot] === undefined && slot === "lastAddedTile") {
+        return null;
+      }
+      if (heap[slot] === undefined) {
+        const resolved = resolveInlineFieldSlot(slot, heap);
+        if (resolved.found) return resolved.value;
+      }
+      if (
+        heap[slot] === undefined &&
+        (slot.startsWith("__inst_") ||
+          slot.startsWith("__viface_") ||
+          slot.startsWith("__inline_") ||
+          slot.startsWith("__inline_ret_") ||
+          slot.startsWith("__inlineRec_") ||
+          slot.startsWith("__inlineRecInst_") ||
+          slot.startsWith("__outline_") ||
+          slot.startsWith("__tmp"))
+      ) {
+        return 0;
+      }
+      return readSlot(heap[slot], slot, ctx);
+    }
+    case "k":
+      return operand[1];
+    case "bi":
+      return BigInt(String(operand[1]));
+    case "label":
+      return String(operand[1]);
+    default:
+      throw runtimeError(`Unsupported encoded TAC operand '${operand[0]}'`, ctx);
+  }
+}
+
+function resolveInlineFieldSlot(
+  slot: string,
+  heap: Record<string, unknown>,
+): { readonly found: boolean; readonly value?: unknown } {
+  let bestParent = "";
+  let bestHandle: unknown;
+  for (const [name, value] of Object.entries(heap)) {
+    if (
+      !slot.startsWith(`${name}_`) ||
+      value === undefined ||
+      value === null ||
+      value === NULL_HANDLE ||
+      !Number.isFinite(Number(value))
+    ) {
+      continue;
+    }
+    if (name.length > bestParent.length) {
+      bestParent = name;
+      bestHandle = value;
+    }
+  }
+  if (!bestParent) return { found: false };
+
+  const suffix = slot.slice(bestParent.length + 1);
+  for (const [name, value] of Object.entries(heap)) {
+    if (!name.endsWith("__handle") || value !== bestHandle) continue;
+    const prefix = name.slice(0, -"__handle".length);
+    const candidate = `${prefix}_${suffix}`;
+    if (Object.prototype.hasOwnProperty.call(heap, candidate)) {
+      return { found: true, value: heap[candidate] };
+    }
+  }
+  return { found: false };
 }
 
 function isDataToken(value: unknown): value is DataToken<unknown> {

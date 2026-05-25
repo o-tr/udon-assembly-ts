@@ -2,6 +2,7 @@ node_modules/
 dist/
 output/
 generated/
+.transpiler-cache.json
 *.log
 .env
 
