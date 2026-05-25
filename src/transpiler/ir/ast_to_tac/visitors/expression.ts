@@ -4646,6 +4646,11 @@ export function visitObjectLiteralExpression(
       className,
     });
     this.allInlineInstanceIdsByPrefix.set(instancePrefix, instanceId);
+    this.structuralFieldPrefixes.add(instancePrefix);
+    const instanceFieldTypes =
+      this.structuralFieldPrefixTypes.get(instancePrefix) ??
+      new Map<string, TypeSymbol>();
+    this.structuralFieldPrefixTypes.set(instancePrefix, instanceFieldTypes);
     if (className.startsWith("__anon_")) {
       this.anonymousInlineClassNames.add(className);
     }
@@ -4661,6 +4666,7 @@ export function visitObjectLiteralExpression(
         `${instancePrefix}_${prop.key}`,
         propType ?? ObjectType,
       );
+      instanceFieldTypes.set(prop.key, propType ?? ObjectType);
       // Propagate expected type for nested typed object literals
       const prev = this.currentExpectedType;
       if (

@@ -3799,6 +3799,63 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    it("object literal handle assignments populate structural local fields", () => {
+      const source = `
+        type Hand = { tiles: number[] };
+        type Context = { hand: Hand };
+
+        class Main {
+          use(ctx: Context): number {
+            return ctx.hand.tiles.length;
+          }
+
+          Start(): void {
+            const hand: Hand = { tiles: [1, 2, 3] };
+            const ctx: Context = { hand };
+            Debug.Log(this.use(ctx));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/ctx_hand = __inst_Context_\d+_hand/);
+      expect(result.tac).toMatch(
+        /ctx_hand_tiles = __inst_Context_\d+_hand_tiles/,
+      );
+      expect(result.tac).not.toContain(
+        "[udon-assembly-ts] D3 dispatch miss: hand on untracked instance",
+      );
+    });
+
+    it("structural reassignments preserve object literal fields", () => {
+      const source = `
+        type Candidate = {
+          yaku: string[];
+          han: number;
+          points: number;
+        };
+
+        class Main {
+          Start(): void {
+            let best: Candidate | null = null;
+            const candidate: Candidate = {
+              yaku: ["Haku"],
+              han: 1,
+              points: 1000,
+            };
+            best = candidate;
+            Debug.Log(best.han);
+            Debug.Log(best.yaku.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/best_han = candidate_han/);
+      expect(result.tac).toMatch(/best_yaku = candidate_yaku/);
+      expect(result.tac).toMatch(/best_points = candidate_points/);
+    });
+
     it("object destructuring preserves nested structural property fields", () => {
       const source = `
         type Child = { count: number };

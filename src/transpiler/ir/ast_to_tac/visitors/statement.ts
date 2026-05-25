@@ -744,6 +744,23 @@ export function visitVariableDeclaration(
     const structuralType = structuralInterfaceForType(this, destType);
     const srcKey = operandTrackingKey(src);
     const destKey = operandTrackingKey(dest);
+    if (destKey && node.initializer?.kind === ASTNodeKind.ObjectLiteralExpression) {
+      const objectLiteral = node.initializer as ObjectLiteralExpressionNode;
+      const fieldTypes =
+        this.structuralFieldPrefixTypes.get(destKey) ??
+        new Map<string, TypeSymbol>();
+      for (const prop of objectLiteral.properties) {
+        if (prop.kind !== "property") continue;
+        fieldTypes.set(
+          prop.key,
+          resolveTypeFromNode(this, prop.value) ?? ObjectType,
+        );
+      }
+      if (fieldTypes.size > 0) {
+        this.structuralFieldPrefixTypes.set(destKey, fieldTypes);
+        this.structuralFieldPrefixes.add(destKey);
+      }
+    }
     // Only run structural field propagation when the source actually maps to
     // an inline instance. For untracked sources (e.g. a temporary holding the
     // result of `cond ? a : b` where each branch is a different concrete
@@ -753,11 +770,22 @@ export function visitVariableDeclaration(
     // through to D-3 untracked-handle dispatch.
     const srcMapping =
       structuralType && srcKey ? this.resolveInlineInstance(srcKey) : undefined;
+    const sourceHandlePrefix =
+      srcKey && srcKey.endsWith("__handle")
+        ? srcKey.slice(0, -"__handle".length)
+        : undefined;
     const sourcePrefixFromNamedSlots =
       structuralType && srcKey
         ? this.structuralFieldPrefixes.has(srcKey) ||
           Array.from(structuralType.properties.keys()).some((propName) =>
             this.symbolTable.lookup(`${srcKey}_${propName}`),
+          )
+        : false;
+    const sourcePrefixFromHandleSlots =
+      structuralType && sourceHandlePrefix
+        ? this.structuralFieldPrefixes.has(sourceHandlePrefix) ||
+          Array.from(structuralType.properties.keys()).some((propName) =>
+            this.symbolTable.lookup(`${sourceHandlePrefix}_${propName}`),
           )
         : false;
     const sourcePrefixFromStructuralProperty =
@@ -766,6 +794,8 @@ export function visitVariableDeclaration(
       node.initializer?.kind === ASTNodeKind.PropertyAccessExpression;
     const sourcePrefix = sourcePrefixFromNamedSlots
       ? srcKey
+      : sourcePrefixFromHandleSlots
+        ? sourceHandlePrefix
       : srcMapping
         ? srcMapping.prefix
         : sourcePrefixFromStructuralProperty
@@ -809,20 +839,34 @@ export function visitVariableDeclaration(
       this.untrackedStructuralHandleVars.add(destKey);
     } else if (!structuralType && srcKey && destKey) {
       const sourceFieldTypes = this.structuralFieldPrefixTypes.get(srcKey);
-      if (sourceFieldTypes) {
+      const sourceHandlePrefix = srcKey.endsWith("__handle")
+        ? srcKey.slice(0, -"__handle".length)
+        : undefined;
+      const copiedSourceFieldTypes =
+        sourceFieldTypes ??
+        (sourceHandlePrefix
+          ? this.structuralFieldPrefixTypes.get(sourceHandlePrefix)
+          : undefined);
+      const copiedSourcePrefix = sourceFieldTypes
+        ? srcKey
+        : sourceHandlePrefix;
+      if (copiedSourceFieldTypes && copiedSourcePrefix) {
         const targetFieldTypes =
           this.structuralFieldPrefixTypes.get(destKey) ??
           new Map<string, TypeSymbol>();
         this.structuralFieldPrefixTypes.set(destKey, targetFieldTypes);
         this.structuralFieldPrefixes.add(destKey);
-        for (const [propertyName, propertyType] of sourceFieldTypes) {
+        for (const [propertyName, propertyType] of copiedSourceFieldTypes) {
           targetFieldTypes.set(propertyName, propertyType);
           this.emit(
             new CopyInstruction(
               createVariable(`${destKey}_${propertyName}`, propertyType, {
                 isLocal,
               }),
-              createVariable(`${srcKey}_${propertyName}`, propertyType),
+              createVariable(
+                `${copiedSourcePrefix}_${propertyName}`,
+                propertyType,
+              ),
             ),
           );
         }
@@ -2210,6 +2254,54 @@ export function visitReturnStatement(
           );
         }
         returnPayload = this.wrapDataToken(value);
+      }
+      const returnKey = operandTrackingKey(inlineContext.returnVar);
+      const valueKey = operandTrackingKey(value);
+      let valueFieldSourceKey = valueKey;
+      let valueFieldTypes = valueKey
+        ? this.structuralFieldPrefixTypes.get(valueKey)
+        : undefined;
+      if (valueKey && !valueFieldTypes) {
+        const scanStart = Math.max(0, this.instructions.length - 512);
+        for (let i = this.instructions.length - 1; i >= scanStart; i--) {
+          const instruction = this.instructions[i];
+          if (
+            !(
+              instruction instanceof CopyInstruction ||
+              instruction instanceof AssignmentInstruction
+            )
+          ) {
+            continue;
+          }
+          if (operandTrackingKey(instruction.dest) !== valueKey) continue;
+          const sourceKey = operandTrackingKey(instruction.src);
+          if (!sourceKey) continue;
+          const sourceFieldTypes =
+            this.structuralFieldPrefixTypes.get(sourceKey);
+          if (!sourceFieldTypes) continue;
+          valueFieldSourceKey = sourceKey;
+          valueFieldTypes = sourceFieldTypes;
+          break;
+        }
+      }
+      if (returnKey && valueFieldSourceKey && valueFieldTypes) {
+        const returnFieldTypes =
+          this.structuralFieldPrefixTypes.get(returnKey) ??
+          new Map<string, TypeSymbol>();
+        this.structuralFieldPrefixTypes.set(returnKey, returnFieldTypes);
+        this.structuralFieldPrefixes.add(returnKey);
+        for (const [propertyName, propertyType] of valueFieldTypes) {
+          returnFieldTypes.set(propertyName, propertyType);
+          this.emit(
+            new CopyInstruction(
+              createVariable(`${returnKey}_${propertyName}`, propertyType),
+              createVariable(
+                `${valueFieldSourceKey}_${propertyName}`,
+                propertyType,
+              ),
+            ),
+          );
+        }
       }
       this.emit(new CopyInstruction(inlineContext.returnVar, returnPayload));
       if (inlineContext.isErasedReturn) {

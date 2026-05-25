@@ -5617,6 +5617,70 @@ export function emitCopyWithTracking(
   } else if (clearIfUntracked) {
     this.inlineInstanceMap.delete(destName);
   }
+  if (srcName && destName !== srcName) {
+    const sourceHandlePrefix = srcName.endsWith("__handle")
+      ? srcName.slice(0, -"__handle".length)
+      : undefined;
+    const sourceInfoFieldTypes =
+      srcInfo && structuralInterfaceForType(this, this.typeMapper.getAlias(srcInfo.className) ?? srcType)
+        ? structuralInterfaceForType(
+            this,
+            this.typeMapper.getAlias(srcInfo.className) ?? srcType,
+          )?.properties
+        : undefined;
+    let inferredSourceFieldTypes: Map<string, TypeSymbol> | undefined;
+    const inferSourceFieldTypes = (): Map<string, TypeSymbol> | undefined => {
+      const inferred = new Map<string, TypeSymbol>();
+      const prefix = `${srcName}_`;
+      const scanStart = Math.max(0, this.instructions.length - 512);
+      for (let i = this.instructions.length - 1; i >= scanStart; i--) {
+        const instruction = this.instructions[i];
+        if (
+          !(
+            instruction instanceof CopyInstruction ||
+            instruction instanceof AssignmentInstruction
+          )
+        ) {
+          continue;
+        }
+        const fieldName = operandTrackingKey(instruction.dest);
+        if (!fieldName?.startsWith(prefix)) continue;
+        inferred.set(
+          fieldName.slice(prefix.length),
+          this.getOperandType(instruction.dest),
+        );
+      }
+      return inferred.size > 0 ? inferred : undefined;
+    };
+    const sourceFieldTypes =
+      this.structuralFieldPrefixTypes.get(srcName) ??
+      (sourceHandlePrefix
+        ? this.structuralFieldPrefixTypes.get(sourceHandlePrefix)
+        : undefined) ??
+      sourceInfoFieldTypes ??
+      (inferredSourceFieldTypes = inferSourceFieldTypes());
+    const sourcePrefix = this.structuralFieldPrefixTypes.has(srcName)
+      ? srcName
+      : sourceHandlePrefix && this.structuralFieldPrefixTypes.has(sourceHandlePrefix)
+        ? sourceHandlePrefix
+        : srcInfo?.prefix ?? (inferredSourceFieldTypes ? srcName : undefined);
+    if (sourceFieldTypes && sourcePrefix) {
+      const targetFieldTypes =
+        this.structuralFieldPrefixTypes.get(destName) ??
+        new Map<string, TypeSymbol>();
+      this.structuralFieldPrefixTypes.set(destName, targetFieldTypes);
+      this.structuralFieldPrefixes.add(destName);
+      for (const [propertyName, propertyType] of sourceFieldTypes) {
+        targetFieldTypes.set(propertyName, propertyType);
+        this.emit(
+          new CopyInstruction(
+            createVariable(`${destName}_${propertyName}`, propertyType),
+            createVariable(`${sourcePrefix}_${propertyName}`, propertyType),
+          ),
+        );
+      }
+    }
+  }
 }
 
 /**
