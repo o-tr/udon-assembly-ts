@@ -54,6 +54,33 @@ describe("inline instance tracking across method boundaries", () => {
     expect(startSection).not.toMatch(/EXTERN.*Config/);
   });
 
+  it("restores structural fields when an inline parameter shadows a caller local", () => {
+    const source = `
+      type Ctx = { isTsumo: boolean };
+      class Helper {
+        check(context: Ctx): boolean {
+          return context.isTsumo;
+        }
+      }
+      class Entry {
+        test(context: Ctx): boolean {
+          const alt: Ctx = { isTsumo: false };
+          new Helper().check(alt);
+          return context.isTsumo;
+        }
+        Start(): void {
+          const context: Ctx = { isTsumo: true };
+          Debug.Log(this.test(context));
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/__tmp\d+_isTsumo = context_isTsumo/);
+    expect(result.tac).toMatch(/context_isTsumo = __tmp\d+_isTsumo/);
+    expect(result.tac).toContain("return context_isTsumo");
+  });
+
   it("tracks inline class instance through inlined instance method parameter", () => {
     const source = `
       class Vec2 {

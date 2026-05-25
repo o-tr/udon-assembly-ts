@@ -354,11 +354,9 @@ function tryReadPopulatedStructuralFieldSlot(
   property: string,
 ): TACOperand | undefined {
   if (!converter.structuralFieldPrefixes.has(slotBase)) return undefined;
-  const propType = resolveStructuralPropertyType(
-    converter,
-    receiverType,
-    property,
-  ) ?? converter.structuralFieldPrefixTypes.get(slotBase)?.get(property);
+  const propType =
+    resolveStructuralPropertyType(converter, receiverType, property) ??
+    converter.structuralFieldPrefixTypes.get(slotBase)?.get(property);
   if (!propType) return undefined;
   return createVariable(`${slotBase}_${property}`, propType, { isLocal: true });
 }
@@ -1048,6 +1046,16 @@ export function resolveMethodReturnType(
 ): TypeSymbol | null {
   const typeName = baseType.name;
   if (!typeName) return null;
+
+  if (
+    methodName === "includes" &&
+    (baseType instanceof ArrayTypeSymbol ||
+      baseType instanceof DataListTypeSymbol ||
+      baseType instanceof NativeArrayTypeSymbol ||
+      baseType.udonType === ExternTypes.dataList.udonType)
+  ) {
+    return PrimitiveTypes.boolean;
+  }
 
   // Check class registry for inline classes.
   // getMergedMethods does not filter by static, so both instance and static

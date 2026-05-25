@@ -4149,7 +4149,7 @@ export function visitCallExpression(
       resolvedOptBaseType && !isPlainObjectType(resolvedOptBaseType)
         ? resolvedOptBaseType
         : this.getOperandType(objTemp);
-    const resolvedReturnType = resolveMethodReturnType(
+    let resolvedReturnType = resolveMethodReturnType(
       this,
       optBaseType,
       opt.property,
@@ -4223,6 +4223,7 @@ export function visitCallExpression(
         typeArguments: node.typeArguments,
       } as CallExpressionNode);
       if (propCallResult !== VOID_RETURN) {
+        resolvedReturnType ??= this.getOperandType(propCallResult);
         this.emitCopyWithTracking(callResult, propCallResult);
         const callResultName = operandTrackingKey(callResult);
         if (callResultName) {

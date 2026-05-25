@@ -1032,6 +1032,17 @@ export function saveAndBindInlineParams(
           createVariable(param.name, slotType, { isParameter: true }),
         ),
       );
+      const backupKey = operandTrackingKey(backupTemp);
+      if (backupKey) {
+        emitStructuralFieldCopies(
+          converter,
+          backupKey,
+          slotType,
+          createVariable(param.name, slotType, { isParameter: true }),
+          { isLocal: true },
+          true,
+        );
+      }
       valueBackup = { temp: backupTemp, slotType };
     }
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
@@ -1257,6 +1268,14 @@ export function restoreInlineParams(
           }),
           entry.valueBackup.temp,
         ),
+      );
+      emitStructuralFieldCopies(
+        converter,
+        name,
+        entry.valueBackup.slotType,
+        entry.valueBackup.temp,
+        { isParameter: true },
+        true,
       );
     }
     // Remove untracked-handle status added during this expansion so that

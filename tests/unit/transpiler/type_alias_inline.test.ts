@@ -170,6 +170,45 @@ describe("type alias inline heap variables", () => {
     expect(result.uasm).not.toContain("EXTERN");
   });
 
+  it("inlines object literals assigned through indexed access type aliases", () => {
+    const source = `
+      type ScoreResult = {
+        payment:
+          | { type: "ron"; ron: number }
+          | { type: "tsumo"; tsumo: { dealer: number; nonDealer: number } };
+      };
+
+      class ScoringService {
+        calculate(): ScoreResult {
+          let payment: ScoreResult["payment"];
+          payment = {
+            type: "tsumo",
+            tsumo: { dealer: 4000, nonDealer: 2000 },
+          };
+          return { payment };
+        }
+      }
+
+      class Main {
+        Start(): void {
+          const score = new ScoringService().calculate();
+          if (score.payment.type === "tsumo") {
+            Debug.Log(score.payment.tsumo.dealer);
+            Debug.Log(score.payment.tsumo.nonDealer);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/__inst___anon_union_\d+_\d+_type/);
+    expect(result.tac).toMatch(
+      /score_payment_type = __inline_ret_\d+_payment_type/,
+    );
+    expect(result.tac).not.toContain("DataDictionary.__ctor__");
+    expect(result.tac).not.toContain("D3 dispatch miss: type");
+  });
+
   it("inlines nested typed object literals", () => {
     const source = `
       type Inner = { x: number };
