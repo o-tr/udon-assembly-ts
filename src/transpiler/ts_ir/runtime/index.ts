@@ -593,12 +593,14 @@ export function runTacProgram(
     const ctx = { pc };
     switch (op) {
       case "a": {
-        heap[String(instruction[1])] = readEncodedOperand(
-          instruction[2] as EncodedOperand,
-          heap,
-          ctx,
-          slotDefaults,
-        );
+        const dest = String(instruction[1]);
+        const source = instruction[2] as EncodedOperand;
+        heap[dest] = readEncodedOperand(source, heap, ctx, slotDefaults);
+        if (source[0] === "s") {
+          heap[aliasSlot(dest)] = String(source[1]);
+        } else {
+          delete heap[aliasSlot(dest)];
+        }
         pc += 1;
         break;
       }
@@ -866,6 +868,10 @@ function readEncodedOperand(
       if (heap[slot] === undefined && slot.endsWith("__inited")) {
         return 0;
       }
+      if (heap[slot] === undefined) {
+        const resolved = resolveInlineFieldSlot(slot, heap);
+        if (resolved.found) return resolved.value;
+      }
       if (heap[slot] === undefined && slot in slotDefaults) {
         return defaultValueForCode(slotDefaults[slot]);
       }
@@ -880,10 +886,6 @@ function readEncodedOperand(
       }
       if (heap[slot] === undefined && slot === "lastAddedTile") {
         return null;
-      }
-      if (heap[slot] === undefined) {
-        const resolved = resolveInlineFieldSlot(slot, heap);
-        if (resolved.found) return resolved.value;
       }
       if (
         heap[slot] === undefined &&
@@ -935,6 +937,21 @@ function resolveInlineFieldSlot(
   slot: string,
   heap: Record<string, unknown>,
 ): { readonly found: boolean; readonly value?: unknown } {
+  const tempAlias = /^__tmp(\d+)_(.+)$/.exec(slot);
+  if (tempAlias) {
+    const tempId = tempAlias[1];
+    const suffix = tempAlias[2];
+    if (tempId === undefined || suffix === undefined) {
+      return { found: false };
+    }
+    const resolved = resolveInlineFieldFromParent(
+      `__t${tempId}`,
+      suffix,
+      heap,
+    );
+    if (resolved.found) return resolved;
+  }
+
   let bestParent = "";
   let bestHandle: unknown;
   for (const [name, value] of Object.entries(heap)) {
@@ -955,6 +972,45 @@ function resolveInlineFieldSlot(
   if (!bestParent) return { found: false };
 
   const suffix = slot.slice(bestParent.length + 1);
+  return resolveInlineFieldFromParent(bestParent, suffix, heap);
+}
+
+function resolveInlineFieldFromParent(
+  parent: string,
+  suffix: string,
+  heap: Record<string, unknown>,
+  seen: ReadonlySet<string> = new Set(),
+): { readonly found: boolean; readonly value?: unknown } {
+  if (seen.has(parent)) return { found: false };
+  const nextSeen = new Set(seen);
+  nextSeen.add(parent);
+
+  const directAlias = `${parent}_${suffix}`;
+  if (Object.prototype.hasOwnProperty.call(heap, directAlias)) {
+    return { found: true, value: heap[directAlias] };
+  }
+
+  const copiedFrom = heap[aliasSlot(parent)];
+  if (typeof copiedFrom === "string") {
+    const resolved = resolveInlineFieldFromParent(
+      copiedFrom,
+      suffix,
+      heap,
+      nextSeen,
+    );
+    if (resolved.found) return resolved;
+  }
+
+  const bestHandle = heap[parent];
+  if (
+    bestHandle === undefined ||
+    bestHandle === null ||
+    bestHandle === NULL_HANDLE ||
+    !Number.isFinite(Number(bestHandle))
+  ) {
+    return { found: false };
+  }
+
   for (const [name, value] of Object.entries(heap)) {
     if (!name.endsWith("__handle") || value !== bestHandle) continue;
     const prefix = name.slice(0, -"__handle".length);
@@ -964,6 +1020,10 @@ function resolveInlineFieldSlot(
     }
   }
   return { found: false };
+}
+
+function aliasSlot(slot: string): string {
+  return `__tsir_alias_${slot}`;
 }
 
 function isDataToken(value: unknown): value is DataToken<unknown> {
