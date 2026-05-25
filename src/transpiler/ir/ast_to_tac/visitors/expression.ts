@@ -4443,6 +4443,36 @@ export function visitPropertyAccessExpression(
           resultType;
       }
     }
+    if (
+      objectType instanceof InterfaceTypeSymbol &&
+      objectType.properties.has(node.property) &&
+      !this.udonBehaviourClasses.has(objectType.name)
+    ) {
+      const missType = resultType ?? objectType.properties.get(node.property);
+      const missResult = this.newTemp(missType ?? ObjectType);
+      this.emit(
+        new AssignmentInstruction(
+          missResult,
+          createSoaSentinelValue(this, missType ?? ObjectType),
+        ),
+      );
+      const logExtern = this.requireExternSignature(
+        "Debug",
+        "LogError",
+        "method",
+        ["object"],
+        "void",
+      );
+      this.emit(
+        new CallInstruction(undefined, logExtern, [
+          createConstant(
+            `[udon-assembly-ts] structural dispatch miss: ${node.property} on untracked interface value`,
+            PrimitiveTypes.string,
+          ),
+        ]),
+      );
+      return missResult;
+    }
     const result = this.newTemp(resultType ?? ObjectType);
 
     this.emit(new PropertyGetInstruction(result, object, node.property));

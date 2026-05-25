@@ -3720,5 +3720,52 @@ class Main extends UdonSharpBehaviour {
       expect(result.tac).toContain("__inst_Candidate_0_decomposition");
       expect(result.tac).toContain("__inst_Candidate_0_estimate_maxHan");
     });
+
+    it("anonymous Array<T> structural destructuring avoids raw SystemObject property externs", () => {
+      const source = `
+        type UdonInt = number & { __brand: "UdonInt" };
+        type WinDecomposition = { waitType: string };
+
+        class Analyzer {
+          run(
+            items: Array<{
+              decomposition: WinDecomposition;
+              estimate: { minHan: UdonInt; maxHan: UdonInt };
+            }>,
+          ): void {
+            const filteredCandidates: Array<{
+              decomposition: WinDecomposition;
+              estimate: { minHan: UdonInt; maxHan: UdonInt };
+            }> = [];
+            for (const candidate of items) filteredCandidates.push(candidate);
+            const topCandidates = filteredCandidates.slice(0, 1);
+            for (const { decomposition, estimate } of topCandidates) {
+              Debug.Log(decomposition.waitType);
+              Debug.Log(estimate.maxHan);
+            }
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const analyzer = new Analyzer();
+            const items: Array<{
+              decomposition: WinDecomposition;
+              estimate: { minHan: UdonInt; maxHan: UdonInt };
+            }> = [];
+            analyzer.run(items);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain("SystemObject.__get_decomposition");
+      expect(result.uasm).not.toContain("SystemObject.__get_estimate");
+      expect(result.uasm).not.toContain("SystemObject.__get_waitType");
+      expect(result.uasm).not.toContain("SystemObject.__get_maxHan");
+      expect(result.tac).toContain(
+        "[udon-assembly-ts] structural dispatch miss: decomposition on untracked interface value",
+      );
+    });
   });
 });
