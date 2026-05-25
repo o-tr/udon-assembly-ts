@@ -586,6 +586,163 @@ function tryReadPopulatedStructuralFieldSlot(
   return createVariable(`${slotBase}_${property}`, propType, { isLocal: true });
 }
 
+function tryEmitStructuralInterfacePropertyDispatch(
+  converter: ASTToTACConverter,
+  object: TACOperand,
+  interfaceType: InterfaceTypeSymbol,
+  property: string,
+  resultType: TypeSymbol,
+): TACOperand | undefined {
+  const dispInstances: Array<[number, { prefix: string; className: string }]> =
+    [];
+  for (const [instId, info] of converter.allInlineInstances) {
+    if (
+      hasAssignableStructuralProperty(
+        converter,
+        info.className,
+        interfaceType,
+        property,
+      )
+    ) {
+      dispInstances.push([instId, info]);
+    }
+  }
+  const dispatchLimit = converter.dispatchLimitResolver.getLimit({
+    property,
+    usedErasedFallback: true,
+    isStructuralUnionDispatch: false,
+  });
+  if (dispInstances.length === 0 || dispInstances.length > dispatchLimit) {
+    return undefined;
+  }
+
+  const result = converter.newTemp(resultType);
+  converter.emit(
+    new AssignmentInstruction(
+      result,
+      createSoaSentinelValue(converter, resultType),
+    ),
+  );
+  const hdlVar = normalizeOperandToInt32(converter, object);
+  const endLabel = converter.newLabel("struct_prop_end");
+  for (const [, info] of dispInstances) {
+    const nextLabel = converter.newLabel("struct_prop_next");
+    const cond = converter.newTemp(PrimitiveTypes.boolean);
+    const isRuntimeSoAInstance = converter.soaInstancePrefixes.has(info.prefix);
+    if (isRuntimeSoAInstance && converter.soaClasses.has(info.className)) {
+      const offset = converter.soaClassOffsets.get(info.className);
+      if (offset === undefined) {
+        converter.emit(
+          new BinaryOpInstruction(
+            cond,
+            hdlVar,
+            "==",
+            createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+          ),
+        );
+      } else {
+        const lowerCond = converter.newTemp(PrimitiveTypes.boolean);
+        const upperCond = converter.newTemp(PrimitiveTypes.boolean);
+        const rangeEnd = converter.newLabel("struct_prop_range_end");
+        converter.emit(
+          new AssignmentInstruction(
+            cond,
+            createConstant(false, PrimitiveTypes.boolean),
+          ),
+        );
+        converter.emit(
+          new BinaryOpInstruction(
+            lowerCond,
+            hdlVar,
+            ">=",
+            createConstant(offset + 1, PrimitiveTypes.int32),
+          ),
+        );
+        converter.emit(new ConditionalJumpInstruction(lowerCond, rangeEnd));
+        converter.emit(
+          new BinaryOpInstruction(
+            upperCond,
+            hdlVar,
+            "<",
+            createConstant(offset + SOA_PARTITION_SIZE, PrimitiveTypes.int32),
+          ),
+        );
+        converter.emit(new ConditionalJumpInstruction(upperCond, rangeEnd));
+        converter.emit(
+          new AssignmentInstruction(
+            cond,
+            createConstant(true, PrimitiveTypes.boolean),
+          ),
+        );
+        converter.emit(new LabelInstruction(rangeEnd));
+      }
+    } else {
+      const instanceHandle = createVariable(
+        `${info.prefix}__handle`,
+        PrimitiveTypes.int32,
+      );
+      const nonZeroHandleCond = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(cond, hdlVar, "==", instanceHandle),
+      );
+      converter.emit(
+        new BinaryOpInstruction(
+          nonZeroHandleCond,
+          instanceHandle,
+          "!=",
+          createConstant(0, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
+      converter.emit(
+        new ConditionalJumpInstruction(nonZeroHandleCond, nextLabel),
+      );
+    }
+    if (isRuntimeSoAInstance && converter.soaClasses.has(info.className)) {
+      const fieldList = converter.soaFieldLists
+        .get(info.className)
+        ?.get(property);
+      if (fieldList) {
+        const indexVar = emitSoaHandleToIndex(
+          converter,
+          hdlVar,
+          info.className,
+        );
+        const token = converter.newTemp(ExternTypes.dataToken);
+        emitBoundedDataListGetItem(
+          converter,
+          fieldList,
+          indexVar,
+          token,
+          createSoaSentinelValue(converter, resultType),
+          true,
+          info.className,
+        );
+        converter.emitCopyWithTracking(
+          result,
+          converter.unwrapDataToken(token, resultType),
+        );
+      }
+    } else {
+      const mapped =
+        converter.mapInlineProperty(info.className, info.prefix, property) ??
+        tryMapAliasInlineProperty(
+          converter,
+          info.className,
+          info.prefix,
+          property,
+        );
+      if (mapped) {
+        converter.emitCopyWithTracking(result, mapped);
+      }
+    }
+    converter.emit(new UnconditionalJumpInstruction(endLabel));
+    converter.emit(new LabelInstruction(nextLabel));
+  }
+  converter.emit(new LabelInstruction(endLabel));
+  return result;
+}
+
 function inferIdentifierInitialPropertyClassName(
   converter: ASTToTACConverter,
   node: ASTNode,
@@ -3972,14 +4129,8 @@ export function visitPropertyAccessExpression(
                 ? untrackedAlias
                 : null;
           if (structuralIface?.properties.has(node.property)) {
-            const preferAnonymousStructural =
-              structuralIface.name.startsWith("__anon_") &&
-              !structuralIface.name.startsWith("__anon_union_");
             for (const [instId, info] of this.allInlineInstances) {
               if (
-                (!preferAnonymousStructural ||
-                  (info.className.startsWith("__anon_") &&
-                    !info.className.startsWith("__anon_union_"))) &&
                 hasAssignableStructuralProperty(
                   this,
                   info.className,
@@ -4862,6 +5013,14 @@ export function visitPropertyAccessExpression(
       !this.udonBehaviourClasses.has(objectType.name)
     ) {
       const missType = resultType ?? objectType.properties.get(node.property);
+      const dispatched = tryEmitStructuralInterfacePropertyDispatch(
+        this,
+        object,
+        objectType,
+        node.property,
+        missType ?? ObjectType,
+      );
+      if (dispatched) return dispatched;
       const missResult = this.newTemp(missType ?? ObjectType);
       this.emit(
         new AssignmentInstruction(

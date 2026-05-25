@@ -681,8 +681,11 @@ export function hasAssignableStructuralProperty(
   const targetProp = structuralType.properties.get(propertyName);
   if (!targetProp) return false;
   const concrete = converter.typeMapper.getAlias(concreteClassName);
-  if (!(concrete instanceof InterfaceTypeSymbol)) return false;
-  const concreteProp = concrete.properties.get(propertyName);
+  const concreteProp =
+    concrete instanceof InterfaceTypeSymbol
+      ? concrete.properties.get(propertyName)
+      : resolveClassProperty(converter, concreteClassName, propertyName)?.prop
+          .type;
   if (!concreteProp) return false;
   return isStructurallyAssignableType(
     concreteProp,

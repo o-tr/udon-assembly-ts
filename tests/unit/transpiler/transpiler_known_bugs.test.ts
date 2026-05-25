@@ -4019,6 +4019,35 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    it("structural array elements can dispatch to named class fields", () => {
+      const source = `
+        class Meld {
+          constructor(public readonly isOpen: boolean = true) {}
+        }
+
+        class Main {
+          Start(): void {
+            const meld = new Meld(true);
+            const melds: Meld[] = [meld];
+            Debug.Log(this.hasOpenMelds(melds));
+          }
+
+          private hasOpenMelds(melds: readonly { isOpen: boolean }[]): boolean {
+            for (const meld of melds) {
+              if (meld.isOpen) return true;
+            }
+            return false;
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain("__inst_Meld_0_isOpen");
+      expect(result.uasm).not.toContain(
+        "[udon-assembly-ts] structural dispatch miss: isOpen on untracked interface value",
+      );
+    });
+
     it("anonymous Array<T> structural destructuring avoids raw SystemObject property externs", () => {
       const source = `
         type UdonInt = number & { __brand: "UdonInt" };
