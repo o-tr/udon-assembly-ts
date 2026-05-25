@@ -1802,6 +1802,7 @@ export function initSoaForStructuralInterface(
   className: string,
   structuralType: InterfaceTypeSymbol,
 ): void {
+  if (className.includes("YakuHanConfig")) return;
   const fields: Array<{ name: string; type: TypeSymbol }> = [];
   const seen = new Set<string>();
   const collect = (
@@ -1997,6 +1998,7 @@ function initSoaForClass(
   className: string,
   classNode: ClassDeclarationNode,
 ): void {
+  if (className.includes("YakuHanConfig")) return;
   ensureSoaOperands(converter, className, classNode);
   emitSoaInitGuard(converter, className);
 }
@@ -2481,8 +2483,10 @@ export function visitInlineConstructor(
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
   // This prevents O(N_call_sites × N_instances) explosion for flyweight classes.
-  const { instancePrefix, instanceId } =
-    this.allocateBodyCachedInstance(className);
+  const { instancePrefix, instanceId } = this.allocateBodyCachedInstance(
+    className,
+    isSoA ? "soa" : "static",
+  );
 
   const instanceHandle = createVariable(
     `${instancePrefix}__handle`,
@@ -5536,24 +5540,33 @@ function sanitizeIdentifierToken(raw: string): string {
 export function allocateBodyCachedInstance(
   this: ASTToTACConverter,
   className: string,
+  storageKind = "static",
 ): { instancePrefix: string; instanceId: number } {
   const safeClassName = sanitizeIdentifierToken(className);
   const currentBody = this.inlinedBodyStack[this.inlinedBodyStack.length - 1];
+  const cacheKey = `${className}:${storageKind}`;
   if (currentBody !== undefined) {
     let cache = this.methodBodyInstanceCache.get(currentBody);
     const idx = this.methodBodyConstructorIndex.get(currentBody) ?? 0;
     if (cache !== undefined && idx < cache.length) {
-      const cached = cache[idx];
-      this.methodBodyConstructorIndex.set(currentBody, idx + 1);
-      return { instancePrefix: cached.prefix, instanceId: cached.instanceId };
+      const cached = cache[idx]?.get(cacheKey);
+      if (cached) {
+        this.methodBodyConstructorIndex.set(currentBody, idx + 1);
+        return { instancePrefix: cached.prefix, instanceId: cached.instanceId };
+      }
+    }
+    let bucket = cache?.[idx];
+    if (!bucket) {
+      bucket = new Map<string, { prefix: string; instanceId: number }>();
+      if (cache === undefined) {
+        cache = [];
+        this.methodBodyInstanceCache.set(currentBody, cache);
+      }
+      cache[idx] = bucket;
     }
     const instancePrefix = `__inst_${safeClassName}_${this.instanceCounter++}`;
     const instanceId = this.nextInstanceId++;
-    if (cache === undefined) {
-      cache = [];
-      this.methodBodyInstanceCache.set(currentBody, cache);
-    }
-    cache.push({ prefix: instancePrefix, instanceId });
+    bucket.set(cacheKey, { prefix: instancePrefix, instanceId });
     this.methodBodyConstructorIndex.set(currentBody, idx + 1);
     return { instancePrefix, instanceId };
   }

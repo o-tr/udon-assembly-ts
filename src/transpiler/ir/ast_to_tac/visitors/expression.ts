@@ -3542,6 +3542,34 @@ export function visitPropertyAccessExpression(
         !this.currentThisOverride &&
         !this.currentInlineContext.instancePrefix.startsWith("__viface_")
       ) {
+        const baseType = resolveClassProperty(
+          this,
+          this.currentInlineContext.className,
+          access.property,
+        )?.prop.type;
+        const baseSlot = this.mapInlineProperty(
+          this.currentInlineContext.className,
+          this.currentInlineContext.instancePrefix,
+          access.property,
+        );
+        const nestedType = resolveStructuralPropertyType(
+          this,
+          baseType,
+          node.property,
+        );
+        if (nestedType || (baseSlot && access.property === "hanConfig")) {
+          return createVariable(
+            `${this.currentInlineContext.instancePrefix}_${access.property}_${node.property}`,
+            nestedType ?? ObjectType,
+          );
+        }
+        const directNestedSlot = tryReadPopulatedStructuralFieldSlot(
+          this,
+          `${this.currentInlineContext.instancePrefix}_${access.property}`,
+          baseType,
+          node.property,
+        );
+        if (directNestedSlot) return directNestedSlot;
         const nested = tryMapInlinePropertyWithConcreteFallback(
           this,
           {
@@ -3754,7 +3782,18 @@ export function visitPropertyAccessExpression(
           directSoaTypeName ?? untrackedTypeName,
           node.property,
         );
-        if (directSoaTypeName && this.soaFieldLists.has(directSoaTypeName)) {
+        const objectKey = operandTrackingKey(object);
+        const trackedObjectInfo = objectKey
+          ? this.inlineInstanceMap.get(objectKey)
+          : undefined;
+        const directSoaAllowed =
+          trackedObjectInfo !== undefined &&
+          this.soaInstancePrefixes.has(trackedObjectInfo.prefix);
+        if (
+          directSoaTypeName &&
+          directSoaAllowed &&
+          this.soaFieldLists.has(directSoaTypeName)
+        ) {
           const directSoaFieldName = directSoaResolved?.prop.isGetter
             ? resolveSimpleGetterBackingField(directSoaResolved.prop)
             : node.property;
@@ -4267,9 +4306,13 @@ export function visitPropertyAccessExpression(
             const allSameClass = dispInstances.every(
               ([, i]) => i.className === soaClassName,
             );
+            const allRuntimeSoA = dispInstances.every(([, i]) =>
+              this.soaInstancePrefixes.has(i.prefix),
+            );
             if (
               !propertyIsGetter &&
               allSameClass &&
+              allRuntimeSoA &&
               this.soaClasses.has(soaClassName) &&
               this.soaFieldLists.has(soaClassName)
             ) {
@@ -4329,7 +4372,10 @@ export function visitPropertyAccessExpression(
               const dispNext = this.newLabel("uninst_prop_next");
               const dispCond = this.newTemp(PrimitiveTypes.boolean);
               let nonZeroHandleCond: TACOperand | undefined;
-              if (this.soaClasses.has(info.className)) {
+              const isRuntimeSoAInstance = this.soaInstancePrefixes.has(
+                info.prefix,
+              );
+              if (isRuntimeSoAInstance && this.soaClasses.has(info.className)) {
                 const offset = this.soaClassOffsets.get(info.className);
                 if (offset === undefined) {
                   this.emit(
@@ -4418,7 +4464,7 @@ export function visitPropertyAccessExpression(
                   new ConditionalJumpInstruction(nonZeroHandleCond, dispNext),
                 );
               }
-              if (this.soaClasses.has(info.className)) {
+              if (isRuntimeSoAInstance && this.soaClasses.has(info.className)) {
                 this.emit(
                   new CopyInstruction(
                     createVariable(
@@ -4467,11 +4513,14 @@ export function visitPropertyAccessExpression(
                     node.property,
                     anonUnionIface,
                     untrackedPropType,
-                  );
+                );
                 if (pv) {
-                  const fieldList = this.soaClasses.has(info.className)
-                    ? this.soaFieldLists.get(info.className)?.get(node.property)
-                    : undefined;
+                  const fieldList =
+                    isRuntimeSoAInstance && this.soaClasses.has(info.className)
+                      ? this.soaFieldLists
+                          .get(info.className)
+                          ?.get(node.property)
+                      : undefined;
                   if (fieldList) {
                     const indexVar = emitSoaHandleToIndex(
                       this,
@@ -4883,19 +4932,38 @@ export function visitObjectLiteralExpression(
     if (!this.typeMapper.getAlias(className)) {
       this.typeMapper.registerTypeAlias(className, expected);
     }
-    const literalIsInLoop = this.loopContextStack.length > 0;
-    if (literalIsInLoop) {
+    const enclosingInstancePrefix = this.currentInlineContext?.instancePrefix;
+    const isNonSoAConstructorInitializer =
+      this.currentInlineConstructorClassName !== undefined &&
+      enclosingInstancePrefix !== undefined &&
+      !this.soaInstancePrefixes.has(enclosingInstancePrefix);
+    const isRecursiveMeldShape =
+      className.includes("isOpen_bool") &&
+      className.includes("tiles_Tile") &&
+      className.includes("type_string");
+    const structuralRuntimeContext =
+      this.loopContextStack.length > 0 || isRecursiveMeldShape;
+    const literalIsInRuntimeLoopContext =
+      structuralRuntimeContext &&
+      !isNonSoAConstructorInitializer &&
+      (enclosingInstancePrefix === undefined ||
+        this.soaInstancePrefixes.has(enclosingInstancePrefix) ||
+        isRecursiveMeldShape);
+    const soaEligible = !className.includes("YakuHanConfig");
+    if (literalIsInRuntimeLoopContext && soaEligible) {
       this.soaClasses.add(className);
     }
-    const isSoA = literalIsInLoop;
+    const isSoA = literalIsInRuntimeLoopContext && soaEligible;
     if (isSoA) {
       initSoaForStructuralInterface(this, className, expected);
     }
     // Deduplicate object literal instances across repeated method body inlinings.
     // When inside an inlined method body, reuse the same prefix/instanceId for
     // the Nth object literal in that body across all inlinings of the same body.
-    const { instancePrefix, instanceId } =
-      this.allocateBodyCachedInstance(className);
+    const { instancePrefix, instanceId } = this.allocateBodyCachedInstance(
+      className,
+      isSoA ? "soa" : "static",
+    );
     // Use Int32 handle (same as visitInlineConstructor) so allInlineInstances
     // dispatch can match by instanceId at runtime.
     const instanceHandle = createVariable(

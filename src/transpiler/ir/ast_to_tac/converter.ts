@@ -384,12 +384,13 @@ export class ASTToTACConverter {
    * handles, so D-3 dispatch and viface dispatch work uniformly across call sites.
    *
    * Cache key: the body AST node object (identity, not structural equality).
-   * Cache value: ordered list of {prefix, instanceId} for each constructor call
-   *   encountered in visit order within that body.
+   * Cache value: ordered list of per-position maps. A position may need
+   * separate entries when the same inlined body is emitted once with static
+   * instance slots and once with runtime SoA slots.
    */
   methodBodyInstanceCache: Map<
     ASTNode,
-    Array<{ prefix: string; instanceId: number }>
+    Array<Map<string, { prefix: string; instanceId: number }>>
   > = new Map();
   /** Per-body call index for the current invocation of that body.
    *  Reset to 0 at the start of each visitInlineStaticMethodCall /
