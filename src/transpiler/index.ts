@@ -29,6 +29,7 @@ import { ASTToTACConverter } from "./ir/ast_to_tac/index.js";
 import { TACOptimizer } from "./ir/optimizer/index.js";
 import { pruneProgramByMethodUsage } from "./ir/optimizer/ipa.js";
 import { buildUdonBehaviourLayouts } from "./ir/udon_behaviour_layout.js";
+import { emitTsIr } from "./ts_ir/index.js";
 
 /**
  * Transpiler options
@@ -49,6 +50,8 @@ export interface TranspilerOptions {
   silent?: boolean;
   /** Override the body-instruction threshold for method outlining (applies to both static and instance methods). */
   outlineBodyInstrThreshold?: number;
+  /** Emit executable TypeScript IR from TAC alongside the normal UASM output. */
+  emitTsIr?: boolean;
 }
 
 /**
@@ -59,6 +62,7 @@ export interface TranspilerResult {
   tac: string;
   warnings?: string[];
   diagnostics?: TranspileWarning[];
+  tsIr?: string;
 }
 
 /**
@@ -172,6 +176,7 @@ export class TypeScriptToUdonTranspiler {
 
     // Generate TAC text representation
     const tacText = tacInstructions.map((inst) => inst.toString()).join("\n");
+    const tsIr = options.emitTsIr ? emitTsIr(tacInstructions).code : undefined;
 
     // Phase 4: Convert TAC to Udon instructions
     const udonConverter = new TACToUdonConverter();
@@ -231,6 +236,7 @@ export class TypeScriptToUdonTranspiler {
       tac: tacText,
       warnings: warnings.length > 0 ? warnings : undefined,
       diagnostics: diagnostics.length > 0 ? diagnostics : undefined,
+      tsIr,
     };
   }
 
@@ -291,3 +297,9 @@ export {
   UnconditionalJumpInstruction,
 } from "./ir/tac_instruction.js";
 export * from "./ir/tac_operand.js";
+export {
+  emitTsIr,
+  type TsIrEmitOptions,
+  type TsIrEmitResult,
+} from "./ts_ir/index.js";
+export * from "./ts_ir/runtime/index.js";
