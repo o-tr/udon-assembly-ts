@@ -3701,6 +3701,43 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    it("structural type assertions preserve sibling fields for parameter binding", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        type Win = { isWin: true; fu: number };
+        type NotWin = { isWin: false };
+        type Result = Win | NotWin;
+
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          check(): Result {
+            return { isWin: true, fu: 25 };
+          }
+
+          score(win: Win): number {
+            if (!win.isWin) return 0;
+            return win.fu;
+          }
+
+          Start(): void {
+            const result = this.check();
+            if (result.isWin) {
+              Debug.Log(this.score(result as Win));
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/__tmp\d+_isWin = result_isWin/);
+      expect(result.tac).toMatch(/win_isWin = __tmp\d+_isWin/);
+      expect(result.tac).toMatch(/__tmp\d+_fu = result_fu/);
+      expect(result.tac).toMatch(/win_fu = __tmp\d+_fu/);
+    });
+
     it("structural subset params dispatch nested object fields through handles", () => {
       const source = `
         type Estimate = { minHan: number; maxHan: number };

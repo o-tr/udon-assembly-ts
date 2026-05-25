@@ -4949,6 +4949,12 @@ export function visitAsExpression(
   } else {
     this.emitCopyWithTracking(result, operand);
   }
+  const resultKey = operandTrackingKey(result);
+  if (resultKey) {
+    emitStructuralFieldCopies(this, resultKey, targetTypeSymbol, operand, {
+      isLocal: true,
+    });
+  }
   return result;
 }
 
