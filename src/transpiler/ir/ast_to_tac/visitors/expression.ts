@@ -94,6 +94,7 @@ import {
   isInlineHandleType,
   isSubclassOf,
   isTrackedInlineHandleType,
+  markUntrackedStructuralHandlePrefixes,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
@@ -243,6 +244,26 @@ function inferInlineStructuralPropertyType(
     if (checkedClasses.has(info.className)) continue;
     checkedClasses.add(info.className);
 
+    const propertyPrefixInfo = converter.resolveInlineInstance(
+      `${info.prefix}_${property}`,
+    );
+    if (propertyPrefixInfo) {
+      const alias = converter.typeMapper.getAlias(propertyPrefixInfo.className);
+      if (!(alias instanceof InterfaceTypeSymbol)) continue;
+      const concreteType = alias;
+      if (!inferred) {
+        inferred = concreteType;
+        continue;
+      }
+      if (
+        inferred.name !== concreteType.name ||
+        inferred.udonType !== concreteType.udonType
+      ) {
+        return undefined;
+      }
+      continue;
+    }
+
     const resolved = resolveClassProperty(converter, info.className, property);
     const alias = converter.typeMapper.getAlias(info.className);
     const propertyType =
@@ -256,6 +277,9 @@ function inferInlineStructuralPropertyType(
     const concreteType = propertyType.name
       ? (converter.typeMapper.getAlias(propertyType.name) ?? propertyType)
       : propertyType;
+    if (concreteType === ObjectType) {
+      continue;
+    }
     if (!inferred) {
       inferred = concreteType;
       continue;
@@ -4288,6 +4312,23 @@ export function visitPropertyAccessExpression(
             // of the matched type was constructed via a tracked constructor,
             // so its runtime handle always matches one branch above.
             this.emit(new LabelInstruction(dispEnd));
+            const dispKey = operandTrackingKey(dispResult);
+            const structuralResultType =
+              resolveStructuralInterface(this, untrackedPropType) !== undefined
+                ? untrackedPropType
+                : (inferInlineStructuralPropertyType(this, node.property) ??
+                  this.fieldTypeRegistry.getStructuralFieldType(node.property));
+            if (
+              dispKey &&
+              structuralResultType &&
+              resolveStructuralInterface(this, structuralResultType)
+            ) {
+              markUntrackedStructuralHandlePrefixes(
+                this,
+                dispKey,
+                structuralResultType,
+              );
+            }
             return dispResult;
           }
         } else if (
@@ -4624,10 +4665,16 @@ export function visitObjectLiteralExpression(
       this.maybeTrackInlineInstanceAssignment(propVar, value);
       const propKey = operandTrackingKey(propVar);
       if (propKey) {
+        const structuralCopyType =
+          propType && propType !== ObjectType
+            ? propType
+            : (resolveTypeFromNode(this, prop.value) ??
+              propType ??
+              this.getOperandType(value));
         emitStructuralFieldCopies(
           this,
           propKey,
-          propType ?? this.getOperandType(value),
+          structuralCopyType,
           value,
         );
       }

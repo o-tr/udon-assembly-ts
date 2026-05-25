@@ -3823,8 +3823,10 @@ class Main extends UdonSharpBehaviour {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       expect(result.tac).toContain("child = __uninst_prop_");
-      expect(result.tac).toContain("child_count = __uninst_prop_");
-      expect(result.tac).toMatch(/__inst_Context_\d+_child_count = child_count/);
+      expect(result.tac).not.toMatch(/^child_count = __uninst_prop_/m);
+      expect(result.tac).not.toMatch(/__inst_Context_\d+_child_count = child_count/);
+      expect(result.tac).toContain("= ctx_child");
+      expect(result.tac).toContain("= __uninst_prop_");
     });
 
     it("object literals wrap untracked structural handles without stale nested slots", () => {

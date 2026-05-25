@@ -231,6 +231,17 @@ function emitVarDeclStructuralFieldCopies(
   depth = 0,
 ): void {
   if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  if (converter.untrackedStructuralHandleVars.has(sourcePrefix)) {
+    converter.inlineInstanceMap.delete(targetPrefix);
+    converter.structuralFieldPrefixes.delete(targetPrefix);
+    converter.structuralFieldPrefixTypes.delete(targetPrefix);
+    markUntrackedStructuralHandlePrefixes(
+      converter,
+      targetPrefix,
+      structuralType,
+    );
+    return;
+  }
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -254,14 +265,31 @@ function emitVarDeclStructuralFieldCopies(
       propType,
     );
     if (nestedStructuralType) {
-      emitVarDeclStructuralFieldCopies(
-        converter,
-        `${sourcePrefix}_${propName}`,
-        `${targetPrefix}_${propName}`,
-        nestedStructuralType,
-        seen,
-        depth + 1,
-      );
+      const sourceNestedPrefix = `${sourcePrefix}_${propName}`;
+      const targetNestedPrefix = `${targetPrefix}_${propName}`;
+      const sourceNestedIsPopulated =
+        converter.structuralFieldPrefixes.has(sourceNestedPrefix) ||
+        converter.structuralFieldPrefixTypes.has(sourceNestedPrefix) ||
+        converter.resolveInlineInstance(sourceNestedPrefix) !== undefined;
+      if (
+        converter.untrackedStructuralHandleVars.has(sourceNestedPrefix) ||
+        !sourceNestedIsPopulated
+      ) {
+        markUntrackedStructuralHandlePrefixes(
+          converter,
+          targetNestedPrefix,
+          nestedStructuralType,
+        );
+      } else {
+        emitVarDeclStructuralFieldCopies(
+          converter,
+          sourceNestedPrefix,
+          targetNestedPrefix,
+          nestedStructuralType,
+          seen,
+          depth + 1,
+        );
+      }
     }
   }
 }

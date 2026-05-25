@@ -853,6 +853,17 @@ function emitNestedStructuralFieldCopies(
   depth = 0,
 ): void {
   if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  if (converter.untrackedStructuralHandleVars.has(sourcePrefix)) {
+    converter.inlineInstanceMap.delete(targetPrefix);
+    converter.structuralFieldPrefixes.delete(targetPrefix);
+    converter.structuralFieldPrefixTypes.delete(targetPrefix);
+    markUntrackedStructuralHandlePrefixes(
+      converter,
+      targetPrefix,
+      structuralType,
+    );
+    return;
+  }
   const seenKey = `${targetPrefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -878,15 +889,32 @@ function emitNestedStructuralFieldCopies(
     );
     const nestedInterface = structuralInterfaceForType(converter, propertyType);
     if (nestedInterface) {
-      emitNestedStructuralFieldCopies(
-        converter,
-        `${sourcePrefix}_${propertyName}`,
-        `${targetPrefix}_${propertyName}`,
-        nestedInterface,
-        targetOptions,
-        seen,
-        depth + 1,
-      );
+      const sourceNestedPrefix = `${sourcePrefix}_${propertyName}`;
+      const targetNestedPrefix = `${targetPrefix}_${propertyName}`;
+      const sourceNestedIsPopulated =
+        converter.structuralFieldPrefixes.has(sourceNestedPrefix) ||
+        converter.structuralFieldPrefixTypes.has(sourceNestedPrefix) ||
+        converter.resolveInlineInstance(sourceNestedPrefix) !== undefined;
+      if (
+        converter.untrackedStructuralHandleVars.has(sourceNestedPrefix) ||
+        !sourceNestedIsPopulated
+      ) {
+        markUntrackedStructuralHandlePrefixes(
+          converter,
+          targetNestedPrefix,
+          nestedInterface,
+        );
+      } else {
+        emitNestedStructuralFieldCopies(
+          converter,
+          sourceNestedPrefix,
+          targetNestedPrefix,
+          nestedInterface,
+          targetOptions,
+          seen,
+          depth + 1,
+        );
+      }
     }
   }
 }
@@ -903,6 +931,9 @@ export function emitStructuralFieldCopies(
   const sourceName = operandTrackingKey(arg);
   if (!sourceName) return;
   if (converter.untrackedStructuralHandleVars.has(sourceName)) {
+    converter.inlineInstanceMap.delete(targetPrefix);
+    converter.structuralFieldPrefixes.delete(targetPrefix);
+    converter.structuralFieldPrefixTypes.delete(targetPrefix);
     markUntrackedStructuralHandlePrefixes(converter, targetPrefix, targetType);
     if (!converter.untrackedStructuralHandleVars.has(targetPrefix)) {
       converter.untrackedStructuralHandleVars.add(targetPrefix);
@@ -1054,6 +1085,9 @@ export function markUntrackedStructuralHandlePrefixes(
   const seenKey = `${prefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
+  converter.inlineInstanceMap.delete(prefix);
+  converter.structuralFieldPrefixes.delete(prefix);
+  converter.structuralFieldPrefixTypes.delete(prefix);
   converter.untrackedStructuralHandleVars.add(prefix);
 
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
@@ -5373,6 +5407,17 @@ export function maybeTrackInlineInstanceAssignment(
   clearIfUntracked = true,
 ): void {
   const srcName = operandTrackingKey(value);
+  if (srcName && this.untrackedStructuralHandleVars.has(srcName)) {
+    this.inlineInstanceMap.delete(target.name);
+    const targetType = this.getOperandType(target);
+    const sourceType = this.getOperandType(value);
+    const structuralType =
+      structuralInterfaceForType(this, targetType) !== null
+        ? targetType
+        : sourceType;
+    markUntrackedStructuralHandlePrefixes(this, target.name, structuralType);
+    return;
+  }
   let mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (!mapped && srcName?.endsWith("__handle")) {
     const prefix = srcName.slice(0, -"__handle".length);
@@ -5468,6 +5513,13 @@ export function emitCopyWithTracking(
   // undefined either way. Keeping src (not actualSrc) preserves tracking for
   // the no-cast path.
   const srcName = operandTrackingKey(src);
+  if (srcName && this.untrackedStructuralHandleVars.has(srcName)) {
+    this.inlineInstanceMap.delete(destName);
+    const structuralType =
+      structuralInterfaceForType(this, destType) !== null ? destType : srcType;
+    markUntrackedStructuralHandlePrefixes(this, destName, structuralType);
+    return;
+  }
   let srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
   if (!srcInfo && srcName?.endsWith("__handle")) {
     const prefix = srcName.slice(0, -"__handle".length);
