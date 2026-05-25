@@ -878,9 +878,9 @@ export function emitStructuralFieldCopies(
         ? converter.mapInlineProperty(
             sourceInfo.className,
             sourceInfo.prefix,
-          propertyName,
-        )
-      : createVariable(`${sourceName}_${propertyName}`, propertyType);
+            propertyName,
+          )
+        : createVariable(`${sourceName}_${propertyName}`, propertyType);
     if (!sourceProperty) continue;
 
     const targetProperty = createVariable(
@@ -1322,6 +1322,50 @@ function buildInheritanceChain(
     }
   }
   return inheritanceChain;
+}
+
+function samePropertyOrigin(
+  left: PropertyDeclarationNode,
+  right: PropertyDeclarationNode,
+): boolean {
+  if (left.tsNodeId && right.tsNodeId) {
+    return left.tsNodeId === right.tsNodeId;
+  }
+  if (left.sourceSpan && right.sourceSpan) {
+    return (
+      left.sourceSpan.filePath === right.sourceSpan.filePath &&
+      left.sourceSpan.start === right.sourceSpan.start &&
+      left.sourceSpan.end === right.sourceSpan.end &&
+      left.sourceSpan.syntaxKind === right.sourceSpan.syntaxKind
+    );
+  }
+  return left === right;
+}
+
+function isProjectedAncestorProperty(
+  converter: ASTToTACConverter,
+  classNode: ClassDeclarationNode,
+  prop: PropertyDeclarationNode,
+): boolean {
+  if (!classNode.baseClass) return false;
+  let current = resolveClassNode(converter, classNode.baseClass);
+  const visited = new Set<string>();
+  while (current) {
+    if (visited.has(current.name)) return false;
+    visited.add(current.name);
+    for (const ancestorProp of current.properties) {
+      if (
+        ancestorProp.name === prop.name &&
+        samePropertyOrigin(ancestorProp, prop)
+      ) {
+        return true;
+      }
+    }
+    current = current.baseClass
+      ? resolveClassNode(converter, current.baseClass)
+      : undefined;
+  }
+  return false;
 }
 
 /**
@@ -1778,6 +1822,7 @@ function emitInlinePropertyInitializersForClass(
 
   for (const prop of classNode.properties) {
     if (prop.isStatic || prop.isGetter) continue;
+    if (isProjectedAncestorProperty(converter, classNode, prop)) continue;
 
     const propVarName =
       state.kind === "inline"
