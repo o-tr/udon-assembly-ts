@@ -902,11 +902,11 @@ export function emitStructuralFieldCopies(
   const targetInterface = structuralInterfaceForType(converter, targetType);
   const sourceName = operandTrackingKey(arg);
   if (!sourceName) return;
-  if (
-    targetInterface &&
-    converter.untrackedStructuralHandleVars.has(sourceName)
-  ) {
-    converter.untrackedStructuralHandleVars.add(targetPrefix);
+  if (converter.untrackedStructuralHandleVars.has(sourceName)) {
+    markUntrackedStructuralHandlePrefixes(converter, targetPrefix, targetType);
+    if (!converter.untrackedStructuralHandleVars.has(targetPrefix)) {
+      converter.untrackedStructuralHandleVars.add(targetPrefix);
+    }
     return;
   }
   if (!targetInterface) {
@@ -966,7 +966,13 @@ export function emitStructuralFieldCopies(
     sourceHasNamedStructuralSlots ||
     sourceName.startsWith("__inline_ret_") ||
     isRecursiveReturnSlot;
-  if (!sourceHasStructuralSlots) return;
+  if (!sourceHasStructuralSlots) {
+    markUntrackedStructuralHandlePrefixes(converter, targetPrefix, targetType);
+    if (!converter.untrackedStructuralHandleVars.has(targetPrefix)) {
+      converter.untrackedStructuralHandleVars.add(targetPrefix);
+    }
+    return;
+  }
 
   // Cycle-guarded recursion across any depth of nested structural interfaces.
   // The original implementation handled exactly two levels manually, leaving
@@ -1031,6 +1037,33 @@ export function emitStructuralFieldCopies(
       prefix: targetPrefix,
       className: targetInterface.name,
     });
+  }
+}
+
+export function markUntrackedStructuralHandlePrefixes(
+  converter: ASTToTACConverter,
+  prefix: string,
+  type: TypeSymbol,
+  seen = new Set<string>(),
+  depth = 0,
+): void {
+  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+  const structuralType = structuralInterfaceForType(converter, type);
+  if (!structuralType) return;
+  if (structuralType.methods.size > 0) return;
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+  converter.untrackedStructuralHandleVars.add(prefix);
+
+  for (const [propertyName, rawPropertyType] of structuralType.properties) {
+    markUntrackedStructuralHandlePrefixes(
+      converter,
+      `${prefix}_${propertyName}`,
+      resolvedStructuralPropertyType(converter, rawPropertyType),
+      seen,
+      depth + 1,
+    );
   }
 }
 

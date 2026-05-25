@@ -3769,6 +3769,96 @@ class Main extends UdonSharpBehaviour {
       expect(result.tac).toContain("__inst_Estimate_1_maxHan");
     });
 
+    it("object literals preserve nullable nested structural property fields", () => {
+      const source = `
+        type Child = { name: string; count: number };
+        type Context = { child: Child | null };
+
+        class Main {
+          build(): Child {
+            return { name: "ok", count: 3 };
+          }
+
+          use(ctx: Context): number {
+            return ctx.child === null ? 0 : ctx.child.count;
+          }
+
+          Start(): void {
+            const child = this.build();
+            const ctx: Context = { child };
+            Debug.Log(this.use(ctx));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/__inst_Context_\d+_child = child/);
+      expect(result.tac).toMatch(/__inst_Context_\d+_child_name = child_name/);
+      expect(result.tac).toMatch(
+        /__inst_Context_\d+_child_count = child_count/,
+      );
+    });
+
+    it("object destructuring preserves nested structural property fields", () => {
+      const source = `
+        type Child = { count: number };
+        type Candidate = { child: Child };
+        type Context = { child: Child | null };
+
+        class Main {
+          use(ctx: Context): number {
+            return ctx.child === null ? 0 : ctx.child.count;
+          }
+
+          Start(): void {
+            const list: Candidate[] = [];
+            list.push({ child: { count: 7 } });
+            for (const { child } of list) {
+              const ctx: Context = { child };
+              Debug.Log(this.use(ctx));
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("child = __uninst_prop_");
+      expect(result.tac).toContain("child_count = __uninst_prop_");
+      expect(result.tac).toMatch(/__inst_Context_\d+_child_count = child_count/);
+    });
+
+    it("object literals wrap untracked structural handles without stale nested slots", () => {
+      const source = `
+        type Child = { count: number };
+        type Candidate = { child: Child };
+
+        class Main {
+          build(): Child[] {
+            const list: Child[] = [];
+            list.push({ count: 7 });
+            return list;
+          }
+
+          Start(): void {
+            const children = this.build();
+            const candidates: Candidate[] = [];
+            for (const child of children) {
+              candidates.push({ child });
+            }
+            for (const { child } of candidates) {
+              Debug.Log(child.count);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain(
+        "[udon-assembly-ts] D3 dispatch miss: count on untracked instance",
+      );
+      expect(result.tac).not.toContain("__inst_Candidate_1_child_count");
+    });
+
     it("array slice preserves structural element types for object destructuring", () => {
       const source = `
         type Estimate = { minHan: number; maxHan: number };

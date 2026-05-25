@@ -3897,8 +3897,24 @@ export function visitPropertyAccessExpression(
                 untrackedPropType,
               );
             if (pv) {
-              untrackedPropType = this.getOperandType(pv);
-              break;
+              const pvType = this.getOperandType(pv);
+              untrackedPropType ??= pvType;
+              if (pvType !== ObjectType) {
+                untrackedPropType = pvType;
+                break;
+              }
+            }
+          }
+          if (untrackedPropType === ObjectType) {
+            const structuralFieldType =
+              this.fieldTypeRegistry.getStructuralFieldType(node.property);
+            const inferredStructuralType =
+              structuralFieldType !== undefined
+                ? (inferInlineStructuralPropertyType(this, node.property) ??
+                  structuralFieldType)
+                : undefined;
+            if (inferredStructuralType) {
+              untrackedPropType = inferredStructuralType;
             }
           }
           // When the multi-class fallback path (D3DispatchFallback) populated
@@ -4133,6 +4149,16 @@ export function visitPropertyAccessExpression(
               );
               if (armGetter !== undefined) {
                 this.emitCopyWithTracking(dispResult, armGetter);
+                const dispKey = operandTrackingKey(dispResult);
+                if (dispKey) {
+                  emitStructuralFieldCopies(
+                    this,
+                    dispKey,
+                    untrackedPropType,
+                    armGetter,
+                    { isLocal: true },
+                  );
+                }
               } else {
                 const pv =
                   this.mapInlineProperty(
@@ -4179,8 +4205,28 @@ export function visitPropertyAccessExpression(
                       untrackedPropType,
                     );
                     this.emitCopyWithTracking(dispResult, unwrapped);
+                    const dispKey = operandTrackingKey(dispResult);
+                    if (dispKey) {
+                      emitStructuralFieldCopies(
+                        this,
+                        dispKey,
+                        untrackedPropType,
+                        unwrapped,
+                        { isLocal: true },
+                      );
+                    }
                   } else {
                     this.emitCopyWithTracking(dispResult, pv);
+                    const dispKey = operandTrackingKey(dispResult);
+                    if (dispKey) {
+                      emitStructuralFieldCopies(
+                        this,
+                        dispKey,
+                        untrackedPropType,
+                        pv,
+                        { isLocal: true },
+                      );
+                    }
                   }
                 } else if (propertyIsGetter) {
                   // Symmetric with the interface classId dispatch arm at
@@ -4576,14 +4622,14 @@ export function visitObjectLiteralExpression(
       this.currentExpectedType = prev;
       this.emitCopyWithTracking(propVar, value);
       this.maybeTrackInlineInstanceAssignment(propVar, value);
-      if (
-        propType instanceof InterfaceTypeSymbol &&
-        propType.properties.size > 0
-      ) {
-        const propKey = operandTrackingKey(propVar);
-        if (propKey) {
-          emitStructuralFieldCopies(this, propKey, propType, value);
-        }
+      const propKey = operandTrackingKey(propVar);
+      if (propKey) {
+        emitStructuralFieldCopies(
+          this,
+          propKey,
+          propType ?? this.getOperandType(value),
+          value,
+        );
       }
     }
     return instanceHandle;

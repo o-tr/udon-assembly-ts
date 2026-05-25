@@ -77,6 +77,8 @@ import {
   countSelfCalls,
   countTryCatchBlocks,
   createSoaSentinelValue,
+  emitStructuralFieldCopies,
+  markUntrackedStructuralHandlePrefixes,
   MAX_RECURSION_STACK_DEPTH,
   makeDefaultDataTokenForLocal,
   operandTrackingKey,
@@ -301,33 +303,6 @@ function emitStructuralPrefixDefaults(
         depth + 1,
       );
     }
-  }
-}
-
-function markUntrackedStructuralHandlePrefixes(
-  converter: ASTToTACConverter,
-  prefix: string,
-  type: TypeSymbol,
-  seen = new Set<string>(),
-  depth = 0,
-): void {
-  if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
-  const structuralType = structuralInterfaceForType(converter, type);
-  if (!structuralType) return;
-  if (structuralType.methods.size > 0) return;
-  const seenKey = `${prefix}:${structuralType.name}`;
-  if (seen.has(seenKey)) return;
-  seen.add(seenKey);
-  converter.untrackedStructuralHandleVars.add(prefix);
-
-  for (const [propertyName, rawPropertyType] of structuralType.properties) {
-    markUntrackedStructuralHandlePrefixes(
-      converter,
-      `${prefix}_${propertyName}`,
-      resolvedStructuralPropertyType(converter, rawPropertyType),
-      seen,
-      depth + 1,
-    );
   }
 }
 
@@ -1239,6 +1214,12 @@ export function visitForOfStatement(
         isLocal: true,
       });
       this.emitCopyWithTracking(targetVar, propValue, true);
+      const targetKey = operandTrackingKey(targetVar);
+      if (targetKey) {
+        emitStructuralFieldCopies(this, targetKey, propType, propValue, {
+          isLocal: true,
+        });
+      }
     }
   }
   // Interface dispatch: when element type is an interface with all-inline implementors,
