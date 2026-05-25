@@ -162,6 +162,21 @@ export function assignToTarget(
     // All array types (ArrayTypeSymbol, DataListTypeSymbol, untyped DataList)
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
     // is handled above and does not need DataToken wrapping.
+    const assignedValueType = this.getOperandType(value);
+    if (
+      arrayAccess.array.kind === ASTNodeKind.Identifier &&
+      arrayType instanceof ArrayTypeSymbol &&
+      arrayType.elementType === ObjectType &&
+      assignedValueType !== ObjectType
+    ) {
+      const arrayName = (arrayAccess.array as IdentifierNode).name;
+      const symbol = this.symbolTable.lookup(arrayName);
+      if (symbol) {
+        const refinedType = new ArrayTypeSymbol(assignedValueType);
+        symbol.type = refinedType;
+        symbol.declaredType = refinedType;
+      }
+    }
     let coercedIndex = index;
     const idxType = this.getOperandType(index);
     if (needsInt32IndexCoercion(idxType.udonType)) {
@@ -176,7 +191,9 @@ export function assignToTarget(
     // so reusing the same heap slot for defaultToken across iterations is safe.
     const growElementType =
       arrayType instanceof ArrayTypeSymbol
-        ? arrayType.elementType
+        ? arrayType.elementType === ObjectType && assignedValueType !== ObjectType
+          ? assignedValueType
+          : arrayType.elementType
         : arrayType instanceof DataListTypeSymbol
           ? arrayType.elementType
           : ObjectType;
@@ -743,7 +760,10 @@ export function wrapDataToken(
   }
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.
-  if (isInlineHandleType(this, valueType)) {
+  if (
+    isInlineHandleType(this, valueType) ||
+    isStructuralTypeAliasDataTokenHandle(this, valueType)
+  ) {
     value = normalizeOperandToInt32(this, value);
     valueType = PrimitiveTypes.int32;
   }

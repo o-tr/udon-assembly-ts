@@ -3913,8 +3913,50 @@ class Main extends UdonSharpBehaviour {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       expect(result.uasm).not.toContain("SystemObject.__get_count");
-      expect(result.tac).toMatch(/__uninst_prop_\d+ = __inst_Child_\d+_count/);
-      expect(result.tac).not.toContain("__inst_Candidate_1_child_count");
+      expect(result.tac).toMatch(
+        /__inst_Candidate_\d+_child_count = __inst_Child_\d+_count/,
+      );
+      expect(result.tac).toMatch(
+        /__uninst_prop_\d+_count = __inst_Candidate_\d+_child_count/,
+      );
+    });
+
+    it("object literals copy nested fields from untracked structural handles before contextual dispatch", () => {
+      const source = `
+        type Child = { count: number };
+        type Candidate = { child: Child; estimate: { max: number } };
+        type Context = { child: Child | null };
+
+        class Main {
+          consume(ctx: Context): void {
+            if (ctx.child === null) return;
+            Debug.Log(ctx.child.count);
+          }
+
+          Start(): void {
+            const children: Child[] = [];
+            children.push({ count: 7 });
+            const candidates: Candidate[] = [];
+            for (const child of children) {
+              candidates.push({ child, estimate: { max: 1 } });
+            }
+            const topCandidates = candidates.slice(0, 1);
+            for (const { child } of topCandidates) {
+              const ctx: Context = { child };
+              this.consume(ctx);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain("SystemObject.__get_count");
+      expect(result.tac).toMatch(
+        /__inst_Context_\d+_child_count = __inst_Child_\d+_count/,
+      );
+      expect(result.tac).toMatch(
+        /ctx_child_count = __inst_Context_\d+_child_count/,
+      );
     });
 
     it("array slice preserves structural element types for object destructuring", () => {

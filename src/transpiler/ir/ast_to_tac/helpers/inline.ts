@@ -1727,6 +1727,7 @@ function ensureSoaOperands(
   }
 
   const fields = collectAllInstanceFields(converter, classNode);
+  const safeClassName = sanitizeIdentifierToken(className);
   const fieldLists = new Map<string, VariableOperand>();
   const fieldTypes = new Map<string, TypeSymbol>();
   for (const field of fields) {
@@ -1734,7 +1735,7 @@ function ensureSoaOperands(
     fieldLists.set(
       field.name,
       createVariable(
-        `__soa_${className}_${field.name}`,
+        `__soa_${safeClassName}_${field.name}`,
         new DataListTypeSymbol(ExternTypes.dataToken),
       ),
     );
@@ -1743,8 +1744,92 @@ function ensureSoaOperands(
   converter.soaFieldTypes.set(className, fieldTypes);
   converter.soaCounterVars.set(
     className,
-    createVariable(`__soa_${className}__counter`, PrimitiveTypes.int32),
+    createVariable(`__soa_${safeClassName}__counter`, PrimitiveTypes.int32),
   );
+}
+
+function ensureSoaOperandsFromFields(
+  converter: ASTToTACConverter,
+  className: string,
+  fields: Array<{ name: string; type: TypeSymbol }>,
+): void {
+  if (converter.soaInitialized.has(className)) return;
+  converter.soaInitialized.add(className);
+
+  if (!converter.soaClassOffsets.has(className)) {
+    const nextOffset = converter.soaClassOffsets.size * SOA_PARTITION_SIZE;
+    if (nextOffset > 0x7fff_ffff) {
+      throw new Error(
+        `SoA class count exceeded Int32 handle range at class "${className}". ` +
+          `Reduce the number of SoA classes or decrease SOA_PARTITION_SIZE.`,
+      );
+    }
+    converter.soaClassOffsets.set(className, nextOffset);
+  }
+
+  const safeClassName = sanitizeIdentifierToken(className);
+  const fieldLists = new Map<string, VariableOperand>();
+  const fieldTypes = new Map<string, TypeSymbol>();
+  for (const field of fields) {
+    fieldTypes.set(field.name, field.type);
+    fieldLists.set(
+      field.name,
+      createVariable(
+        `__soa_${safeClassName}_${field.name}`,
+        new DataListTypeSymbol(ExternTypes.dataToken),
+      ),
+    );
+  }
+  converter.soaFieldLists.set(className, fieldLists);
+  converter.soaFieldTypes.set(className, fieldTypes);
+  converter.soaCounterVars.set(
+    className,
+    createVariable(`__soa_${safeClassName}__counter`, PrimitiveTypes.int32),
+  );
+}
+
+export function initSoaForStructuralFields(
+  converter: ASTToTACConverter,
+  className: string,
+  fields: Array<{ name: string; type: TypeSymbol }>,
+): void {
+  ensureSoaOperandsFromFields(converter, className, fields);
+  emitSoaInitGuard(converter, className);
+}
+
+export function initSoaForStructuralInterface(
+  converter: ASTToTACConverter,
+  className: string,
+  structuralType: InterfaceTypeSymbol,
+): void {
+  const fields: Array<{ name: string; type: TypeSymbol }> = [];
+  const seen = new Set<string>();
+  const collect = (
+    prefix: string,
+    interfaceType: InterfaceTypeSymbol,
+    depth = 0,
+  ): void => {
+    if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
+    for (const [propertyName, rawPropertyType] of interfaceType.properties) {
+      const propertyType = resolvedStructuralPropertyType(
+        converter,
+        rawPropertyType,
+      );
+      const fieldName = prefix ? `${prefix}_${propertyName}` : propertyName;
+      if (!seen.has(fieldName)) {
+        seen.add(fieldName);
+        fields.push({ name: fieldName, type: propertyType });
+      }
+      const nestedInterface = structuralInterfaceForType(
+        converter,
+        propertyType,
+      );
+      if (nestedInterface) collect(fieldName, nestedInterface, depth + 1);
+    }
+  };
+
+  collect("", structuralType);
+  initSoaForStructuralFields(converter, className, fields);
 }
 
 export function createSoaSentinelValue(
@@ -1831,7 +1916,7 @@ function emitSoaInitGuard(
   // placeholder DataList before the first real construction. See the detailed
   // invariant comment in soa_data_list.ts for remediation strategies.
   const initedVar = createVariable(
-    `__soa_${className}__inited`,
+    `__soa_${sanitizeIdentifierToken(className)}__inited`,
     PrimitiveTypes.int32,
   );
   const alreadyInited = converter.newTemp(PrimitiveTypes.boolean);
@@ -2483,6 +2568,7 @@ export function visitInlineConstructor(
   // (not the DataList, which isn't populated until the epilogue below).
   if (isSoA) {
     this.soaConstructionPrefixes.add(instancePrefix);
+    this.soaInstancePrefixes.add(instancePrefix);
   }
   try {
     if (classNode.constructor) {

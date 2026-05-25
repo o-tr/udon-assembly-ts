@@ -366,6 +366,8 @@ export class ASTToTACConverter {
    * post-construction reads (which must go through the per-field DataList).
    */
   soaConstructionPrefixes: Set<string> = new Set();
+  /** Prefixes whose handles are runtime SoA handles rather than static IDs. */
+  soaInstancePrefixes: Set<string> = new Set();
   // Start at 1: Udon zero-initialises heap slots, so an uninitialised
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
@@ -709,6 +711,7 @@ export class ASTToTACConverter {
     this.soaClassOffsets = new Map();
     this.soaInitialized = new Set();
     this.soaConstructionPrefixes = new Set();
+    this.soaInstancePrefixes = new Set();
     this.implementorNamesCache = new Map();
     this.dispatchResultFlags = new Map();
     this.allInlineInterfaceCache = new Map();

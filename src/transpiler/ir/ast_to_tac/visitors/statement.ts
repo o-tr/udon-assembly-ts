@@ -309,6 +309,42 @@ function emitVarDeclStructuralFieldCopies(
   }
 }
 
+function emitKnownStructuralPrefixCopies(
+  converter: ASTToTACConverter,
+  sourcePrefix: string,
+  targetPrefix: string,
+  seen = new Set<string>(),
+): boolean {
+  const sourceFieldTypes = converter.structuralFieldPrefixTypes.get(sourcePrefix);
+  if (!sourceFieldTypes || sourceFieldTypes.size === 0) return false;
+  const seenKey = `${sourcePrefix}->${targetPrefix}`;
+  if (seen.has(seenKey)) return true;
+  seen.add(seenKey);
+
+  converter.structuralFieldPrefixes.add(targetPrefix);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+
+  for (const [propName, propType] of sourceFieldTypes) {
+    targetFieldTypes.set(propName, propType);
+    converter.emit(
+      new CopyInstruction(
+        createVariable(`${targetPrefix}_${propName}`, propType),
+        createVariable(`${sourcePrefix}_${propName}`, propType),
+      ),
+    );
+    emitKnownStructuralPrefixCopies(
+      converter,
+      `${sourcePrefix}_${propName}`,
+      `${targetPrefix}_${propName}`,
+      seen,
+    );
+  }
+  return true;
+}
+
 function emitStructuralPrefixDefaults(
   converter: ASTToTACConverter,
   prefix: string,
@@ -760,6 +796,9 @@ export function visitVariableDeclaration(
         this.structuralFieldPrefixTypes.set(destKey, fieldTypes);
         this.structuralFieldPrefixes.add(destKey);
       }
+    }
+    if (srcKey && destKey) {
+      emitKnownStructuralPrefixCopies(this, srcKey, destKey);
     }
     // Only run structural field propagation when the source actually maps to
     // an inline instance. For untracked sources (e.g. a temporary holding the

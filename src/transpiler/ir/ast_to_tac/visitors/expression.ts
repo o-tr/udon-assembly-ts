@@ -7,6 +7,7 @@ import {
   CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
+  extractArrayLiteralHint,
   getNativeArrayTypeName,
   getPromotedType,
   InterfaceTypeSymbol,
@@ -91,6 +92,7 @@ import {
   evaluateInlineGetter,
   hasAssignableStructuralProperty,
   hasCompatibleUnionProperty,
+  initSoaForStructuralInterface,
   isInlineHandleType,
   isSubclassOf,
   isTrackedInlineHandleType,
@@ -163,6 +165,7 @@ function tryReadSoAField(
   }
   if (
     converter.soaConstructionPrefixes.has(instancePrefix) ||
+    !converter.soaInstancePrefixes.has(instancePrefix) ||
     !converter.soaClasses.has(className) ||
     !converter.soaFieldLists.has(className)
   )
@@ -191,7 +194,41 @@ function tryReadSoAField(
     true,
     className,
   );
-  return converter.unwrapDataToken(token, fieldType);
+  const unwrapped = converter.unwrapDataToken(token, fieldType);
+  const unwrappedKey = operandTrackingKey(unwrapped);
+  if (unwrappedKey) {
+    const nestedPrefix = `${property}_`;
+    const fieldTypes = converter.soaFieldTypes.get(className);
+    for (const [nestedField, nestedList] of fieldLists) {
+      if (!nestedField.startsWith(nestedPrefix)) continue;
+      const nestedName = nestedField.slice(nestedPrefix.length);
+      if (nestedName.length === 0) continue;
+      const nestedType = fieldTypes?.get(nestedField) ?? ObjectType;
+      const nestedToken = converter.newTemp(ExternTypes.dataToken);
+      emitBoundedDataListGetItem(
+        converter,
+        nestedList,
+        indexVar,
+        nestedToken,
+        () => createSoaSentinelValue(converter, nestedType),
+        true,
+        className,
+      );
+      const nestedValue = converter.unwrapDataToken(nestedToken, nestedType);
+      const nestedSlot = createVariable(
+        `${unwrappedKey}_${nestedName}`,
+        nestedType,
+      );
+      converter.emit(new CopyInstruction(nestedSlot, nestedValue));
+      converter.structuralFieldPrefixes.add(unwrappedKey);
+      const prefixTypes =
+        converter.structuralFieldPrefixTypes.get(unwrappedKey) ??
+        new Map<string, TypeSymbol>();
+      prefixTypes.set(nestedName, nestedType);
+      converter.structuralFieldPrefixTypes.set(unwrappedKey, prefixTypes);
+    }
+  }
+  return unwrapped;
 }
 
 function tryMapAliasInlineProperty(
@@ -402,6 +439,123 @@ function emitKnownStructuralFieldCopies(
       depth + 1,
     );
   }
+  return true;
+}
+
+function clearUntrackedStructuralPrefixes(
+  converter: ASTToTACConverter,
+  prefix: string,
+  structuralType: InterfaceTypeSymbol,
+  seen: Set<string> = new Set(),
+): void {
+  const seenKey = `${prefix}:${structuralType.name}`;
+  if (seen.has(seenKey)) return;
+  seen.add(seenKey);
+  converter.untrackedStructuralHandleVars.delete(prefix);
+  for (const [propertyName, rawPropertyType] of structuralType.properties) {
+    const propertyType = resolveStructuralPropertyType(
+      converter,
+      structuralType,
+      propertyName,
+    ) ?? rawPropertyType;
+    const nestedType = resolveStructuralInterface(converter, propertyType);
+    if (nestedType) {
+      clearUntrackedStructuralPrefixes(
+        converter,
+        `${prefix}_${propertyName}`,
+        nestedType,
+        seen,
+      );
+    }
+  }
+}
+
+function structuralInterfacesCompatible(
+  target: InterfaceTypeSymbol,
+  source: InterfaceTypeSymbol | undefined,
+): boolean {
+  if (!source || source.methods.size > 0) return false;
+  for (const propertyName of target.properties.keys()) {
+    if (!source.properties.has(propertyName)) return false;
+  }
+  return true;
+}
+
+function emitStructuralFieldsFromKnownHandle(
+  converter: ASTToTACConverter,
+  targetPrefix: string,
+  targetType: TypeSymbol,
+  sourceHandle: TACOperand,
+  targetOptions: { isParameter?: boolean; isLocal?: boolean } = {},
+): boolean {
+  const targetInterface = resolveStructuralInterface(converter, targetType);
+  const sourceKey = operandTrackingKey(sourceHandle);
+  if (!targetInterface || !sourceKey) return false;
+
+  const candidates = Array.from(converter.allInlineInstances.entries()).filter(
+    ([, info]) => {
+      const sourceInterface = resolveStructuralInterface(
+        converter,
+        new ClassTypeSymbol(info.className, UdonType.Object),
+      );
+      return structuralInterfacesCompatible(targetInterface, sourceInterface);
+    },
+  );
+  if (candidates.length === 0) return false;
+
+  converter.structuralFieldPrefixes.add(targetPrefix);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+  clearUntrackedStructuralPrefixes(converter, targetPrefix, targetInterface);
+
+  const hdlVar = normalizeOperandToInt32(converter, sourceHandle);
+  const dispatchEnd = converter.newLabel("struct_field_sync_end");
+  for (const [, info] of candidates) {
+    const dispatchNext = converter.newLabel("struct_field_sync_next");
+    const dispatchCond = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        dispatchCond,
+        hdlVar,
+        "==",
+        createVariable(`${info.prefix}__handle`, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(dispatchCond, dispatchNext));
+
+    for (const [propertyName, rawPropertyType] of targetInterface.properties) {
+      const propertyType =
+        resolveStructuralPropertyType(converter, targetInterface, propertyName) ??
+        rawPropertyType;
+      targetFieldTypes.set(propertyName, propertyType);
+      const sourceProperty = converter.mapInlineProperty(
+        info.className,
+        info.prefix,
+        propertyName,
+      );
+      if (!sourceProperty) continue;
+      const targetProperty = createVariable(
+        `${targetPrefix}_${propertyName}`,
+        propertyType,
+        targetOptions,
+      );
+      converter.emitCopyWithTracking(targetProperty, sourceProperty);
+      const sourcePropertyKey = operandTrackingKey(sourceProperty);
+      const targetPropertyKey = operandTrackingKey(targetProperty);
+      if (sourcePropertyKey && targetPropertyKey) {
+        emitKnownStructuralFieldCopies(
+          converter,
+          sourcePropertyKey,
+          targetPropertyKey,
+        );
+      }
+    }
+    converter.emit(new UnconditionalJumpInstruction(dispatchEnd));
+    converter.emit(new LabelInstruction(dispatchNext));
+  }
+  converter.emit(new LabelInstruction(dispatchEnd));
   return true;
 }
 
@@ -2480,7 +2634,10 @@ export function visitArrayLiteralExpression(
     }
   }
 
-  const elementType = node.typeHint ?? ObjectType;
+  const expectedArrayElementType = this.currentExpectedType
+    ? extractArrayLiteralHint(this.currentExpectedType)
+    : undefined;
+  const elementType = node.typeHint ?? expectedArrayElementType ?? ObjectType;
 
   // Native fixed-length array path: emit when the variable is eligible and
   // all elements are non-spread, so the length is known at compile time.
@@ -2757,7 +2914,14 @@ export function visitArrayLiteralExpression(
       this.emit(new LabelInstruction(loopEnd));
       continue;
     }
-    const value = this.visitExpression(element.value);
+    const prevExpected = this.currentExpectedType;
+    this.currentExpectedType = elementType;
+    let value: TACOperand;
+    try {
+      value = this.visitExpression(element.value);
+    } finally {
+      this.currentExpectedType = prevExpected;
+    }
     const token = this.wrapDataToken(value);
     this.emit(new MethodCallInstruction(undefined, listResult, "Add", [token]));
   }
@@ -4160,6 +4324,7 @@ export function visitPropertyAccessExpression(
             );
             const hdlVar = normalizeOperandToInt32(this, object);
             const dispEnd = this.newLabel("uninst_prop_end");
+            let copiedDispatchStructuralFields = false;
             for (const [instId, info] of dispInstances) {
               const dispNext = this.newLabel("uninst_prop_next");
               const dispCond = this.newTemp(PrimitiveTypes.boolean);
@@ -4343,7 +4508,9 @@ export function visitPropertyAccessExpression(
                     const dispKey = operandTrackingKey(dispResult);
                     const pvKey = operandTrackingKey(pv);
                     if (dispKey && pvKey) {
-                      emitKnownStructuralFieldCopies(this, pvKey, dispKey);
+                      copiedDispatchStructuralFields =
+                        emitKnownStructuralFieldCopies(this, pvKey, dispKey) ||
+                        copiedDispatchStructuralFields;
                     }
                     if (dispKey && shouldCopyDispatchStructuralFields) {
                       emitStructuralFieldCopies(
@@ -4353,6 +4520,10 @@ export function visitPropertyAccessExpression(
                         pv,
                         { isLocal: true },
                       );
+                      copiedDispatchStructuralFields =
+                        this.structuralFieldPrefixes.has(dispKey) ||
+                        this.structuralFieldPrefixTypes.has(dispKey) ||
+                        copiedDispatchStructuralFields;
                     }
                   }
                 } else if (propertyIsGetter) {
@@ -4424,6 +4595,7 @@ export function visitPropertyAccessExpression(
             if (
               dispKey &&
               structuralResultType &&
+              !copiedDispatchStructuralFields &&
               resolveStructuralInterface(this, structuralResultType)
             ) {
               markUntrackedStructuralHandlePrefixes(
@@ -4711,6 +4883,14 @@ export function visitObjectLiteralExpression(
     if (!this.typeMapper.getAlias(className)) {
       this.typeMapper.registerTypeAlias(className, expected);
     }
+    const literalIsInLoop = this.loopContextStack.length > 0;
+    if (literalIsInLoop) {
+      this.soaClasses.add(className);
+    }
+    const isSoA = literalIsInLoop;
+    if (isSoA) {
+      initSoaForStructuralInterface(this, className, expected);
+    }
     // Deduplicate object literal instances across repeated method body inlinings.
     // When inside an inlined method body, reuse the same prefix/instanceId for
     // the Nth object literal in that body across all inlinings of the same body.
@@ -4722,12 +4902,19 @@ export function visitObjectLiteralExpression(
       `${instancePrefix}__handle`,
       PrimitiveTypes.int32,
     );
-    this.emit(
-      new AssignmentInstruction(
-        instanceHandle,
-        createConstant(instanceId, PrimitiveTypes.int32),
-      ),
-    );
+    if (isSoA) {
+      const counterVar = this.soaCounterVars.get(className);
+      if (counterVar) {
+        this.emit(new CopyInstruction(instanceHandle, counterVar));
+      }
+    } else {
+      this.emit(
+        new AssignmentInstruction(
+          instanceHandle,
+          createConstant(instanceId, PrimitiveTypes.int32),
+        ),
+      );
+    }
     this.inlineInstanceMap.set(instanceHandle.name, {
       prefix: instancePrefix,
       className,
@@ -4745,46 +4932,95 @@ export function visitObjectLiteralExpression(
     if (className.startsWith("__anon_")) {
       this.anonymousInlineClassNames.add(className);
     }
-    for (const prop of node.properties) {
-      if (prop.kind !== "property") continue;
-      const rawPropType = expected.properties.get(prop.key);
-      // Re-resolve through typeMapper in case the property type was registered
-      // before its type alias (e.g. Wind) was defined (parse-order issue).
-      const propType = rawPropType?.name
-        ? (this.typeMapper.getAlias(rawPropType.name) ?? rawPropType)
-        : rawPropType;
-      const propVar = createVariable(
-        `${instancePrefix}_${prop.key}`,
-        propType ?? ObjectType,
-      );
-      instanceFieldTypes.set(prop.key, propType ?? ObjectType);
-      // Propagate expected type for nested typed object literals
-      const prev = this.currentExpectedType;
-      if (
-        propType instanceof InterfaceTypeSymbol &&
-        prop.value.kind === ASTNodeKind.ObjectLiteralExpression
-      ) {
-        this.currentExpectedType = propType;
-      } else {
-        this.currentExpectedType = undefined;
-      }
-      const value = this.visitExpression(prop.value);
-      this.currentExpectedType = prev;
-      this.emitCopyWithTracking(propVar, value);
-      this.maybeTrackInlineInstanceAssignment(propVar, value);
-      const propKey = operandTrackingKey(propVar);
-      if (propKey) {
-        const structuralCopyType =
+    if (isSoA) {
+      this.soaConstructionPrefixes.add(instancePrefix);
+      this.soaInstancePrefixes.add(instancePrefix);
+    }
+    try {
+      for (const prop of node.properties) {
+        if (prop.kind !== "property") continue;
+        const rawPropType = expected.properties.get(prop.key);
+        // Re-resolve through typeMapper in case the property type was registered
+        // before its type alias (e.g. Wind) was defined (parse-order issue).
+        const propType = rawPropType?.name
+          ? (this.typeMapper.getAlias(rawPropType.name) ?? rawPropType)
+          : rawPropType;
+        // Propagate expected type for nested typed object literals
+        const prev = this.currentExpectedType;
+        if (propType && propType !== ObjectType) {
+          this.currentExpectedType = propType;
+        } else {
+          this.currentExpectedType = undefined;
+        }
+        const value = this.visitExpression(prop.value);
+        this.currentExpectedType = prev;
+        const propStorageType =
           propType && propType !== ObjectType
             ? propType
-            : (resolveTypeFromNode(this, prop.value) ??
-              propType ??
-              this.getOperandType(value));
-        emitStructuralFieldCopies(
-          this,
-          propKey,
-          structuralCopyType,
-          value,
+            : this.getOperandType(value);
+        const propVar = createVariable(
+          `${instancePrefix}_${prop.key}`,
+          propStorageType,
+        );
+        instanceFieldTypes.set(prop.key, propStorageType);
+        this.emitCopyWithTracking(propVar, value);
+        this.maybeTrackInlineInstanceAssignment(propVar, value);
+        const propKey = operandTrackingKey(propVar);
+        if (propKey) {
+          const structuralCopyType =
+            propStorageType !== ObjectType
+              ? propStorageType
+              : (resolveTypeFromNode(this, prop.value) ??
+                propType ??
+                this.getOperandType(value));
+          emitStructuralFieldCopies(
+            this,
+            propKey,
+            structuralCopyType,
+            value,
+          );
+          if (
+            resolveStructuralInterface(this, structuralCopyType) &&
+            this.untrackedStructuralHandleVars.has(propKey)
+          ) {
+            emitStructuralFieldsFromKnownHandle(
+              this,
+              propKey,
+              structuralCopyType,
+              value,
+            );
+          }
+        }
+      }
+    } finally {
+      if (isSoA) {
+        this.soaConstructionPrefixes.delete(instancePrefix);
+      }
+    }
+    if (isSoA) {
+      const fieldLists = this.soaFieldLists.get(className);
+      const fieldTypes = this.soaFieldTypes.get(className);
+      if (fieldLists) {
+        for (const [fieldName, listVar] of fieldLists) {
+          const scratchVar = createVariable(
+            `${instancePrefix}_${fieldName}`,
+            fieldTypes?.get(fieldName) ?? ObjectType,
+          );
+          const token = this.wrapDataToken(scratchVar);
+          this.emit(
+            new MethodCallInstruction(undefined, listVar, "Add", [token]),
+          );
+        }
+      }
+      const counterVar = this.soaCounterVars.get(className);
+      if (counterVar) {
+        this.emit(
+          new BinaryOpInstruction(
+            counterVar,
+            counterVar,
+            "+",
+            createConstant(1, PrimitiveTypes.int32),
+          ),
         );
       }
     }
@@ -4932,7 +5168,13 @@ export function visitOptionalChainingExpression(
 
   const isNull = this.newTemp(PrimitiveTypes.boolean);
   const objTempType = this.getOperandType(objTemp);
-  if (usesInlineNullSentinel(this, objTempType)) {
+  const objTempUsesInlineSentinel =
+    usesInlineNullSentinel(this, objTempType) ||
+    (objTempName !== undefined &&
+      (this.inlineInstanceMap.has(objTempName) ||
+        this.untrackedStructuralHandleVars.has(objTempName) ||
+        this.structuralFieldPrefixes.has(objTempName)));
+  if (objTempUsesInlineSentinel) {
     // Inline-handle receivers store null as the sentinel `-1` rather than a
     // null object reference. Boxing the Int32 into an Object slot and then
     // comparing against null would always return false (the box exists), so
