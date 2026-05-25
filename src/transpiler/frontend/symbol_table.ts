@@ -103,6 +103,20 @@ export class SymbolTable {
   }
 
   /**
+   * Update a symbol's type and declared type in the current scope if it exists.
+   */
+  updateTypeAndDeclaredTypeInCurrentScope(
+    name: string,
+    type: TypeSymbol,
+    declaredType?: TypeSymbol,
+  ): void {
+    const scope = this.scopes[this.currentScope];
+    const symbol = scope.get(name);
+    if (!symbol) return;
+    scope.set(name, { ...symbol, type, declaredType });
+  }
+
+  /**
    * Update a symbol's initializer/initialValue in the current scope if it exists.
    */
   updateInitialValueInCurrentScope(name: string, initialValue: unknown): void {

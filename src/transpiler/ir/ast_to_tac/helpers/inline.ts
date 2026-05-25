@@ -1287,6 +1287,11 @@ export function saveAndBindInlineParams(
       }
       valueBackup = { temp: backupTemp, slotType };
     }
+    const declaredParamType =
+      argConcreteType instanceof ArrayTypeSymbol ||
+      argConcreteType instanceof DataListTypeSymbol
+        ? argConcreteType
+        : param.type;
     if (!converter.symbolTable.hasInCurrentScope(param.name)) {
       converter.symbolTable.addSymbol(
         param.name,
@@ -1295,7 +1300,13 @@ export function saveAndBindInlineParams(
         false,
         undefined,
         undefined,
-        param.type,
+        declaredParamType,
+      );
+    } else {
+      converter.symbolTable.updateTypeAndDeclaredTypeInCurrentScope(
+        param.name,
+        effectiveParamType,
+        declaredParamType,
       );
     }
     saved.set(param.name, {

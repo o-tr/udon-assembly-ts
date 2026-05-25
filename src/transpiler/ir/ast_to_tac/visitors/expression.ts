@@ -949,6 +949,13 @@ export function resolveTypeFromNode(
       );
       // If the symbol has a concrete/non-generic type, return it. Otherwise
       // fall back to resolving from the initializer AST when available.
+      if (
+        symbol?.declaredType &&
+        (symbol.declaredType instanceof ArrayTypeSymbol ||
+          symbol.declaredType instanceof DataListTypeSymbol)
+      ) {
+        return symbol.declaredType;
+      }
       if (symbol?.type && symbol.type !== ObjectType) return symbol.type;
       if (symbol?.initialValue) {
         return resolveTypeFromNode(converter, symbol.initialValue as ASTNode);
@@ -3613,16 +3620,17 @@ export function visitPropertyAccessExpression(
         // place of its real slot when the runtime handle points at that
         // branch's instance.
         const untrackedAlias = this.typeMapper.getAlias(untrackedTypeName);
-        const untrackedAnonUnion =
-          untrackedType instanceof InterfaceTypeSymbol &&
-          untrackedType.properties.size > 0
+        const untrackedAnonUnion = untrackedTypeName.startsWith(
+          "__anon_union_",
+        )
+          ? untrackedType instanceof InterfaceTypeSymbol &&
+            untrackedType.properties.size > 0
             ? untrackedType
             : untrackedAlias instanceof InterfaceTypeSymbol &&
                 untrackedAlias.properties.size > 0
               ? untrackedAlias
-              : untrackedTypeName.startsWith("__anon_union_")
-                ? this.typeMapper.getAlias(untrackedTypeName)
-                : undefined;
+              : this.typeMapper.getAlias(untrackedTypeName)
+          : undefined;
         const anonUnionIface =
           untrackedAnonUnion instanceof InterfaceTypeSymbol &&
           untrackedAnonUnion.properties.size > 0
@@ -3717,8 +3725,14 @@ export function visitPropertyAccessExpression(
                 ? untrackedAlias
                 : null;
           if (structuralIface?.properties.has(node.property)) {
+            const preferAnonymousStructural =
+              structuralIface.name.startsWith("__anon_") &&
+              !structuralIface.name.startsWith("__anon_union_");
             for (const [instId, info] of this.allInlineInstances) {
               if (
+                (!preferAnonymousStructural ||
+                  (info.className.startsWith("__anon_") &&
+                    !info.className.startsWith("__anon_union_"))) &&
                 hasAssignableStructuralProperty(
                   this,
                   info.className,
@@ -3782,8 +3796,31 @@ export function visitPropertyAccessExpression(
             // candidateClasses.  Populated only when astName is an interface;
             // hoisted here so the else-if branch below can reference it.
             let matchedImpls: string[] = [];
+            let structurallyNarrowedClasses: string[] = [];
             if (astName) {
-              if (candidateClasses.has(astName)) {
+              if (
+                astType instanceof InterfaceTypeSymbol &&
+                astName.startsWith("__anon_") &&
+                astType.properties.has(node.property)
+              ) {
+                structurallyNarrowedClasses = [...candidateClasses].filter(
+                  (candidate) =>
+                    candidate.startsWith("__anon_") &&
+                    !candidate.startsWith("__anon_union_") &&
+                    hasAssignableStructuralProperty(
+                      this,
+                      candidate,
+                      astType,
+                      node.property,
+                    ),
+                );
+              }
+              if (structurallyNarrowedClasses.length > 0) {
+                // Keep the structurally richer anonymous records that can
+                // satisfy the receiver's smaller structural shape. This avoids
+                // falling back to unrelated named classes that merely share a
+                // property name (for example YakuHanConfig.type).
+              } else if (candidateClasses.has(astName)) {
                 narrowedClass = astName;
               } else {
                 // AST type may be an interface — collect ALL implementors
@@ -3805,7 +3842,15 @@ export function visitPropertyAccessExpression(
                 // matchedImpls.length === 0 → falls to the final else branch.
               }
             }
-            if (narrowedClass) {
+            if (structurallyNarrowedClasses.length > 0) {
+              const narrowedSet = new Set(structurallyNarrowedClasses);
+              for (const [instId, info] of this.allInlineInstances) {
+                if (narrowedSet.has(info.className)) {
+                  dispInstances.push([instId, info]);
+                }
+              }
+              if (dispInstances.length > 0) usedErasedFallback = true;
+            } else if (narrowedClass) {
               for (const [instId, info] of this.allInlineInstances) {
                 if (info.className === narrowedClass) {
                   dispInstances.push([instId, info]);
