@@ -810,6 +810,13 @@ export function emitStructuralFieldCopies(
   const targetInterface = structuralInterfaceForType(converter, targetType);
   const sourceName = operandTrackingKey(arg);
   if (!sourceName) return;
+  if (
+    targetInterface &&
+    converter.untrackedStructuralHandleVars.has(sourceName)
+  ) {
+    converter.untrackedStructuralHandleVars.add(targetPrefix);
+    return;
+  }
   if (!targetInterface) {
     const sourceFieldTypes =
       converter.structuralFieldPrefixTypes.get(sourceName);
@@ -834,6 +841,9 @@ export function emitStructuralFieldCopies(
   }
 
   const sourceInfo = converter.resolveInlineInstance(sourceName);
+  const sourceHandlePrefix = sourceName.endsWith("__handle")
+    ? sourceName.slice(0, -"__handle".length)
+    : undefined;
   const sourceHasKnownStructuralPrefix =
     converter.structuralFieldPrefixes.has(sourceName) ||
     converter.structuralFieldPrefixTypes.has(sourceName);
@@ -858,6 +868,7 @@ export function emitStructuralFieldCopies(
     forceSourceStructuralSlots ||
     sourceHasKnownStructuralPrefix ||
     sourceInfo !== undefined ||
+    sourceHandlePrefix !== undefined ||
     (sourceStructuralType !== null &&
       sourceStructuralType.methods.size === 0) ||
     sourceHasNamedStructuralSlots ||
@@ -878,6 +889,8 @@ export function emitStructuralFieldCopies(
     );
     const sourceProperty = sourceHasKnownStructuralPrefix
       ? createVariable(`${sourceName}_${propertyName}`, propertyType)
+      : sourceHandlePrefix
+        ? createVariable(`${sourceHandlePrefix}_${propertyName}`, propertyType)
       : sourceInfo
         ? converter.mapInlineProperty(
             sourceInfo.className,
@@ -1806,6 +1819,25 @@ export function emitStaticPropertyInitializers(
     const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
     converter.emit(new AssignmentInstruction(propVar, coerced));
     converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
+    const valueType = converter.getOperandType(value);
+    const registryStructuralType =
+      converter.fieldTypeRegistry.getStructuralFieldType(prop.name);
+    const structuralCopyType =
+      structuralInterfaceForType(converter, resolvedPropType) !== null
+        ? resolvedPropType
+        : structuralInterfaceForType(converter, valueType) !== null
+          ? valueType
+          : registryStructuralType !== undefined &&
+              structuralInterfaceForType(converter, registryStructuralType) !==
+                null
+            ? registryStructuralType
+            : valueType;
+    emitStructuralFieldCopies(
+      converter,
+      propVarName,
+      structuralCopyType,
+      propVar,
+    );
   }
 }
 
@@ -1905,6 +1937,25 @@ function emitInlinePropertyInitializersForClass(
     const coerced = coerceValueForParamSlot(converter, value, resolvedPropType);
     converter.emit(new AssignmentInstruction(propVar, coerced));
     converter.maybeTrackInlineInstanceAssignment(propVar, coerced);
+    const valueType = converter.getOperandType(value);
+    const registryStructuralType =
+      converter.fieldTypeRegistry.getStructuralFieldType(prop.name);
+    const structuralCopyType =
+      structuralInterfaceForType(converter, resolvedPropType) !== null
+        ? resolvedPropType
+        : structuralInterfaceForType(converter, valueType) !== null
+          ? valueType
+          : registryStructuralType !== undefined &&
+              structuralInterfaceForType(converter, registryStructuralType) !==
+                null
+            ? registryStructuralType
+            : valueType;
+    emitStructuralFieldCopies(
+      converter,
+      propVarName,
+      structuralCopyType,
+      propVar,
+    );
   }
 
   if (propInitSkipLabel !== null) {
@@ -5197,7 +5248,14 @@ export function maybeTrackInlineInstanceAssignment(
   clearIfUntracked = true,
 ): void {
   const srcName = operandTrackingKey(value);
-  const mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
+  let mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
+  if (!mapped && srcName?.endsWith("__handle")) {
+    const prefix = srcName.slice(0, -"__handle".length);
+    const entry = Array.from(this.allInlineInstances.values()).find(
+      (info) => info.prefix === prefix,
+    );
+    if (entry) mapped = entry;
+  }
   if (mapped) {
     this.inlineInstanceMap.set(target.name, mapped);
   } else if (clearIfUntracked) {
@@ -5285,7 +5343,14 @@ export function emitCopyWithTracking(
   // undefined either way. Keeping src (not actualSrc) preserves tracking for
   // the no-cast path.
   const srcName = operandTrackingKey(src);
-  const srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
+  let srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;
+  if (!srcInfo && srcName?.endsWith("__handle")) {
+    const prefix = srcName.slice(0, -"__handle".length);
+    const entry = Array.from(this.allInlineInstances.values()).find(
+      (info) => info.prefix === prefix,
+    );
+    if (entry) srcInfo = entry;
+  }
   if (srcInfo) {
     this.inlineInstanceMap.set(destName, srcInfo);
   } else if (clearIfUntracked) {

@@ -354,6 +354,7 @@ function tryReadPopulatedStructuralFieldSlot(
   receiverType: TypeSymbol | undefined,
   property: string,
 ): TACOperand | undefined {
+  if (converter.untrackedStructuralHandleVars.has(slotBase)) return undefined;
   if (!converter.structuralFieldPrefixes.has(slotBase)) return undefined;
   const propType =
     resolveStructuralPropertyType(converter, receiverType, property) ??
@@ -1430,12 +1431,22 @@ export function visitBinaryExpression(
     return this.assignToTarget(node.left, assignValue);
   }
   if (node.operator === "**") {
-    const left = this.visitExpression(node.left);
-    const right = this.visitExpression(node.right);
-    const result = this.newTemp(PrimitiveTypes.single);
-    const externSig = this.resolveStaticExtern("Mathf", "Pow", "method");
+    let left = this.visitExpression(node.left);
+    let right = this.visitExpression(node.right);
+    if (this.getOperandType(left).udonType !== UdonType.Double) {
+      const castLeft = this.newTemp(PrimitiveTypes.double);
+      this.emit(new CastInstruction(castLeft, left));
+      left = castLeft;
+    }
+    if (this.getOperandType(right).udonType !== UdonType.Double) {
+      const castRight = this.newTemp(PrimitiveTypes.double);
+      this.emit(new CastInstruction(castRight, right));
+      right = castRight;
+    }
+    const result = this.newTemp(PrimitiveTypes.double);
+    const externSig = this.resolveStaticExtern("SystemMath", "Pow", "method");
     if (!externSig) {
-      throw new Error("Mathf.Pow extern signature not found");
+      throw new Error("System.Math.Pow extern signature not found");
     }
     this.emit(new CallInstruction(result, externSig, [left, right]));
     return result;
@@ -2120,7 +2131,9 @@ export function visitNullCoalescingExpression(
       ((result as TemporaryOperand).type === ObjectType ||
         (result as TemporaryOperand).type.udonType === UdonType.DataToken) &&
       rightType !== ObjectType &&
-      (rightType instanceof ArrayTypeSymbol ||
+      (leftType === ObjectType ||
+        leftType.udonType === UdonType.Object ||
+        rightType instanceof ArrayTypeSymbol ||
         rightType instanceof InterfaceTypeSymbol ||
         rightType instanceof CollectionTypeSymbol ||
         rightType instanceof DataListTypeSymbol)
@@ -3279,7 +3292,8 @@ export function visitPropertyAccessExpression(
       if (
         access.object.kind === ASTNodeKind.ThisExpression &&
         this.currentInlineContext &&
-        !this.currentThisOverride
+        !this.currentThisOverride &&
+        !this.currentInlineContext.instancePrefix.startsWith("__viface_")
       ) {
         const nested = tryMapInlinePropertyWithConcreteFallback(
           this,

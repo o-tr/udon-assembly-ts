@@ -626,8 +626,7 @@ export function visitVariableDeclaration(
     {
       const srcType = this.getOperandType(src);
       if (
-        (destType.udonType === UdonType.Single ||
-          destType.udonType === UdonType.Double) &&
+        isNumericUdonType(destType.udonType) &&
         isNumericUdonType(srcType.udonType) &&
         srcType.udonType !== destType.udonType
       ) {
@@ -638,8 +637,23 @@ export function visitVariableDeclaration(
           if (raw !== null && typeof raw !== "object") {
             const num = typeof raw === "number" ? raw : Number(raw);
             if (!Number.isNaN(num)) {
-              emitSrc = createConstant(num, destType);
-              folded = true;
+              switch (destType.udonType) {
+                case UdonType.Int32:
+                  emitSrc = createConstant(
+                    Math.trunc(num),
+                    PrimitiveTypes.int32,
+                  );
+                  folded = true;
+                  break;
+                case UdonType.Single:
+                  emitSrc = createConstant(num, PrimitiveTypes.single);
+                  folded = true;
+                  break;
+                case UdonType.Double:
+                  emitSrc = createConstant(num, PrimitiveTypes.double);
+                  folded = true;
+                  break;
+              }
             }
           }
           if (!folded) {
@@ -1521,6 +1535,13 @@ export function visitForOfStatement(
           this.emit(new LabelInstruction(nextLabel));
         }
         this.emit(new LabelInstruction(dispatchEndLabel));
+        for (const propName of vifaceFieldTypes.keys()) {
+          const virtualPropName = `${virtualPrefix}_${propName}`;
+          if (this.inlineInstanceMap.has(virtualPropName)) {
+            this.inlineInstanceMap.delete(virtualPropName);
+          }
+          this.untrackedStructuralHandleVars.add(virtualPropName);
+        }
 
         // Register virtual prefix in inlineInstanceMap for the loop variable
         savedInlineMapBeforeViface = new Map(this.inlineInstanceMap);

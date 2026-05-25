@@ -4,6 +4,7 @@ import {
   ClassTypeSymbol,
   ExternTypes,
   InterfaceTypeSymbol,
+  ObjectType,
   PrimitiveTypes,
   type TypeSymbol,
 } from "../../type_symbols.js";
@@ -376,9 +377,26 @@ export function extractInterfaceMembers(
   for (const member of members) {
     if (ts.isPropertySignature(member) || ts.isGetAccessorDeclaration(member)) {
       const propName = member.name.getText();
-      const propType = member.type
+      let propType = member.type
         ? mapType(member.type.getText(), member.type)
         : ExternTypes.dataDictionary;
+      if (
+        ts.isPropertySignature(member) &&
+        member.questionToken &&
+        (propType.udonType === UdonType.Boolean ||
+          propType.udonType === UdonType.Byte ||
+          propType.udonType === UdonType.SByte ||
+          propType.udonType === UdonType.Int16 ||
+          propType.udonType === UdonType.UInt16 ||
+          propType.udonType === UdonType.Int32 ||
+          propType.udonType === UdonType.UInt32 ||
+          propType.udonType === UdonType.Int64 ||
+          propType.udonType === UdonType.UInt64 ||
+          propType.udonType === UdonType.Single ||
+          propType.udonType === UdonType.Double)
+      ) {
+        propType = ObjectType;
+      }
       const existingIdx = properties.findIndex((p) => p.name === propName);
       if (existingIdx === -1) {
         properties.push({ name: propName, type: propType });

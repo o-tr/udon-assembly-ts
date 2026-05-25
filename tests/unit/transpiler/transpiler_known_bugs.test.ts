@@ -1711,6 +1711,128 @@ describe("known transpiler bugs", () => {
         result.tac.indexOf("ContainsKey"),
       );
     });
+
+    it("inline params read structural array elements through handle dispatch", () => {
+      const source = `
+        type Dec = { waitType: string; value: number };
+
+        class Main {
+          consume(d: Dec): string {
+            return d.waitType;
+          }
+
+          Start(): void {
+            const rows: Dec[] = [];
+            rows.push({ waitType: "ok", value: 1 });
+            const d = rows[0];
+            Debug.Log(this.consume(d));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toMatch(/__inline_ret_\d+ = d_waitType/);
+      expect(result.tac).toContain("__uninst_prop_");
+      expect(result.tac).toContain("__inst_Dec_0_waitType");
+    });
+
+    it("object literals preserve nested untracked structural handles", () => {
+      const source = `
+        type Dec = { waitType: string; value: number };
+
+        class Main {
+          Start(): void {
+            const rows: Dec[] = [];
+            rows.push({ waitType: "ok", value: 1 });
+            const decomposition = rows[0];
+            const candidate = { decomposition, fu: 30 };
+            Debug.Log(candidate.decomposition.waitType);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toContain(
+        "candidate_decomposition_waitType = decomposition_waitType",
+      );
+      expect(result.tac).toContain("__uninst_prop_");
+      expect(result.tac).toContain("__inst_Dec_0_waitType");
+    });
+
+    it("interface dispatch does not bind nested structural fields to the last implementor", () => {
+      const source = `
+        type Config = { type: string; fixed?: number };
+        type IY = {
+          readonly name: string;
+          readonly hanConfig: Config;
+          check(): boolean;
+          getHan(open: boolean): number;
+        };
+
+        class Base implements IY {
+          readonly name: string = "Base";
+          readonly hanConfig: Config = { type: "fixed", fixed: 0 };
+          check(): boolean { return false; }
+          getHan(_open: boolean): number {
+            switch (this.hanConfig.type) {
+              case "fixed": return this.hanConfig.fixed ?? 0;
+              default: return 0;
+            }
+          }
+        }
+
+        class A extends Base {
+          readonly name = "A";
+          readonly hanConfig: Config = { type: "fixed", fixed: 1 };
+          check(): boolean { return true; }
+        }
+
+        class Main {
+          Start(): void {
+            const ys: IY[] = [];
+            ys.push(new A());
+            ys.push(new Base());
+            for (const y of ys) {
+              if (y.check()) {
+                Debug.Log(y.getHan(false));
+              }
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__uninst_prop_");
+      expect(result.tac).toContain("__inst_Config_2_fixed");
+      expect(result.tac).not.toMatch(/t\d+ = __inst_Config_4_fixed/);
+    });
+
+    it("optional primitive structural fields keep null sentinel slots", () => {
+      const source = `
+        type Result = { ok: boolean; value?: number };
+        type Checker = { check(): Result };
+
+        class C implements Checker {
+          check(): Result {
+            return { ok: true };
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const c: Checker = new C();
+            const r = c.check();
+            Debug.Log(r.value ?? 7);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain("__inst_Result_1_value: %SystemObject");
+      expect(result.uasm).toContain("__inline_ret_1_value: %SystemObject");
+      expect(result.uasm).toContain("r_value: %SystemObject");
+      expect(result.uasm).not.toContain("__inst_Result_1_value: %SystemInt32");
+    });
   });
 
   describe("tile-like DataToken accessor mismatch regressions", () => {

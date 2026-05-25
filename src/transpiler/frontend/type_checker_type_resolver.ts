@@ -28,6 +28,33 @@ const TYPE_TO_STRING_FLAGS =
 // are not widened.
 const LIB_DTS_RE = /[\\/]typescript[\\/]lib[\\/]lib\..*\.d\.ts$/i;
 
+function isPrimitiveNullableSlotType(type: TypeSymbol): boolean {
+  switch (type.udonType) {
+    case UdonType.Boolean:
+    case UdonType.Byte:
+    case UdonType.SByte:
+    case UdonType.Int16:
+    case UdonType.UInt16:
+    case UdonType.Int32:
+    case UdonType.UInt32:
+    case UdonType.Int64:
+    case UdonType.UInt64:
+    case UdonType.Single:
+    case UdonType.Double:
+      return true;
+    default:
+      return false;
+  }
+}
+
+function hasOptionalPropertyDeclaration(prop: ts.Symbol): boolean {
+  return (
+    prop.declarations?.some(
+      (decl) => ts.isPropertySignature(decl) && decl.questionToken,
+    ) ?? false
+  );
+}
+
 /**
  * Resolves TypeScript compiler types (ts.Type / ts.Node) to internal TypeSymbols.
  *
@@ -783,7 +810,14 @@ export class TypeCheckerTypeResolver {
         continue;
       }
 
-      propertyMap.set(prop.name, this.resolveFromTsType(propType));
+      const resolved = this.resolveFromTsType(propType);
+      propertyMap.set(
+        prop.name,
+        hasOptionalPropertyDeclaration(prop) &&
+          isPrimitiveNullableSlotType(resolved)
+          ? ObjectType
+          : resolved,
+      );
     }
   }
 }

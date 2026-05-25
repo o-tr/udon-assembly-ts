@@ -395,6 +395,8 @@ export function dispatchExtern(
       return Math.max(castFloat(args[0]), castFloat(args[1]));
     case "SystemMath.__Ceiling__SystemDouble__SystemDouble":
       return Math.ceil(castFloat(args[0]));
+    case "SystemMath.__Pow__SystemDouble_SystemDouble__SystemDouble":
+      return castFloat(args[0]) ** castFloat(args[1]);
     case "UnityEngineMathf.__Abs__SystemSingle__SystemSingle":
       return Math.abs(castFloat(args[0]));
     case "UnityEngineMathf.__Ceil__SystemSingle__SystemSingle":
