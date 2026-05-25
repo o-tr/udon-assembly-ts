@@ -2990,9 +2990,20 @@ export function visitCallExpression(
       objectType.udonType === UdonType.Array ||
       objectType.udonType === UdonType.DataList
     ) {
-      const arrayReturn =
-        objectType instanceof ArrayTypeSymbol
+      const inferredObjectType = resolveTypeFromNode(this, propAccess.object);
+      const typedObjectType =
+        objectType instanceof ArrayTypeSymbol ||
+        objectType instanceof DataListTypeSymbol
           ? objectType
+          : inferredObjectType instanceof ArrayTypeSymbol ||
+              inferredObjectType instanceof DataListTypeSymbol
+            ? inferredObjectType
+            : objectType;
+      const arrayReturn =
+        typedObjectType instanceof ArrayTypeSymbol
+          ? typedObjectType
+          : typedObjectType instanceof DataListTypeSymbol
+            ? new ArrayTypeSymbol(typedObjectType.elementType)
           : new ArrayTypeSymbol(ObjectType);
       switch (propAccess.property) {
         case "concat": {
@@ -3051,10 +3062,10 @@ export function visitCallExpression(
           // JS slice(start, end) → loop-based copy (DataList.GetRange not available in VM)
           const result = this.newTemp(arrayReturn);
           const elemType =
-            objectType instanceof ArrayTypeSymbol
-              ? objectType.elementType
-              : objectType instanceof DataListTypeSymbol
-                ? objectType.elementType
+            typedObjectType instanceof ArrayTypeSymbol
+              ? typedObjectType.elementType
+              : typedObjectType instanceof DataListTypeSymbol
+                ? typedObjectType.elementType
                 : ObjectType;
           const coerceToInt32 = (operand: TACOperand): TACOperand => {
             const operandType = this.getOperandType(operand);

@@ -599,6 +599,98 @@ export function hasCompatibleUnionProperty(
   return isStructurallyEqualType(concreteProp, unionProp, converter.typeMapper);
 }
 
+function isStructurallyAssignableType(
+  rawSource: TypeSymbol,
+  rawTarget: TypeSymbol,
+  typeMapper: TypeMapper,
+  visited: Set<string> = new Set(),
+): boolean {
+  const source = resolveTypeThroughAliases(typeMapper, rawSource);
+  const target = resolveTypeThroughAliases(typeMapper, rawTarget);
+  if (source === target) return true;
+  if (source instanceof InterfaceTypeSymbol && target instanceof InterfaceTypeSymbol) {
+    const pairKey = `${source.name}::${target.name}`;
+    if (visited.has(pairKey)) return false;
+    visited.add(pairKey);
+    for (const [propName, targetPropType] of target.properties) {
+      const sourcePropType = source.properties.get(propName);
+      if (!sourcePropType) return false;
+      if (
+        !isStructurallyAssignableType(
+          sourcePropType,
+          targetPropType,
+          typeMapper,
+          visited,
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (source instanceof ArrayTypeSymbol && target instanceof ArrayTypeSymbol) {
+    return (
+      source.dimensions === target.dimensions &&
+      isStructurallyAssignableType(
+        source.elementType,
+        target.elementType,
+        typeMapper,
+        visited,
+      )
+    );
+  }
+  if (source instanceof DataListTypeSymbol && target instanceof DataListTypeSymbol) {
+    return isStructurallyAssignableType(
+      source.elementType,
+      target.elementType,
+      typeMapper,
+      visited,
+    );
+  }
+  if (source instanceof CollectionTypeSymbol && target instanceof CollectionTypeSymbol) {
+    if (source.name !== target.name) return false;
+    const assignable = (
+      sourceInner: TypeSymbol | undefined,
+      targetInner: TypeSymbol | undefined,
+    ): boolean =>
+      sourceInner === undefined && targetInner === undefined
+        ? true
+        : sourceInner !== undefined && targetInner !== undefined
+          ? isStructurallyAssignableType(
+              sourceInner,
+              targetInner,
+              typeMapper,
+              visited,
+            )
+          : false;
+    return (
+      assignable(source.elementType, target.elementType) &&
+      assignable(source.keyType, target.keyType) &&
+      assignable(source.valueType, target.valueType)
+    );
+  }
+  return source.name === target.name && source.udonType === target.udonType;
+}
+
+export function hasAssignableStructuralProperty(
+  converter: ASTToTACConverter,
+  concreteClassName: string,
+  structuralType: InterfaceTypeSymbol,
+  propertyName: string,
+): boolean {
+  const targetProp = structuralType.properties.get(propertyName);
+  if (!targetProp) return false;
+  const concrete = converter.typeMapper.getAlias(concreteClassName);
+  if (!(concrete instanceof InterfaceTypeSymbol)) return false;
+  const concreteProp = concrete.properties.get(propertyName);
+  if (!concreteProp) return false;
+  return isStructurallyAssignableType(
+    concreteProp,
+    targetProp,
+    converter.typeMapper,
+  );
+}
+
 /**
  * Resolve a class node by name, checking classMap first then classRegistry.
  */

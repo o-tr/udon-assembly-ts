@@ -89,6 +89,7 @@ import {
   createSoaSentinelValue,
   emitStructuralFieldCopies,
   evaluateInlineGetter,
+  hasAssignableStructuralProperty,
   hasCompatibleUnionProperty,
   isInlineHandleType,
   isSubclassOf,
@@ -3660,6 +3661,37 @@ export function visitPropertyAccessExpression(
                 info.className === astTypeName ||
                 astImplementorNames?.has(info.className) ||
                 isSubclassOf(this, info.className, astTypeName)
+              ) {
+                dispInstances.push([instId, info]);
+              }
+            }
+            if (dispInstances.length > 0) usedErasedFallback = true;
+          }
+        }
+        // Structural-subset fallback: a value can be declared as a smaller
+        // structural shape than the object literal that actually flows through
+        // it, e.g. `{ estimate: { maxHan } }` while the runtime handle points
+        // at `{ estimate: { minHan, maxHan } }`. Dispatch to concrete inline
+        // instances whose property type contains the requested structural
+        // shape instead of falling through to a raw PropertyGetInstruction.
+        if (dispInstances.length === 0) {
+          const structuralIface =
+            untrackedType instanceof InterfaceTypeSymbol &&
+            untrackedType.properties.size > 0
+              ? untrackedType
+              : untrackedAlias instanceof InterfaceTypeSymbol &&
+                  untrackedAlias.properties.size > 0
+                ? untrackedAlias
+                : null;
+          if (structuralIface?.properties.has(node.property)) {
+            for (const [instId, info] of this.allInlineInstances) {
+              if (
+                hasAssignableStructuralProperty(
+                  this,
+                  info.className,
+                  structuralIface,
+                  node.property,
+                )
               ) {
                 dispInstances.push([instId, info]);
               }

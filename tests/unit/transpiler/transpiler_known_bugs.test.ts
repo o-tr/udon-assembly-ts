@@ -3656,5 +3656,69 @@ class Main extends UdonSharpBehaviour {
         true,
       );
     });
+
+    it("structural subset params dispatch nested object fields through handles", () => {
+      const source = `
+        type Estimate = { minHan: number; maxHan: number };
+        type Candidate = { estimate: Estimate };
+
+        class Main {
+          compare(
+            a: { estimate: { maxHan: number } },
+            b: { estimate: { maxHan: number } },
+          ): number {
+            return b.estimate.maxHan - a.estimate.maxHan;
+          }
+
+          Start(): void {
+            const list: Candidate[] = [];
+            list.push({ estimate: { minHan: 1, maxHan: 7 } });
+            const current = list[0];
+            Debug.Log(this.compare(current, current));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toMatch(/\bt\d+ = [ab]\.estimate\b/);
+      expect(result.tac).toContain(
+        "[udon-assembly-ts] D3 dispatch miss: estimate on untracked instance",
+      );
+      expect(result.tac).toContain("__inst_Candidate_0_estimate");
+      expect(result.tac).toContain("__inst_Estimate_1_maxHan");
+    });
+
+    it("array slice preserves structural element types for object destructuring", () => {
+      const source = `
+        type Estimate = { minHan: number; maxHan: number };
+        type Candidate = { decomposition: string; estimate: Estimate };
+
+        class Main {
+          Start(): void {
+            const candidates: Candidate[] = [];
+            candidates.push({
+              decomposition: "ok",
+              estimate: { minHan: 1, maxHan: 7 },
+            });
+            const topCandidates = candidates.slice(0, 1);
+            for (const { decomposition, estimate } of topCandidates) {
+              Debug.Log(decomposition);
+              Debug.Log(estimate.maxHan);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_decomposition__SystemObject",
+      );
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_estimate__SystemObject",
+      );
+      expect(result.tac).toContain("__forof_destructure_");
+      expect(result.tac).toContain("__inst_Candidate_0_decomposition");
+      expect(result.tac).toContain("__inst_Candidate_0_estimate_maxHan");
+    });
   });
 });

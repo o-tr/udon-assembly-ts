@@ -568,6 +568,9 @@ export function getArrayElementType(
     if (type instanceof ArrayTypeSymbol) {
       return type.peelOneDimension();
     }
+    if (type instanceof DataListTypeSymbol) {
+      return type.elementType;
+    }
     if (type instanceof NativeArrayTypeSymbol) {
       return type.elementType;
     }

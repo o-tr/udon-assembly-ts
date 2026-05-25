@@ -18,6 +18,7 @@ import {
   type BinaryExpressionNode,
   type BlockStatementNode,
   type BreakStatementNode,
+  type CallExpressionNode,
   type ClassDeclarationNode,
   type ConditionalExpressionNode,
   type ContinueStatementNode,
@@ -27,6 +28,7 @@ import {
   type ForOfStatementNode,
   type ForStatementNode,
   type IfStatementNode,
+  type IdentifierNode,
   isNumericUdonType,
   type LiteralNode,
   type NullCoalescingExpressionNode,
@@ -175,6 +177,24 @@ function preferResolvedListType(
     }
   }
   return inferredType;
+}
+
+function inferElementTypeFromIdentifierInitializer(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): TypeSymbol | null {
+  if (node.kind !== ASTNodeKind.Identifier) return null;
+  const symbol = converter.symbolTable.lookup((node as IdentifierNode).name);
+  const initialValue = symbol?.initialValue as ASTNode | undefined;
+  if (initialValue?.kind !== ASTNodeKind.CallExpression) return null;
+  const call = initialValue as CallExpressionNode;
+  if (call.callee.kind !== ASTNodeKind.PropertyAccessExpression) return null;
+  const access = call.callee as PropertyAccessExpressionNode;
+  if (access.property !== "slice" && access.property !== "concat") return null;
+  const sourceType = resolveTypeFromNode(converter, access.object);
+  if (sourceType instanceof ArrayTypeSymbol) return sourceType.peelOneDimension();
+  if (sourceType instanceof DataListTypeSymbol) return sourceType.elementType;
+  return null;
 }
 
 function isNullConstantOperand(
@@ -993,6 +1013,10 @@ export function visitForOfStatement(
       break;
     }
   }
+  inferredElementType ??= inferElementTypeFromIdentifierInitializer(
+    this,
+    node.iterable,
+  );
   // Only unwrap DataToken elements when we have a DataListTypeSymbol (e.g.,
   // Set iteration via GetKeys() yields DataListTypeSymbol) so we can use the
   // element type. When matching ExternTypes.dataList or UdonType.DataList by
