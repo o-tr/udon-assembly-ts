@@ -182,19 +182,28 @@ class TsIrEmitter {
       fs.writeSync(fd, text);
     };
     try {
-      write(`import * as runtime from ${JSON.stringify(this.moduleImportPath)};\n\n`);
+      write(
+        `import * as runtime from ${JSON.stringify(this.moduleImportPath)};\n\n`,
+      );
       write("const program = JSON.parse(`[\n");
       for (let pc = 0; pc < this.instructions.length; pc += 1) {
         if (pc > 0) write(",\n");
         write(
           escapeTemplateJson(
-            JSON.stringify(this.dataInstruction(this.instructions[pc] as TACInstruction)),
+            JSON.stringify(
+              this.dataInstruction(this.instructions[pc] as TACInstruction),
+            ),
           ),
         );
       }
       write("\n]`);\n\n");
+      write(
+        `const slotDefaults = JSON.parse(${JSON.stringify(
+          JSON.stringify(this.dataSlotDefaults()),
+        )});\n\n`,
+      );
       write(`export function ${this.functionName}() {\n`);
-      write("  return runtime.runTacProgram(program);\n");
+      write("  return runtime.runTacProgram(program, slotDefaults);\n");
       write("}\n");
     } finally {
       fs.closeSync(fd);
@@ -386,7 +395,8 @@ class TsIrEmitter {
       case TACInstructionKind.Phi: {
         const inst = instruction as PhiInstruction;
         this.collectOperandSlot(inst.dest);
-        for (const source of inst.sources) this.collectOperandSlot(source.value);
+        for (const source of inst.sources)
+          this.collectOperandSlot(source.value);
         return;
       }
       default:
@@ -730,7 +740,10 @@ class TsIrEmitter {
     }
   }
 
-  private linearUnaryExpression(inst: UnaryOpInstruction, ctxName: string): string {
+  private linearUnaryExpression(
+    inst: UnaryOpInstruction,
+    ctxName: string,
+  ): string {
     const operand = this.readLinearExpression(inst.operand, ctxName);
     if (!this.compact) {
       return `runtime.unaryOp(${JSON.stringify(inst.operator)}, ${operand}, ${ctxName})`;
@@ -1019,7 +1032,11 @@ class TsIrEmitter {
       }
       case TACInstructionKind.ConditionalJump: {
         const inst = instruction as ConditionalJumpInstruction;
-        return ["cj", this.dataOperand(inst.condition), this.labelPc(inst.label)];
+        return [
+          "cj",
+          this.dataOperand(inst.condition),
+          this.labelPc(inst.label),
+        ];
       }
       case TACInstructionKind.UnconditionalJump: {
         const inst = instruction as UnconditionalJumpInstruction;
@@ -1092,10 +1109,7 @@ class TsIrEmitter {
       }
       case TACInstructionKind.Phi: {
         const inst = instruction as PhiInstruction;
-        return [
-          "unsupported",
-          `${instruction.kind}: ${inst.toString()}`,
-        ];
+        return ["unsupported", `${instruction.kind}: ${inst.toString()}`];
       }
       default:
         return ["unsupported", instruction.kind];
@@ -1139,6 +1153,28 @@ class TsIrEmitter {
         return "n";
     }
   }
+
+  private dataSlotDefaults(): Record<string, string> {
+    const defaults: Record<string, string> = {};
+    for (const [slot, info] of this.slots) {
+      const defaultCode = this.defaultCodeForType(info.type);
+      if (defaultCode) defaults[slot] = defaultCode;
+    }
+    return defaults;
+  }
+
+  private defaultCodeForType(type: string): string | undefined {
+    if (type.startsWith("number")) return "z";
+    if (type.startsWith("boolean")) return "f";
+    if (type.startsWith("string")) return "s";
+    if (type.includes("DataList") || type.includes("DataDictionary")) {
+      return "n";
+    }
+    if (type.includes("DataToken")) return "dt";
+    if (type.includes("MaybeHandle")) return "z";
+    if (type.startsWith("unknown")) return "n";
+    return undefined;
+  }
 }
 
 function sanitizeIdentifier(value: string): string {
@@ -1148,5 +1184,8 @@ function sanitizeIdentifier(value: string): string {
 }
 
 function escapeTemplateJson(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\$\{/g, "\\${");
 }

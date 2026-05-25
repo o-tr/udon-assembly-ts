@@ -58,6 +58,14 @@ export class DataDictionary<K = unknown, V = unknown> {
     return this.entries.has(stableKey(key));
   }
 
+  remove(key: K): boolean {
+    return this.entries.delete(stableKey(key));
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+
   getKeys(): DataList<K> {
     return new DataList(
       Array.from(this.entries.values(), (entry) => entry.key),
@@ -430,6 +438,11 @@ export function callMethod(
         return object.getValue(args[0], ctx);
       case "ContainsKey":
         return object.containsKey(args[0]);
+      case "Remove":
+        return object.remove(args[0]);
+      case "Clear":
+        object.clear();
+        return undefined;
       case "GetKeys":
         return object.getKeys();
       case "GetValues":
@@ -444,7 +457,10 @@ export function callMethod(
   if (object === null || object === undefined || object === NULL_HANDLE) {
     throw runtimeError(`Cannot call '${method}' on a null object`, ctx);
   }
-  throw runtimeError(`Unsupported method '${method}'`, ctx);
+  throw runtimeError(
+    `Unsupported method '${method}' on ${describeValue(object)}`,
+    ctx,
+  );
 }
 
 export function getProperty(
@@ -476,13 +492,43 @@ export function getProperty(
       case "IsNull":
         return object.value === null;
       case "DataList":
+        if (object.value instanceof DataList) return object.value;
+        throw runtimeError(
+          `DataToken value is not a DataList: ${describeValue(object.value)}`,
+          ctx,
+        );
       case "DataDictionary":
+        if (object.value instanceof DataDictionary) return object.value;
+        throw runtimeError(
+          `DataToken value is not a DataDictionary: ${describeValue(object.value)}`,
+          ctx,
+        );
       case "Reference":
+        if (
+          object.value === null ||
+          object.value === undefined ||
+          typeof object.value === "object"
+        ) {
+          return object.value;
+        }
+        throw runtimeError(
+          `DataToken value is not a reference: ${describeValue(object.value)}`,
+          ctx,
+        );
       case "String":
       case "Boolean":
       case "Double":
       case "Int":
         return object.value;
+      case "Count":
+        if (object.value instanceof DataList) return object.value.items.length;
+        if (object.value instanceof DataDictionary) return object.value.count;
+        if (Array.isArray(object.value)) return object.value.length;
+        if (typeof object.value === "string") return object.value.length;
+        throw runtimeError(
+          `DataToken Count is unavailable: ${describeValue(object.value)}`,
+          ctx,
+        );
       default:
         throw runtimeError(`Unsupported DataToken property '${property}'`, ctx);
     }
@@ -515,7 +561,10 @@ export function setProperty(
 type EncodedOperand = readonly [string, unknown?];
 type EncodedInstruction = readonly unknown[];
 
-export function runTacProgram(program: readonly EncodedInstruction[]): {
+export function runTacProgram(
+  program: readonly EncodedInstruction[],
+  slotDefaults: Readonly<Record<string, string>> = {},
+): {
   readonly heap: Record<string, unknown>;
   readonly logs: readonly DebugLogEntry[];
 } {
@@ -541,15 +590,26 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
           instruction[2] as EncodedOperand,
           heap,
           ctx,
+          slotDefaults,
         );
         pc += 1;
         break;
       }
       case "b": {
         heap[String(instruction[1])] = binaryOp(
-          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[3] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           String(instruction[2]),
-          readEncodedOperand(instruction[4] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[4] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           ctx,
         );
         pc += 1;
@@ -558,7 +618,12 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
       case "u": {
         heap[String(instruction[1])] = unaryOp(
           String(instruction[2]),
-          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[3] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           ctx,
         );
         pc += 1;
@@ -569,6 +634,7 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
           instruction[3] as EncodedOperand,
           heap,
           ctx,
+          slotDefaults,
         );
         switch (instruction[2]) {
           case "i":
@@ -589,7 +655,12 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
       }
       case "cj":
         pc = coerceBool(
-          readEncodedOperand(instruction[1] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[1] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
         )
           ? pc + 1
           : Number(instruction[2]);
@@ -603,7 +674,7 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
       case "call": {
         const value = dispatchExtern(
           String(instruction[2]),
-          readEncodedOperands(instruction[3], heap, ctx),
+          readEncodedOperands(instruction[3], heap, ctx, slotDefaults),
           ctx,
         );
         if (instruction[1] !== null) heap[String(instruction[1])] = value;
@@ -612,9 +683,14 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
       }
       case "m": {
         const value = callMethod(
-          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[2] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           String(instruction[3]),
-          readEncodedOperands(instruction[4], heap, ctx),
+          readEncodedOperands(instruction[4], heap, ctx, slotDefaults),
           ctx,
         );
         if (instruction[1] !== null) heap[String(instruction[1])] = value;
@@ -623,7 +699,12 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
       }
       case "pg":
         heap[String(instruction[1])] = getProperty(
-          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[2] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           String(instruction[3]),
           ctx,
         );
@@ -631,26 +712,61 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
         break;
       case "ag":
         heap[String(instruction[1])] = getArrayItem(
-          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
-          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[2] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
+          readEncodedOperand(
+            instruction[3] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           ctx,
         );
         pc += 1;
         break;
       case "aa":
         setArrayItem(
-          readEncodedOperand(instruction[1] as EncodedOperand, heap, ctx),
-          readEncodedOperand(instruction[2] as EncodedOperand, heap, ctx),
-          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[1] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
+          readEncodedOperand(
+            instruction[2] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
+          readEncodedOperand(
+            instruction[3] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           ctx,
         );
         pc += 1;
         break;
       case "ps":
         setProperty(
-          readEncodedOperand(instruction[1] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[1] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           String(instruction[2]),
-          readEncodedOperand(instruction[3] as EncodedOperand, heap, ctx),
+          readEncodedOperand(
+            instruction[3] as EncodedOperand,
+            heap,
+            ctx,
+            slotDefaults,
+          ),
           ctx,
         );
         pc += 1;
@@ -661,6 +777,7 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
             instruction[1] as EncodedOperand,
             heap,
             ctx,
+            slotDefaults,
           );
         }
         return { heap, logs: [...debugLogs] };
@@ -676,7 +793,11 @@ export function runTacProgram(program: readonly EncodedInstruction[]): {
   }
 }
 
-function getArrayItem(array: unknown, index: unknown, ctx: TsIrContext): unknown {
+function getArrayItem(
+  array: unknown,
+  index: unknown,
+  ctx: TsIrContext,
+): unknown {
   if (!Array.isArray(array)) {
     throw runtimeError("Array access target is not an array", ctx);
   }
@@ -699,12 +820,13 @@ function readEncodedOperands(
   operands: unknown,
   heap: Record<string, unknown>,
   ctx: TsIrContext,
+  slotDefaults: Readonly<Record<string, string>>,
 ): unknown[] {
   if (!Array.isArray(operands)) {
     throw runtimeError("Encoded TAC operands are not an array", ctx);
   }
   return operands.map((operand) =>
-    readEncodedOperand(operand as EncodedOperand, heap, ctx),
+    readEncodedOperand(operand as EncodedOperand, heap, ctx, slotDefaults),
   );
 }
 
@@ -712,12 +834,16 @@ function readEncodedOperand(
   operand: EncodedOperand,
   heap: Record<string, unknown>,
   ctx: TsIrContext,
+  slotDefaults: Readonly<Record<string, string>> = {},
 ): unknown {
   switch (operand[0]) {
     case "s": {
       const slot = String(operand[1]);
       if (heap[slot] === undefined && slot.endsWith("__inited")) {
         return 0;
+      }
+      if (heap[slot] === undefined && slot in slotDefaults) {
+        return defaultValueForCode(slotDefaults[slot]);
       }
       if (heap[slot] === undefined && slot.endsWith("_stackInit")) {
         return false;
@@ -757,7 +883,27 @@ function readEncodedOperand(
     case "label":
       return String(operand[1]);
     default:
-      throw runtimeError(`Unsupported encoded TAC operand '${operand[0]}'`, ctx);
+      throw runtimeError(
+        `Unsupported encoded TAC operand '${operand[0]}'`,
+        ctx,
+      );
+  }
+}
+
+function defaultValueForCode(code: string | undefined): unknown {
+  switch (code) {
+    case "z":
+      return 0;
+    case "f":
+      return false;
+    case "s":
+      return "";
+    case "n":
+      return null;
+    case "dt":
+      return dataToken(null);
+    default:
+      return undefined;
   }
 }
 
@@ -812,4 +958,14 @@ function stableKey(value: unknown): string {
   const kind = typeof value;
   if (kind === "object") return `object:${JSON.stringify(value)}`;
   return `${kind}:${String(value)}`;
+}
+
+function describeValue(value: unknown): string {
+  if (value instanceof DataList) return `DataList(${value.items.length})`;
+  if (value instanceof DataDictionary) return `DataDictionary(${value.count})`;
+  if (isDataToken(value)) return `DataToken(${describeValue(value.value)})`;
+  if (Array.isArray(value)) return `Array(${value.length})`;
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  return `${typeof value}:${String(value)}`;
 }
