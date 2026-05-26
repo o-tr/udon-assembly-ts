@@ -1069,7 +1069,47 @@ export function emitStructuralFieldCopies(
   const targetInterface = structuralInterfaceForType(converter, targetType);
   const sourceName = operandTrackingKey(arg);
   if (!sourceName) return;
-  if (converter.untrackedStructuralHandleVars.has(sourceName)) {
+  const sourceHasKnownStructuralPrefix =
+    converter.structuralFieldPrefixes.has(sourceName) ||
+    converter.structuralFieldPrefixTypes.has(sourceName);
+  const sourceHasNamedStructuralSlots =
+    targetInterface !== null &&
+    Array.from(targetInterface.properties.keys()).some((propertyName) =>
+      converter.symbolTable.lookup(`${sourceName}_${propertyName}`),
+    );
+  if (
+    converter.untrackedStructuralHandleVars.has(sourceName) &&
+    !sourceHasKnownStructuralPrefix &&
+    !sourceHasNamedStructuralSlots
+  ) {
+    if (targetInterface && targetInterface.methods.size === 0) {
+      const targetFieldTypes =
+        converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+        new Map<string, TypeSymbol>();
+      converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+      converter.structuralFieldPrefixes.add(targetPrefix);
+      for (const [
+        propertyName,
+        rawPropertyType,
+      ] of targetInterface.properties) {
+        const propertyType = resolvedStructuralPropertyType(
+          converter,
+          rawPropertyType,
+        );
+        targetFieldTypes.set(propertyName, propertyType);
+        converter.emitCopyWithTracking(
+          createVariable(
+            `${targetPrefix}_${propertyName}`,
+            propertyType,
+            targetOptions,
+          ),
+          createVariable(`${sourceName}_${propertyName}`, propertyType),
+        );
+      }
+      converter.inlineInstanceMap.delete(targetPrefix);
+      converter.untrackedStructuralHandleVars.add(targetPrefix);
+      return;
+    }
     converter.inlineInstanceMap.delete(targetPrefix);
     converter.structuralFieldPrefixes.delete(targetPrefix);
     converter.structuralFieldPrefixTypes.delete(targetPrefix);
@@ -1106,14 +1146,6 @@ export function emitStructuralFieldCopies(
   const sourceHandlePrefix = sourceName.endsWith("__handle")
     ? sourceName.slice(0, -"__handle".length)
     : undefined;
-  const sourceHasKnownStructuralPrefix =
-    converter.structuralFieldPrefixes.has(sourceName) ||
-    converter.structuralFieldPrefixTypes.has(sourceName);
-  const sourceHasNamedStructuralSlots = Array.from(
-    targetInterface.properties.keys(),
-  ).some((propertyName) =>
-    converter.symbolTable.lookup(`${sourceName}_${propertyName}`),
-  );
   // Recursive-method return slots are named `${prefix}_retVal_${counter}` per
   // emitInlineRecursive*Method, where `prefix` is `__inlineRec_*` (static) or
   // `__inlineRecInst_*` (instance). Use a prefix-anchored regex so generated

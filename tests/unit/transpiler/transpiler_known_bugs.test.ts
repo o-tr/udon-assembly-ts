@@ -4174,5 +4174,60 @@ class Main extends UdonSharpBehaviour {
         "[udon-assembly-ts] structural dispatch miss: decomposition on untracked interface value",
       );
     });
+
+    it("object literals preserve nested fields from untracked structural values", () => {
+      const source = `
+        type Decomposition = {
+          waitType: string;
+          pair: number[];
+        };
+        type Result = {
+          ok: boolean;
+          decomposition: Decomposition | null;
+        };
+        type Context = {
+          decomposition: Decomposition | null;
+        };
+
+        class Analyzer {
+          get(flag: boolean): Result {
+            if (flag) {
+              return {
+                ok: true,
+                decomposition: {
+                  waitType: "ryanmen",
+                  pair: [1, 1],
+                },
+              };
+            }
+            return { ok: false, decomposition: null };
+          }
+        }
+
+        class Checker {
+          check(context: Context): boolean {
+            const { decomposition } = context;
+            if (!decomposition) return false;
+            return decomposition.waitType === "ryanmen";
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const analyzer = new Analyzer();
+            const checker = new Checker();
+            const result = analyzer.get(true);
+            Debug.Log(result.decomposition.waitType);
+            Debug.Log(checker.check({ decomposition: result.decomposition }));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__inst_Context_");
+      expect(result.tac).toMatch(
+        /__inst_Context_\d+_decomposition_waitType = result_decomposition_waitType/,
+      );
+    });
   });
 });
