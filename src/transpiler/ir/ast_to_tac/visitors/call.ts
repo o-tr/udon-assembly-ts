@@ -101,7 +101,7 @@ const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // D3 method dispatch inlines full method bodies per instance, so use a
 // stricter limit than property dispatch to avoid excessive code bloat.
-const MAX_D3_METHOD_DISPATCH_CANDIDATES = 100;
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 2000;
 
 function emitDataListPop(
   converter: ASTToTACConverter,
@@ -1300,8 +1300,7 @@ function tryD3MethodDispatch(
   rawArgs: ASTNode[],
   evaluatedArgs: TACOperand[],
 ): TACOperand | null {
-  const objectTypeName = objectType.name;
-  if (!objectTypeName) return null;
+  const objectTypeName = objectType.name ?? "";
 
   // Collect candidate instances: match by type name, implementors, or
   // method-name fallback for erased types.
@@ -1310,12 +1309,14 @@ function tryD3MethodDispatch(
   const seenInstanceIds = new Set<number>();
 
   // Direct type match + interface implementor/subclass match.
-  addD3MethodInstancesForType(
-    converter,
-    objectTypeName,
-    dispInstances,
-    seenInstanceIds,
-  );
+  if (objectTypeName) {
+    addD3MethodInstancesForType(
+      converter,
+      objectTypeName,
+      dispInstances,
+      seenInstanceIds,
+    );
+  }
   const objectKey = operandTrackingKey(object);
   const declaredReceiverType = objectKey
     ? lookupDeclaredTypeForTrackingName(converter, objectKey)
@@ -1353,7 +1354,10 @@ function tryD3MethodDispatch(
   // scan inline instances for classes that define the target method.
   if (
     dispInstances.length === 0 &&
-    (objectTypeName === "object" || objectTypeName === "DataDictionary")
+    (objectTypeName === "object" ||
+      objectTypeName === "DataDictionary" ||
+      objectType.udonType === UdonType.Object ||
+      objectType.udonType === UdonType.Int32)
   ) {
     const candidateClasses = new Set<string>();
     for (const [, info] of converter.allInlineInstances) {

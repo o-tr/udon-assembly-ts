@@ -23,7 +23,7 @@ import type { TACToUdonConverter } from "./converter.js";
  * Resolve the heap type name for a TypeSymbol.
  * ArrayTypeSymbol uses DataList in Udon, not the raw "Array" udonType.
  */
-function resolveHeapType(typeSymbol: TypeSymbol): string {
+export function resolveHeapType(typeSymbol: TypeSymbol): string {
   // System.Void is a method return marker, not an allocatable Udon heap type.
   // Any surviving void-typed operand is a compiler sentinel/dummy slot.
   if (typeSymbol.udonType === UdonType.Void) {
@@ -89,12 +89,9 @@ export function getOperandAddress(
 
     case TACOperandKind.Temporary: {
       const tempOp = operand as TemporaryOperand;
-      if (!this.tempAddresses.has(tempOp.id)) {
-        this.tempAddresses.set(tempOp.id, this.nextAddress++);
-        this.tempTypes.set(tempOp.id, resolveHeapType(tempOp.type));
-      }
+      const alias = this.allocateTemporaryAlias(tempOp);
       // Return the temporary name for use in PUSH instruction
-      return `__t${tempOp.id}`;
+      return `__t${alias}`;
     }
 
     case TACOperandKind.Constant: {
