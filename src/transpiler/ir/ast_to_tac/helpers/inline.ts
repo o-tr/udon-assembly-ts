@@ -2658,9 +2658,21 @@ export function visitInlineConstructor(
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
   // This prevents O(N_call_sites × N_instances) explosion for flyweight classes.
+  let storageKind = isSoA ? "soa" : "static";
+  if (classNode.constructor && this.inlineCallSiteStack.length > 0) {
+    const callSiteKey = this.inlineCallSiteStack
+      .map((site, index) => {
+        const loc = site.loc;
+        return loc
+          ? `${loc.filePath}:${loc.line}:${loc.column}`
+          : `site${index}`;
+      })
+      .join("|");
+    storageKind = `${storageKind}:ctor:${callSiteKey}`;
+  }
   const { instancePrefix, instanceId } = this.allocateBodyCachedInstance(
     className,
-    isSoA ? "soa" : "static",
+    storageKind,
   );
 
   const instanceHandle = createVariable(

@@ -4229,5 +4229,71 @@ class Main extends UdonSharpBehaviour {
         /__inst_Context_\d+_decomposition_waitType = result_decomposition_waitType/,
       );
     });
+
+    it("constructor-bearing factory results allocate distinct inline instances", () => {
+      const source = `
+        class Box {
+          value: number = 0;
+          constructor() {
+            this.value = 1;
+          }
+        }
+
+        class Factory {
+          make(): Box {
+            return new Box();
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const factory = new Factory();
+            const a = factory.make();
+            const b = factory.make();
+            Debug.Log(a.value);
+            Debug.Log(b.value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      const boxPrefixes = new Set(result.tac.match(/__inst_Box_\d+/g) ?? []);
+      expect(boxPrefixes.size).toBeGreaterThanOrEqual(2);
+    });
+
+    it("structural interface handle chains avoid raw SystemObject property externs", () => {
+      const source = `
+        interface IYaku {
+          readonly name: string;
+        }
+
+        class KokushiMusouYaku implements IYaku {
+          readonly name = "KokushiMusou";
+        }
+
+        class DaisangenYaku implements IYaku {
+          readonly name = "Daisangen";
+        }
+
+        class Main {
+          Start(): void {
+            const yakuList: Array<{ yaku: IYaku; name: string; han: number }> = [];
+            const kokushi: IYaku = new KokushiMusouYaku();
+            const daisangen: IYaku = new DaisangenYaku();
+            yakuList.push({ yaku: kokushi, name: "KokushiMusou", han: 13 });
+            yakuList.push({ yaku: daisangen, name: "Daisangen", han: 13 });
+
+            for (const item of yakuList) {
+              if (item.yaku.name === "KokushiMusou") {
+                Debug.Log(item.name);
+              }
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain("SystemObject.__get_name__SystemString");
+    });
   });
 });

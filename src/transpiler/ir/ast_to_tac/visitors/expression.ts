@@ -610,7 +610,7 @@ function tryEmitStructuralInterfacePropertyDispatch(
   const dispatchLimit = converter.dispatchLimitResolver.getLimit({
     property,
     usedErasedFallback: true,
-    isStructuralUnionDispatch: false,
+    isStructuralUnionDispatch: true,
   });
   if (dispInstances.length === 0 || dispInstances.length > dispatchLimit) {
     return undefined;
@@ -3940,6 +3940,80 @@ export function visitPropertyAccessExpression(
       }
     }
 
+    const inlineLocalObjectKey = operandTrackingKey(object);
+    if (
+      inlineLocalObjectKey &&
+      this.currentInlineLocalPrefix &&
+      inlineLocalObjectKey.startsWith(this.currentInlineLocalPrefix)
+    ) {
+      const siblingType =
+        this.structuralFieldPrefixTypes
+          .get(inlineLocalObjectKey)
+          ?.get(node.property) ??
+        this.fieldTypeRegistry.getStructuralFieldType(node.property) ??
+        inferInlineStructuralPropertyType(this, node.property);
+      if (siblingType) {
+        return createVariable(
+          `${inlineLocalObjectKey}_${node.property}`,
+          siblingType,
+          { isLocal: true },
+        );
+      }
+    }
+
+    if (node.object.kind === ASTNodeKind.PropertyAccessExpression) {
+      const access = node.object as PropertyAccessExpressionNode;
+      if (access.object.kind === ASTNodeKind.Identifier) {
+        const receiverName = (access.object as IdentifierNode).name;
+        const receiverSymbol = this.symbolTable.lookup(receiverName);
+        const baseType = resolveStructuralPropertyType(
+          this,
+          receiverSymbol?.type,
+          access.property,
+        );
+        const baseInterface = resolveStructuralInterface(this, baseType);
+        if (
+          baseInterface?.properties.has(node.property) &&
+          !this.udonBehaviourClasses.has(baseInterface.name)
+        ) {
+          const propType =
+            resolveStructuralPropertyType(this, baseInterface, node.property) ??
+            ObjectType;
+          const dispatched = tryEmitStructuralInterfacePropertyDispatch(
+            this,
+            object,
+            baseInterface,
+            node.property,
+            propType,
+          );
+          if (dispatched) return dispatched;
+          const missResult = this.newTemp(propType);
+          this.emit(
+            new AssignmentInstruction(
+              missResult,
+              createSoaSentinelValue(this, propType),
+            ),
+          );
+          const logExtern = this.requireExternSignature(
+            "Debug",
+            "LogError",
+            "method",
+            ["object"],
+            "void",
+          );
+          this.emit(
+            new CallInstruction(undefined, logExtern, [
+              createConstant(
+                `[udon-assembly-ts] structural dispatch miss: ${node.property} on nested structural handle`,
+                PrimitiveTypes.string,
+              ),
+            ]),
+          );
+          return missResult;
+        }
+      }
+    }
+
     // Handle-based dispatch for variables/temporaries of known concrete inline
     // types. Fires when the tracked path above did not return a result — either
     // because the operand has no tracking entry, or because both
@@ -4056,6 +4130,9 @@ export function visitPropertyAccessExpression(
         // place of its real slot when the runtime handle points at that
         // branch's instance.
         const untrackedAlias = this.typeMapper.getAlias(untrackedTypeName);
+        const isInterfaceHandlePropertyDispatch =
+          untrackedAlias instanceof InterfaceTypeSymbol &&
+          untrackedAlias.properties.has(node.property);
         const untrackedAnonUnion = untrackedTypeName.startsWith(
           "__anon_union_",
         )
@@ -4357,7 +4434,8 @@ export function visitPropertyAccessExpression(
         const dispatchLimit = this.dispatchLimitResolver.getLimit({
           property: node.property,
           usedErasedFallback,
-          isStructuralUnionDispatch: usedAnonUnionIface,
+          isStructuralUnionDispatch:
+            usedAnonUnionIface || isInterfaceHandlePropertyDispatch,
         });
         if (
           (usedErasedFallback || usedAnonUnionIface) &&
@@ -4842,7 +4920,9 @@ export function visitPropertyAccessExpression(
           }
         } else if (
           dispInstances.length > dispatchLimit &&
-          (usedErasedFallback || usedAnonUnionIface)
+          (usedErasedFallback ||
+            usedAnonUnionIface ||
+            isInterfaceHandlePropertyDispatch)
         ) {
           // Dispatch limit exceeded for a structural-union or erased-fallback
           // path. We cannot emit the full dispatch table, but we MUST NOT fall
@@ -5071,6 +5151,55 @@ export function visitPropertyAccessExpression(
         new CallInstruction(undefined, logExtern, [
           createConstant(
             `[udon-assembly-ts] structural dispatch miss: ${node.property} on untracked interface value`,
+            PrimitiveTypes.string,
+          ),
+        ]),
+      );
+      return missResult;
+    }
+    const structuralBaseInterface = resolveStructuralInterface(
+      this,
+      resolvedBaseType ?? undefined,
+    );
+    if (
+      structuralBaseInterface &&
+      structuralBaseInterface.properties.has(node.property) &&
+      !this.udonBehaviourClasses.has(structuralBaseInterface.name)
+    ) {
+      const missType =
+        resultType ??
+        resolveStructuralPropertyType(
+          this,
+          structuralBaseInterface,
+          node.property,
+        ) ??
+        ObjectType;
+      const dispatched = tryEmitStructuralInterfacePropertyDispatch(
+        this,
+        object,
+        structuralBaseInterface,
+        node.property,
+        missType,
+      );
+      if (dispatched) return dispatched;
+      const missResult = this.newTemp(missType);
+      this.emit(
+        new AssignmentInstruction(
+          missResult,
+          createSoaSentinelValue(this, missType),
+        ),
+      );
+      const logExtern = this.requireExternSignature(
+        "Debug",
+        "LogError",
+        "method",
+        ["object"],
+        "void",
+      );
+      this.emit(
+        new CallInstruction(undefined, logExtern, [
+          createConstant(
+            `[udon-assembly-ts] structural dispatch miss: ${node.property} on untracked structural handle`,
             PrimitiveTypes.string,
           ),
         ]),
