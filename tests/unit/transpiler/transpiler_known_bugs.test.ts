@@ -4089,6 +4089,45 @@ class Main extends UdonSharpBehaviour {
       expect(result.uasm).not.toContain("outline_inst_Analyzer_check");
     });
 
+    it("collection-param methods with nested calls are not outlined", () => {
+      const source = `
+        class Helper {
+          check(counts: number[], needed: number): boolean {
+            return counts.length >= needed;
+          }
+        }
+
+        class Service {
+          private helper: Helper;
+
+          constructor() {
+            this.helper = new Helper();
+          }
+
+          scan(counts: number[], needed: number): boolean {
+            for (let i = 0; i < counts.length; i += 1) {
+              if (this.helper.check(counts, needed)) return true;
+            }
+            return false;
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const service = new Service();
+            const counts = [1, 2, 3];
+            Debug.Log(service.scan(counts, 2));
+            Debug.Log(service.scan(counts, 4));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source, {
+        outlineBodyInstrThreshold: 1,
+      });
+
+      expect(result.uasm).not.toContain("outline_inst_Service_scan");
+    });
+
     it("anonymous Array<T> structural destructuring avoids raw SystemObject property externs", () => {
       const source = `
         type UdonInt = number & { __brand: "UdonInt" };

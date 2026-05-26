@@ -3858,6 +3858,9 @@ function checkOutlineIneligible(
   ) {
     return true;
   }
+  if (hasCollectionParam(params) && hasNestedCall(body)) {
+    return true;
+  }
   for (const param of params) {
     const structuralParam = structuralInterfaceForType(converter, param.type);
     if (!structuralParam || structuralParam.methods.size > 0) continue;
@@ -3876,6 +3879,41 @@ function checkOutlineIneligible(
   const result = hasInlineClassParamDependentUse(converter, params, body);
   converter.outlineIneligibleCache.set(body, result);
   return result;
+}
+
+function hasCollectionParam(
+  params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
+): boolean {
+  return params.some(
+    (param) =>
+      param.type instanceof ArrayTypeSymbol ||
+      param.type instanceof DataListTypeSymbol ||
+      param.type.udonType === UdonType.Array ||
+      param.type.udonType === UdonType.DataList,
+  );
+}
+
+function hasNestedCall(body: BlockStatementNode): boolean {
+  let found = false;
+  const visit = (node: unknown): void => {
+    if (found || !node || typeof node !== "object") return;
+    const maybeNode = node as { kind?: unknown };
+    if (maybeNode.kind === ASTNodeKind.CallExpression) {
+      found = true;
+      return;
+    }
+    if (typeof maybeNode.kind !== "string") return;
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+      } else {
+        visit(value);
+      }
+      if (found) return;
+    }
+  };
+  visit(body);
+  return found;
 }
 
 /**
