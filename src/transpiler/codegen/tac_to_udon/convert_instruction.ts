@@ -96,10 +96,13 @@ export function convertInstruction(
       // SystemObject.__op_Equality/Inequality regardless of the declared type
       // (the type mapper assigns DataDictionary to null literals via the
       // "object" mapping, but Udon requires Object-level comparison for null).
-      // Only applies to == and != operators — other operators with null
+      // Only applies to equality operators — other operators with null
       // operands are invalid and should not be silently promoted.
       const isNullComparison =
-        (binInst.operator === "==" || binInst.operator === "!=") &&
+        (binInst.operator === "==" ||
+          binInst.operator === "!=" ||
+          binInst.operator === "===" ||
+          binInst.operator === "!==") &&
         ((leftOp.kind === TACOperandKind.Constant &&
           (leftOp as ConstantOperand).value === null) ||
           (rightOp.kind === TACOperandKind.Constant &&
@@ -270,7 +273,9 @@ export function convertInstruction(
         binInst.operator === "<=" ||
         binInst.operator === ">=" ||
         binInst.operator === "==" ||
-        binInst.operator === "!=";
+        binInst.operator === "!=" ||
+        binInst.operator === "===" ||
+        binInst.operator === "!==";
       // destType differs from promotedType: either narrowing (promoted wider
       // type back to original dest) or widening (e.g. Int32 result into Int64 dest).
       const needsResultConversion =

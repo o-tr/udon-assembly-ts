@@ -56,10 +56,12 @@ export function getExternForBinaryOp(
       returnType = "Boolean";
       break;
     case "==":
+    case "===":
       methodName = "op_Equality";
       returnType = "Boolean";
       break;
     case "!=":
+    case "!==":
       methodName = "op_Inequality";
       returnType = "Boolean";
       break;

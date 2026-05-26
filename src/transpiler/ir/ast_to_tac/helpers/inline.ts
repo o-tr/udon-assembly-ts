@@ -3014,6 +3014,7 @@ function visitInlineStaticMethodCallImpl(
   const savedBaseClass = this.currentInlineBaseClass;
   const savedInlineNativeIneligible = this.nativeArrayIneligible;
   const savedInlineNativeVarName = this.currentNativeArrayVarName;
+  const savedExpectedType = this.currentExpectedType;
   const returnStackDepth = this.inlineReturnStack.length;
   const bodyStackDepth = this.inlinedBodyStack.length;
   let savedParamEntries: InlineParamSave | undefined;
@@ -3041,6 +3042,7 @@ function visitInlineStaticMethodCallImpl(
       this.currentInlineConstructorClassName = undefined;
       this.currentThisOverride = null;
       this.currentInlineBaseClass = undefined;
+      this.currentExpectedType = undefined;
 
       this.inlineMethodStack.add(inlineKey);
       addedInlineMethodKey = true;
@@ -3097,6 +3099,7 @@ function visitInlineStaticMethodCallImpl(
       this.currentInlineConstructorClassName = savedInlineCtorClass;
       this.currentThisOverride = savedThisOverride;
       this.currentInlineBaseClass = savedBaseClass;
+      this.currentExpectedType = savedExpectedType;
       // Emit the inline return label BEFORE restoring params so all early
       // `goto inline_return*` paths from the body fall through into the
       // restore COPYs. Otherwise the restore is dead code (gotos jump past it).
@@ -3205,6 +3208,7 @@ function emitInlineRecursiveStaticMethod(
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
+    const savedExpectedType = converter.currentExpectedType;
     const savedRecNativeIneligible = converter.nativeArrayIneligible;
     const savedRecNativeVarName = converter.currentNativeArrayVarName;
     const returnStackDepth = converter.inlineReturnStack.length;
@@ -4001,6 +4005,7 @@ function emitInlineOutlinedBody(
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
+    const savedExpectedType = converter.currentExpectedType;
     const savedInlineInstanceMap = new Map(converter.inlineInstanceMap);
     converter.currentParamExportMap = new Map();
     converter.currentParamExportReverseMap = new Map();
@@ -4015,6 +4020,7 @@ function emitInlineOutlinedBody(
     converter.currentInlineConstructorClassName = undefined;
     converter.currentThisOverride = null;
     converter.currentInlineBaseClass = undefined;
+    converter.currentExpectedType = undefined;
 
     converter.inlineMethodStack.add(inlineKey);
     const structuralReturnType = structuralInterfaceForType(
@@ -4066,6 +4072,7 @@ function emitInlineOutlinedBody(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
+      converter.currentExpectedType = savedExpectedType;
       // Preserve caller tracking across outlined body emission.
       returnVarInlineInstance = converter.inlineInstanceMap.get(result.name);
       converter.inlineInstanceMap.clear();

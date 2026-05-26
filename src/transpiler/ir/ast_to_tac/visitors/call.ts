@@ -250,6 +250,18 @@ const resolveMapGetResultType = (
   // `expr as T` should guide Map.get() unwrap when map value generic is unknown/any.
   const expected = converter.currentExpectedType;
   if (!expected || isPlainObjectType(expected)) return mapValueType;
+  // Inline-class/structural values are stored in DataToken as handles. Keep the
+  // raw DataToken result so a missing Map key remains nullish; the surrounding
+  // `as T` path can unwrap the handle only after the caller proves it exists.
+  if (
+    isInlineHandleType(converter, expected) ||
+    expected instanceof InterfaceTypeSymbol ||
+    (expected instanceof ClassTypeSymbol &&
+      expected.name !== undefined &&
+      resolveClassNode(converter, expected.name) !== undefined)
+  ) {
+    return mapValueType;
+  }
   return expected;
 };
 

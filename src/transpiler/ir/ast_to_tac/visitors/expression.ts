@@ -2067,7 +2067,12 @@ export function visitBinaryExpression(
     return dataTokenNullishComparison;
   }
 
-  if (node.operator === "==" || node.operator === "!=") {
+  if (
+    node.operator === "==" ||
+    node.operator === "!=" ||
+    node.operator === "===" ||
+    node.operator === "!=="
+  ) {
     const leftType = this.getOperandType(left);
     const rightType = this.getOperandType(right);
     if (isNullishOperand(right) && !isNullishOperand(left)) {
@@ -2087,9 +2092,16 @@ export function visitBinaryExpression(
   }
 
   // Determine result type - comparison operators return Boolean
-  const isComparison = ["<", ">", "<=", ">=", "==", "!="].includes(
-    node.operator,
-  );
+  const isComparison = [
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "===",
+    "!==",
+  ].includes(node.operator);
   // String concatenation with mixed types: call ToString on non-string operand.
   // Entry conditions:
   //   (a) useStringBuilder is false → chain detection skipped entirely; all
@@ -2184,7 +2196,14 @@ function tryEmitDataTokenNullishComparison(
   right: TACOperand,
   operator: string,
 ): TACOperand | null {
-  if (operator !== "==" && operator !== "!=") return null;
+  if (
+    operator !== "==" &&
+    operator !== "!=" &&
+    operator !== "===" &&
+    operator !== "!=="
+  ) {
+    return null;
+  }
 
   const leftType = converter.getOperandType(left);
   const rightType = converter.getOperandType(right);
@@ -2202,7 +2221,7 @@ function tryEmitDataTokenNullishComparison(
 
   const isNull = converter.newTemp(PrimitiveTypes.boolean);
   converter.emit(new PropertyGetInstruction(isNull, token, "IsNull"));
-  if (operator === "==") {
+  if (operator === "==" || operator === "===") {
     return isNull;
   }
 
