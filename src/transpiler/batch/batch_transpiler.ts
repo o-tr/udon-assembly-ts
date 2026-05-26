@@ -962,14 +962,11 @@ export class BatchTranspiler {
 
         const _profAssemble = pmark();
         const assembler = new UdonAssembler();
-        const uasm = assembler.assemble(
-          udonInstructions,
-          externSignatures,
-          dataSectionWithTypes,
-          syncModes,
-          entryPoint.behaviourSyncMode,
-          exposedLabels, // same as computeExportLabels(...)
+        const outPath = path.join(
+          options.outputDir,
+          `${entryPoint.name}.${ext}`,
         );
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
         const heapWarnings: string[] = [];
         const heapUsage = computeHeapUsage(dataSectionWithTypes);
         if (ext === "uasm" && heapUsage > UASM_RUNTIME_LIMIT) {
@@ -988,21 +985,39 @@ export class BatchTranspiler {
             `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown}`,
           );
         }
+        let uasm: string | undefined;
+        let outputBytes = 0;
+        if (ext === "uasm") {
+          outputBytes = assembler.assembleToFile(
+            outPath,
+            udonInstructions,
+            externSignatures,
+            dataSectionWithTypes,
+            syncModes,
+            entryPoint.behaviourSyncMode,
+            exposedLabels,
+          );
+        } else {
+          uasm = assembler.assemble(
+            udonInstructions,
+            externSignatures,
+            dataSectionWithTypes,
+            syncModes,
+            entryPoint.behaviourSyncMode,
+            exposedLabels, // same as computeExportLabels(...)
+          );
+          outputBytes = uasm.length;
+          fs.writeFileSync(outPath, uasm, "utf8");
+        }
+
         const assemblerWarnings = assembler.getWarnings();
         for (const w of heapWarnings) console.warn(w);
         for (const w of assemblerWarnings) console.warn(w);
 
-        const outPath = path.join(
-          options.outputDir,
-          `${entryPoint.name}.${ext}`,
-        );
-        fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, uasm, "utf8");
-
         const allWarnings = [...heapWarnings, ...assemblerWarnings];
         const warnings = allWarnings.length > 0 ? allWarnings : undefined;
         // Tier 2: Save assembled output to cache.
-        if (useOutputCache && cacheFilePath && outputCacheKey) {
+        if (useOutputCache && cacheFilePath && outputCacheKey && uasm) {
           this.saveOutputCache(cacheFilePath, {
             key: outputCacheKey,
             uasm,
@@ -1025,7 +1040,7 @@ export class BatchTranspiler {
         pend(
           `entry-${entryPoint.name}-assemble`,
           _profAssemble,
-          `bytes=${uasm.length}`,
+          `bytes=${outputBytes}`,
         );
         outputs.push({
           className: entryPoint.name,

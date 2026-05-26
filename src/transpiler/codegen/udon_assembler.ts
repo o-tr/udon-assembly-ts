@@ -2,6 +2,7 @@
  * Udon Assembly (.uasm) file generator
  */
 
+import * as fs from "node:fs";
 import { isVrcEventLabel } from "../vrc/event_registry.js";
 import type { UdonInstruction } from "./udon_instruction.js";
 import {
@@ -763,6 +764,160 @@ export class UdonAssembler {
     lines.push(".code_end");
 
     return lines.join("\n");
+  }
+
+  /**
+   * Generate .uasm directly to a file without materialising the whole output
+   * as a single JavaScript string. Large inline-dispatch programs can exceed
+   * V8's maximum string length even though writing the same text incrementally
+   * is still possible.
+   */
+  assembleToFile(
+    filePath: string,
+    instructions: UdonInstruction[],
+    _externSignatures: string[],
+    dataSection?: Array<[string, number, string, unknown]>,
+    syncModes?: Map<string, string>,
+    _behaviourSyncMode?: string,
+    exportLabels?: Set<string>,
+  ): number {
+    let effectiveData = dataSection;
+    let effectiveInstructions = instructions;
+    if (dataSection && dataSection.length > 0) {
+      const lowered = this.lowerRestrictedTypes(dataSection, instructions);
+      effectiveData = lowered.dataSection;
+      effectiveInstructions = lowered.instructions;
+    }
+
+    const { labelAddresses, canonicalLabels } = this.computeLabelAddressInfo(
+      effectiveInstructions,
+      exportLabels,
+    );
+
+    const fd = fs.openSync(filePath, "w");
+    let bytes = 0;
+    const writeLine = (line = ""): void => {
+      bytes += fs.writeSync(fd, `${line}\n`, undefined, "utf8");
+    };
+
+    try {
+      writeLine(".data_start");
+      writeLine();
+
+      if (effectiveData && effectiveData.length > 0) {
+        const sortedData = [...effectiveData].sort((a, b) => a[1] - b[1]);
+
+        for (const [name, _address, type, value] of sortedData) {
+          const { csharpType, udonType, category } = this.classifyType(type);
+
+          let initialValue: string;
+          if (value === null) {
+            initialValue = "null";
+          } else if (category === "boolean") {
+            initialValue = value === true ? "true" : "false";
+          } else if (udonType === "SystemType" && typeof value === "string") {
+            initialValue = value;
+          } else if (
+            typeof value === "string" &&
+            value.startsWith("0x") &&
+            category !== "string"
+          ) {
+            initialValue = value;
+          } else if (typeof value === "number" && category === "float") {
+            initialValue = this.formatFloatLiteral(value);
+          } else if (typeof value === "number" && category === "integer") {
+            const integerTypeName = this.isIntegerType(udonType)
+              ? udonType
+              : this.isIntegerType(csharpType)
+                ? csharpType
+                : type;
+            initialValue = this.formatIntegerLiteral(value, integerTypeName);
+          } else {
+            initialValue = JSON.stringify(value);
+          }
+
+          writeLine(`    ${name}: %${udonType}, ${initialValue}`);
+
+          if (!name.startsWith("__")) {
+            writeLine(`    .export ${name}`);
+            const syncMode = syncModes?.get(name);
+            writeLine(`    .sync ${name}, ${syncMode ?? "none"}`);
+          }
+        }
+        writeLine();
+      }
+
+      writeLine(".data_end");
+      writeLine();
+      writeLine(".code_start");
+      writeLine();
+
+      for (const inst of effectiveInstructions) {
+        if (inst.kind === UdonInstructionKind.Label) {
+          const labelName = (inst as LabelInstruction).name;
+          const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
+          const preserveAliasLabel =
+            isVrcEventLabel(labelName) || exportLabels?.has(labelName);
+          if (canonicalLabel !== labelName && !preserveAliasLabel) {
+            continue;
+          }
+          if (labelName === "_start") {
+            writeLine("    .export _start");
+          } else if (isVrcEventLabel(labelName)) {
+            writeLine(`    .export ${labelName}`);
+          } else if (exportLabels?.has(labelName)) {
+            writeLine(`    .export ${labelName}`);
+          }
+          writeLine(inst.toString());
+        } else if (inst.kind === UdonInstructionKind.Jump) {
+          const jumpInst = inst as JumpInstruction;
+          if (typeof jumpInst.address === "number") {
+            writeLine(`    JUMP, ${this.formatHexAddress(jumpInst.address)}`);
+          } else {
+            const canonicalLabel =
+              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+            const byteAddr = labelAddresses.get(canonicalLabel);
+            if (byteAddr !== undefined) {
+              writeLine(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
+            } else {
+              this.warnings.push(
+                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+              );
+              writeLine("    JUMP, 0xFFFFFFFC");
+            }
+          }
+        } else if (inst.kind === UdonInstructionKind.JumpIfFalse) {
+          const jumpInst = inst as JumpIfFalseInstruction;
+          if (typeof jumpInst.address === "number") {
+            writeLine(
+              `    JUMP_IF_FALSE, ${this.formatHexAddress(jumpInst.address)}`,
+            );
+          } else {
+            const canonicalLabel =
+              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+            const byteAddr = labelAddresses.get(canonicalLabel);
+            if (byteAddr !== undefined) {
+              writeLine(
+                `    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`,
+              );
+            } else {
+              this.warnings.push(
+                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+              );
+              writeLine("    JUMP_IF_FALSE, 0xFFFFFFFC");
+            }
+          }
+        } else {
+          writeLine(inst.toString());
+        }
+      }
+
+      writeLine();
+      writeLine(".code_end");
+      return bytes;
+    } finally {
+      fs.closeSync(fd);
+    }
   }
 
   /**

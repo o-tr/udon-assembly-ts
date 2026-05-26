@@ -60,6 +60,7 @@ export class TACToUdonConverter {
   tempTypes: Map<number, string> = new Map();
   tempAliases: Map<number, number> = new Map();
   tempUseRemaining: Map<number, number> = new Map();
+  escapedTempIds: Set<number> = new Set();
   reusableTempAliasesByType: Map<string, number[]> = new Map();
   nextTempAliasId = 0;
   constantAddresses: Map<string, number> = new Map();
@@ -94,6 +95,7 @@ export class TACToUdonConverter {
     this.tempTypes.clear();
     this.tempAliases.clear();
     this.tempUseRemaining.clear();
+    this.escapedTempIds.clear();
     this.reusableTempAliasesByType.clear();
     this.constantAddresses.clear();
     this.constantTypes.clear();
@@ -285,6 +287,9 @@ export class TACToUdonConverter {
 
   private prepareTemporaryReuse(tacInstructions: TACInstruction[]): void {
     for (const inst of tacInstructions) {
+      this.collectEscapingTemporariesFromInstruction(inst, (temp) => {
+        this.escapedTempIds.add(temp.id);
+      });
       this.collectTemporariesFromInstruction(inst, (temp) => {
         this.tempUseRemaining.set(
           temp.id,
@@ -305,6 +310,7 @@ export class TACToUdonConverter {
       this.tempUseRemaining.delete(temp.id);
       const alias = this.tempAliases.get(temp.id);
       if (alias === undefined) return;
+      if (this.escapedTempIds.has(temp.id)) return;
       this.tempAliases.delete(temp.id);
       const typeName = resolveHeapType(temp.type);
       const reusable = this.reusableTempAliasesByType.get(typeName) ?? [];
@@ -319,6 +325,44 @@ export class TACToUdonConverter {
   ): void {
     if (operand?.kind === TACOperandKind.Temporary) {
       visit(operand as TemporaryOperand);
+    }
+  }
+
+  private collectEscapingTemporariesFromInstruction(
+    inst: TACInstruction,
+    visit: (temp: TemporaryOperand) => void,
+  ): void {
+    if (inst.kind !== TACInstructionKind.MethodCall) return;
+    const node = inst as TACInstruction & {
+      object?: TACOperand;
+      method?: string;
+      args?: TACOperand[];
+    };
+    const objectType =
+      node.object &&
+      (node.object.kind === TACOperandKind.Variable ||
+        node.object.kind === TACOperandKind.Constant ||
+        node.object.kind === TACOperandKind.Temporary)
+        ? resolveHeapType(
+            (node.object as unknown as { type: TemporaryOperand["type"] })
+              .type,
+          )
+        : "";
+    const method = node.method ?? "";
+    const storesDataToken =
+      (objectType === "DataList" &&
+        (method === "Add" || method === "Insert" || method === "set_Item")) ||
+      (objectType === "DataDictionary" &&
+        (method === "SetValue" || method === "set_Item"));
+    if (!storesDataToken) return;
+
+    for (const arg of node.args ?? []) {
+      if (
+        arg.kind === TACOperandKind.Temporary &&
+        resolveHeapType((arg as TemporaryOperand).type) === "DataToken"
+      ) {
+        visit(arg as TemporaryOperand);
+      }
     }
   }
 

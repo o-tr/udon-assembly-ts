@@ -84,6 +84,7 @@ import {
   MAX_RECURSION_STACK_DEPTH,
   makeDefaultDataTokenForLocal,
   operandTrackingKey,
+  resolveClassNode,
   resolveInlineClassType,
   STRUCTURAL_RECURSION_DEPTH_CAP,
   usesInlineNullSentinel,
@@ -306,14 +307,7 @@ function isNullConstantOperand(
  * into `${targetPrefix}_<prop>` at arbitrary depth. Used by the structural
  * field-copy block in visitVariableDeclaration; complements
  * `emitStructuralPrefixDefaults` (default fill) and
- * `emitNestedStructuralFieldCopies` (helpers/inline.ts variant). Emits plain
- * `CopyInstruction` rather than `emitCopyWithTracking` so nested slot keys
- * (e.g. `${destKey}_outer_inner`) are NOT seeded into inlineInstanceMap —
- * matching the behaviour of the prior 2-level inline loop this helper
- * replaces. The call site's top-level mapping guard
- * (`inlineInstanceMap.get(destKey)` for the canonical `__inst_*` prefix) is a
- * separate, top-level-only concern that stays correct regardless of which
- * copy instruction is used here.
+ * `emitNestedStructuralFieldCopies` (helpers/inline.ts variant).
  */
 function emitVarDeclStructuralFieldCopies(
   converter: ASTToTACConverter,
@@ -362,12 +356,10 @@ function emitVarDeclStructuralFieldCopies(
   for (const [propName, propTypeRaw] of structuralType.properties) {
     const propType = resolvedStructuralPropertyType(converter, propTypeRaw);
     targetFieldTypes.set(propName, propType);
-    converter.emit(
-      new CopyInstruction(
-        createVariable(`${targetPrefix}_${propName}`, propType),
-        createVariable(`${sourcePrefix}_${propName}`, propType),
-      ),
-    );
+    const targetProp = createVariable(`${targetPrefix}_${propName}`, propType);
+    const sourceProp = createVariable(`${sourcePrefix}_${propName}`, propType);
+    converter.emit(new CopyInstruction(targetProp, sourceProp));
+    converter.maybeTrackInlineInstanceAssignment(targetProp, sourceProp, false);
     const nestedStructuralType = structuralInterfaceForType(
       converter,
       propType,
@@ -422,12 +414,10 @@ function emitKnownStructuralPrefixCopies(
 
   for (const [propName, propType] of sourceFieldTypes) {
     targetFieldTypes.set(propName, propType);
-    converter.emit(
-      new CopyInstruction(
-        createVariable(`${targetPrefix}_${propName}`, propType),
-        createVariable(`${sourcePrefix}_${propName}`, propType),
-      ),
-    );
+    const targetProp = createVariable(`${targetPrefix}_${propName}`, propType);
+    const sourceProp = createVariable(`${sourcePrefix}_${propName}`, propType);
+    converter.emit(new CopyInstruction(targetProp, sourceProp));
+    converter.maybeTrackInlineInstanceAssignment(targetProp, sourceProp, false);
     emitKnownStructuralPrefixCopies(
       converter,
       `${sourcePrefix}_${propName}`,
@@ -978,6 +968,17 @@ export function visitVariableDeclaration(
         structuralType,
         new Set<string>(),
       );
+      const concreteSourceMapping =
+        srcMapping ??
+        (srcKey.endsWith("__handle")
+          ? Array.from(this.allInlineInstances.values()).find(
+              (info) =>
+                info.prefix === srcKey.slice(0, -"__handle".length),
+            )
+          : undefined) ??
+        Array.from(this.allInlineInstances.values()).find(
+          (info) => info.prefix === sourcePrefix,
+        );
       // Preserve a canonical inline-instance mapping when one was already set
       // by maybeTrackInlineInstanceAssignment above. Replacing the canonical
       // `__inst_*` prefix with the local var name would force downstream
@@ -985,7 +986,12 @@ export function visitVariableDeclaration(
       // (e.g. `__inline_ret_0_x = p1_x`) instead of the canonical instance
       // slot, missing the unified-return-prefix population the tests expect.
       const existing = this.inlineInstanceMap.get(destKey);
-      if (!existing || !existing.prefix.startsWith("__inst_")) {
+      if (
+        concreteSourceMapping &&
+        resolveClassNode(this, concreteSourceMapping.className)
+      ) {
+        this.inlineInstanceMap.set(destKey, concreteSourceMapping);
+      } else if (!existing || !existing.prefix.startsWith("__inst_")) {
         this.inlineInstanceMap.set(destKey, {
           prefix: destKey,
           className: structuralType.name,
@@ -1199,8 +1205,17 @@ export function visitForOfStatement(
       const elemVar = createVariable(elemSlotName ?? variableName, elemType, {
         isLocal: true,
       });
-      const idxVar = this.newTemp(PrimitiveTypes.int32);
-      const lenVar = this.newTemp(PrimitiveTypes.int32);
+      const nativeLoopStatePrefix = `forof_native_state_${this.labelCounter++}`;
+      const idxVar = createVariable(
+        `${nativeLoopStatePrefix}_index`,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
+      const lenVar = createVariable(
+        `${nativeLoopStatePrefix}_length`,
+        PrimitiveTypes.int32,
+        { isLocal: true },
+      );
 
       this.emit(
         new AssignmentInstruction(
@@ -1295,8 +1310,17 @@ export function visitForOfStatement(
           declaredIterableType instanceof ArrayTypeSymbol
         ? declaredIterableType
         : undefined;
-  const indexVar = this.newTemp(PrimitiveTypes.int32);
-  const lengthVar = this.newTemp(PrimitiveTypes.int32);
+  const loopStatePrefix = `forof_state_${this.labelCounter++}`;
+  const indexVar = createVariable(
+    `${loopStatePrefix}_index`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  const lengthVar = createVariable(
+    `${loopStatePrefix}_length`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
 
   const isDestructured = Array.isArray(node.variable);
   const isObjectDestructured = !!node.destructureProperties?.length;

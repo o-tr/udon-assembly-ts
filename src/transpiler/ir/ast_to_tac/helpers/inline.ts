@@ -1187,11 +1187,20 @@ export function emitStructuralFieldCopies(
       converter,
       rawPropertyType,
     );
-    const sourceProperty = sourceHasKnownStructuralPrefix
-      ? createVariable(`${sourceName}_${propertyName}`, propertyType)
-      : sourceHandlePrefix
-        ? createVariable(`${sourceHandlePrefix}_${propertyName}`, propertyType)
-      : sourceInfo
+    const sourceInfoIsConcrete =
+      sourceInfo !== undefined &&
+      resolveClassNode(converter, sourceInfo.className) !== undefined;
+    const sourceProperty = sourceInfoIsConcrete
+      ? converter.mapInlineProperty(
+          sourceInfo.className,
+          sourceInfo.prefix,
+          propertyName,
+        )
+      : sourceHasKnownStructuralPrefix
+        ? createVariable(`${sourceName}_${propertyName}`, propertyType)
+        : sourceHandlePrefix
+          ? createVariable(`${sourceHandlePrefix}_${propertyName}`, propertyType)
+          : sourceInfo
         ? converter.mapInlineProperty(
             sourceInfo.className,
             sourceInfo.prefix,
@@ -1259,6 +1268,7 @@ export function markUntrackedStructuralHandlePrefixes(
   converter.structuralFieldPrefixes.delete(prefix);
   converter.structuralFieldPrefixTypes.delete(prefix);
   converter.untrackedStructuralHandleVars.add(prefix);
+  converter.untrackedStructuralHandleTypes.set(prefix, structuralType);
   if (structuralType.methods.size > 0) return;
 
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
@@ -1709,6 +1719,8 @@ export function restoreInlineParams(
     // argument are not incorrectly penalised with D-3 dispatch.
     if (entry.addedToUntrackedSet) {
       converter.untrackedStructuralHandleVars.delete(name);
+      converter.untrackedStructuralHandleTypes.delete(name);
+      converter.untrackedStructuralHandleClassIds.delete(name);
     }
   }
 }
@@ -3888,10 +3900,22 @@ function checkOutlineIneligible(
   // Type-alias resolution in saveAndBindInlineParams operates on argument
   // types at each call site, not the compiled body, so it doesn't create
   // a gap here.
-  if (isInlineHandleType(converter, returnType)) {
+  const structuralReturn = structuralInterfaceForType(converter, returnType);
+  if (
+    isInlineHandleType(converter, returnType) &&
+    !(structuralReturn && !usesInlineNullSentinel(converter, returnType))
+  ) {
     return true;
   }
-  const structuralReturn = structuralInterfaceForType(converter, returnType);
+  if (
+    returnType instanceof ArrayTypeSymbol ||
+    returnType instanceof DataListTypeSymbol ||
+    returnType instanceof CollectionTypeSymbol ||
+    returnType.udonType === UdonType.Array ||
+    returnType.udonType === UdonType.DataList
+  ) {
+    return true;
+  }
   if (
     structuralReturn &&
     body.statements.some(
@@ -5862,6 +5886,7 @@ export function maybeTrackInlineInstanceAssignment(
     this.inlineInstanceMap.delete(target.name);
     const targetType = this.getOperandType(target);
     const sourceType = this.getOperandType(value);
+    const sourceStructuralType = this.untrackedStructuralHandleTypes.get(srcName);
     const targetDeclaredType = lookupDeclaredTypeForTrackingName(
       this,
       target.name,
@@ -5871,8 +5896,14 @@ export function maybeTrackInlineInstanceAssignment(
         ? targetDeclaredType
         : structuralInterfaceForType(this, targetType) !== null
           ? targetType
+          : sourceStructuralType
+            ? sourceStructuralType
           : sourceType;
     markUntrackedStructuralHandlePrefixes(this, target.name, structuralType);
+    const sourceClassId = this.untrackedStructuralHandleClassIds.get(srcName);
+    if (sourceClassId) {
+      this.untrackedStructuralHandleClassIds.set(target.name, sourceClassId);
+    }
     return;
   }
   let mapped = srcName ? this.resolveInlineInstance(srcName) : undefined;
@@ -5973,13 +6004,20 @@ export function emitCopyWithTracking(
   if (srcName && this.untrackedStructuralHandleVars.has(srcName)) {
     this.inlineInstanceMap.delete(destName);
     const destDeclaredType = lookupDeclaredTypeForTrackingName(this, destName);
+    const sourceStructuralType = this.untrackedStructuralHandleTypes.get(srcName);
     const structuralType =
       destDeclaredType && structuralInterfaceForType(this, destDeclaredType)
         ? destDeclaredType
         : structuralInterfaceForType(this, destType) !== null
           ? destType
+          : sourceStructuralType
+            ? sourceStructuralType
           : srcType;
     markUntrackedStructuralHandlePrefixes(this, destName, structuralType);
+    const sourceClassId = this.untrackedStructuralHandleClassIds.get(srcName);
+    if (sourceClassId) {
+      this.untrackedStructuralHandleClassIds.set(destName, sourceClassId);
+    }
     return;
   }
   let srcInfo = srcName ? this.resolveInlineInstance(srcName) : undefined;

@@ -163,6 +163,51 @@ function markUntrackedInlineInterfaceArrayElement(
     isAllInlineInterface(converter, interfaceName)
   ) {
     markUntrackedStructuralHandlePrefixes(converter, key, resolvedElementType);
+    const classIds = converter.interfaceClassIdMap.get(interfaceName);
+    if (!classIds) return;
+    const implementors = converter.classRegistry.getImplementorsOfInterface(
+      interfaceName,
+    );
+    const implementorNames = new Set(implementors.map((impl) => impl.name));
+    const classIdVar = createVariable(
+      `${key}__classId`,
+      PrimitiveTypes.int32,
+      { isLocal: true },
+    );
+    converter.emit(
+      new AssignmentInstruction(
+        classIdVar,
+        createConstant(-1, PrimitiveTypes.int32),
+      ),
+    );
+    const handle = normalizeOperandToInt32(converter, operand);
+    const endLabel = converter.newLabel("inline_iface_classid_end");
+    for (const [instanceId, info] of converter.allInlineInstances) {
+      if (!implementorNames.has(info.className)) continue;
+      const classId = classIds.get(info.className);
+      if (classId === undefined) continue;
+      const nextLabel = converter.newLabel("inline_iface_classid_next");
+      const cond = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          cond,
+          handle,
+          "==",
+          createConstant(instanceId, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
+      converter.emit(
+        new AssignmentInstruction(
+          classIdVar,
+          createConstant(classId, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emit(new UnconditionalJumpInstruction(endLabel));
+      converter.emit(new LabelInstruction(nextLabel));
+    }
+    converter.emit(new LabelInstruction(endLabel));
+    converter.untrackedStructuralHandleClassIds.set(key, classIdVar);
   }
 }
 
@@ -517,6 +562,8 @@ function clearUntrackedStructuralPrefixes(
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
   converter.untrackedStructuralHandleVars.delete(prefix);
+  converter.untrackedStructuralHandleTypes.delete(prefix);
+  converter.untrackedStructuralHandleClassIds.delete(prefix);
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
     const propertyType = resolveStructuralPropertyType(
       converter,
@@ -563,7 +610,14 @@ function emitStructuralFieldsFromKnownHandle(
         converter,
         new ClassTypeSymbol(info.className, UdonType.Object),
       );
-      return structuralInterfacesCompatible(targetInterface, sourceInterface);
+      if (structuralInterfacesCompatible(targetInterface, sourceInterface)) {
+        return true;
+      }
+      return Array.from(targetInterface.properties.keys()).every(
+        (propertyName) =>
+          resolveClassProperty(converter, info.className, propertyName) !==
+          undefined,
+      );
     },
   );
   if (candidates.length === 0) return false;
@@ -1471,7 +1525,7 @@ function resolveDeclaredTypeFromNode(
 ): TypeSymbol | null {
   if (node.kind === ASTNodeKind.Identifier) {
     const symbol = converter.symbolTable.lookup((node as IdentifierNode).name);
-    return symbol?.declaredType ?? null;
+    return symbol?.declaredType ?? symbol?.type ?? null;
   }
   if (node.kind === ASTNodeKind.AsExpression) {
     return resolveDeclaredTypeFromNode(
@@ -2880,7 +2934,33 @@ export function visitArrayLiteralExpression(
   const expectedArrayElementType = this.currentExpectedType
     ? extractArrayLiteralHint(this.currentExpectedType)
     : undefined;
-  const elementType = node.typeHint ?? expectedArrayElementType ?? ObjectType;
+  let spreadElementType: TypeSymbol | undefined;
+  if (
+    !node.typeHint &&
+    !expectedArrayElementType &&
+    node.elements.length > 0 &&
+    node.elements.every((e) => e.kind === "spread")
+  ) {
+    const spreadTypes = node.elements.map((element) =>
+      resolveTypeFromNode(this, element.value),
+    );
+    const spreadElementTypes = spreadTypes
+      .map((type) => {
+        if (type instanceof ArrayTypeSymbol) return type.elementType;
+        if (type instanceof DataListTypeSymbol) return type.elementType;
+        if (type instanceof NativeArrayTypeSymbol) return type.elementType;
+        return undefined;
+      })
+      .filter((type): type is TypeSymbol => type !== undefined);
+    if (spreadElementTypes.length === node.elements.length) {
+      const firstElementType = spreadElementTypes[0];
+      if (spreadElementTypes.every((type) => type.isAssignableTo(firstElementType))) {
+        spreadElementType = firstElementType;
+      }
+    }
+  }
+  const elementType =
+    node.typeHint ?? expectedArrayElementType ?? spreadElementType ?? ObjectType;
 
   // Native fixed-length array path: emit when the variable is eligible and
   // all elements are non-spread, so the length is known at compile time.
@@ -4526,6 +4606,15 @@ export function visitPropertyAccessExpression(
           isStructuralUnionDispatch:
             usedAnonUnionIface || isInterfaceHandlePropertyDispatch,
         });
+        if (dispInstances.length > 1) {
+          const soaClassName = dispInstances[0][1].className;
+          if (
+            this.soaClasses.has(soaClassName) &&
+            dispInstances.every(([, info]) => info.className === soaClassName)
+          ) {
+            dispInstances.splice(1);
+          }
+        }
         if (
           (usedErasedFallback || usedAnonUnionIface) &&
           dispInstances.length > dispatchLimit

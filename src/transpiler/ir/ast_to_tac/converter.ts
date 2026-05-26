@@ -324,6 +324,12 @@ export class ASTToTACConverter {
    * prefix from a sibling tracked return.
    */
   untrackedStructuralHandleVars: Set<string> = new Set();
+  /** Structural/interface type associated with an untracked handle prefix. */
+  untrackedStructuralHandleTypes: Map<string, TypeSymbol> = new Map();
+  /** Runtime class id slot associated with an untracked all-inline interface handle. */
+  untrackedStructuralHandleClassIds: Map<string, VariableOperand> = new Map();
+  /** Shared D3 method-dispatch bodies keyed by receiver interface/method/candidate set. */
+  d3MethodDispatchOutlines: Map<string, unknown> = new Map();
   /**
    * Prefixes whose structural `${prefix}_<prop>` slots have been populated
    * by explicit field-copy/default emission. Property reads may use these
@@ -720,6 +726,9 @@ export class ASTToTACConverter {
     this.allInlineInterfaceCache = new Map();
     this.anonymousInlineClassNames = new Set();
     this.untrackedStructuralHandleVars = new Set();
+    this.untrackedStructuralHandleTypes = new Map();
+    this.untrackedStructuralHandleClassIds = new Map();
+    this.d3MethodDispatchOutlines = new Map();
     this.structuralFieldPrefixes = new Set();
     this.structuralFieldPrefixTypes = new Map();
     this.inlineStructuralPropertyTypeCache = new Map();

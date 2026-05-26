@@ -43,6 +43,7 @@ import {
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
+  ReturnInstruction,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
@@ -101,7 +102,7 @@ const VOID_RETURN: ConstantOperand = createConstant(null, ObjectType);
 const MAX_UNTRACKED_DISPATCH_CANDIDATES = 100;
 // D3 method dispatch inlines full method bodies per instance, so use a
 // stricter limit than property dispatch to avoid excessive code bloat.
-const MAX_D3_METHOD_DISPATCH_CANDIDATES = 2000;
+const MAX_D3_METHOD_DISPATCH_CANDIDATES = 256;
 
 function emitDataListPop(
   converter: ASTToTACConverter,
@@ -553,6 +554,268 @@ function emitDispatchResultDefaults(
     structuralType,
     new Set<string>(),
   );
+}
+
+type D3MethodDispatchGroup = {
+  representative: { prefix: string; className: string };
+  instances: Array<[number, { prefix: string; className: string }]>;
+};
+
+type D3MethodDispatchOutlineState = {
+  entryLabel: LabelOperand;
+  dispatchLabel: LabelOperand;
+  doneLabel: LabelOperand;
+  bodyReturnJumpIdx: number;
+  returnVar?: VariableOperand;
+  returnType?: TypeSymbol;
+  returnSiteIdxVar: VariableOperand;
+  nextReturnSiteIndex: number;
+  returnSites: Array<{ index: number; labelName: string }>;
+  receiverClassIdParam: VariableOperand;
+  argParams: VariableOperand[];
+};
+
+function d3OutlineMap(
+  converter: ASTToTACConverter,
+): Map<string, D3MethodDispatchOutlineState> {
+  return converter.d3MethodDispatchOutlines as Map<
+    string,
+    D3MethodDispatchOutlineState
+  >;
+}
+
+function buildD3DispatchOutlineKey(
+  receiverInterfaceName: string,
+  methodName: string,
+  groups: D3MethodDispatchGroup[],
+): string {
+  const classes = groups
+    .map((group) => group.representative.className)
+    .sort()
+    .join(",");
+  return `${receiverInterfaceName}.${methodName}:${classes}`;
+}
+
+function emitD3OutlinedCallSite(
+  converter: ASTToTACConverter,
+  state: D3MethodDispatchOutlineState,
+  receiverClassIdVar: VariableOperand,
+  dispatchArgs: TACOperand[],
+): TACOperand | typeof VOID_RETURN {
+  converter.emitCopyWithTracking(state.receiverClassIdParam, receiverClassIdVar);
+  for (let i = 0; i < state.argParams.length; i++) {
+    const arg = dispatchArgs[i] ?? createConstant(null, ObjectType);
+    const param = state.argParams[i];
+    converter.emitCopyWithTracking(param, arg);
+    emitStructuralFieldCopies(
+      converter,
+      param.name,
+      converter.getOperandType(param),
+      arg,
+      { isLocal: true },
+      true,
+    );
+  }
+
+  const returnLabel = converter.newLabel("d3_outline_return") as LabelOperand;
+  const returnSiteIdx = state.nextReturnSiteIndex++;
+  state.returnSites.push({
+    index: returnSiteIdx,
+    labelName: returnLabel.name,
+  });
+  converter.emit(
+    new AssignmentInstruction(
+      state.returnSiteIdxVar,
+      createConstant(returnSiteIdx, PrimitiveTypes.int32),
+    ),
+  );
+  converter.emit(new UnconditionalJumpInstruction(state.entryLabel));
+  converter.emit(new LabelInstruction(returnLabel));
+
+  if (!state.returnVar || !state.returnType) {
+    return VOID_RETURN;
+  }
+  const result = converter.newTemp(state.returnType);
+  converter.emitCopyWithTracking(result, state.returnVar);
+  const resultPrefix = operandTrackingKey(result);
+  if (resultPrefix) {
+    emitStructuralFieldCopies(
+      converter,
+      resultPrefix,
+      state.returnType,
+      state.returnVar,
+      { isLocal: true },
+      true,
+    );
+  }
+  return result;
+}
+
+function emitD3MethodDispatchOutline(
+  converter: ASTToTACConverter,
+  outlineKey: string,
+  propAccess: PropertyAccessExpressionNode,
+  groups: D3MethodDispatchGroup[],
+  receiverClassIds: Map<string, number>,
+  dispatchArgs: TACOperand[],
+  returnType: TypeSymbol | undefined,
+  isVoid: boolean,
+): D3MethodDispatchOutlineState {
+  const sanitizedKey = outlineKey.replace(/[^A-Za-z0-9_]/g, "_");
+  const prefix = `__d3_outline_${sanitizedKey}`;
+  const entryLabel = converter.newLabel("d3_outline_entry") as LabelOperand;
+  const dispatchLabel = converter.newLabel(
+    "d3_outline_dispatch",
+  ) as LabelOperand;
+  const doneLabel = converter.newLabel("d3_outline_done") as LabelOperand;
+  const bodyReturnLabel = converter.newLabel(
+    "d3_outline_body_return",
+  ) as LabelOperand;
+  const firstCallSiteLabel = converter.newLabel(
+    "d3_outline_first_call",
+  ) as LabelOperand;
+  const receiverClassIdParam = createVariable(
+    `${prefix}_classId`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  const returnSiteIdxVar = createVariable(
+    `${prefix}_returnSiteIdx`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  const argParams = dispatchArgs.map((arg, i) =>
+    createVariable(`${prefix}_arg_${i}`, converter.getOperandType(arg), {
+      isLocal: true,
+    }),
+  );
+  const returnVar = isVoid
+    ? undefined
+    : createVariable(`${prefix}_retVal`, returnType ?? ObjectType, {
+        isLocal: true,
+        isInlineReturn: true,
+      });
+
+  converter.emit(new UnconditionalJumpInstruction(firstCallSiteLabel));
+  converter.emit(new LabelInstruction(entryLabel));
+  if (returnVar) {
+    emitDispatchResultDefaults(converter, returnVar, returnType);
+  }
+
+  const endLabel = converter.newLabel("d3_outline_method_end");
+  for (const group of groups) {
+    const info = group.representative;
+    const classId = receiverClassIds.get(info.className);
+    if (classId === undefined) continue;
+    const nextLabel = converter.newLabel("d3_outline_method_next");
+    const cond = converter.newTemp(PrimitiveTypes.boolean);
+    converter.emit(
+      new BinaryOpInstruction(
+        cond,
+        receiverClassIdParam,
+        "==",
+        createConstant(classId, PrimitiveTypes.int32),
+      ),
+    );
+    converter.emit(new ConditionalJumpInstruction(cond, nextLabel));
+
+    const branchMapSnapshot = new Map(converter.inlineInstanceMap);
+    const inlineRes = converter.withInlineCallSite(propAccess, () =>
+      converter.visitInlineInstanceMethodCallWithContext(
+        info.className,
+        info.prefix,
+        propAccess.property,
+        argParams,
+      ),
+    );
+    if (!inlineRes) {
+      converter.warnAt(
+        propAccess,
+        "D3DispatchFallback",
+        `D3 method dispatch outline skipped branch for "${info.className}.${propAccess.property}".`,
+      );
+    } else if (returnVar) {
+      converter.emit(new CopyInstruction(returnVar, inlineRes));
+      emitStructuralFieldCopies(
+        converter,
+        returnVar.name,
+        returnType ?? ObjectType,
+        inlineRes,
+        { isLocal: true },
+        true,
+      );
+    }
+    converter.inlineInstanceMap = branchMapSnapshot;
+    converter.emit(new UnconditionalJumpInstruction(endLabel));
+    converter.emit(new LabelInstruction(nextLabel));
+  }
+
+  const logExtern = converter.requireExternSignature(
+    "Debug",
+    "LogError",
+    "method",
+    ["object"],
+    "void",
+  );
+  const errMsg = createConstant(
+    `[udon-assembly-ts] D3 method dispatch miss: ${propAccess.property} on classId`,
+    PrimitiveTypes.string,
+  );
+  converter.emit(new CallInstruction(undefined, logExtern, [errMsg]));
+  converter.emit(new LabelInstruction(endLabel));
+  converter.emit(new LabelInstruction(bodyReturnLabel));
+  const bodyReturnJumpIdx = converter.instructions.length;
+  converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+
+  const state: D3MethodDispatchOutlineState = {
+    entryLabel,
+    dispatchLabel,
+    doneLabel,
+    bodyReturnJumpIdx,
+    returnVar,
+    returnType,
+    returnSiteIdxVar,
+    nextReturnSiteIndex: 1,
+    returnSites: [],
+    receiverClassIdParam,
+    argParams,
+  };
+  d3OutlineMap(converter).set(outlineKey, state);
+
+  converter.pendingOutlineDispatches.push(() => {
+    if (state.returnSites.length === 1) {
+      converter.instructions[state.bodyReturnJumpIdx] =
+        new UnconditionalJumpInstruction(
+          createLabel(state.returnSites[0].labelName),
+        );
+      return;
+    }
+    converter.emit(new LabelInstruction(dispatchLabel));
+    for (const site of state.returnSites) {
+      const cmpResult = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          cmpResult,
+          returnSiteIdxVar,
+          "!=",
+          createConstant(site.index, PrimitiveTypes.int32),
+        ),
+      );
+      converter.emit(
+        new ConditionalJumpInstruction(cmpResult, createLabel(site.labelName)),
+      );
+    }
+    converter.emit(new LabelInstruction(doneLabel));
+    const missMsg = createConstant(
+      `[udon-assembly-ts] D3 outline dispatch miss: no return site matched at ${doneLabel.name}`,
+      PrimitiveTypes.string,
+    );
+    converter.emit(new CallInstruction(undefined, logExtern, [missMsg]));
+    converter.emit(new ReturnInstruction());
+  });
+
+  converter.emit(new LabelInstruction(firstCallSiteLabel));
+  return state;
 }
 
 /**
@@ -1322,6 +1585,10 @@ function tryD3MethodDispatch(
     ? lookupDeclaredTypeForTrackingName(converter, objectKey)
     : undefined;
   const declaredReceiverName = declaredReceiverType?.name;
+  const untrackedStructuralReceiverType = objectKey
+    ? converter.untrackedStructuralHandleTypes.get(objectKey)
+    : undefined;
+  const untrackedStructuralReceiverName = untrackedStructuralReceiverType?.name;
   if (
     dispInstances.length === 0 &&
     declaredReceiverName &&
@@ -1334,11 +1601,24 @@ function tryD3MethodDispatch(
       seenInstanceIds,
     );
   }
+  if (
+    dispInstances.length === 0 &&
+    untrackedStructuralReceiverName &&
+    untrackedStructuralReceiverName !== objectTypeName &&
+    untrackedStructuralReceiverName !== declaredReceiverName
+  ) {
+    addD3MethodInstancesForType(
+      converter,
+      untrackedStructuralReceiverName,
+      dispInstances,
+      seenInstanceIds,
+    );
+  }
 
   // AST type fallback: when operand type is erased, try resolving from AST.
   if (dispInstances.length === 0) {
     const astType = resolveTypeFromNode(converter, propAccess.object);
-    const astName = astType?.name;
+    const astName = astType?.name ?? untrackedStructuralReceiverName;
     if (astName && astName !== objectTypeName) {
       addD3MethodInstancesForType(
         converter,
@@ -1461,6 +1741,16 @@ function tryD3MethodDispatch(
     }
   }
 
+  if (dispInstances.length > 1) {
+    const soaClassName = dispInstances[0][1].className;
+    if (
+      converter.soaClasses.has(soaClassName) &&
+      dispInstances.every(([, info]) => info.className === soaClassName)
+    ) {
+      dispInstances.splice(1);
+    }
+  }
+
   if (
     dispInstances.length === 0 ||
     dispInstances.length > MAX_D3_METHOD_DISPATCH_CANDIDATES
@@ -1560,6 +1850,16 @@ function tryD3MethodDispatch(
     : converter.newTemp(resolvedRetType ?? ObjectType);
   emitDispatchResultDefaults(converter, dispatchResult, resolvedRetType);
   const handleVar = normalizeOperandToInt32(converter, object);
+  const receiverClassIdVar = objectKey
+    ? converter.untrackedStructuralHandleClassIds.get(objectKey)
+    : undefined;
+  const receiverInterfaceName =
+    untrackedStructuralReceiverName ??
+    declaredReceiverName ??
+    objectTypeName;
+  const receiverClassIds = receiverInterfaceName
+    ? converter.interfaceClassIdMap.get(receiverInterfaceName)
+    : undefined;
   const objectAlias = objectTypeName
     ? converter.typeMapper.getAlias(objectTypeName)
     : undefined;
@@ -1642,10 +1942,112 @@ function tryD3MethodDispatch(
     converter.emit(new LabelInstruction(matchEndLabel));
     return combinedCond;
   };
+
+  const dispatchGroups: Array<{
+    representative: { prefix: string; className: string };
+    instances: Array<[number, { prefix: string; className: string }]>;
+  }> = [];
+  const dispatchGroupsByClass = new Map<
+    string,
+    {
+      representative: { prefix: string; className: string };
+      instances: Array<[number, { prefix: string; className: string }]>;
+    }
+  >();
   for (const [instId, info] of dispInstances) {
+    let group = dispatchGroupsByClass.get(info.className);
+    if (!group) {
+      group = { representative: info, instances: [] };
+      dispatchGroupsByClass.set(info.className, group);
+      dispatchGroups.push(group);
+    }
+    group.instances.push([instId, info]);
+  }
+
+  if (receiverClassIdVar && receiverClassIds && dispatchGroups.length > 1) {
+    const outlineKey = buildD3DispatchOutlineKey(
+      receiverInterfaceName || objectTypeName || "unknown",
+      propAccess.property,
+      dispatchGroups,
+    );
+    const outlines = d3OutlineMap(converter);
+    const existing = outlines.get(outlineKey);
+    const state =
+      existing ??
+      emitD3MethodDispatchOutline(
+        converter,
+        outlineKey,
+        propAccess,
+        dispatchGroups,
+        receiverClassIds,
+        dispatchArgs,
+        resolvedRetType,
+        isVoid,
+      );
+    return emitD3OutlinedCallSite(
+      converter,
+      state,
+      receiverClassIdVar,
+      dispatchArgs,
+    );
+  }
+
+  const emitD3MethodGroupMatchCondition = (
+    group: {
+      representative: { prefix: string; className: string };
+      instances: Array<[number, { prefix: string; className: string }]>;
+    },
+  ): TACOperand => {
+    const classId =
+      receiverClassIdVar && receiverClassIds
+        ? receiverClassIds.get(group.representative.className)
+        : undefined;
+    if (receiverClassIdVar && classId !== undefined) {
+      const cond = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          cond,
+          receiverClassIdVar,
+          "==",
+          createConstant(classId, PrimitiveTypes.int32),
+        ),
+      );
+      return cond;
+    }
+    const { instances } = group;
+    if (instances.length === 1) {
+      return emitD3MethodMatchCondition(instances[0][0], instances[0][1]);
+    }
+    const combinedCond = converter.newTemp(PrimitiveTypes.boolean);
+    const matchEndLabel = converter.newLabel("d3_method_group_match_end");
+    converter.emit(
+      new AssignmentInstruction(
+        combinedCond,
+        createConstant(false, PrimitiveTypes.boolean),
+      ),
+    );
+    for (const [instId, info] of instances) {
+      const nextMatchLabel = converter.newLabel("d3_method_group_match_next");
+      const cond = emitD3MethodMatchCondition(instId, info);
+      converter.emit(new ConditionalJumpInstruction(cond, nextMatchLabel));
+      converter.emit(
+        new AssignmentInstruction(
+          combinedCond,
+          createConstant(true, PrimitiveTypes.boolean),
+        ),
+      );
+      converter.emit(new UnconditionalJumpInstruction(matchEndLabel));
+      converter.emit(new LabelInstruction(nextMatchLabel));
+    }
+    converter.emit(new LabelInstruction(matchEndLabel));
+    return combinedCond;
+  };
+
+  for (const group of dispatchGroups) {
+    const info = group.representative;
     const branchMapSnapshot = new Map(converter.inlineInstanceMap);
     const nextLabel = converter.newLabel("d3_method_next");
-    const branchCond = emitD3MethodMatchCondition(instId, info);
+    const branchCond = emitD3MethodGroupMatchCondition(group);
     converter.emit(new ConditionalJumpInstruction(branchCond, nextLabel));
     if (converter.soaClasses.has(info.className)) {
       converter.emit(
@@ -2504,11 +2906,15 @@ export function visitCallExpression(
       let elemType: TypeSymbol | undefined;
       if (arrType instanceof ArrayTypeSymbol) {
         elemType = arrType.elementType;
+      } else if (arrType instanceof DataListTypeSymbol) {
+        elemType = arrType.elementType;
       }
       // Also try AST-based resolution when operand type has erased element type
       if (!elemType || elemType === ObjectType) {
         const resolved = resolveTypeFromNode(this, propAccess.object);
         if (resolved instanceof ArrayTypeSymbol) {
+          elemType = resolved.elementType;
+        } else if (resolved instanceof DataListTypeSymbol) {
           elemType = resolved.elementType;
         }
       }
@@ -3315,6 +3721,30 @@ export function visitCallExpression(
             const curLen = this.newTemp(PrimitiveTypes.int32);
             this.emit(new PropertyGetInstruction(curLen, object, "Count"));
             return curLen;
+          }
+
+          if (propAccess.object.kind === ASTNodeKind.Identifier) {
+            const arrayName = (propAccess.object as IdentifierNode).name;
+            const symbol = this.symbolTable.lookup(arrayName);
+            const currentType = symbol?.type;
+            const firstSpecificArg = evaluatedArgs
+              .map((arg) => this.getOperandType(arg))
+              .find((argType) => !isPlainObjectType(argType));
+            if (
+              symbol &&
+              firstSpecificArg &&
+              ((currentType instanceof ArrayTypeSymbol &&
+                isPlainObjectType(currentType.elementType)) ||
+                (currentType instanceof DataListTypeSymbol &&
+                  isPlainObjectType(currentType.elementType)))
+            ) {
+              const refinedType =
+                currentType instanceof DataListTypeSymbol
+                  ? new DataListTypeSymbol(firstSpecificArg)
+                  : new ArrayTypeSymbol(firstSpecificArg);
+              symbol.type = refinedType;
+              symbol.declaredType = refinedType;
+            }
           }
 
           // Current lowering policy: TS arrays use DataList; push = Add(token).
