@@ -2372,9 +2372,11 @@ export function visitReturnStatement(
         const sourceSymbol = this.symbolTable
           .getAllSymbols()
           .find((symbol) => (symbol.heapSlotName ?? symbol.name) === valueKey);
-        const sourceStructuralType = sourceSymbol
-          ? structuralInterfaceForType(this, sourceSymbol.type)
-          : undefined;
+        const sourceStructuralType =
+          (sourceSymbol
+            ? structuralInterfaceForType(this, sourceSymbol.type)
+            : undefined) ??
+          structuralInterfaceForType(this, this.getOperandType(value));
         const returnFieldTypes =
           this.structuralFieldPrefixTypes.get(returnKey) ??
           (sourceStructuralType
@@ -2396,6 +2398,17 @@ export function visitReturnStatement(
               new CopyInstruction(
                 createVariable(`${returnKey}_${propertyName}`, propertyType),
                 propertyValue,
+              ),
+            );
+          }
+        } else if (returnFieldTypes) {
+          this.structuralFieldPrefixTypes.set(returnKey, returnFieldTypes);
+          this.structuralFieldPrefixes.add(returnKey);
+          for (const [propertyName, propertyType] of returnFieldTypes) {
+            this.emit(
+              new CopyInstruction(
+                createVariable(`${returnKey}_${propertyName}`, propertyType),
+                createVariable(`${valueKey}_${propertyName}`, propertyType),
               ),
             );
           }

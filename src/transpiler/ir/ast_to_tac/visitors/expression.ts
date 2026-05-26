@@ -3520,7 +3520,20 @@ export function visitPropertyAccessExpression(
         instancePrefix,
         node.property,
       );
-      if (mapped) return mapped;
+      if (mapped) {
+        if (
+          isInlineHandleType(this, mapped.type) &&
+          !this.resolveInlineInstance(mapped.name)
+        ) {
+          const candidates = Array.from(this.allInlineInstances.values()).filter(
+            (info) => info.className === mapped.type.name,
+          );
+          if (candidates.length === 1) {
+            this.inlineInstanceMap.set(mapped.name, candidates[0]);
+          }
+        }
+        return mapped;
+      }
     }
 
     // Entry point class self-property READ.

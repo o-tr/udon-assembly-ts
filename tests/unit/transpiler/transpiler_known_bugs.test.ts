@@ -4048,6 +4048,47 @@ class Main extends UdonSharpBehaviour {
       );
     });
 
+    it("structural return forwarding methods are not outlined", () => {
+      const source = `
+        type Result = { ok: boolean; waits: number[] };
+
+        class Service {
+          check(flag: boolean): Result {
+            if (flag) return { ok: true, waits: [1, 2] };
+            return { ok: false, waits: [] };
+          }
+        }
+
+        class Analyzer {
+          private service: Service;
+
+          constructor() {
+            this.service = new Service();
+          }
+
+          check(flag: boolean): Result {
+            return this.service.check(flag);
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const analyzer = new Analyzer();
+            const first = analyzer.check(true);
+            const second = analyzer.check(false);
+            Debug.Log(first.ok);
+            Debug.Log(first.waits.length);
+            Debug.Log(second.ok);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source, {
+        outlineBodyInstrThreshold: 1,
+      });
+
+      expect(result.uasm).not.toContain("outline_inst_Analyzer_check");
+    });
+
     it("anonymous Array<T> structural destructuring avoids raw SystemObject property externs", () => {
       const source = `
         type UdonInt = number & { __brand: "UdonInt" };

@@ -1383,8 +1383,14 @@ export function saveAndBindInlineParams(
     const collidingCallerSymbol = converter.symbolTable.lookup(param.name);
     let valueBackup: InlineParamSaveEntry["valueBackup"];
     const callerSlotName = collidingCallerSymbol?.heapSlotName ?? param.name;
-    const isRealCollision =
+    const collidesWithCallerSlot =
       collidingCallerSymbol !== undefined && callerSlotName === param.name;
+    const paramSlotName =
+      collidesWithCallerSlot && converter.currentInlineLocalPrefix
+        ? `${converter.currentInlineLocalPrefix}${param.name}`
+        : param.name;
+    const isRealCollision =
+      collidesWithCallerSlot && paramSlotName === param.name;
     if (isRealCollision) {
       // Snapshot the slot's current value to a temp so restoreInlineParams
       // can put the caller's value back after the inlined body returns.
@@ -1423,7 +1429,7 @@ export function saveAndBindInlineParams(
         true,
         false,
         undefined,
-        undefined,
+        paramSlotName !== param.name ? paramSlotName : undefined,
         declaredParamType,
       );
     } else {
@@ -1433,11 +1439,11 @@ export function saveAndBindInlineParams(
         declaredParamType,
       );
     }
-    saved.set(param.name, {
-      inlineInstance: converter.inlineInstanceMap.get(param.name),
+    saved.set(paramSlotName, {
+      inlineInstance: converter.inlineInstanceMap.get(paramSlotName),
       valueBackup,
     });
-    converter.inlineInstanceMap.delete(param.name);
+    converter.inlineInstanceMap.delete(paramSlotName);
     if (arg) {
       // Use a pre-binding snapshot if this arg references a slot that collides
       // with a param name (see snapshottedArgs above).
@@ -1473,13 +1479,15 @@ export function saveAndBindInlineParams(
       }
       converter.emit(
         new CopyInstruction(
-          createVariable(param.name, effectiveParamType, { isParameter: true }),
+          createVariable(paramSlotName, effectiveParamType, {
+            isParameter: true,
+          }),
           argToUse,
         ),
       );
       emitStructuralParamFieldCopies(
         converter,
-        param.name,
+        paramSlotName,
         param.type,
         argToUse,
       );
@@ -1488,13 +1496,13 @@ export function saveAndBindInlineParams(
         propagateNestedUntrackedStructuralProperties(
           converter,
           argToUseKey,
-          param.name,
+          paramSlotName,
           param.type,
         );
       }
       const argInfo = argInlineInfos[i];
       if (argInfo) {
-        converter.inlineInstanceMap.set(param.name, argInfo);
+        converter.inlineInstanceMap.set(paramSlotName, argInfo);
       } else if (arg.kind === TACOperandKind.Variable) {
         const argVar = arg as VariableOperand;
         // Only real heap-instance backing slots can be rebound this way.
@@ -1515,14 +1523,14 @@ export function saveAndBindInlineParams(
           if (
             argKey &&
             converter.untrackedStructuralHandleVars.has(argKey) &&
-            !converter.untrackedStructuralHandleVars.has(param.name)
+            !converter.untrackedStructuralHandleVars.has(paramSlotName)
           ) {
-            converter.untrackedStructuralHandleVars.add(param.name);
+            converter.untrackedStructuralHandleVars.add(paramSlotName);
             // Mark the save entry so restoreInlineParams removes this name
             // from the set when the inline expansion finishes, preventing
             // stale membership from leaking into later expansions that reuse
             // the same parameter name with a tracked argument.
-            const savedEntry = saved.get(param.name);
+            const savedEntry = saved.get(paramSlotName);
             if (savedEntry) savedEntry.addedToUntrackedSet = true;
           }
           // emitStructuralParamFieldCopies (called above) may have set
@@ -1532,8 +1540,8 @@ export function saveAndBindInlineParams(
           // inside the callee triggers returnTrackingInvalidated instead of
           // silently propagating zeroed field-slot values through the tracked
           // path.
-          if (converter.untrackedStructuralHandleVars.has(param.name)) {
-            converter.inlineInstanceMap.delete(param.name);
+          if (converter.untrackedStructuralHandleVars.has(paramSlotName)) {
+            converter.inlineInstanceMap.delete(paramSlotName);
           }
           continue;
         }
@@ -1546,7 +1554,7 @@ export function saveAndBindInlineParams(
           resolveClassNode(converter, argType.name) !== undefined &&
           !converter.udonBehaviourClasses.has(argType.name);
         if (isTypeAlias || isInlineClass) {
-          converter.inlineInstanceMap.set(param.name, {
+          converter.inlineInstanceMap.set(paramSlotName, {
             prefix: argVar.name,
             className: argType.name,
           });
@@ -1563,7 +1571,7 @@ export function saveAndBindInlineParams(
             resolveClassNode(converter, paramTypeName) !== undefined &&
             !converter.udonBehaviourClasses.has(paramTypeName);
           if (isParamTypeAlias || isParamInlineClass) {
-            converter.inlineInstanceMap.set(param.name, {
+            converter.inlineInstanceMap.set(paramSlotName, {
               prefix: argVar.name,
               className: paramTypeName,
             });
@@ -3833,6 +3841,17 @@ function checkOutlineIneligible(
   // types at each call site, not the compiled body, so it doesn't create
   // a gap here.
   if (isInlineHandleType(converter, returnType)) {
+    return true;
+  }
+  const structuralReturn = structuralInterfaceForType(converter, returnType);
+  if (
+    structuralReturn &&
+    body.statements.some(
+      (stmt) =>
+        stmt.kind === ASTNodeKind.ReturnStatement &&
+        (stmt as ReturnStatementNode).value?.kind === ASTNodeKind.CallExpression,
+    )
+  ) {
     return true;
   }
   for (const param of params) {
