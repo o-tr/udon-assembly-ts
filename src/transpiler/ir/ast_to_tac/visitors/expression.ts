@@ -350,6 +350,24 @@ function emitSoaNestedStructuralFieldCopies(
     if (nestedName.length === 0) continue;
     const nestedType = fieldTypes?.get(nestedField) ?? ObjectType;
     const nestedToken = converter.newTemp(ExternTypes.dataToken);
+    const nestedSlot = createVariable(
+      `${targetPrefix}_${nestedName}`,
+      nestedType,
+      { isLocal: true },
+    );
+    for (const [, info] of converter.allInlineInstances) {
+      if (info.className !== ownerClassName) continue;
+      converter.emit(
+        new CopyInstruction(
+          nestedSlot,
+          createVariable(
+            `${info.prefix}_${ownerProperty}_${nestedName}`,
+            nestedType,
+          ),
+        ),
+      );
+      break;
+    }
     emitBoundedDataListGetItem(
       converter,
       nestedList,
@@ -360,11 +378,6 @@ function emitSoaNestedStructuralFieldCopies(
       ownerClassName,
     );
     const nestedValue = converter.unwrapDataToken(nestedToken, nestedType);
-    const nestedSlot = createVariable(
-      `${targetPrefix}_${nestedName}`,
-      nestedType,
-      { isLocal: true },
-    );
     converter.emit(new CopyInstruction(nestedSlot, nestedValue));
     converter.structuralFieldPrefixes.add(targetPrefix);
     const prefixTypes =
@@ -593,6 +606,16 @@ function structuralInterfacesCompatible(
   return true;
 }
 
+function structuralInterfaceHasImplementors(
+  converter: ASTToTACConverter,
+  interfaceType: InterfaceTypeSymbol,
+): boolean {
+  return (
+    (converter.classRegistry?.getImplementorsOfInterface(interfaceType.name)
+      .length ?? 0) > 0
+  );
+}
+
 function emitStructuralFieldsFromKnownHandle(
   converter: ASTToTACConverter,
   targetPrefix: string,
@@ -603,6 +626,12 @@ function emitStructuralFieldsFromKnownHandle(
   const targetInterface = resolveStructuralInterface(converter, targetType);
   const sourceKey = operandTrackingKey(sourceHandle);
   if (!targetInterface || !sourceKey) return false;
+  if (
+    targetInterface.methods.size > 0 ||
+    structuralInterfaceHasImplementors(converter, targetInterface)
+  ) {
+    return false;
+  }
 
   const candidates = Array.from(converter.allInlineInstances.entries()).filter(
     ([, info]) => {
@@ -735,7 +764,9 @@ function tryEmitStructuralInterfacePropertyDispatch(
     return undefined;
   }
 
-  const result = converter.newTemp(resultType);
+  const result = createVariable(`__uninst_prop_${converter.tempCounter++}`, resultType, {
+    isLocal: true,
+  });
   converter.emit(
     new AssignmentInstruction(
       result,
@@ -3199,8 +3230,7 @@ export function visitArrayLiteralExpression(
         ),
       );
       // All arrays (both DataList and ArrayTypeSymbol) use Count at runtime.
-      const countSpread = ensureDataListForCount(this, spreadValue);
-      this.emit(new PropertyGetInstruction(lengthVar, countSpread, "Count"));
+      this.emit(new PropertyGetInstruction(lengthVar, spreadValue, "Count"));
 
       const loopStart = this.newLabel("array_spread_start");
       const loopContinue = this.newLabel("array_spread_continue");
@@ -3414,8 +3444,7 @@ function emitDataListBracketRead(
   const mergeLabel = converter.newLabel("dlrd_merge");
   converter.emit(new ConditionalJumpInstruction(geZero, skipLabel));
   const countTemp = converter.newTemp(PrimitiveTypes.int32);
-  const countArray = ensureDataListForCount(converter, array);
-  converter.emit(new PropertyGetInstruction(countTemp, countArray, "Count"));
+  converter.emit(new PropertyGetInstruction(countTemp, array, "Count"));
   const ltCount = converter.newTemp(PrimitiveTypes.boolean);
   converter.emit(
     new BinaryOpInstruction(ltCount, coercedIndex, "<", countTemp),
@@ -4222,7 +4251,8 @@ export function visitPropertyAccessExpression(
           : undefined;
         const directSoaAllowed =
           trackedObjectInfo !== undefined &&
-          this.soaInstancePrefixes.has(trackedObjectInfo.prefix);
+          this.soaClasses.has(trackedObjectInfo.className) &&
+          !this.soaConstructionPrefixes.has(trackedObjectInfo.prefix);
         if (
           directSoaTypeName &&
           directSoaAllowed &&
@@ -5577,12 +5607,28 @@ export function visitObjectLiteralExpression(
               : (resolveTypeFromNode(this, prop.value) ??
                 propType ??
                 this.getOperandType(value));
+          const propStructuralInterface = resolveStructuralInterface(
+            this,
+            structuralCopyType,
+          );
+          const propShouldDispatchByHandle =
+            propStructuralInterface !== undefined &&
+            (propStructuralInterface.methods.size > 0 ||
+              structuralInterfaceHasImplementors(this, propStructuralInterface));
           const propIsUntrackedStructuralHandle =
+            propShouldDispatchByHandle ||
             this.untrackedStructuralHandleVars.has(propKey) ||
             (valueKey
               ? this.untrackedStructuralHandleVars.has(valueKey) ||
                 valueKey.startsWith("__uninst_prop_")
               : false);
+          if (propShouldDispatchByHandle && propStructuralInterface) {
+            markUntrackedStructuralHandlePrefixes(
+              this,
+              propKey,
+              propStructuralInterface,
+            );
+          }
           if (!propIsUntrackedStructuralHandle) {
             emitStructuralFieldCopies(
               this,
@@ -5592,7 +5638,7 @@ export function visitObjectLiteralExpression(
             );
           }
           if (
-            resolveStructuralInterface(this, structuralCopyType) &&
+            propStructuralInterface &&
             this.untrackedStructuralHandleVars.has(propKey)
           ) {
             emitStructuralFieldsFromKnownHandle(

@@ -703,6 +703,23 @@ export function visitVariableDeclaration(
         destType.udonType === PrimitiveTypes.double.udonType)
     ) {
       const inferredType = this.getOperandType(src);
+      const shouldPreserveErasedIdentifierHandle = (() => {
+        if (
+          !isObjectTypeSymbol(destType) ||
+          node.initializer?.kind !== ASTNodeKind.Identifier
+        ) {
+          return false;
+        }
+        const sourceName = (node.initializer as IdentifierNode).name;
+        if (this.soaForOfHandleVars.has(sourceName)) {
+          return true;
+        }
+        const sourceKey = operandTrackingKey(src);
+        const sourceInfo = sourceKey
+          ? this.resolveInlineInstance(sourceKey)
+          : undefined;
+        return sourceInfo ? this.soaClasses.has(sourceInfo.className) : false;
+      })();
       if (!isObjectTypeSymbol(inferredType)) {
         resolvedInitializerType ??= resolveTypeFromNode(this, node.initializer);
         // Do not narrow a float-declared variable to an integer type.
@@ -718,7 +735,10 @@ export function visitVariableDeclaration(
           isNumericUdonType(inferredType.udonType) &&
           inferredType.udonType !== UdonType.Single &&
           inferredType.udonType !== UdonType.Double;
-        if (!(destIsFloat && inferredIsInteger)) {
+        if (
+          !shouldPreserveErasedIdentifierHandle &&
+          !(destIsFloat && inferredIsInteger)
+        ) {
           destType = preferResolvedListType(
             inferredType,
             resolvedInitializerType,
@@ -737,7 +757,10 @@ export function visitVariableDeclaration(
             isNumericUdonType(resolvedType.udonType) &&
             resolvedType.udonType !== UdonType.Single &&
             resolvedType.udonType !== UdonType.Double;
-          if (!(destIsFloat && resolvedIsInteger)) {
+          if (
+            !shouldPreserveErasedIdentifierHandle &&
+            !(destIsFloat && resolvedIsInteger)
+          ) {
             destType = resolvedType;
           }
         }
@@ -1969,6 +1992,33 @@ export function visitForOfStatement(
   // so the stack is clean if they fire. The push below is the first
   // mutation that requires a pop (handled by the try/finally).
   const needsVifaceEpilogue = !!vifacePrefix;
+  const forOfSourceVariableName =
+    !isDestructured && !isObjectDestructured && typeof node.variable === "string"
+      ? node.variable
+      : undefined;
+  const forOfElementClassName = (() => {
+    const candidates = [inferredElementType?.name, node.variableType?.name];
+    for (const name of candidates) {
+      if (name && resolveClassNode(this, name) && this.soaClasses.has(name)) {
+        return name;
+      }
+    }
+    return undefined;
+  })();
+  const markSoAForOfHandle =
+    forOfSourceVariableName && forOfElementClassName
+      ? (): (() => void) => {
+          const wasMarked = this.soaForOfHandleVars.has(
+            forOfSourceVariableName,
+          );
+          this.soaForOfHandleVars.add(forOfSourceVariableName);
+          return () => {
+            if (!wasMarked) {
+              this.soaForOfHandleVars.delete(forOfSourceVariableName);
+            }
+          };
+        }
+      : undefined;
   if (needsVifaceEpilogue) {
     const loopFinalizeContinue = this.newLabel("forof_finalize_continue");
     const loopFinalizeBreak = this.newLabel("forof_finalize_break");
@@ -1986,9 +2036,11 @@ export function visitForOfStatement(
       emitExitEpilogue: () => emitVirtualInterfaceIterationEpilogue(),
     });
 
+    const unmarkSoAForOfHandle = markSoAForOfHandle?.();
     try {
       this.visitStatement(node.body);
     } finally {
+      unmarkSoAForOfHandle?.();
       // Ensure the loop context is popped even if visitStatement throws
       // (e.g. CompileError for unsupported syntax inside the loop body),
       // preventing a stale entry from corrupting the stack.
@@ -2012,9 +2064,11 @@ export function visitForOfStatement(
       continueLabel: loopContinue,
     });
 
+    const unmarkSoAForOfHandle = markSoAForOfHandle?.();
     try {
       this.visitStatement(node.body);
     } finally {
+      unmarkSoAForOfHandle?.();
       this.loopContextStack.pop();
     }
   }

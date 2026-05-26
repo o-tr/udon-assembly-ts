@@ -83,7 +83,11 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import { histKey, PROF, profEnter, profExit } from "../profiling.js";
 import { analyzeNativeArrayIneligibility } from "./native_array_analysis.js";
-import { SOA_PARTITION_SIZE } from "./soa_data_list.js";
+import {
+  emitBoundedDataListGetItem,
+  emitSoaHandleToIndex,
+  SOA_PARTITION_SIZE,
+} from "./soa_data_list.js";
 
 // Heap-variable name prefixes that identify "real" inline-instance backing
 // slots (as opposed to synthetic temps such as `__inline_ret_*`). Only
@@ -1243,11 +1247,86 @@ function emitStructuralParamFieldCopies(
   });
 }
 
+function loadSoAFieldsIntoPrefix(
+  converter: ASTToTACConverter,
+  className: string,
+  targetPrefix: string,
+  handleOperand: TACOperand,
+  fieldNames?: Set<string>,
+): void {
+  if (!converter.soaClasses.has(className)) return;
+  const fieldLists = converter.soaFieldLists.get(className);
+  if (!fieldLists) return;
+  const fieldTypes = converter.soaFieldTypes.get(className);
+  const indexVar = emitSoaHandleToIndex(converter, handleOperand, className);
+  for (const [fieldName, listVar] of fieldLists) {
+    if (fieldNames && !fieldNames.has(fieldName)) continue;
+    const fieldType = fieldTypes?.get(fieldName) ?? ObjectType;
+    const token = converter.newTemp(ExternTypes.dataToken);
+    emitBoundedDataListGetItem(
+      converter,
+      listVar,
+      indexVar,
+      token,
+      () => createSoaSentinelValue(converter, fieldType),
+      true,
+      className,
+    );
+    converter.emit(
+      new CopyInstruction(
+        createVariable(`${targetPrefix}_${fieldName}`, fieldType, {
+          isParameter: true,
+        }),
+        converter.unwrapDataToken(token, fieldType),
+      ),
+    );
+  }
+}
+
+function collectParamPropertyReads(
+  params: Array<{ name: string; type: TypeSymbol; initializer?: ASTNode }>,
+  body: ASTNode,
+): Map<string, Set<string>> {
+  const paramNames = new Set(params.map((param) => param.name));
+  const reads = new Map<string, Set<string>>();
+  const addRead = (paramName: string, propertyName: string): void => {
+    let props = reads.get(paramName);
+    if (!props) {
+      props = new Set();
+      reads.set(paramName, props);
+    }
+    props.add(propertyName);
+  };
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    const ast = node as ASTNode;
+    if (ast.kind === ASTNodeKind.PropertyAccessExpression) {
+      const propAccess = ast as PropertyAccessExpressionNode;
+      if (propAccess.object.kind === ASTNodeKind.Identifier) {
+        const owner = propAccess.object as IdentifierNode;
+        if (paramNames.has(owner.name)) {
+          addRead(owner.name, propAccess.property);
+        }
+      }
+    }
+    for (const value of Object.values(node as Record<string, unknown>)) {
+      visit(value);
+    }
+  };
+  visit(body);
+  return reads;
+}
+
 export function saveAndBindInlineParams(
   converter: ASTToTACConverter,
   params: Array<{ name: string; type: TypeSymbol; initializer?: ASTNode }>,
   args: TACOperand[],
   saved: InlineParamSave,
+  neededSoAFieldsByParam?: Map<string, Set<string>>,
 ): void {
   const argInlineInfos = args.map((arg) => {
     if (!arg) return undefined;
@@ -1430,6 +1509,23 @@ export function saveAndBindInlineParams(
           argToUse,
         ),
       );
+      const paramClassName = resolveClassNode(converter, param.type.name)
+        ? param.type.name
+        : resolveClassNode(converter, effectiveParamType.name)
+          ? effectiveParamType.name
+          : undefined;
+      if (paramClassName && converter.soaClasses.has(paramClassName)) {
+        const fieldNames = neededSoAFieldsByParam?.get(param.name);
+        if (!neededSoAFieldsByParam || fieldNames) {
+          loadSoAFieldsIntoPrefix(
+            converter,
+            paramClassName,
+            paramSlotName,
+            argToUse,
+            fieldNames,
+          );
+        }
+      }
       emitStructuralParamFieldCopies(
         converter,
         paramSlotName,
@@ -1759,7 +1855,11 @@ function collectAllInstanceFields(
         converter,
         propertyType,
       );
-      if (nestedInterface) {
+      if (
+        nestedInterface &&
+        nestedInterface.methods.size === 0 &&
+        !structuralInterfaceHasImplementors(converter, nestedInterface)
+      ) {
         collectNestedStructuralFields(fieldName, nestedInterface, depth + 1);
       }
     }
@@ -1770,7 +1870,11 @@ function collectAllInstanceFields(
       seen.add(prop.name);
       fields.push({ name: prop.name, type: prop.type });
       const structuralType = structuralInterfaceForType(converter, prop.type);
-      if (structuralType) {
+      if (
+        structuralType &&
+        structuralType.methods.size === 0 &&
+        !structuralInterfaceHasImplementors(converter, structuralType)
+      ) {
         collectNestedStructuralFields(prop.name, structuralType);
       }
     }
@@ -1904,12 +2008,28 @@ export function initSoaForStructuralInterface(
         converter,
         propertyType,
       );
-      if (nestedInterface) collect(fieldName, nestedInterface, depth + 1);
+      if (
+        nestedInterface &&
+        nestedInterface.methods.size === 0 &&
+        !structuralInterfaceHasImplementors(converter, nestedInterface)
+      ) {
+        collect(fieldName, nestedInterface, depth + 1);
+      }
     }
   };
 
   collect("", structuralType);
   initSoaForStructuralFields(converter, className, fields);
+}
+
+function structuralInterfaceHasImplementors(
+  converter: ASTToTACConverter,
+  interfaceType: InterfaceTypeSymbol,
+): boolean {
+  return (
+    (converter.classRegistry?.getImplementorsOfInterface(interfaceType.name)
+      .length ?? 0) > 0
+  );
 }
 
 export function createSoaSentinelValue(
@@ -2983,7 +3103,13 @@ function visitInlineStaticMethodCallImpl(
       // names themselves still use saveAndBindInlineParams' shadow/restore
       // mechanism.
       this.currentInlineLocalPrefix = `__inline_${resolved.declaringClassName}_${methodName}_`;
-      saveAndBindInlineParams(this, method.parameters, args, savedParamEntries);
+      saveAndBindInlineParams(
+        this,
+        method.parameters,
+        args,
+        savedParamEntries,
+        collectParamPropertyReads(method.parameters, method.body),
+      );
       prologueComplete = true;
 
       this.currentParamExportMap = new Map();

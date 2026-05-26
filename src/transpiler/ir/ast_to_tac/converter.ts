@@ -376,6 +376,8 @@ export class ASTToTACConverter {
   soaConstructionPrefixes: Set<string> = new Set();
   /** Prefixes whose handles are runtime SoA handles rather than static IDs. */
   soaInstancePrefixes: Set<string> = new Set();
+  /** Source variable names introduced by for-of over SoA-backed inline classes. */
+  soaForOfHandleVars: Set<string> = new Set();
   // Start at 1: Udon zero-initialises heap slots, so an uninitialised
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
