@@ -267,6 +267,51 @@ function tryMapAnonymousUnionInlineProperty(
   return createVariable(`${instancePrefix}_${property}`, resolvedType);
 }
 
+function emitSoaNestedStructuralFieldCopies(
+  converter: ASTToTACConverter,
+  targetPrefix: string,
+  ownerClassName: string,
+  ownerProperty: string,
+  indexVar: TACOperand,
+): boolean {
+  const fieldLists = converter.soaFieldLists.get(ownerClassName);
+  if (!fieldLists) return false;
+  const fieldTypes = converter.soaFieldTypes.get(ownerClassName);
+  const nestedPrefix = `${ownerProperty}_`;
+  let copied = false;
+  for (const [nestedField, nestedList] of fieldLists) {
+    if (!nestedField.startsWith(nestedPrefix)) continue;
+    const nestedName = nestedField.slice(nestedPrefix.length);
+    if (nestedName.length === 0) continue;
+    const nestedType = fieldTypes?.get(nestedField) ?? ObjectType;
+    const nestedToken = converter.newTemp(ExternTypes.dataToken);
+    emitBoundedDataListGetItem(
+      converter,
+      nestedList,
+      indexVar,
+      nestedToken,
+      () => createSoaSentinelValue(converter, nestedType),
+      true,
+      ownerClassName,
+    );
+    const nestedValue = converter.unwrapDataToken(nestedToken, nestedType);
+    const nestedSlot = createVariable(
+      `${targetPrefix}_${nestedName}`,
+      nestedType,
+      { isLocal: true },
+    );
+    converter.emit(new CopyInstruction(nestedSlot, nestedValue));
+    converter.structuralFieldPrefixes.add(targetPrefix);
+    const prefixTypes =
+      converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+      new Map<string, TypeSymbol>();
+    prefixTypes.set(nestedName, nestedType);
+    converter.structuralFieldPrefixTypes.set(targetPrefix, prefixTypes);
+    copied = true;
+  }
+  return copied;
+}
+
 function inferInlineStructuralPropertyType(
   converter: ASTToTACConverter,
   property: string,
@@ -3960,6 +4005,22 @@ export function visitPropertyAccessExpression(
         );
       }
     }
+    const populatedStructuralObjectKey = operandTrackingKey(object);
+    if (
+      populatedStructuralObjectKey &&
+      !this.untrackedStructuralHandleVars.has(populatedStructuralObjectKey)
+    ) {
+      const populatedType = this.structuralFieldPrefixTypes
+        .get(populatedStructuralObjectKey)
+        ?.get(node.property);
+      if (populatedType) {
+        return createVariable(
+          `${populatedStructuralObjectKey}_${node.property}`,
+          populatedType,
+          { isLocal: true },
+        );
+      }
+    }
 
     if (node.object.kind === ASTNodeKind.PropertyAccessExpression) {
       const access = node.object as PropertyAccessExpressionNode;
@@ -4806,6 +4867,16 @@ export function visitPropertyAccessExpression(
                     );
                     this.emitCopyWithTracking(dispResult, unwrapped);
                     const dispKey = operandTrackingKey(dispResult);
+                    if (dispKey) {
+                      copiedDispatchStructuralFields =
+                        emitSoaNestedStructuralFieldCopies(
+                          this,
+                          dispKey,
+                          info.className,
+                          node.property,
+                          indexVar,
+                        ) || copiedDispatchStructuralFields;
+                    }
                     if (dispKey && shouldCopyDispatchStructuralFields) {
                       emitStructuralFieldCopies(
                         this,

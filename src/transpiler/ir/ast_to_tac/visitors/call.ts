@@ -3574,6 +3574,16 @@ export function visitCallExpression(
           classIds.size > 0 &&
           isAllInlineInterface(this, instanceInfo.className)
         ) {
+          const allowedClassNames = this.vifaceAllowedClassNames.get(
+            instanceInfo.prefix,
+          );
+          const dispatchClassIds = allowedClassNames
+            ? new Map(
+                Array.from(classIds).filter(([className]) =>
+                  allowedClassNames.has(className),
+                ),
+              )
+            : classIds;
           const ifaceMeta = this.classRegistry?.getInterface(
             instanceInfo.className,
           );
@@ -3606,7 +3616,7 @@ export function visitCallExpression(
             | null
             | undefined;
 
-          for (const [className, classId] of classIds) {
+          for (const [className, classId] of dispatchClassIds) {
             // Snapshot inlineInstanceMap before each branch so temporary
             // operand tracking from one implementor's inlined body does not
             // leak into subsequent branches.

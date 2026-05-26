@@ -88,6 +88,7 @@ import {
 } from "../helpers/inline.js";
 import { normalizeOperandToInt32 } from "../helpers/int32_normalization.js";
 import { analyzeNativeArrayIneligibility } from "../helpers/native_array_analysis.js";
+import { emitBoundedDataListGetItem } from "../helpers/soa_data_list.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
 import { resolveTypeFromNode } from "./expression.js";
 
@@ -149,6 +150,63 @@ function resolvedStructuralPropertyType(
   return type.name ? (converter.typeMapper.getAlias(type.name) ?? type) : type;
 }
 
+function emitSoAForOfElementFieldCopies(
+  converter: ASTToTACConverter,
+  targetPrefix: string,
+  elementType: TypeSymbol,
+  indexVar: TACOperand,
+): boolean {
+  const structuralType = structuralInterfaceForType(converter, elementType);
+  if (!structuralType) return false;
+  const fieldLists = converter.soaFieldLists.get(structuralType.name);
+  if (!fieldLists) return false;
+  const fieldTypes = converter.soaFieldTypes.get(structuralType.name);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
+  converter.structuralFieldPrefixes.add(targetPrefix);
+
+  let copied = false;
+  for (const [fieldName, fieldList] of fieldLists) {
+    const fieldPath = fieldName.split("_");
+    if (fieldPath.length > 1 && fieldPath[fieldPath.length - 1] !== "name") {
+      continue;
+    }
+    const fieldType = fieldTypes?.get(fieldName) ?? ObjectType;
+    const token = converter.newTemp(ExternTypes.dataToken);
+    emitBoundedDataListGetItem(
+      converter,
+      fieldList,
+      indexVar,
+      token,
+      () => createSoaSentinelValue(converter, fieldType),
+      true,
+      structuralType.name,
+    );
+    const value = converter.unwrapDataToken(token, fieldType);
+    converter.emitCopyWithTracking(
+      createVariable(`${targetPrefix}_${fieldName}`, fieldType, {
+        isLocal: true,
+      }),
+      value,
+    );
+    const [topLevelField] = fieldName.split("_");
+    if (topLevelField) {
+      const topLevelType =
+        structuralType.properties.get(topLevelField) ??
+        targetFieldTypes.get(topLevelField) ??
+        fieldType;
+      targetFieldTypes.set(
+        topLevelField,
+        resolvedStructuralPropertyType(converter, topLevelType),
+      );
+    }
+    copied = true;
+  }
+  return copied;
+}
+
 function hasConcreteListElementType(type: TypeSymbol): boolean {
   if (type instanceof ArrayTypeSymbol) {
     return !isPlainObjectType(type.elementType);
@@ -197,6 +255,39 @@ function inferElementTypeFromIdentifierInitializer(
   if (sourceType instanceof ArrayTypeSymbol) return sourceType.peelOneDimension();
   if (sourceType instanceof DataListTypeSymbol) return sourceType.elementType;
   return null;
+}
+
+function inferGetByCategoryLiteralFromIdentifierInitializer(
+  converter: ASTToTACConverter,
+  node: ASTNode,
+): string | null {
+  if (node.kind !== ASTNodeKind.Identifier) return null;
+  const symbol = converter.symbolTable.lookup((node as IdentifierNode).name);
+  const initialValue = symbol?.initialValue as ASTNode | undefined;
+  if (initialValue?.kind !== ASTNodeKind.CallExpression) return null;
+  const call = initialValue as CallExpressionNode;
+  if (call.callee.kind !== ASTNodeKind.PropertyAccessExpression) return null;
+  const access = call.callee as PropertyAccessExpressionNode;
+  if (access.property !== "getByCategory") return null;
+  const firstArg = call.arguments[0];
+  if (firstArg?.kind !== ASTNodeKind.Literal) return null;
+  const value = (firstArg as LiteralNode).value;
+  return typeof value === "string" ? value : null;
+}
+
+function classHasLiteralPropertyValue(
+  converter: ASTToTACConverter,
+  className: string,
+  propertyName: string,
+  expectedValue: string,
+): boolean {
+  const prop =
+    converter.classRegistry?.getMergedProperty(className, propertyName)?.node ??
+    converter.classMap
+      .get(className)
+      ?.properties.find((candidate) => candidate.name === propertyName);
+  if (prop?.initializer?.kind !== ASTNodeKind.Literal) return false;
+  return (prop.initializer as LiteralNode).value === expectedValue;
 }
 
 function isNullConstantOperand(
@@ -1271,7 +1362,15 @@ export function visitForOfStatement(
     if (!isDestructured && !isObjectDestructured) {
       const elementKey = operandTrackingKey(elementVar);
       if (elementKey) {
-        markUntrackedStructuralHandlePrefixes(this, elementKey, elementType);
+        const populatedFromSoA = emitSoAForOfElementFieldCopies(
+          this,
+          elementKey,
+          elementType,
+          indexVar,
+        );
+        if (!populatedFromSoA) {
+          markUntrackedStructuralHandlePrefixes(this, elementKey, elementType);
+        }
       }
     }
   }
@@ -1622,11 +1721,25 @@ export function visitForOfStatement(
       // through to generic handling.  Pass 2 will have classIds pre-seeded
       // from pass 1 and will generate the correct dispatch.
       if (classIds) {
+        const categoryFilter =
+          inferGetByCategoryLiteralFromIdentifierInitializer(
+            this,
+            node.iterable,
+          );
         const relevantInstances: Array<
           [number, { prefix: string; className: string }]
         > = [];
         for (const [id, info] of this.allInlineInstances) {
-          if (implementorNames.has(info.className)) {
+          if (
+            implementorNames.has(info.className) &&
+            (!categoryFilter ||
+              classHasLiteralPropertyValue(
+                this,
+                info.className,
+                "category",
+                categoryFilter,
+              ))
+          ) {
             relevantInstances.push([id, info]);
           }
         }
@@ -1739,11 +1852,26 @@ export function visitForOfStatement(
           prefix: virtualPrefix,
           className: ifaceName,
         });
+        const elementKey = operandTrackingKey(elementVar);
+        if (elementKey && elementKey !== variableName) {
+          this.inlineInstanceMap.set(elementKey, {
+            prefix: virtualPrefix,
+            className: ifaceName,
+          });
+        }
 
         vifacePrefix = virtualPrefix;
         vifaceHandleVar = handleVar;
         vifaceInterfaceName = ifaceName;
         vifaceRelevantInstances = relevantInstances;
+        if (categoryFilter) {
+          this.vifaceAllowedClassNames.set(
+            virtualPrefix,
+            new Set(relevantInstances.map(([, info]) => info.className)),
+          );
+        } else {
+          this.vifaceAllowedClassNames.delete(virtualPrefix);
+        }
       } // if (classIds)
     }
   }

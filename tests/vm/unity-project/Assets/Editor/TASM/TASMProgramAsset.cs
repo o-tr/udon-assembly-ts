@@ -76,7 +76,7 @@ namespace VRC.Udon.Editor.ProgramSources
             string assembly, uint heapSize, IUAssemblyTypeResolver typeResolver)
         {
             const int maxRetries = 4; // retry on IndexOutOfRangeException by doubling heap size
-            const uint maxHeapSize = 1048576; // 1 MB cap to prevent runaway allocations
+            const uint maxHeapSize = 8388608; // large VM fixtures can exceed 1M heap slots
             Exception lastException = null;
             for (int i = 0; i < maxRetries; i++)
             {

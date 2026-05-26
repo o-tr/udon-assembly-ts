@@ -181,7 +181,7 @@ export const OUTLINE_MIN_CALL_SITES = 2;
  *  Default 200 targets mid-size and large methods; very small methods
  *  (accessors, tiny helpers) remain fully inlined.
  *  Overridable per-converter via constructor options for testing. */
-export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 200;
+export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 50;
 
 /**
  * AST to TAC converter
@@ -306,6 +306,8 @@ export class ASTToTACConverter {
   inlineMethodStack: Set<string> = new Set();
   /** Maps interface name → (class name → classId) for inline dispatch */
   interfaceClassIdMap: Map<string, Map<string, number>> = new Map();
+  /** Optional per-virtual-interface-prefix class subset for classId dispatch. */
+  vifaceAllowedClassNames: Map<string, Set<string>> = new Map();
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
