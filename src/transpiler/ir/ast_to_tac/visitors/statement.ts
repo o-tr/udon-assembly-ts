@@ -359,7 +359,11 @@ function emitVarDeclStructuralFieldCopies(
     const targetProp = createVariable(`${targetPrefix}_${propName}`, propType);
     const sourceProp = createVariable(`${sourcePrefix}_${propName}`, propType);
     converter.emit(new CopyInstruction(targetProp, sourceProp));
-    converter.maybeTrackInlineInstanceAssignment(targetProp, sourceProp, false);
+    maybeTrackConcreteStructuralFieldAssignment(
+      converter,
+      targetProp,
+      sourceProp,
+    );
     const nestedStructuralType = structuralInterfaceForType(
       converter,
       propType,
@@ -394,6 +398,16 @@ function emitVarDeclStructuralFieldCopies(
   }
 }
 
+function maybeTrackConcreteStructuralFieldAssignment(
+  converter: ASTToTACConverter,
+  targetProp: VariableOperand,
+  sourceProp: VariableOperand,
+): void {
+  const sourceInfo = converter.resolveInlineInstance(sourceProp.name);
+  if (!sourceInfo || !resolveClassNode(converter, sourceInfo.className)) return;
+  converter.maybeTrackInlineInstanceAssignment(targetProp, sourceProp, false);
+}
+
 function emitKnownStructuralPrefixCopies(
   converter: ASTToTACConverter,
   sourcePrefix: string,
@@ -417,7 +431,11 @@ function emitKnownStructuralPrefixCopies(
     const targetProp = createVariable(`${targetPrefix}_${propName}`, propType);
     const sourceProp = createVariable(`${sourcePrefix}_${propName}`, propType);
     converter.emit(new CopyInstruction(targetProp, sourceProp));
-    converter.maybeTrackInlineInstanceAssignment(targetProp, sourceProp, false);
+    maybeTrackConcreteStructuralFieldAssignment(
+      converter,
+      targetProp,
+      sourceProp,
+    );
     emitKnownStructuralPrefixCopies(
       converter,
       `${sourcePrefix}_${propName}`,
@@ -1510,9 +1528,19 @@ export function visitForOfStatement(
       this.emitCopyWithTracking(targetVar, propValue, true);
       const targetKey = operandTrackingKey(targetVar);
       if (targetKey) {
-        emitStructuralFieldCopies(this, targetKey, propType, propValue, {
-          isLocal: true,
-        });
+        const propValueKey = operandTrackingKey(propValue);
+        const structuralPropType = structuralInterfaceForType(this, propType);
+        if (propValueKey?.startsWith("__uninst_prop_") && structuralPropType) {
+          markUntrackedStructuralHandlePrefixes(
+            this,
+            targetKey,
+            structuralPropType,
+          );
+        } else {
+          emitStructuralFieldCopies(this, targetKey, propType, propValue, {
+            isLocal: true,
+          });
+        }
       }
     }
   }

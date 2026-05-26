@@ -716,38 +716,6 @@ export function resolveClassNode(
   return classNode;
 }
 
-function implementsAllInlineInterfaceWithDispatch(
-  converter: ASTToTACConverter,
-  className: string,
-): boolean {
-  const registry = converter.classRegistry;
-  if (!registry) return false;
-
-  const ifaceNames = registry.getAllImplementedInterfaces(className);
-  for (const ifaceName of ifaceNames) {
-    const iface = registry.getInterface(ifaceName);
-    if (!iface || (!iface.methods?.length && !iface.properties?.length)) {
-      continue;
-    }
-
-    const implementors = registry.getImplementorsOfInterface(ifaceName);
-    if (
-      implementors.length > 0 &&
-      implementors.every(
-        (cls) =>
-          !converter.entryPointClasses.has(cls.name) &&
-          !converter.isUdonBehaviourType(
-            new ClassTypeSymbol(cls.name, UdonType.Object),
-          ),
-      )
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 function isAllInlineInterfaceWithDispatch(
   converter: ASTToTACConverter,
   ifaceName: string,
@@ -769,71 +737,6 @@ function isAllInlineInterfaceWithDispatch(
           new ClassTypeSymbol(cls.name, UdonType.Object),
         ),
     )
-  );
-}
-
-function typeContainsAllInlineInterfaceWithDispatch(
-  converter: ASTToTACConverter,
-  type: TypeSymbol | undefined,
-  seen: Set<string> = new Set(),
-): boolean {
-  if (!type) return false;
-  if (seen.has(type.name)) return false;
-  seen.add(type.name);
-
-  const alias = type.name ? converter.typeMapper.getAlias(type.name) : undefined;
-  const resolved = alias ?? type;
-
-  if (resolved instanceof InterfaceTypeSymbol) {
-    return isAllInlineInterfaceWithDispatch(converter, resolved.name);
-  }
-  if (resolved instanceof ArrayTypeSymbol) {
-    return typeContainsAllInlineInterfaceWithDispatch(
-      converter,
-      resolved.elementType,
-      seen,
-    );
-  }
-  if (resolved instanceof DataListTypeSymbol) {
-    return typeContainsAllInlineInterfaceWithDispatch(
-      converter,
-      resolved.elementType,
-      seen,
-    );
-  }
-  if (resolved instanceof CollectionTypeSymbol) {
-    return (
-      typeContainsAllInlineInterfaceWithDispatch(
-        converter,
-        resolved.elementType,
-        seen,
-      ) ||
-      typeContainsAllInlineInterfaceWithDispatch(
-        converter,
-        resolved.keyType,
-        seen,
-      ) ||
-      typeContainsAllInlineInterfaceWithDispatch(
-        converter,
-        resolved.valueType,
-        seen,
-      )
-    );
-  }
-
-  return false;
-}
-
-function hasAllInlineInterfaceValueFields(
-  converter: ASTToTACConverter,
-  className: string,
-  classNode: ClassDeclarationNode,
-): boolean {
-  const props =
-    converter.classRegistry?.getMergedProperties(className).map((p) => p.node) ??
-    classNode.properties;
-  return props.some((prop) =>
-    typeContainsAllInlineInterfaceWithDispatch(converter, prop.type),
   );
 }
 
@@ -2649,23 +2552,15 @@ export function visitInlineConstructor(
   // Emit static property initializers once per class
   emitStaticPropertyInitializers(this, className);
 
-  const requiresStableInterfaceIdentity =
-    implementsAllInlineInterfaceWithDispatch(this, className) ||
-    hasAllInlineInterfaceValueFields(this, className, classNode);
-
   // SoA detection: if this constructor runs inside a loop, mark the class
   // so that pass 2 uses DataList-based SoA storage instead of static variables.
-  // All-inline interface dispatch stores only an Int32 object handle in arrays
-  // and maps. SoA handles are class-local list indices, so different
-  // implementor classes can collide at runtime. Keep those classes on stable
-  // per-allocation instanceIds until interface values carry an explicit tag.
-  if (requiresStableInterfaceIdentity) {
-    this.soaClasses.delete(className);
-  } else if (this.loopContextStack.length > 0) {
+  // Handles are partitioned per SoA class (see soaClassOffsets), so classes
+  // that participate in all-inline interface dispatch can still use SoA
+  // without colliding with other implementors.
+  if (this.loopContextStack.length > 0) {
     this.soaClasses.add(className);
   }
-  const isSoA =
-    !requiresStableInterfaceIdentity && this.soaClasses.has(className);
+  const isSoA = this.soaClasses.has(className);
 
   // When we're inside an inlined method body, reuse the same prefix+instanceId
   // for the same constructor call position across all invocations of that body.
@@ -6001,6 +5896,21 @@ export function emitCopyWithTracking(
   // undefined either way. Keeping src (not actualSrc) preserves tracking for
   // the no-cast path.
   const srcName = operandTrackingKey(src);
+  if (srcName?.startsWith("__uninst_prop_")) {
+    const sourceStructuralType =
+      this.untrackedStructuralHandleTypes.get(srcName) ??
+      structuralInterfaceForType(this, destType) ??
+      structuralInterfaceForType(this, srcType);
+    if (sourceStructuralType) {
+      this.inlineInstanceMap.delete(destName);
+      markUntrackedStructuralHandlePrefixes(
+        this,
+        destName,
+        sourceStructuralType,
+      );
+      return;
+    }
+  }
   if (srcName && this.untrackedStructuralHandleVars.has(srcName)) {
     this.inlineInstanceMap.delete(destName);
     const destDeclaredType = lookupDeclaredTypeForTrackingName(this, destName);

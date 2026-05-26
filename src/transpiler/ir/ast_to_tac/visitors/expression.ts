@@ -4776,7 +4776,21 @@ export function visitPropertyAccessExpression(
                   true,
                   soaClassName,
                 );
-                return this.unwrapDataToken(token, untrackedPropType);
+                const unwrapped = this.unwrapDataToken(token, untrackedPropType);
+                const dispResult = createVariable(
+                  `__uninst_prop_${this.tempCounter++}`,
+                  untrackedPropType,
+                  { isLocal: true },
+                );
+                this.emitCopyWithTracking(dispResult, unwrapped);
+                emitSoaNestedStructuralFieldCopies(
+                  this,
+                  dispResult.name,
+                  soaClassName,
+                  node.property,
+                  indexVar,
+                );
+                return dispResult;
               }
               // SoA class property not in soaFieldLists — the fallthrough
               // to static-handle dispatch below will always miss because
@@ -5556,18 +5570,27 @@ export function visitObjectLiteralExpression(
         this.maybeTrackInlineInstanceAssignment(propVar, value);
         const propKey = operandTrackingKey(propVar);
         if (propKey) {
+          const valueKey = operandTrackingKey(value);
           const structuralCopyType =
             propStorageType !== ObjectType
               ? propStorageType
               : (resolveTypeFromNode(this, prop.value) ??
                 propType ??
                 this.getOperandType(value));
-          emitStructuralFieldCopies(
-            this,
-            propKey,
-            structuralCopyType,
-            value,
-          );
+          const propIsUntrackedStructuralHandle =
+            this.untrackedStructuralHandleVars.has(propKey) ||
+            (valueKey
+              ? this.untrackedStructuralHandleVars.has(valueKey) ||
+                valueKey.startsWith("__uninst_prop_")
+              : false);
+          if (!propIsUntrackedStructuralHandle) {
+            emitStructuralFieldCopies(
+              this,
+              propKey,
+              structuralCopyType,
+              value,
+            );
+          }
           if (
             resolveStructuralInterface(this, structuralCopyType) &&
             this.untrackedStructuralHandleVars.has(propKey)
