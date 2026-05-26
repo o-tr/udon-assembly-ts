@@ -146,6 +146,26 @@ function ensureDataListForCount(
   return safeList;
 }
 
+function markUntrackedInlineInterfaceArrayElement(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+  elementType: TypeSymbol,
+): void {
+  const key = operandTrackingKey(operand);
+  if (!key) return;
+  const resolvedElementType = elementType.name
+    ? (converter.typeMapper.getAlias(elementType.name) ?? elementType)
+    : elementType;
+  const interfaceName = resolvedElementType.name || elementType.name;
+  if (
+    interfaceName &&
+    converter.classRegistry?.getInterface(interfaceName) &&
+    isAllInlineInterface(converter, interfaceName)
+  ) {
+    markUntrackedStructuralHandlePrefixes(converter, key, resolvedElementType);
+  }
+}
+
 /**
  * Emit a DataList-indexed read for an SoA field, or return undefined if the
  * field is not in the per-field DataList (e.g. during construction, or for
@@ -3414,6 +3434,11 @@ export function visitArrayAccessExpression(
       nativeIndex = intIndex;
     }
     this.emit(new ArrayAccessInstruction(result, array, nativeIndex));
+    markUntrackedInlineInterfaceArrayElement(
+      this,
+      result,
+      arrayType.elementType,
+    );
     return result;
   }
 
@@ -3422,6 +3447,7 @@ export function visitArrayAccessExpression(
       arrayType.valueType ?? arrayType.elementType ?? PrimitiveTypes.double;
     const result = this.newTemp(elementType);
     this.emit(new MethodCallInstruction(result, array, "get_Item", [index]));
+    markUntrackedInlineInterfaceArrayElement(this, result, elementType);
     return result;
   }
 
@@ -3463,6 +3489,7 @@ export function visitArrayAccessExpression(
       const resultType = resolveInlineClassType(this, elementType);
       const result = this.newTemp(resultType);
       this.emitCopyWithTracking(result, unwrapped);
+      markUntrackedInlineInterfaceArrayElement(this, result, elementType);
       return result;
     }
     return tokenResult;
@@ -3512,6 +3539,7 @@ export function visitArrayAccessExpression(
   const resultType = resolveInlineClassType(this, resolvedElementType);
   const result = this.newTemp(resultType);
   this.emitCopyWithTracking(result, unwrapped);
+  markUntrackedInlineInterfaceArrayElement(this, result, resolvedElementType);
   return result;
 }
 

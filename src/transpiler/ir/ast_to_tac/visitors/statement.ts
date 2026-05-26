@@ -1,5 +1,6 @@
 import {
   ArrayTypeSymbol,
+  CollectionTypeSymbol,
   DataListTypeSymbol,
   ExternTypes,
   getNativeArrayTypeName,
@@ -15,6 +16,7 @@ import {
 import {
   type ASTNode,
   ASTNodeKind,
+  type ArrayAccessExpressionNode,
   type BinaryExpressionNode,
   type BlockStatementNode,
   type BreakStatementNode,
@@ -868,6 +870,38 @@ export function visitVariableDeclaration(
     // is still valid (e.g. `const { hand } = context` inside an inlined method
     // body where `hand` inherits tracking from the enclosing inline expansion).
     this.maybeTrackInlineInstanceAssignment(dest, src, false);
+    let arrayAccessElementType = node.type;
+    if (node.initializer?.kind === ASTNodeKind.ArrayAccessExpression) {
+      const arrayAccess = node.initializer as ArrayAccessExpressionNode;
+      const arrayType = resolveTypeFromNode(this, arrayAccess.array);
+      if (arrayType instanceof ArrayTypeSymbol) {
+        arrayAccessElementType = arrayType.peelOneDimension();
+      } else if (arrayType instanceof DataListTypeSymbol) {
+        arrayAccessElementType = arrayType.elementType;
+      } else if (arrayType instanceof CollectionTypeSymbol) {
+        arrayAccessElementType =
+          arrayType.valueType ?? arrayType.elementType ?? node.type;
+      } else {
+        arrayAccessElementType =
+          resolveTypeFromNode(this, node.initializer) ?? node.type;
+      }
+    }
+    const declaredInterfaceName = arrayAccessElementType.name;
+    if (
+      declaredInterfaceName &&
+      node.initializer?.kind === ASTNodeKind.ArrayAccessExpression &&
+      this.classRegistry?.getInterface(declaredInterfaceName) &&
+      isAllInlineInterface(this, declaredInterfaceName)
+    ) {
+      const destKey = operandTrackingKey(dest);
+      if (destKey) {
+        markUntrackedStructuralHandlePrefixes(
+          this,
+          destKey,
+          arrayAccessElementType,
+        );
+      }
+    }
     const structuralType = structuralInterfaceForType(this, destType);
     const srcKey = operandTrackingKey(src);
     const destKey = operandTrackingKey(dest);

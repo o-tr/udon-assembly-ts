@@ -76,6 +76,7 @@ import {
   inlineSuperConstructorFromArgs,
   isInlineHandleType,
   isSubclassOf,
+  lookupDeclaredTypeForTrackingName,
   operandTrackingKey,
   resolveClassMethod,
   resolveClassNode,
@@ -1062,7 +1063,14 @@ function tryUntrackedInlineDispatch(
     object.kind === TACOperandKind.Variable &&
     !converter.symbolTable.lookup((object as VariableOperand).name)
       ?.isParameter;
-  if (hasInterfaceTypedReceiver && isNonParameterVariableReceiver) {
+  const objectKey = operandTrackingKey(object);
+  const isMarkedUntrackedStructuralReceiver =
+    !!objectKey && converter.untrackedStructuralHandleVars.has(objectKey);
+  if (
+    hasInterfaceTypedReceiver &&
+    isNonParameterVariableReceiver &&
+    !isMarkedUntrackedStructuralReceiver
+  ) {
     // Keep local interface aliases on the regular call path so they don't
     // eagerly lower to handle-dispatch blocks in post-loop alias-restore flows.
     return null;
@@ -1308,6 +1316,23 @@ function tryD3MethodDispatch(
     dispInstances,
     seenInstanceIds,
   );
+  const objectKey = operandTrackingKey(object);
+  const declaredReceiverType = objectKey
+    ? lookupDeclaredTypeForTrackingName(converter, objectKey)
+    : undefined;
+  const declaredReceiverName = declaredReceiverType?.name;
+  if (
+    dispInstances.length === 0 &&
+    declaredReceiverName &&
+    declaredReceiverName !== objectTypeName
+  ) {
+    addD3MethodInstancesForType(
+      converter,
+      declaredReceiverName,
+      dispInstances,
+      seenInstanceIds,
+    );
+  }
 
   // AST type fallback: when operand type is erased, try resolving from AST.
   if (dispInstances.length === 0) {

@@ -1252,7 +1252,6 @@ export function markUntrackedStructuralHandlePrefixes(
   if (depth >= STRUCTURAL_RECURSION_DEPTH_CAP) return;
   const structuralType = structuralInterfaceForType(converter, type);
   if (!structuralType) return;
-  if (structuralType.methods.size > 0) return;
   const seenKey = `${prefix}:${structuralType.name}`;
   if (seen.has(seenKey)) return;
   seen.add(seenKey);
@@ -1260,6 +1259,7 @@ export function markUntrackedStructuralHandlePrefixes(
   converter.structuralFieldPrefixes.delete(prefix);
   converter.structuralFieldPrefixTypes.delete(prefix);
   converter.untrackedStructuralHandleVars.add(prefix);
+  if (structuralType.methods.size > 0) return;
 
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
     markUntrackedStructuralHandlePrefixes(
@@ -5758,6 +5758,21 @@ export function operandTrackingKey(op: TACOperand): string | undefined {
   return undefined;
 }
 
+export function lookupDeclaredTypeForTrackingName(
+  converter: ASTToTACConverter,
+  name: string,
+): TypeSymbol | undefined {
+  const direct = converter.symbolTable.lookup(name);
+  if (direct) return direct.declaredType ?? direct.type;
+  const inlinePrefix = converter.currentInlineLocalPrefix;
+  if (inlinePrefix && name.startsWith(inlinePrefix)) {
+    const rawName = name.slice(inlinePrefix.length);
+    const raw = converter.symbolTable.lookup(rawName);
+    if (raw) return raw.declaredType ?? raw.type;
+  }
+  return undefined;
+}
+
 function sanitizeIdentifierToken(raw: string): string {
   const replaced = raw.replace(/[^A-Za-z0-9_]/g, "_");
   const normalized =
@@ -5847,10 +5862,16 @@ export function maybeTrackInlineInstanceAssignment(
     this.inlineInstanceMap.delete(target.name);
     const targetType = this.getOperandType(target);
     const sourceType = this.getOperandType(value);
+    const targetDeclaredType = lookupDeclaredTypeForTrackingName(
+      this,
+      target.name,
+    );
     const structuralType =
-      structuralInterfaceForType(this, targetType) !== null
-        ? targetType
-        : sourceType;
+      targetDeclaredType && structuralInterfaceForType(this, targetDeclaredType)
+        ? targetDeclaredType
+        : structuralInterfaceForType(this, targetType) !== null
+          ? targetType
+          : sourceType;
     markUntrackedStructuralHandlePrefixes(this, target.name, structuralType);
     return;
   }
@@ -5951,8 +5972,13 @@ export function emitCopyWithTracking(
   const srcName = operandTrackingKey(src);
   if (srcName && this.untrackedStructuralHandleVars.has(srcName)) {
     this.inlineInstanceMap.delete(destName);
+    const destDeclaredType = lookupDeclaredTypeForTrackingName(this, destName);
     const structuralType =
-      structuralInterfaceForType(this, destType) !== null ? destType : srcType;
+      destDeclaredType && structuralInterfaceForType(this, destDeclaredType)
+        ? destDeclaredType
+        : structuralInterfaceForType(this, destType) !== null
+          ? destType
+          : srcType;
     markUntrackedStructuralHandlePrefixes(this, destName, structuralType);
     return;
   }

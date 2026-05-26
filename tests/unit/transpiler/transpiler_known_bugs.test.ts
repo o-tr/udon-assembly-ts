@@ -4295,5 +4295,48 @@ class Main extends UdonSharpBehaviour {
 
       expect(result.uasm).not.toContain("SystemObject.__get_name__SystemString");
     });
+
+    it("all-inline interface array bracket reads avoid raw SystemObject method externs", () => {
+      const source = `
+        interface IYaku {
+          check(): boolean;
+        }
+
+        class TanyaoYaku implements IYaku {
+          check(): boolean {
+            return true;
+          }
+        }
+
+        class PinfuYaku implements IYaku {
+          check(): boolean {
+            return false;
+          }
+        }
+
+        class Main {
+          private yakuList!: IYaku[];
+
+          constructor() {
+            this.yakuList = [new TanyaoYaku(), new PinfuYaku()];
+          }
+
+          Start(): void {
+            for (let i = 0; i < this.yakuList.length; i += 1) {
+              const yaku = this.yakuList[i];
+              if (yaku.check()) {
+                Debug.Log("hit");
+              }
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__check__SystemObject__SystemObject",
+      );
+      expect(result.tac).toContain("d3_method_end");
+    });
   });
 });
