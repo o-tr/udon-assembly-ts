@@ -258,6 +258,8 @@ export function emitDataListGetRangeLoop(
   converter.emit(
     new BinaryOpInstruction(inSourceBounds, srcIdx, "<", sourceCount),
   );
+  // ConditionalJumpInstruction jumps when the condition is false, so this
+  // exits when srcIdx is outside source.Count.
   converter.emit(new ConditionalJumpInstruction(inSourceBounds, loopEnd));
 
   // token = source.get_Item(srcIdx)

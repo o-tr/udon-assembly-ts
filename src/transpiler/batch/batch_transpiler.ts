@@ -946,6 +946,30 @@ export class BatchTranspiler {
               entryCompilationOrder,
             ),
           };
+          if (
+            useOutputCache &&
+            cacheFilePath !== undefined &&
+            outputCacheKey !== undefined
+          ) {
+            try {
+              const tsIr = fs.readFileSync(outPath, "utf8");
+              this.saveOutputCache(cacheFilePath, {
+                key: outputCacheKey,
+                uasm: tsIr,
+                diagnostics:
+                  entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
+                transpilerHash: getTranspilerHash(),
+              });
+            } catch (e) {
+              if (
+                !(e instanceof RangeError) ||
+                !String(e.message).includes("Invalid string length")
+              ) {
+                throw e;
+              }
+              // File too large to hold in a JS string; skip output-cache save.
+            }
+          }
           pend(`entry-${entryPoint.name}`, _profEntryStart, "ts-ir");
           continue;
         }
