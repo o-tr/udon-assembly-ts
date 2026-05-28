@@ -82,6 +82,7 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import { emitArrayConcat } from "../helpers/assignment.js";
 import {
+  ensureDataListForCount,
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
@@ -113,38 +114,6 @@ import {
 } from "../helpers/soa_data_list.js";
 import { emitSoaHandleRestore } from "../helpers/soa_handle_restore.js";
 import { isAllInlineInterface } from "../helpers/udon_behaviour.js";
-
-function ensureDataListForCount(
-  converter: ASTToTACConverter,
-  operand: TACOperand,
-): TACOperand {
-  const safeList = converter.newTemp(ExternTypes.dataList);
-  const listCtorSig = converter.requireExternSignature(
-    "DataList",
-    "ctor",
-    "method",
-    [],
-    "DataList",
-  );
-  converter.emit(new CallInstruction(safeList, listCtorSig, []));
-
-  const boxedList = converter.newTemp(ObjectType);
-  converter.emit(new CopyInstruction(boxedList, operand));
-  const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
-  const listReady = converter.newLabel("datalist_ready");
-  converter.emit(
-    new BinaryOpInstruction(
-      listIsNotNull,
-      boxedList,
-      "!=",
-      createConstant(null, ObjectType),
-    ),
-  );
-  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listReady));
-  converter.emit(new CopyInstruction(safeList, operand));
-  converter.emit(new LabelInstruction(listReady));
-  return safeList;
-}
 
 function markUntrackedInlineInterfaceArrayElement(
   converter: ASTToTACConverter,
@@ -4195,13 +4164,16 @@ export function visitPropertyAccessExpression(
       ? this.resolveInlineInstance(instanceKey)
       : undefined;
     if (instanceKey?.startsWith("__inline_ret_")) {
-      const soaField = tryReadUniqueSoAFieldFromHandle(
-        this,
-        normalizeOperandToInt32(this, object),
-        node.property,
-        true,
-      );
-      if (soaField) return soaField;
+      const inlineRetType = this.getOperandType(object);
+      if (isInlineHandleType(this, inlineRetType)) {
+        const soaField = tryReadUniqueSoAFieldFromHandle(
+          this,
+          normalizeOperandToInt32(this, object),
+          node.property,
+          true,
+        );
+        if (soaField) return soaField;
+      }
     }
 
     if (instanceInfo) {

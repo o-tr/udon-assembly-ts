@@ -7,7 +7,6 @@ import {
   ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
-  isPlainObjectType,
   NativeArrayTypeSymbol,
   ObjectType,
   ObjectTypeSymbol,
@@ -164,11 +163,15 @@ export function assignToTarget(
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
     // is handled above and does not need DataToken wrapping.
     const assignedValueType = this.getOperandType(value);
+    const assignedValueIsInlineHandle = isInlineHandleType(
+      this,
+      assignedValueType,
+    );
     if (
       arrayAccess.array.kind === ASTNodeKind.Identifier &&
       arrayType instanceof ArrayTypeSymbol &&
       arrayType.elementType === ObjectType &&
-      assignedValueType !== ObjectType
+      assignedValueIsInlineHandle
     ) {
       const arrayName = (arrayAccess.array as IdentifierNode).name;
       const symbol = this.symbolTable.lookup(arrayName);
@@ -181,7 +184,7 @@ export function assignToTarget(
         symbol.type instanceof ArrayTypeSymbol &&
         symbol.type.elementType === ObjectType &&
         declaredArrayType &&
-        !isPlainObjectType(declaredArrayType.elementType)
+        isInlineHandleType(this, declaredArrayType.elementType)
       ) {
         symbol.type = new ArrayTypeSymbol(assignedValueType);
       }
@@ -200,8 +203,7 @@ export function assignToTarget(
     // so reusing the same heap slot for defaultToken across iterations is safe.
     const growElementType =
       arrayType instanceof ArrayTypeSymbol
-        ? arrayType.elementType === ObjectType &&
-          assignedValueType !== ObjectType
+        ? arrayType.elementType === ObjectType && assignedValueIsInlineHandle
           ? assignedValueType
           : arrayType.elementType
         : arrayType instanceof DataListTypeSymbol

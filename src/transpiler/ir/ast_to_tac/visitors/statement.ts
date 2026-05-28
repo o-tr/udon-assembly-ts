@@ -73,6 +73,8 @@ import {
 import type { ASTToTACConverter } from "../converter.js";
 import {
   emitMapEntriesList,
+  emitMapKeysList,
+  ensureDataListForCount,
   isMapCollectionType,
   isSetCollectionType,
 } from "../helpers/collections.js";
@@ -103,35 +105,100 @@ function emitLoopExitEpilogues(converter: ASTToTACConverter): void {
   }
 }
 
-function ensureDataListForCount(
+function emitMapDestructureForOfLoop(
   converter: ASTToTACConverter,
-  operand: TACOperand,
-): TACOperand {
-  const safeList = converter.newTemp(ExternTypes.dataList);
-  const listCtorSig = converter.requireExternSignature(
-    "DataList",
-    "ctor",
-    "method",
-    [],
-    "DataList",
+  node: ForOfStatementNode,
+  mapOperand: TACOperand,
+): void {
+  const names = node.variable as string[];
+  const keysList = emitMapKeysList(
+    converter,
+    mapOperand,
+    ExternTypes.dataToken,
   );
-  converter.emit(new CallInstruction(safeList, listCtorSig, []));
-  const boxedList = converter.newTemp(ObjectType);
-  converter.emit(new CopyInstruction(boxedList, operand));
-  const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
-  const listReady = converter.newLabel("forof_list_ready");
+  const loopStatePrefix = `forof_state_${converter.labelCounter++}`;
+  const indexVar = createVariable(
+    `${loopStatePrefix}_index`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
+  const lengthVar = createVariable(
+    `${loopStatePrefix}_length`,
+    PrimitiveTypes.int32,
+    { isLocal: true },
+  );
   converter.emit(
-    new BinaryOpInstruction(
-      listIsNotNull,
-      boxedList,
-      "!=",
-      createConstant(null, ObjectType),
+    new AssignmentInstruction(
+      indexVar,
+      createConstant(0, PrimitiveTypes.int32),
     ),
   );
-  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listReady));
-  converter.emit(new CopyInstruction(safeList, operand));
-  converter.emit(new LabelInstruction(listReady));
-  return safeList;
+  const countOperand = ensureDataListForCount(
+    converter,
+    keysList,
+    "forof_list_ready",
+  );
+  converter.emit(new PropertyGetInstruction(lengthVar, countOperand, "Count"));
+
+  const loopStart = converter.newLabel("forof_start");
+  const loopContinue = converter.newLabel("forof_continue");
+  const loopEnd = converter.newLabel("forof_end");
+  converter.emit(new LabelInstruction(loopStart));
+
+  const condTemp = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(new BinaryOpInstruction(condTemp, indexVar, "<", lengthVar));
+  converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
+
+  const keyToken = converter.newTemp(ExternTypes.dataToken);
+  converter.emit(
+    new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
+  );
+  const valueToken = converter.newTemp(ExternTypes.dataToken);
+  converter.emit(
+    new MethodCallInstruction(valueToken, mapOperand, "GetValue", [keyToken]),
+  );
+  const destructuredValues = [keyToken, valueToken];
+  for (let i = 0; i < names.length; i += 1) {
+    const name = names[i];
+    const slotName = converter.currentInlineLocalPrefix
+      ? `${converter.currentInlineLocalPrefix}${name}`
+      : undefined;
+    if (!converter.symbolTable.hasInCurrentScope(name)) {
+      converter.symbolTable.addSymbol(
+        name,
+        ExternTypes.dataToken,
+        false,
+        false,
+        undefined,
+        slotName,
+      );
+    }
+    const targetVar = createVariable(slotName ?? name, ExternTypes.dataToken, {
+      isLocal: true,
+    });
+    const sourceValue =
+      destructuredValues[i] ?? createConstant(null, ExternTypes.dataToken);
+    converter.emitCopyWithTracking(targetVar, sourceValue, true);
+  }
+
+  converter.loopContextStack.push({
+    breakLabel: loopEnd,
+    continueLabel: loopContinue,
+  });
+  converter.visitStatement(node.body);
+  converter.loopContextStack.pop();
+
+  converter.emit(new LabelInstruction(loopContinue));
+  converter.emit(
+    new BinaryOpInstruction(
+      indexVar,
+      indexVar,
+      "+",
+      createConstant(1, PrimitiveTypes.int32),
+    ),
+  );
+  converter.emit(new UnconditionalJumpInstruction(loopStart));
+  converter.emit(new LabelInstruction(loopEnd));
 }
 
 function structuralInterfaceForType(
@@ -1198,6 +1265,11 @@ export function visitForOfStatement(
       ? inferredIterableType
       : null;
 
+  if (inferredMapType && Array.isArray(node.variable)) {
+    emitMapDestructureForOfLoop(this, node, iterableOperand);
+    return;
+  }
+
   if (inferredMapType) {
     // keyType omitted — defaults to ExternTypes.dataToken, which is correct
     // because DataDictionary.GetKeys() always returns DataToken-wrapped keys.
@@ -1429,7 +1501,11 @@ export function visitForOfStatement(
   );
   // All arrays use DataList Count at runtime. Guard against erased or
   // recursive-return paths that can carry a null DataList at runtime.
-  const countOperand = ensureDataListForCount(this, iterableOperand);
+  const countOperand = ensureDataListForCount(
+    this,
+    iterableOperand,
+    "forof_list_ready",
+  );
   this.emit(new PropertyGetInstruction(lengthVar, countOperand, "Count"));
 
   const loopStart = this.newLabel("forof_start");

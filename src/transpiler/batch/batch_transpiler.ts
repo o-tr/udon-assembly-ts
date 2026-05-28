@@ -1013,7 +1013,17 @@ export class BatchTranspiler {
             exposedLabels,
           );
           if (shouldSaveOutputCache) {
-            uasm = fs.readFileSync(outPath, "utf8");
+            try {
+              uasm = fs.readFileSync(outPath, "utf8");
+            } catch (e) {
+              if (
+                !(e instanceof RangeError) ||
+                !String(e.message).includes("Invalid string length")
+              ) {
+                throw e;
+              }
+              // File too large to hold in a JS string; skip output-cache save.
+            }
           }
         } else {
           try {

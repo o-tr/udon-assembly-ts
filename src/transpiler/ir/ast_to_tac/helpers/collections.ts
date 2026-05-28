@@ -12,6 +12,7 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   ConditionalJumpInstruction,
+  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -70,6 +71,39 @@ export const emitMapKeysList = (
   );
   return keysList;
 };
+
+export function ensureDataListForCount(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+  labelPrefix = "datalist_ready",
+): TACOperand {
+  const safeList = converter.newTemp(ExternTypes.dataList);
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.emit(new CallInstruction(safeList, listCtorSig, []));
+
+  const boxedList = converter.newTemp(ObjectType);
+  converter.emit(new CopyInstruction(boxedList, operand));
+  const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
+  const listReady = converter.newLabel(labelPrefix);
+  converter.emit(
+    new BinaryOpInstruction(
+      listIsNotNull,
+      boxedList,
+      "!=",
+      createConstant(null, ObjectType),
+    ),
+  );
+  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listReady));
+  converter.emit(new CopyInstruction(safeList, operand));
+  converter.emit(new LabelInstruction(listReady));
+  return safeList;
+}
 
 /**
  * Emits TAC instructions that build a DataList of [key, value] pair lists
