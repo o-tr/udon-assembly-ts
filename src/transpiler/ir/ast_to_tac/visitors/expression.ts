@@ -291,6 +291,61 @@ function tryReadSoAField(
   return unwrapped;
 }
 
+function tryReadSoAFieldFromHandle(
+  converter: ASTToTACConverter,
+  handle: TACOperand,
+  className: string,
+  property: string,
+  scalarOnly = false,
+): TACOperand | undefined {
+  const fieldLists = converter.soaFieldLists.get(className);
+  if (!fieldLists) return undefined;
+  const readableField = resolveSoAReadableField(converter, className, property);
+  if (!readableField) return undefined;
+  if (
+    scalarOnly &&
+    (readableField.fieldType.udonType === UdonType.DataDictionary ||
+      readableField.fieldType.udonType === UdonType.DataList ||
+      readableField.fieldType.udonType === UdonType.Array ||
+      readableField.fieldType.udonType === UdonType.Object)
+  ) {
+    return undefined;
+  }
+  const fieldList = fieldLists.get(readableField.fieldName);
+  if (!fieldList) return undefined;
+  const indexVar = emitSoaHandleToIndex(converter, handle, className);
+  const token = converter.newTemp(ExternTypes.dataToken);
+  emitBoundedDataListGetItem(
+    converter,
+    fieldList,
+    indexVar,
+    token,
+    () => createSoaSentinelValue(converter, readableField.fieldType),
+    true,
+    className,
+  );
+  return converter.unwrapDataToken(token, readableField.fieldType);
+}
+
+function tryReadUniqueSoAFieldFromHandle(
+  converter: ASTToTACConverter,
+  handle: TACOperand,
+  property: string,
+  scalarOnly = false,
+): TACOperand | undefined {
+  const candidates = Array.from(converter.soaClasses).filter((className) =>
+    resolveSoAReadableField(converter, className, property),
+  );
+  if (candidates.length !== 1) return undefined;
+  return tryReadSoAFieldFromHandle(
+    converter,
+    handle,
+    candidates[0],
+    property,
+    scalarOnly,
+  );
+}
+
 function tryMapAliasInlineProperty(
   converter: ASTToTACConverter,
   className: string,
@@ -728,6 +783,29 @@ function tryReadPopulatedStructuralFieldSlot(
     converter.structuralFieldPrefixTypes.get(slotBase)?.get(property);
   if (!propType) return undefined;
   return createVariable(`${slotBase}_${property}`, propType, { isLocal: true });
+}
+
+function trackSoAArrayElementHandle(
+  converter: ASTToTACConverter,
+  result: TACOperand,
+  elementType: TypeSymbol,
+): void {
+  const resultKey = operandTrackingKey(result);
+  const className = elementType.name;
+  if (
+    !resultKey ||
+    !className ||
+    !resolveClassNode(converter, className) ||
+    converter.udonBehaviourClasses.has(className) ||
+    !converter.soaClasses.has(className)
+  ) {
+    return;
+  }
+  converter.inlineInstanceMap.set(resultKey, {
+    prefix: resultKey,
+    className,
+  });
+  converter.soaInstancePrefixes.add(resultKey);
 }
 
 function tryEmitStructuralInterfacePropertyDispatch(
@@ -3671,6 +3749,7 @@ export function visitArrayAccessExpression(
       const resultType = resolveInlineClassType(this, elementType);
       const result = this.newTemp(resultType);
       this.emitCopyWithTracking(result, unwrapped);
+      trackSoAArrayElementHandle(this, result, resultType);
       markUntrackedInlineInterfaceArrayElement(this, result, elementType);
       return result;
     }
@@ -3721,6 +3800,7 @@ export function visitArrayAccessExpression(
   const resultType = resolveInlineClassType(this, resolvedElementType);
   const result = this.newTemp(resultType);
   this.emitCopyWithTracking(result, unwrapped);
+  trackSoAArrayElementHandle(this, result, resultType);
   markUntrackedInlineInterfaceArrayElement(this, result, resolvedElementType);
   return result;
 }
@@ -3865,6 +3945,28 @@ export function visitPropertyAccessExpression(
         node.property,
       );
       if (directSlot) return directSlot;
+      if (objectName.startsWith("__inline_ret_")) {
+        const objectClassName =
+          objectSymbol?.type.name && this.soaClasses.has(objectSymbol.type.name)
+            ? objectSymbol.type.name
+            : undefined;
+        const objectHandle = createVariable(objectName, PrimitiveTypes.int32);
+        const soaField = objectClassName
+          ? tryReadSoAFieldFromHandle(
+              this,
+              objectHandle,
+              objectClassName,
+              node.property,
+              true,
+            )
+          : tryReadUniqueSoAFieldFromHandle(
+              this,
+              objectHandle,
+              node.property,
+              true,
+            );
+        if (soaField) return soaField;
+      }
       const instanceInfo = this.resolveInlineInstance(objectName);
       let mappedPropertyIsUntrackedStructuralHandle = false;
       if (instanceInfo) {
@@ -4092,6 +4194,15 @@ export function visitPropertyAccessExpression(
     const instanceInfo = instanceKey
       ? this.resolveInlineInstance(instanceKey)
       : undefined;
+    if (instanceKey?.startsWith("__inline_ret_")) {
+      const soaField = tryReadUniqueSoAFieldFromHandle(
+        this,
+        normalizeOperandToInt32(this, object),
+        node.property,
+        true,
+      );
+      if (soaField) return soaField;
+    }
 
     if (instanceInfo) {
       emitSoaHandleRestore(this, instanceInfo, object);

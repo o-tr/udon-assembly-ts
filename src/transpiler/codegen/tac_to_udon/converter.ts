@@ -344,8 +344,7 @@ export class TACToUdonConverter {
         node.object.kind === TACOperandKind.Constant ||
         node.object.kind === TACOperandKind.Temporary)
         ? resolveHeapType(
-            (node.object as unknown as { type: TemporaryOperand["type"] })
-              .type,
+            (node.object as unknown as { type: TemporaryOperand["type"] }).type,
           )
         : "";
     const method = node.method ?? "";

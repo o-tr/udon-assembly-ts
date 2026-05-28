@@ -998,6 +998,10 @@ export class BatchTranspiler {
         }
         let uasm: string | undefined;
         let outputBytes = 0;
+        const shouldSaveOutputCache =
+          useOutputCache &&
+          cacheFilePath !== undefined &&
+          outputCacheKey !== undefined;
         if (ext === "uasm") {
           outputBytes = assembler.assembleToFile(
             outPath,
@@ -1008,6 +1012,9 @@ export class BatchTranspiler {
             entryPoint.behaviourSyncMode,
             exposedLabels,
           );
+          if (shouldSaveOutputCache) {
+            uasm = fs.readFileSync(outPath, "utf8");
+          }
         } else {
           try {
             uasm = assembler.assemble(
@@ -1046,7 +1053,12 @@ export class BatchTranspiler {
         const allWarnings = [...heapWarnings, ...assemblerWarnings];
         const warnings = allWarnings.length > 0 ? allWarnings : undefined;
         // Tier 2: Save assembled output to cache.
-        if (useOutputCache && cacheFilePath && outputCacheKey && uasm) {
+        if (
+          useOutputCache &&
+          cacheFilePath !== undefined &&
+          outputCacheKey !== undefined &&
+          uasm
+        ) {
           this.saveOutputCache(cacheFilePath, {
             key: outputCacheKey,
             uasm,

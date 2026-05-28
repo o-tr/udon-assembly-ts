@@ -14,7 +14,7 @@
  * matches the unwrap accessor selected by `unwrapDataToken` for the
  * local's TypeSymbol. For DataList/Array locals, that means constructing
  * a fresh empty DataList and wrapping it via
- * `DataToken.__ctor__VRCSDK3DataDataList` so the slot carries a
+ * `DataToken.__op_Implicit__VRCSDK3DataDataList` so the slot carries a
  * `TokenType.DataList` token from the start.
  */
 
@@ -30,7 +30,7 @@ beforeAll(() => {
  * Find the recursive-stack DataList that backs a particular local in the
  * generated TAC, then return the DataToken ctor / op_Implicit extern that
  * produced its prefill token. Returns the captured fragment (e.g.
- * `__ctor__VRCSDK3DataDataList`, `__op_Implicit__SystemDouble`).
+ * `__op_Implicit__VRCSDK3DataDataList`, `__op_Implicit__SystemDouble`).
  *
  * `stackPrefix` is the per-method prefix (e.g.
  * `__inlineRec_Helper_recurse_stack_`, `__recursionStack_<Class>_<method>_`)
@@ -124,13 +124,13 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     const prefix = "__inlineRec_Helper_recurse_stack_";
 
     expect(tokenCtorForStack(tac, prefix, "items")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     expect(tokenCtorForStack(tac, prefix, "subTiles")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     expect(tokenCtorForStack(tac, prefix, "r")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     // `number` parameter maps to Double; prefill goes via op_Implicit.
     expect(tokenCtorForStack(tac, prefix, "depth")).toBe(
@@ -169,19 +169,19 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     const prefix = "__inlineRecInst_Walker_walk_stack_";
 
     expect(tokenCtorForStack(tac, prefix, "items")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     expect(tokenCtorForStack(tac, prefix, "collected")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     expect(tokenCtorForStack(tac, prefix, "sub")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     // The synthesized `selfCallResult_0` slot has the method's return
     // type (DataList) — its prefill must also be a DataList token, since
     // emitInlineRecursivePop unwraps it via .DataList.
     expect(tokenCtorForStack(tac, prefix, "selfCallResult_0")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
   });
 
@@ -220,7 +220,7 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     // Parameters in the @RecursiveMethod path carry the `0_<name>__param`
     // suffix; pass that through to the suffix matcher.
     expect(tokenCtorForStack(tac, prefix, "0_items__param")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     // `number` parameter → Double op_Implicit (mirrors the inline cases).
     expect(tokenCtorForStack(tac, prefix, "0_depth__param")).toBe(
@@ -228,10 +228,10 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     );
     // Declared DataList locals.
     expect(tokenCtorForStack(tac, prefix, "collected")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     expect(tokenCtorForStack(tac, prefix, "sub")).toBe(
-      "__ctor__VRCSDK3DataDataList",
+      "__op_Implicit__VRCSDK3DataDataList",
     );
     // Synthesized selfCallResult slot for the recursive call's DataList return.
     expect(
@@ -240,6 +240,6 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
         prefix,
         "selfCallResult_RecMethodWithDataList_walk_0",
       ),
-    ).toBe("__ctor__VRCSDK3DataDataList");
+    ).toBe("__op_Implicit__VRCSDK3DataDataList");
   });
 });

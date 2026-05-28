@@ -1479,10 +1479,15 @@ function loadSoAFieldsIntoPrefix(
   const fieldLists = converter.soaFieldLists.get(className);
   if (!fieldLists) return;
   const fieldTypes = converter.soaFieldTypes.get(className);
+  converter.structuralFieldPrefixes.add(targetPrefix);
+  const targetFieldTypes =
+    converter.structuralFieldPrefixTypes.get(targetPrefix) ??
+    new Map<string, TypeSymbol>();
   const indexVar = emitSoaHandleToIndex(converter, handleOperand, className);
   for (const [fieldName, listVar] of fieldLists) {
     if (fieldNames && !fieldNames.has(fieldName)) continue;
     const fieldType = fieldTypes?.get(fieldName) ?? ObjectType;
+    targetFieldTypes.set(fieldName, fieldType);
     const token = converter.newTemp(ExternTypes.dataToken);
     emitBoundedDataListGetItem(
       converter,
@@ -1502,6 +1507,7 @@ function loadSoAFieldsIntoPrefix(
       ),
     );
   }
+  converter.structuralFieldPrefixTypes.set(targetPrefix, targetFieldTypes);
 }
 
 function collectParamPropertyReads(

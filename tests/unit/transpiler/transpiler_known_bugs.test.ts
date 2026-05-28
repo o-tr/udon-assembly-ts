@@ -1153,13 +1153,13 @@ describe("known transpiler bugs", () => {
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
       expect(result.uasm).toContain(
-        "VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken",
+        "VRCSDK3DataDataToken.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken",
       );
       expect(result.uasm).toContain(
         "VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList",
       );
       expect(result.tac).toContain(
-        "call VRCSDK3DataDataToken.__ctor__VRCSDK3DataDataList__VRCSDK3DataDataToken(value)",
+        "call VRCSDK3DataDataToken.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken(value)",
       );
     });
 
@@ -3910,7 +3910,9 @@ class Main extends UdonSharpBehaviour {
 
       expect(result.tac).toContain("child = __uninst_prop_");
       expect(result.tac).not.toMatch(/^child_count = __uninst_prop_/m);
-      expect(result.tac).not.toMatch(/__inst_Context_\d+_child_count = child_count/);
+      expect(result.tac).not.toMatch(
+        /__inst_Context_\d+_child_count = child_count/,
+      );
       expect(result.tac).toContain("= ctx_child");
       expect(result.tac).toContain("= __uninst_prop_");
     });
@@ -4321,7 +4323,9 @@ class Main extends UdonSharpBehaviour {
       `;
       const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-      expect(result.uasm).not.toContain("SystemObject.__get_name__SystemString");
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_name__SystemString",
+      );
     });
 
     it("all-inline interface array bracket reads avoid raw SystemObject method externs", () => {

@@ -630,7 +630,7 @@ describe("inline remaining bugs", () => {
       expect(soaFieldRead.length).toBeGreaterThan(0);
     });
 
-    it("writes back a mutable Map field after SoA method dispatch mutates it", () => {
+    it("mutates a mutable Map field through the canonical SoA value", () => {
       const source = `
         interface IThing {
           name: string;
@@ -669,17 +669,43 @@ describe("inline remaining bugs", () => {
       expect(result.uasm).toContain("__soa_Registry_data:");
 
       const lines = result.tac.split("\n");
-      const mutationIndex = lines.findIndex((line) =>
-        /call __soa_mdisp_Registry_\d+_data\.SetValue\(/.test(line),
+      const fieldReadIndex = lines.findIndex(
+        (line) =>
+          line.includes("__soa_Registry_data") && line.includes("get_Item"),
+      );
+      expect(fieldReadIndex).toBeGreaterThanOrEqual(0);
+
+      const mutationIndex = lines.findIndex(
+        (line, index) =>
+          index > fieldReadIndex &&
+          /call (?:__soa_mdisp_Registry_\d+_data|t\d+)\.SetValue\(/.test(line),
       );
       expect(mutationIndex).toBeGreaterThanOrEqual(0);
+      const mutatedReceiver = lines[mutationIndex].match(
+        /call (.+)\.SetValue\(/,
+      )?.[1];
+      expect(mutatedReceiver).toBeDefined();
 
       const writeBackIndex = lines.findIndex(
         (line, index) =>
           index > mutationIndex &&
           line.includes("call __soa_Registry_data.set_Item("),
       );
-      expect(writeBackIndex).toBeGreaterThan(mutationIndex);
+      if (writeBackIndex >= 0) {
+        expect(writeBackIndex).toBeGreaterThan(mutationIndex);
+      } else {
+        // DataDictionary is reference-typed. If no explicit write-back is
+        // needed, the mutation must target the dictionary loaded from the
+        // canonical SoA field value rather than a detached scratch field.
+        const receiverSourceIndex = lines
+          .slice(fieldReadIndex, mutationIndex)
+          .findIndex((line) =>
+            new RegExp(`^${mutatedReceiver} = t\\d+\\.DataDictionary$`).test(
+              line,
+            ),
+          );
+        expect(receiverSourceIndex).toBeGreaterThanOrEqual(0);
+      }
     });
 
     it("guards inline-handle Map.get with ContainsKey before unwrapping Int", () => {

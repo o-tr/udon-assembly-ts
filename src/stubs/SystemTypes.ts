@@ -238,10 +238,7 @@ export class SystemMath {
     return 0 as UdonDouble;
   }
 
-  static Pow(
-    _x: UdonDouble | number,
-    _y: UdonDouble | number,
-  ): UdonDouble {
+  static Pow(_x: UdonDouble | number, _y: UdonDouble | number): UdonDouble {
     return 0 as UdonDouble;
   }
 }

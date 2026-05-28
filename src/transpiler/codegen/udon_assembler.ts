@@ -810,7 +810,10 @@ export class UdonAssembler {
         }
       } else if (inst.kind === UdonInstructionKind.Push) {
         lines.push(
-          this.formatPushInstruction(inst as PushInstruction, internalSymbolMap),
+          this.formatPushInstruction(
+            inst as PushInstruction,
+            internalSymbolMap,
+          ),
         );
       } else if (inst.kind === UdonInstructionKind.Extern) {
         lines.push(

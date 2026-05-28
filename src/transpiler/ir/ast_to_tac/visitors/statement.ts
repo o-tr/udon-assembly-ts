@@ -81,6 +81,7 @@ import {
   countTryCatchBlocks,
   createSoaSentinelValue,
   emitStructuralFieldCopies,
+  isInlineHandleType,
   MAX_RECURSION_STACK_DEPTH,
   makeDefaultDataTokenForLocal,
   markUntrackedStructuralHandlePrefixes,
@@ -2726,6 +2727,17 @@ export function visitReturnStatement(
               valueMapping,
             );
           }
+        } else if (
+          isInlineHandleType(this, inlineContext.returnVar.type) &&
+          resolveClassNode(this, inlineContext.returnVar.type.name) &&
+          !this.udonBehaviourClasses.has(inlineContext.returnVar.type.name) &&
+          this.soaClasses.has(inlineContext.returnVar.type.name)
+        ) {
+          this.inlineInstanceMap.set(inlineContext.returnVar.name, {
+            prefix: inlineContext.returnVar.name,
+            className: inlineContext.returnVar.type.name,
+          });
+          this.soaInstancePrefixes.add(inlineContext.returnVar.name);
         } else if (
           inlineContext.returnInstancePrefix &&
           structuralInterfaceForType(this, inlineContext.returnVar.type) &&

@@ -317,11 +317,13 @@ describe("interface-based polymorphic dispatch", () => {
       udonBehaviourInterfaceNames,
     );
 
-    const relevantError = errorCollector.getErrors().find(
-      (e) =>
-        e.message.includes("WeaponBase") &&
-        e.message.includes("UdonBehaviour interface"),
-    );
+    const relevantError = errorCollector
+      .getErrors()
+      .find(
+        (e) =>
+          e.message.includes("WeaponBase") &&
+          e.message.includes("UdonBehaviour interface"),
+      );
     expect(relevantError).toBeUndefined();
   });
 

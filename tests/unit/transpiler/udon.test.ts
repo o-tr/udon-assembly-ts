@@ -7,10 +7,10 @@ import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/ex
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "../../../src/transpiler/codegen/udon_assembler";
 import {
+  ExternInstruction,
   JumpIfFalseInstruction,
   JumpInstruction,
   LabelInstruction,
-  ExternInstruction,
   PushInstruction,
   UdonInstructionKind,
 } from "../../../src/transpiler/codegen/udon_instruction";

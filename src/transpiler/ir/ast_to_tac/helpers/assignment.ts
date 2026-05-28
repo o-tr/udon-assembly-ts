@@ -7,6 +7,7 @@ import {
   ExternTypes,
   GenericTypeParameterSymbol,
   InterfaceTypeSymbol,
+  isPlainObjectType,
   NativeArrayTypeSymbol,
   ObjectType,
   ObjectTypeSymbol,
@@ -163,6 +164,28 @@ export function assignToTarget(
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
     // is handled above and does not need DataToken wrapping.
     const assignedValueType = this.getOperandType(value);
+    if (
+      arrayAccess.array.kind === ASTNodeKind.Identifier &&
+      arrayType instanceof ArrayTypeSymbol &&
+      arrayType.elementType === ObjectType &&
+      assignedValueType !== ObjectType
+    ) {
+      const arrayName = (arrayAccess.array as IdentifierNode).name;
+      const symbol = this.symbolTable.lookup(arrayName);
+      const declaredArrayType =
+        symbol?.declaredType instanceof ArrayTypeSymbol
+          ? symbol.declaredType
+          : undefined;
+      if (
+        symbol &&
+        symbol.type instanceof ArrayTypeSymbol &&
+        symbol.type.elementType === ObjectType &&
+        declaredArrayType &&
+        !isPlainObjectType(declaredArrayType.elementType)
+      ) {
+        symbol.type = new ArrayTypeSymbol(assignedValueType);
+      }
+    }
     let coercedIndex = index;
     const idxType = this.getOperandType(index);
     if (needsInt32IndexCoercion(idxType.udonType)) {
@@ -778,7 +801,8 @@ export function wrapDataToken(
   // op_Implicit are verified in the VM test suite against the real VRC SDK.
   const ctorMember =
     valueType.udonType === UdonType.Single ||
-    valueType.udonType === UdonType.Double
+    valueType.udonType === UdonType.Double ||
+    valueType.udonType === UdonType.DataList
       ? "op_Implicit"
       : "ctor";
   const externSig = this.requireExternSignature(

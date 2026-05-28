@@ -829,7 +829,9 @@ export class ASTToTACConverter {
     }
     this.instructions.push(instruction);
     if (PROF && this.instructions.length % 1_000_000 === 0) {
-      console.log(`[prof]   tac-pass2 progress instr=${this.instructions.length}`);
+      console.log(
+        `[prof]   tac-pass2 progress instr=${this.instructions.length}`,
+      );
       this.pass2ProgressLastLength = this.instructions.length;
     }
   }
@@ -1141,13 +1143,13 @@ export class ASTToTACConverter {
     for (const statement of otherStatements) {
       if (statement.kind === ASTNodeKind.ClassDeclaration) {
         const classNode = statement as ClassDeclarationNode;
-      if (
-        this.entryPointClasses.size > 0 &&
-        !this.entryPointClasses.has(classNode.name)
-      ) {
-        continue;
+        if (
+          this.entryPointClasses.size > 0 &&
+          !this.entryPointClasses.has(classNode.name)
+        ) {
+          continue;
+        }
       }
-    }
       this.visitStatement(statement);
     }
 
