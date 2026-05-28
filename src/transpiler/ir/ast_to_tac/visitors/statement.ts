@@ -173,10 +173,6 @@ function emitSoAForOfElementFieldCopies(
 
   let copied = false;
   for (const [fieldName, fieldList] of fieldLists) {
-    const fieldPath = fieldName.split("_");
-    if (fieldPath.length > 1 && fieldPath[fieldPath.length - 1] !== "name") {
-      continue;
-    }
     const fieldType = fieldTypes?.get(fieldName) ?? ObjectType;
     const token = converter.newTemp(ExternTypes.dataToken);
     emitBoundedDataListGetItem(

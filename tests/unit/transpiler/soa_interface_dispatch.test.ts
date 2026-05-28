@@ -154,4 +154,39 @@ describe("SoA interface dispatch", () => {
       expect(line).not.toMatch(/= shape == \d+$/);
     }
   });
+
+  it("copies non-name compound SoA fields into for-of loop elements", () => {
+    const source = `
+      type Info = { value: number };
+      type Candidate = {
+        tile: Info;
+        hand_count: number;
+      };
+
+      class Factory {
+        static make(): Candidate[] {
+          const result: Candidate[] = [];
+          for (let i = 0; i < 1; i++) {
+            result.push({ tile: { value: 3 }, hand_count: 4 });
+          }
+          return result;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const items = Factory.make();
+          for (const item of items) {
+            Debug.Log(item.tile.value + item.hand_count);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/\bitem_tile_value = /);
+    expect(result.tac).toMatch(/\bitem_hand_count = /);
+    expect(result.tac).not.toContain("structural dispatch miss");
+  });
 });

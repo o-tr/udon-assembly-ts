@@ -121,6 +121,27 @@ describe("custom type array operations", () => {
     expect(result.uasm).not.toContain("DataToken.__push__");
   });
 
+  it("keeps explicitly erased object arrays erased across mixed indexed writes", () => {
+    const source = `
+      class Demo extends UdonSharpBehaviour {
+        Start(): void {
+          const values: object[] = [];
+          values[0] = 1;
+          values[1] = "two";
+          Debug.Log(values[1]);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toContain(
+      "VRCSDK3DataDataToken.__get_Double__SystemDouble",
+    );
+    expect(result.uasm).not.toContain(
+      "VRCSDK3DataDataToken.__get_Int__SystemInt32",
+    );
+  });
+
   it("generates valid length extern for known type arrays (number[], string[])", () => {
     const parser = new TypeScriptParser();
     const source = `

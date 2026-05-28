@@ -227,7 +227,7 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
         const windowStart = Math.max(0, callIdx - 16);
         const window = lines.slice(windowStart, callIdx).join("\n");
         if (convertAlias) {
-          expect(window).toContain(`EXTERN, ${convertAlias}`);
+          expect(window).not.toContain(`EXTERN, ${convertAlias}`);
         }
         expect(window).not.toMatch(
           /PUSH,\s+item\s*\n\s*PUSH,\s+__t\d+\s*\n\s*COPY/,

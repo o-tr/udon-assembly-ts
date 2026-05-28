@@ -163,20 +163,6 @@ export function assignToTarget(
     // use DataList.set_Item + DataToken wrapping. CollectionTypeSymbol (Map/Set)
     // is handled above and does not need DataToken wrapping.
     const assignedValueType = this.getOperandType(value);
-    if (
-      arrayAccess.array.kind === ASTNodeKind.Identifier &&
-      arrayType instanceof ArrayTypeSymbol &&
-      arrayType.elementType === ObjectType &&
-      assignedValueType !== ObjectType
-    ) {
-      const arrayName = (arrayAccess.array as IdentifierNode).name;
-      const symbol = this.symbolTable.lookup(arrayName);
-      if (symbol) {
-        const refinedType = new ArrayTypeSymbol(assignedValueType);
-        symbol.type = refinedType;
-        symbol.declaredType = refinedType;
-      }
-    }
     let coercedIndex = index;
     const idxType = this.getOperandType(index);
     if (needsInt32IndexCoercion(idxType.udonType)) {
