@@ -285,6 +285,23 @@ export class BatchTranspiler {
           .getEntryPoints()
           .filter((ep) => entryPointNameFilter.has(ep.name))
       : registry.getEntryPoints();
+    if (entryPointNameFilter && selectedEntryPoints.length === 0) {
+      const availableEntryPointNames = registry
+        .getEntryPoints()
+        .map((ep) => ep.name);
+      errorCollector.addWarning({
+        code: "EntryPointFilterNoMatch",
+        message:
+          "entryPointNames filter matched no registered entry points. " +
+          `Requested: [${[...entryPointNameFilter].join(", ")}]. ` +
+          `Available: [${availableEntryPointNames.join(", ")}].`,
+        location: {
+          filePath: options.sourceDir,
+          line: 0,
+          column: 0,
+        },
+      });
+    }
     const entryFiles = [
       ...new Set(selectedEntryPoints.map((ep) => ep.filePath)),
     ];
