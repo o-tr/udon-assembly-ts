@@ -150,6 +150,8 @@ function emitMapDestructureForOfLoop(
   converter.emit(new ConditionalJumpInstruction(condTemp, loopEnd));
 
   const keyToken = converter.newTemp(ExternTypes.dataToken);
+  // The loop guard above maintains 0 <= indexVar < keysList.Count for this
+  // direct DataList read; keep that guard adjacent if this loop is refactored.
   converter.emit(
     new MethodCallInstruction(keyToken, keysList, "get_Item", [indexVar]),
   );

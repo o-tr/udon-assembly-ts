@@ -112,6 +112,7 @@ export class TACToUdonConverter {
 
     for (const tacInst of tacInstructions) {
       this.convertInstruction(tacInst);
+      this.assertDefinedTemporaryAliasAllocated(tacInst);
       this.releaseTemporariesAfterInstruction(tacInst);
     }
 
@@ -317,6 +318,36 @@ export class TACToUdonConverter {
       reusable.push(alias);
       this.reusableTempAliasesByType.set(typeName, reusable);
     });
+  }
+
+  private assertDefinedTemporaryAliasAllocated(inst: TACInstruction): void {
+    const temp = this.getDefinedTemporary(inst);
+    if (!temp) return;
+    if (this.tempAliases.has(temp.id)) return;
+    throw new Error(
+      `Temporary t${temp.id} was defined by ${inst.kind} without allocating a codegen alias`,
+    );
+  }
+
+  private getDefinedTemporary(inst: TACInstruction): TemporaryOperand | null {
+    const node = inst as TACInstruction & { dest?: TACOperand };
+    switch (inst.kind) {
+      case TACInstructionKind.Assignment:
+      case TACInstructionKind.Copy:
+      case TACInstructionKind.Cast:
+      case TACInstructionKind.BinaryOp:
+      case TACInstructionKind.UnaryOp:
+      case TACInstructionKind.Call:
+      case TACInstructionKind.MethodCall:
+      case TACInstructionKind.PropertyGet:
+      case TACInstructionKind.ArrayAccess:
+      case TACInstructionKind.Phi:
+        return node.dest?.kind === TACOperandKind.Temporary
+          ? (node.dest as TemporaryOperand)
+          : null;
+      default:
+        return null;
+    }
   }
 
   private collectTemporariesFromOperand(

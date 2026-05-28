@@ -82,7 +82,7 @@ export function ensureDataListForCount(
   converter.emit(new CopyInstruction(boxedList, operand));
   const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
   const listReady = converter.newLabel(labelPrefix);
-  const listFallback = converter.newLabel(`${labelPrefix}_fallback`);
+  const listIsNull = converter.newLabel(`${labelPrefix}_is_null`);
   converter.emit(
     new BinaryOpInstruction(
       listIsNotNull,
@@ -91,10 +91,10 @@ export function ensureDataListForCount(
       createConstant(null, ObjectType),
     ),
   );
-  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listFallback));
+  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listIsNull));
   converter.emit(new CopyInstruction(safeList, operand));
   converter.emit(new UnconditionalJumpInstruction(listReady));
-  converter.emit(new LabelInstruction(listFallback));
+  converter.emit(new LabelInstruction(listIsNull));
   const listCtorSig = converter.requireExternSignature(
     "DataList",
     "ctor",
