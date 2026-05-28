@@ -1519,6 +1519,34 @@ describe("known transpiler bugs", () => {
       );
     });
 
+    it("SoA simple getter read from any-annotated local uses backing DataList fast path", () => {
+      const source = `
+        class Tile {
+          private _code: number;
+          constructor(code: number) {
+            this._code = code;
+          }
+          get code(): number {
+            return this._code;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[1];
+            Debug.Log(boxed.code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Tile__code.get_Item");
+      expect(result.tac).not.toContain("uninst_prop_next");
+    });
+
     it("SoA method dispatch from any-annotated local keeps Int32 handle", () => {
       const source = `
         class Tile {

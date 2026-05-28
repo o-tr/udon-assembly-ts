@@ -903,7 +903,17 @@ export class BatchTranspiler {
         if (options.optimize === true) {
           const _profOpt = pmark();
           const optimizer = new TACOptimizer();
-          tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
+          tacInstructions = optimizer.optimize(tacInstructions, exposedLabels, {
+            profile: PROF
+              ? {
+                  record: (name, ms) => {
+                    console.log(
+                      `[prof]   optimizer ${entryPoint.name}.${name}: ${ms.toFixed(1)}ms`,
+                    );
+                  },
+                }
+              : undefined,
+          });
           pend(
             `entry-${entryPoint.name}-optimize`,
             _profOpt,
@@ -998,16 +1008,34 @@ export class BatchTranspiler {
             exposedLabels,
           );
         } else {
-          uasm = assembler.assemble(
-            udonInstructions,
-            externSignatures,
-            dataSectionWithTypes,
-            syncModes,
-            entryPoint.behaviourSyncMode,
-            exposedLabels, // same as computeExportLabels(...)
-          );
-          outputBytes = uasm.length;
-          fs.writeFileSync(outPath, uasm, "utf8");
+          try {
+            uasm = assembler.assemble(
+              udonInstructions,
+              externSignatures,
+              dataSectionWithTypes,
+              syncModes,
+              entryPoint.behaviourSyncMode,
+              exposedLabels, // same as computeExportLabels(...)
+            );
+            outputBytes = uasm.length;
+            fs.writeFileSync(outPath, uasm, "utf8");
+          } catch (e) {
+            if (
+              !(e instanceof RangeError) ||
+              !String(e.message).includes("Invalid string length")
+            ) {
+              throw e;
+            }
+            outputBytes = assembler.assembleToFile(
+              outPath,
+              udonInstructions,
+              externSignatures,
+              dataSectionWithTypes,
+              syncModes,
+              entryPoint.behaviourSyncMode,
+              exposedLabels,
+            );
+          }
         }
 
         const assemblerWarnings = assembler.getWarnings();

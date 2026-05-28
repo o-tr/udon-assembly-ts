@@ -182,6 +182,24 @@ export const OUTLINE_MIN_CALL_SITES = 2;
  *  (accessors, tiny helpers) remain fully inlined.
  *  Overridable per-converter via constructor options for testing. */
 export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 50;
+const OUTLINE_CALL_OVERHEAD_ESTIMATE = 80;
+const OUTLINE_MAX_CANDIDATES = 64;
+// Broader outlining can regress when outlined bodies still bake receiver or
+// param-field prefixes. Raise the default only when those two cases are using
+// shared/copy-backed outlines; explicit UDON_OUTLINE_MAX_CANDIDATES still wins.
+const OUTLINE_MAX_CANDIDATES_WITH_SHARED_INLINE_FIELDS = 256;
+
+function resolveOutlineMaxCandidates(): number {
+  const raw = process.env.UDON_OUTLINE_MAX_CANDIDATES;
+  const defaultMax =
+    process.env.UDON_SHARED_INSTANCE_OUTLINE === "1" &&
+    process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS === "1"
+      ? OUTLINE_MAX_CANDIDATES_WITH_SHARED_INLINE_FIELDS
+      : OUTLINE_MAX_CANDIDATES;
+  if (raw === undefined || raw.trim() === "") return defaultMax;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultMax;
+}
 
 /**
  * AST to TAC converter
@@ -504,6 +522,7 @@ export class ASTToTACConverter {
    *  wrapper around a large inlined callee will appear large. This is
    *  conservative: it may outline methods that are themselves tiny. */
   pass1EmitCount = 0;
+  pass2ProgressLastLength = 0;
   /** Per-method call count and body instruction estimate from pass 1.
    *  Key: outlineMapKey() — "static:Cls.method" or "inst:Cls.method:prefix" */
   inlineStaticCallInfo: Map<
@@ -770,6 +789,7 @@ export class ASTToTACConverter {
     this.nativeArrayIneligible = new Set();
     this.currentNativeArrayVarName = null;
     this.pass1EmitCount = 0;
+    this.pass2ProgressLastLength = 0;
     this.inlineStaticCallInfo = new Map();
     this.inlineMethodSelfCallCount = new Map();
     // outlineCandidates intentionally NOT cleared — survives between passes
@@ -802,6 +822,10 @@ export class ASTToTACConverter {
       return;
     }
     this.instructions.push(instruction);
+    if (PROF && this.instructions.length % 1_000_000 === 0) {
+      console.log(`[prof]   tac-pass2 progress instr=${this.instructions.length}`);
+      this.pass2ProgressLastLength = this.instructions.length;
+    }
   }
 
   /**
@@ -910,6 +934,10 @@ export class ASTToTACConverter {
         );
       }
     }
+    const eligibleOutlineCandidates: Array<{
+      key: string;
+      estimatedSavings: number;
+    }> = [];
     for (const [key, info] of this.inlineStaticCallInfo) {
       if (
         info.callSites >= OUTLINE_MIN_CALL_SITES &&
@@ -917,18 +945,37 @@ export class ASTToTACConverter {
         info.bodyInstr >= this.outlineBodyInstrThreshold &&
         (info.selfCallCount ?? 0) === 0
       ) {
-        outlineCandidatesFromPass1.add(key);
+        eligibleOutlineCandidates.push({
+          key,
+          estimatedSavings:
+            Math.max(1, info.bodyInstr - OUTLINE_CALL_OVERHEAD_ESTIMATE) *
+            (info.callSites - 1),
+        });
       }
+    }
+    eligibleOutlineCandidates.sort(
+      (a, b) =>
+        b.estimatedSavings - a.estimatedSavings || a.key.localeCompare(b.key),
+    );
+    const outlineMaxCandidates = resolveOutlineMaxCandidates();
+    for (const candidate of eligibleOutlineCandidates.slice(
+      0,
+      outlineMaxCandidates,
+    )) {
+      outlineCandidatesFromPass1.add(candidate.key);
     }
     if (PROF && outlineCandidatesFromPass1.size > 0) {
       console.log(
-        `[prof] outline selected: ${[...outlineCandidatesFromPass1].join(", ")}`,
+        `[prof] outline selected (${outlineCandidatesFromPass1.size}/${eligibleOutlineCandidates.length}, max=${outlineMaxCandidates}): ${[...outlineCandidatesFromPass1].join(", ")}`,
       );
     }
 
     const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
     const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
-    if (outlineCandidatesFromPass1.size > 0) {
+    if (
+      outlineCandidatesFromPass1.size > 0 &&
+      process.env.UDON_SKIP_OUTLINE_METADATA_PASS !== "1"
+    ) {
       this.resetState();
       this.metadataOnlyMode = true;
       this.collectOutlineMetadataMode = true;
@@ -1088,13 +1135,13 @@ export class ASTToTACConverter {
     for (const statement of otherStatements) {
       if (statement.kind === ASTNodeKind.ClassDeclaration) {
         const classNode = statement as ClassDeclarationNode;
-        if (
-          this.entryPointClasses.size > 0 &&
-          !this.entryPointClasses.has(classNode.name)
-        ) {
-          continue;
-        }
+      if (
+        this.entryPointClasses.size > 0 &&
+        !this.entryPointClasses.has(classNode.name)
+      ) {
+        continue;
       }
+    }
       this.visitStatement(statement);
     }
 

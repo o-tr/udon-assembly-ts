@@ -24,6 +24,7 @@ import {
   ASTNodeKind,
   type BlockStatementNode,
   type CallExpressionNode,
+  type ExpressionStatementNode,
   type FunctionExpressionNode,
   type IdentifierNode,
   isNumericUdonType,
@@ -565,7 +566,7 @@ type D3MethodDispatchOutlineState = {
   entryLabel: LabelOperand;
   dispatchLabel: LabelOperand;
   doneLabel: LabelOperand;
-  bodyReturnJumpIdx: number;
+  bodyReturnJump: UnconditionalJumpInstruction;
   returnVar?: VariableOperand;
   returnType?: TypeSymbol;
   returnSiteIdxVar: VariableOperand;
@@ -764,14 +765,14 @@ function emitD3MethodDispatchOutline(
   converter.emit(new CallInstruction(undefined, logExtern, [errMsg]));
   converter.emit(new LabelInstruction(endLabel));
   converter.emit(new LabelInstruction(bodyReturnLabel));
-  const bodyReturnJumpIdx = converter.instructions.length;
-  converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+  const bodyReturnJump = new UnconditionalJumpInstruction(dispatchLabel);
+  converter.emit(bodyReturnJump);
 
   const state: D3MethodDispatchOutlineState = {
     entryLabel,
     dispatchLabel,
     doneLabel,
-    bodyReturnJumpIdx,
+    bodyReturnJump,
     returnVar,
     returnType,
     returnSiteIdxVar,
@@ -784,10 +785,7 @@ function emitD3MethodDispatchOutline(
 
   converter.pendingOutlineDispatches.push(() => {
     if (state.returnSites.length === 1) {
-      converter.instructions[state.bodyReturnJumpIdx] =
-        new UnconditionalJumpInstruction(
-          createLabel(state.returnSites[0].labelName),
-        );
+      state.bodyReturnJump.label = createLabel(state.returnSites[0].labelName);
       return;
     }
     converter.emit(new LabelInstruction(dispatchLabel));
@@ -1109,6 +1107,13 @@ function trySoAMethodDispatch(
     soaClassName,
     propAccess.property,
   );
+  const shouldLoadSoAField = (fieldName: string): boolean => {
+    if (fieldsToLoad.has(fieldName)) return true;
+    for (const readName of fieldsToLoad) {
+      if (fieldName.startsWith(`${readName}_`)) return true;
+    }
+    return false;
+  };
 
   // Save state for rollback if inlining fails
   const savedInstanceCounter = converter.instanceCounter;
@@ -1164,12 +1169,7 @@ function trySoAMethodDispatch(
 
   // Prologue: load only the SoA fields referenced by the inlined body.
   for (const [fieldName, listVar] of fieldLists) {
-    if (
-      !fieldsToLoad.has(fieldName) &&
-      !Array.from(fieldsToLoad).some((readName) =>
-        fieldName.startsWith(`${readName}_`),
-      )
-    ) {
+    if (!shouldLoadSoAField(fieldName)) {
       continue;
     }
     const scratchVar = fieldScratchVars.get(fieldName);
@@ -2216,6 +2216,13 @@ export function visitCallExpression(
         const stmt = block.statements[0];
         if (stmt.kind === ASTNodeKind.CallExpression) {
           innerCall = stmt as CallExpressionNode;
+        } else if (
+          stmt.kind === ASTNodeKind.ExpressionStatement &&
+          (stmt as ExpressionStatementNode).expression.kind ===
+            ASTNodeKind.CallExpression
+        ) {
+          innerCall = (stmt as ExpressionStatementNode)
+            .expression as CallExpressionNode;
         }
       } else if (callback.body.kind === ASTNodeKind.CallExpression) {
         innerCall = callback.body as CallExpressionNode;

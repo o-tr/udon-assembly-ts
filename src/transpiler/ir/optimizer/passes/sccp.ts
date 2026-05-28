@@ -1,20 +1,20 @@
 import {
-  type ArrayAccessInstruction,
-  type ArrayAssignmentInstruction,
+  ArrayAccessInstruction,
+  ArrayAssignmentInstruction,
   AssignmentInstruction,
-  type BinaryOpInstruction,
-  type CallInstruction,
-  type CastInstruction,
-  type ConditionalJumpInstruction,
+  BinaryOpInstruction,
+  CallInstruction,
+  CastInstruction,
+  ConditionalJumpInstruction,
   CopyInstruction,
   type LabelInstruction,
-  type MethodCallInstruction,
-  type PropertyGetInstruction,
-  type PropertySetInstruction,
-  type ReturnInstruction,
+  MethodCallInstruction,
+  PropertyGetInstruction,
+  PropertySetInstruction,
+  ReturnInstruction,
   type TACInstruction,
   TACInstructionKind,
-  type UnaryOpInstruction,
+  UnaryOpInstruction,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import type {
@@ -1132,5 +1132,194 @@ export const sccpAndPrune = (
     instructions: result,
     changed: didChange,
     structurallyChanged: jumpTopologyChanged || prunedUnreachable || undefined,
+  };
+};
+
+export const sccpLocal = (
+  instructions: TACInstruction[],
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
+
+  const result: TACInstruction[] = [];
+  let didChange = false;
+  let jumpTopologyChanged = false;
+
+  const resolveConstant = (
+    operand: TACOperand,
+    constants: Map<string, ConstantOperand>,
+  ): ConstantOperand | null => {
+    if (operand.kind === TACOperandKind.Constant) return operand as ConstantOperand;
+    const name = latticeNameForOperand(operand);
+    if (name === null) return null;
+    return constants.get(name) ?? null;
+  };
+
+  const replace = (
+    operand: TACOperand,
+    constants: Map<string, ConstantOperand>,
+  ): TACOperand => resolveConstant(operand, constants) ?? operand;
+
+  const replaceInstruction = (
+    inst: TACInstruction,
+    constants: Map<string, ConstantOperand>,
+  ): TACInstruction => {
+    switch (inst.kind) {
+      case TACInstructionKind.Assignment:
+      case TACInstructionKind.Copy: {
+        const { dest, src } = inst as unknown as InstWithDestSrc;
+        const resolved = replace(src, constants);
+        if (resolved === src) return inst;
+        if (inst.kind === TACInstructionKind.Copy) {
+          return new CopyInstruction(dest, resolved);
+        }
+        return new AssignmentInstruction(dest, resolved);
+      }
+      case TACInstructionKind.BinaryOp: {
+        const bin = inst as BinaryOpInstruction;
+        const left = replace(bin.left, constants);
+        const right = replace(bin.right, constants);
+        return left === bin.left && right === bin.right
+          ? inst
+          : new BinaryOpInstruction(bin.dest, left, bin.operator, right);
+      }
+      case TACInstructionKind.UnaryOp: {
+        const unary = inst as UnaryOpInstruction;
+        const operand = replace(unary.operand, constants);
+        return operand === unary.operand
+          ? inst
+          : new UnaryOpInstruction(unary.dest, unary.operator, operand);
+      }
+      case TACInstructionKind.Cast: {
+        const cast = inst as CastInstruction;
+        const src = replace(cast.src, constants);
+        return src === cast.src ? inst : new CastInstruction(cast.dest, src);
+      }
+      case TACInstructionKind.ConditionalJump: {
+        const jump = inst as ConditionalJumpInstruction;
+        const condition = replace(jump.condition, constants);
+        return condition === jump.condition
+          ? inst
+          : new ConditionalJumpInstruction(condition, jump.label);
+      }
+      case TACInstructionKind.Call: {
+        const call = inst as CallInstruction;
+        const args = call.args.map((arg) => replace(arg, constants));
+        return args.some((arg, idx) => arg !== call.args[idx])
+          ? new CallInstruction(call.dest, call.func, args, call.isTailCall)
+          : inst;
+      }
+      case TACInstructionKind.MethodCall: {
+        const call = inst as MethodCallInstruction;
+        const object = replace(call.object, constants);
+        const args = call.args.map((arg) => replace(arg, constants));
+        return object !== call.object ||
+          args.some((arg, idx) => arg !== call.args[idx])
+          ? new MethodCallInstruction(
+              call.dest,
+              object,
+              call.method,
+              args,
+              call.isTailCall,
+            )
+          : inst;
+      }
+      case TACInstructionKind.PropertyGet: {
+        const get = inst as PropertyGetInstruction;
+        const object = replace(get.object, constants);
+        return object === get.object
+          ? inst
+          : new PropertyGetInstruction(get.dest, object, get.property);
+      }
+      case TACInstructionKind.PropertySet: {
+        const set = inst as PropertySetInstruction;
+        const object = replace(set.object, constants);
+        const value = replace(set.value, constants);
+        return object === set.object && value === set.value
+          ? inst
+          : new PropertySetInstruction(object, set.property, value);
+      }
+      case TACInstructionKind.Return: {
+        const ret = inst as ReturnInstruction;
+        if (!ret.value) return inst;
+        const value = replace(ret.value, constants);
+        return value === ret.value
+          ? inst
+          : new ReturnInstruction(value, ret.returnVarName);
+      }
+      case TACInstructionKind.ArrayAccess: {
+        const access = inst as ArrayAccessInstruction;
+        const array = replace(access.array, constants);
+        const index = replace(access.index, constants);
+        return array === access.array && index === access.index
+          ? inst
+          : new ArrayAccessInstruction(access.dest, array, index);
+      }
+      case TACInstructionKind.ArrayAssignment: {
+        const assign = inst as ArrayAssignmentInstruction;
+        const array = replace(assign.array, constants);
+        const index = replace(assign.index, constants);
+        const value = replace(assign.value, constants);
+        return array === assign.array &&
+          index === assign.index &&
+          value === assign.value
+          ? inst
+          : new ArrayAssignmentInstruction(array, index, value);
+      }
+      default:
+        return inst;
+    }
+  };
+
+  for (const block of cfg.blocks) {
+    const constants = new Map<string, ConstantOperand>();
+    for (let i = block.start; i <= block.end; i++) {
+      const original = instructions[i];
+      const inst = replaceInstruction(original, constants);
+      if (inst !== original) didChange = true;
+
+      if (inst.kind === TACInstructionKind.ConditionalJump) {
+        const condInst = inst as ConditionalJumpInstruction;
+        const condConst = resolveConstant(condInst.condition, constants);
+        const truthy = condConst ? isTruthyConstant(condConst.value) : null;
+        if (truthy === false) {
+          result.push(new UnconditionalJumpInstruction(condInst.label));
+          didChange = true;
+          jumpTopologyChanged = true;
+        } else if (truthy === true) {
+          didChange = true;
+          jumpTopologyChanged = true;
+        } else {
+          result.push(inst);
+        }
+      } else {
+        result.push(inst);
+      }
+
+      const defined = getDefinedOperandForReuse(original);
+      const defName = defined ? latticeNameForOperand(defined) : null;
+      if (!defName) continue;
+
+      if (
+        inst.kind === TACInstructionKind.Assignment ||
+        inst.kind === TACInstructionKind.Copy
+      ) {
+        const { src } = inst as unknown as InstWithDestSrc;
+        const constant = resolveConstant(src, constants);
+        if (constant) {
+          constants.set(defName, constant);
+          continue;
+        }
+      }
+
+      constants.delete(defName);
+    }
+  }
+
+  return {
+    instructions: didChange ? result : instructions,
+    changed: didChange,
+    structurallyChanged: jumpTopologyChanged || undefined,
   };
 };

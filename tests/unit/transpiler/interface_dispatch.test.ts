@@ -285,6 +285,46 @@ describe("interface-based polymorphic dispatch", () => {
     expect(relevantError).toBeDefined();
   });
 
+  it("allows an undecorated base class to implement a UdonBehaviour interface when a decorated subclass inherits it", () => {
+    const source = `
+      interface IWeapon {
+        attack(): void;
+      }
+
+      class WeaponBase extends UdonSharpBehaviour implements IWeapon {
+        attack(): void {
+          const x: number = 1;
+        }
+      }
+
+      @UdonBehaviour()
+      class Sword extends WeaponBase {
+      }
+    `;
+
+    const errorCollector = new ErrorCollector();
+    const parser = new TypeScriptParser(errorCollector);
+    const ast = parser.parse(source, "test.ts");
+    const registry = new ClassRegistry();
+    registry.registerFromProgram(ast, "test.ts");
+
+    const udonBehaviourInterfaceNames = new Set(
+      registry.getUdonBehaviourInterfaces().keys(),
+    );
+
+    const validator = new InheritanceValidator(registry, errorCollector);
+    validator.validateUdonBehaviourInterfaceConsistency(
+      udonBehaviourInterfaceNames,
+    );
+
+    const relevantError = errorCollector.getErrors().find(
+      (e) =>
+        e.message.includes("WeaponBase") &&
+        e.message.includes("UdonBehaviour interface"),
+    );
+    expect(relevantError).toBeUndefined();
+  });
+
   it("interface layout is stored in layouts map", () => {
     const source = `
       interface IWeapon {

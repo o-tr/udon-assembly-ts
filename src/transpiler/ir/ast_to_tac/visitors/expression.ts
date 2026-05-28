@@ -237,7 +237,9 @@ function tryReadSoAField(
     return undefined;
   const fieldLists = converter.soaFieldLists.get(className);
   if (!fieldLists) return undefined;
-  const fieldList = fieldLists.get(property);
+  const readableField = resolveSoAReadableField(converter, className, property);
+  if (!readableField) return undefined;
+  const fieldList = fieldLists.get(readableField.fieldName);
   if (!fieldList) return undefined;
   const hdlVar = createVariable(
     `${instancePrefix}__handle`,
@@ -245,11 +247,7 @@ function tryReadSoAField(
   );
   const indexVar = emitSoaHandleToIndex(converter, hdlVar, className);
   const token = converter.newTemp(ExternTypes.dataToken);
-  const resolved = resolveClassProperty(converter, className, property);
-  const fieldType =
-    resolved?.prop.type ??
-    converter.soaFieldTypes.get(className)?.get(property) ??
-    ObjectType;
+  const fieldType = readableField.fieldType;
   emitBoundedDataListGetItem(
     converter,
     fieldList,
@@ -262,7 +260,7 @@ function tryReadSoAField(
   const unwrapped = converter.unwrapDataToken(token, fieldType);
   const unwrappedKey = operandTrackingKey(unwrapped);
   if (unwrappedKey) {
-    const nestedPrefix = `${property}_`;
+    const nestedPrefix = `${readableField.fieldName}_`;
     const fieldTypes = converter.soaFieldTypes.get(className);
     for (const [nestedField, nestedList] of fieldLists) {
       if (!nestedField.startsWith(nestedPrefix)) continue;
@@ -849,10 +847,17 @@ function tryEmitStructuralInterfacePropertyDispatch(
       );
     }
     if (isRuntimeSoAInstance && converter.soaClasses.has(info.className)) {
-      const fieldList = converter.soaFieldLists
-        .get(info.className)
-        ?.get(property);
-      if (fieldList) {
+      const readableField = resolveSoAReadableField(
+        converter,
+        info.className,
+        property,
+      );
+      const fieldList = readableField
+        ? converter.soaFieldLists
+            .get(info.className)
+            ?.get(readableField.fieldName)
+        : undefined;
+      if (readableField && fieldList) {
         const indexVar = emitSoaHandleToIndex(
           converter,
           hdlVar,
@@ -864,13 +869,13 @@ function tryEmitStructuralInterfacePropertyDispatch(
           fieldList,
           indexVar,
           token,
-          createSoaSentinelValue(converter, resultType),
+          createSoaSentinelValue(converter, readableField.fieldType),
           true,
           info.className,
         );
         converter.emitCopyWithTracking(
           result,
-          converter.unwrapDataToken(token, resultType),
+          converter.unwrapDataToken(token, readableField.fieldType),
         );
       }
     } else {
@@ -1026,6 +1031,47 @@ function resolveSimpleGetterBackingField(getter: {
   const access = value as PropertyAccessExpressionNode;
   if (access.object.kind !== ASTNodeKind.ThisExpression) return null;
   return access.property;
+}
+
+function resolveSoAReadableField(
+  converter: ASTToTACConverter,
+  className: string,
+  property: string,
+):
+  | {
+      fieldName: string;
+      fieldType: TypeSymbol;
+      isGetter: boolean;
+    }
+  | undefined {
+  const resolved = resolveClassProperty(converter, className, property);
+  if (!resolved) {
+    const fieldType = converter.soaFieldTypes.get(className)?.get(property);
+    return fieldType
+      ? { fieldName: property, fieldType, isGetter: false }
+      : undefined;
+  }
+
+  if (!resolved.prop.isGetter) {
+    return {
+      fieldName: property,
+      fieldType: resolved.prop.type,
+      isGetter: false,
+    };
+  }
+
+  const backingField = resolveSimpleGetterBackingField(resolved.prop);
+  if (!backingField) return undefined;
+  const backingFieldType =
+    resolveClassProperty(converter, className, backingField)?.prop.type ??
+    converter.soaFieldTypes.get(className)?.get(backingField) ??
+    resolved.prop.getterReturnType ??
+    resolved.prop.type;
+  return {
+    fieldName: backingField,
+    fieldType: backingFieldType,
+    isGetter: true,
+  };
 }
 
 const NUMERIC_UDON_TYPES = new Set([
@@ -4766,13 +4812,10 @@ export function visitPropertyAccessExpression(
           if (untrackedPropType) {
             // SoA fast path: when ALL candidate instances belong to a single
             // SoA class, read the field from the per-field DataList at the
-            // handle index. No per-instance branching needed.
-            //
-            // Skipped for getters: they intentionally have no soaFieldLists
-            // entry (filtered out of collectAllInstanceFields). Per-arm
-            // tryInlineGetter handles them correctly in the dispatch below;
-            // entering the fast-path here would emit a misleading
-            // SoAFieldListMissing warning.
+            // handle index. No per-instance branching needed. Simple getters
+            // of the form `return this.<field>` can use the backing field's
+            // DataList; non-simple getters still fall through to per-arm
+            // tryInlineGetter below.
             const soaClassName = dispInstances[0][1].className;
             const allSameClass = dispInstances.every(
               ([, i]) => i.className === soaClassName,
@@ -4780,15 +4823,19 @@ export function visitPropertyAccessExpression(
             const allRuntimeSoA = dispInstances.every(([, i]) =>
               this.soaInstancePrefixes.has(i.prefix),
             );
+            const soaReadableField =
+              allSameClass && allRuntimeSoA && this.soaClasses.has(soaClassName)
+                ? resolveSoAReadableField(this, soaClassName, node.property)
+                : undefined;
             if (
-              !propertyIsGetter &&
+              soaReadableField &&
               allSameClass &&
               allRuntimeSoA &&
               this.soaClasses.has(soaClassName) &&
               this.soaFieldLists.has(soaClassName)
             ) {
               const fieldLists = this.soaFieldLists.get(soaClassName);
-              const fieldList = fieldLists?.get(node.property);
+              const fieldList = fieldLists?.get(soaReadableField.fieldName);
               if (fieldList) {
                 const hdlVar = normalizeOperandToInt32(this, object);
                 const indexVar = emitSoaHandleToIndex(
@@ -4802,11 +4849,14 @@ export function visitPropertyAccessExpression(
                   fieldList,
                   indexVar,
                   token,
-                  createSoaSentinelValue(this, untrackedPropType),
+                  createSoaSentinelValue(this, soaReadableField.fieldType),
                   true,
                   soaClassName,
                 );
-                const unwrapped = this.unwrapDataToken(token, untrackedPropType);
+                const unwrapped = this.unwrapDataToken(
+                  token,
+                  soaReadableField.fieldType,
+                );
                 const dispResult = createVariable(
                   `__uninst_prop_${this.tempCounter++}`,
                   untrackedPropType,
@@ -4817,19 +4867,21 @@ export function visitPropertyAccessExpression(
                   this,
                   dispResult.name,
                   soaClassName,
-                  node.property,
+                  soaReadableField.fieldName,
                   indexVar,
                 );
                 return dispResult;
               }
-              // SoA class property not in soaFieldLists — the fallthrough
-              // to static-handle dispatch below will always miss because
-              // SoA handles are dynamic counters, not static instanceIds.
-              this.warnAt(
-                node,
-                "SoAFieldListMissing",
-                `SoA class "${soaClassName}" has no DataList for property "${node.property}". D3 dispatch will fall through to static-handle comparison which cannot match dynamic SoA handles.`,
-              );
+              if (!soaReadableField.isGetter) {
+                // SoA class property not in soaFieldLists — the fallthrough
+                // to static-handle dispatch below will always miss because
+                // SoA handles are dynamic counters, not static instanceIds.
+                this.warnAt(
+                  node,
+                  "SoAFieldListMissing",
+                  `SoA class "${soaClassName}" has no DataList for property "${node.property}". D3 dispatch will fall through to static-handle comparison which cannot match dynamic SoA handles.`,
+                );
+              }
             }
 
             // Use the concrete inline field type for the dispatch result.

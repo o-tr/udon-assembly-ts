@@ -9,10 +9,14 @@ import { TACOptimizer } from "../../../src/transpiler/ir/optimizer/index.js";
 import { optimizeBlockLayout } from "../../../src/transpiler/ir/optimizer/passes/block_layout";
 import { sinkCode } from "../../../src/transpiler/ir/optimizer/passes/code_sinking";
 import { constantFolding } from "../../../src/transpiler/ir/optimizer/passes/constant_folding";
-import { propagateCopies } from "../../../src/transpiler/ir/optimizer/passes/copy_propagation";
+import {
+  propagateCopies,
+  propagateCopiesLocal,
+} from "../../../src/transpiler/ir/optimizer/passes/copy_propagation";
 import {
   deadCodeElimination,
   eliminateDeadStoresCFG,
+  eliminateOverwrittenPureProducersLocal,
 } from "../../../src/transpiler/ir/optimizer/passes/dead_code";
 import { simplifyDiamondPatterns } from "../../../src/transpiler/ir/optimizer/passes/diamond_simplification";
 import { eliminateFallthroughJumps } from "../../../src/transpiler/ir/optimizer/passes/fallthrough";
@@ -22,7 +26,10 @@ import { performLICM } from "../../../src/transpiler/ir/optimizer/passes/licm";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
 import { unswitchLoops } from "../../../src/transpiler/ir/optimizer/passes/loop_unswitching";
 import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
-import { sccpAndPrune } from "../../../src/transpiler/ir/optimizer/passes/sccp";
+import {
+  sccpAndPrune,
+  sccpLocal,
+} from "../../../src/transpiler/ir/optimizer/passes/sccp";
 import { optimizeStringConcatenation } from "../../../src/transpiler/ir/optimizer/passes/string_optimization";
 import { mergeTails } from "../../../src/transpiler/ir/optimizer/passes/tail_merging";
 import { optimizeVectorSwizzle } from "../../../src/transpiler/ir/optimizer/passes/vector_opts";
@@ -106,12 +113,99 @@ describe("optimizer passes", () => {
       expect(result.changed).toBe(false);
     });
 
+    it("propagateCopiesLocal rewrites temp copies within a basic block", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const t1 = createTemporary(1, PrimitiveTypes.int32);
+      const t2 = createTemporary(2, PrimitiveTypes.int32);
+      const instructions = [
+        new BinaryOpInstruction(
+          t0,
+          a,
+          "+",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+        new CopyInstruction(t1, t0),
+        new BinaryOpInstruction(
+          t2,
+          t1,
+          "+",
+          createConstant(2, PrimitiveTypes.int32),
+        ),
+        new ReturnInstruction(t2),
+      ];
+
+      const result = propagateCopiesLocal(instructions);
+      expect(result.changed).toBe(true);
+      expect(stringify(result.instructions)).toContain("t2 = t0 + 2");
+    });
+
+    it("eliminateOverwrittenPureProducersLocal removes only unused overwritten defs", () => {
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const t1 = createTemporary(1, PrimitiveTypes.int32);
+      const instructions = [
+        new AssignmentInstruction(t0, createConstant(1, PrimitiveTypes.int32)),
+        new AssignmentInstruction(t0, createConstant(2, PrimitiveTypes.int32)),
+        new AssignmentInstruction(t1, t0),
+        new AssignmentInstruction(t0, createConstant(3, PrimitiveTypes.int32)),
+        new ReturnInstruction(t1),
+      ];
+
+      const result = eliminateOverwrittenPureProducersLocal(instructions);
+      const text = stringify(result.instructions);
+      expect(result.changed).toBe(true);
+      expect(text).not.toContain("t0 = 1");
+      expect(text).toContain("t0 = 2");
+      expect(text).toContain("t0 = 3");
+    });
+
     it("sccpAndPrune returns changed: false on trivial input", () => {
       const a = createVariable("a", PrimitiveTypes.int32);
       const instructions = [new ReturnInstruction(a)];
 
       const result = sccpAndPrune(instructions);
       expect(result.changed).toBe(false);
+    });
+
+    it("sccpLocal propagates constants inside one basic block", () => {
+      const a = createVariable("a", PrimitiveTypes.int32);
+      const t0 = createTemporary(0, PrimitiveTypes.int32);
+      const instructions = [
+        new AssignmentInstruction(a, createConstant(3, PrimitiveTypes.int32)),
+        new BinaryOpInstruction(
+          t0,
+          a,
+          "+",
+          createConstant(4, PrimitiveTypes.int32),
+        ),
+        new ReturnInstruction(t0),
+      ];
+
+      const local = sccpLocal(instructions).instructions;
+      const folded = constantFolding(local).instructions;
+      expect(stringify(local)).toContain("t0 = 3 + 4");
+      expect(stringify(folded)).toContain("t0 = 7");
+    });
+
+    it("sccpLocal folds constant conditional jumps without pruning blocks", () => {
+      const t0 = createTemporary(0, PrimitiveTypes.boolean);
+      const done = createLabel("done");
+      const instructions = [
+        new AssignmentInstruction(
+          t0,
+          createConstant(true, PrimitiveTypes.boolean),
+        ),
+        new ConditionalJumpInstruction(t0, done),
+        new ReturnInstruction(createConstant(1, PrimitiveTypes.int32)),
+        new LabelInstruction(done),
+        new ReturnInstruction(createConstant(0, PrimitiveTypes.int32)),
+      ];
+
+      const result = sccpLocal(instructions);
+      const text = stringify(result.instructions);
+      expect(result.changed).toBe(true);
+      expect(text).not.toContain("ifFalse");
+      expect(text).toContain("done:");
     });
 
     it("sccpAndPrune removes conditional jump when temporary holds constant true", () => {

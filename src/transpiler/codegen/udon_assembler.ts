@@ -72,6 +72,11 @@ const STRING_TYPES = new Set(["String", "SystemString", "System.String"]);
 
 const BOOLEAN_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
 
+const omitInternalLabels = (): boolean =>
+  process.env.UDON_OMIT_INTERNAL_LABELS === "1";
+const minifyInternalSymbols = (): boolean =>
+  process.env.UDON_MINIFY_INTERNAL_SYMBOLS === "1";
+
 /**
  * Udon assembler - generates .uasm output
  */
@@ -263,6 +268,61 @@ export class UdonAssembler {
       return toUdonTypeNameWithArray(`System.${typeName}`);
     }
     return toUdonTypeNameWithArray(csharpType);
+  }
+
+  private buildInternalSymbolMap(
+    dataSection?: Array<[string, number, string, unknown]>,
+  ): Map<string, string> {
+    const map = new Map<string, string>();
+    if (!minifyInternalSymbols() || !dataSection) return map;
+
+    const sorted = [...dataSection].sort((a, b) => a[1] - b[1]);
+    let nextId = 0;
+    for (const [name] of sorted) {
+      if (!name.startsWith("__")) continue;
+      map.set(name, `__v${nextId++}`);
+    }
+    return map;
+  }
+
+  private formatSymbolName(
+    name: string,
+    internalSymbolMap: Map<string, string>,
+  ): string {
+    return internalSymbolMap.get(name) ?? name;
+  }
+
+  private formatPushInstruction(
+    inst: PushInstruction,
+    internalSymbolMap: Map<string, string>,
+  ): string {
+    const address =
+      typeof inst.address === "string"
+        ? this.formatSymbolName(inst.address, internalSymbolMap)
+        : inst.address;
+    return `    PUSH, ${address}`;
+  }
+
+  private formatExternInstruction(
+    inst: ExternInstruction,
+    internalSymbolMap: Map<string, string>,
+  ): string {
+    if (!inst.isSymbol) return inst.toString();
+    return `    EXTERN, ${this.formatSymbolName(inst.signature, internalSymbolMap)}`;
+  }
+
+  private shouldEmitLabel(
+    labelName: string,
+    canonicalLabel: string,
+    exportLabels?: Set<string>,
+  ): boolean {
+    const preserveAliasLabel =
+      isVrcEventLabel(labelName) || exportLabels?.has(labelName);
+    if (canonicalLabel !== labelName && !preserveAliasLabel) return false;
+    if (omitInternalLabels() && !preserveAliasLabel && labelName !== "_start") {
+      return false;
+    }
+    return true;
   }
 
   private classifyType(type: string): TypeClassification {
@@ -620,6 +680,7 @@ export class UdonAssembler {
       effectiveInstructions,
       exportLabels,
     );
+    const internalSymbolMap = this.buildInternalSymbolMap(effectiveData);
 
     // Data section
     lines.push(".data_start");
@@ -672,13 +733,14 @@ export class UdonAssembler {
           initialValue = JSON.stringify(resolvedValue);
         }
 
-        lines.push(`    ${name}: %${udonType}, ${initialValue}`);
+        const outputName = this.formatSymbolName(name, internalSymbolMap);
+        lines.push(`    ${outputName}: %${udonType}, ${initialValue}`);
 
         // internal variables should not be exported or synced
         if (!name.startsWith("__")) {
-          lines.push(`    .export ${name}`);
+          lines.push(`    .export ${outputName}`);
           const syncMode = syncModes?.get(name);
-          lines.push(`    .sync ${name}, ${syncMode ?? "none"}`);
+          lines.push(`    .sync ${outputName}, ${syncMode ?? "none"}`);
         }
       }
       lines.push("");
@@ -697,11 +759,7 @@ export class UdonAssembler {
         // Labels appear on their own line
         const labelName = (inst as LabelInstruction).name;
         const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
-        // Keep externally callable labels even when same-address labels are
-        // canonicalized; VRC events and exportLabels are part of the public ABI.
-        const preserveAliasLabel =
-          isVrcEventLabel(labelName) || exportLabels?.has(labelName);
-        if (canonicalLabel !== labelName && !preserveAliasLabel) {
+        if (!this.shouldEmitLabel(labelName, canonicalLabel, exportLabels)) {
           continue;
         }
         if (labelName === "_start") {
@@ -751,10 +809,16 @@ export class UdonAssembler {
           }
         }
       } else if (inst.kind === UdonInstructionKind.Push) {
-        const _pushInst = inst as PushInstruction;
-        // If address is a variable name from data section, keep it as-is
-        // Otherwise convert to address
-        lines.push(inst.toString());
+        lines.push(
+          this.formatPushInstruction(inst as PushInstruction, internalSymbolMap),
+        );
+      } else if (inst.kind === UdonInstructionKind.Extern) {
+        lines.push(
+          this.formatExternInstruction(
+            inst as ExternInstruction,
+            internalSymbolMap,
+          ),
+        );
       } else {
         lines.push(inst.toString());
       }
@@ -793,6 +857,7 @@ export class UdonAssembler {
       effectiveInstructions,
       exportLabels,
     );
+    const internalSymbolMap = this.buildInternalSymbolMap(effectiveData);
 
     const fd = fs.openSync(filePath, "w");
     let bytes = 0;
@@ -836,12 +901,13 @@ export class UdonAssembler {
             initialValue = JSON.stringify(value);
           }
 
-          writeLine(`    ${name}: %${udonType}, ${initialValue}`);
+          const outputName = this.formatSymbolName(name, internalSymbolMap);
+          writeLine(`    ${outputName}: %${udonType}, ${initialValue}`);
 
           if (!name.startsWith("__")) {
-            writeLine(`    .export ${name}`);
+            writeLine(`    .export ${outputName}`);
             const syncMode = syncModes?.get(name);
-            writeLine(`    .sync ${name}, ${syncMode ?? "none"}`);
+            writeLine(`    .sync ${outputName}, ${syncMode ?? "none"}`);
           }
         }
         writeLine();
@@ -856,9 +922,7 @@ export class UdonAssembler {
         if (inst.kind === UdonInstructionKind.Label) {
           const labelName = (inst as LabelInstruction).name;
           const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
-          const preserveAliasLabel =
-            isVrcEventLabel(labelName) || exportLabels?.has(labelName);
-          if (canonicalLabel !== labelName && !preserveAliasLabel) {
+          if (!this.shouldEmitLabel(labelName, canonicalLabel, exportLabels)) {
             continue;
           }
           if (labelName === "_start") {
@@ -907,6 +971,20 @@ export class UdonAssembler {
               writeLine("    JUMP_IF_FALSE, 0xFFFFFFFC");
             }
           }
+        } else if (inst.kind === UdonInstructionKind.Push) {
+          writeLine(
+            this.formatPushInstruction(
+              inst as PushInstruction,
+              internalSymbolMap,
+            ),
+          );
+        } else if (inst.kind === UdonInstructionKind.Extern) {
+          writeLine(
+            this.formatExternInstruction(
+              inst as ExternInstruction,
+              internalSymbolMap,
+            ),
+          );
         } else {
           writeLine(inst.toString());
         }

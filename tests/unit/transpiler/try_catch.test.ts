@@ -58,4 +58,33 @@ describe("try/catch expansion", () => {
 
     expect(tacText).toContain("goto catch_");
   });
+
+  it("runs finally before a break without heavy error-flag lowering", () => {
+    const parser = new TypeScriptParser();
+    const source = `
+      class Demo {
+        Start(): void {
+          while (true) {
+            try {
+              break;
+            } finally {
+              this.SendCustomEvent("Done");
+            }
+          }
+        }
+      }
+    `;
+    const ast = parser.parse(source);
+    const converter = new ASTToTACConverter(
+      parser.getSymbolTable(),
+      parser.getEnumRegistry(),
+    );
+    const tac = converter.convert(ast);
+    const tacText = stringify(tac);
+
+    expect(tacText).not.toContain("__error_flag_");
+    expect(tacText).toContain("finally_jump_while_end");
+    expect(tacText).toContain('SendCustomEvent__SystemString__SystemVoid(this, "Done")');
+    expect(tacText).toContain("goto while_end");
+  });
 });

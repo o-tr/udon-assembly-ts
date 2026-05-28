@@ -38,15 +38,18 @@ import { castChainFolding } from "./passes/cast_chain_folding.js";
 import { sinkCode } from "./passes/code_sinking.js";
 import { deduplicateConstants } from "./passes/constant_dedup.js";
 import { constantFolding } from "./passes/constant_folding.js";
-import { propagateCopies } from "./passes/copy_propagation.js";
+import {
+  propagateCopies,
+  propagateCopiesLocal,
+} from "./passes/copy_propagation.js";
 import {
   deadCodeElimination,
   eliminateDeadStoresCFG,
   eliminateDeadTemporaries,
+  eliminateOverwrittenPureProducersLocal,
   eliminateNoopCopies,
 } from "./passes/dead_code.js";
 import { simplifyDiamondPatterns } from "./passes/diamond_simplification.js";
-import { doubleNegationElimination } from "./passes/double_negation.js";
 import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
 import { globalValueNumbering } from "./passes/gvn.js";
 import { optimizeInductionVariables } from "./passes/induction.js";
@@ -55,12 +58,12 @@ import { computeRPO, performLICM } from "./passes/licm.js";
 import { optimizeLoopStructures } from "./passes/loop_opts.js";
 import { unswitchLoops } from "./passes/loop_unswitching.js";
 import { narrowTypes } from "./passes/narrow_type.js";
-import { negatedComparisonFusion } from "./passes/negated_comparison_fusion.js";
+import { booleanNegationFusion } from "./passes/negated_comparison_fusion.js";
 import { performPRE } from "./passes/pre.js";
 import { readonlyArrayFolding } from "./passes/readonly_array_folding.js";
 import { readonlyDataCollectionFolding } from "./passes/readonly_data_collection_folding.js";
 import { reassociate } from "./passes/reassociation.js";
-import { sccpAndPrune } from "./passes/sccp.js";
+import { sccpAndPrune, sccpLocal } from "./passes/sccp.js";
 import { buildSSA, deconstructSSA } from "./passes/ssa.js";
 import { optimizeStringConcatenation } from "./passes/string_optimization.js";
 import { mergeTails } from "./passes/tail_merging.js";
@@ -77,6 +80,67 @@ import { optimizeVectorSwizzle } from "./passes/vector_opts.js";
 const SSA_REACHABLE_BLOCK_LIMIT = 50_000;
 // Tighter limit for the second SSA pass to avoid timeout on large codebases
 const SSA_REACHABLE_BLOCK_LIMIT_SECOND = 10_000;
+const SSA_INSTRUCTION_LIMIT = 500_000;
+const SCCP_INSTRUCTION_LIMIT = 500_000;
+const READONLY_DATA_COLLECTION_FOLDING_INSTRUCTION_LIMIT = 500_000;
+const CFG_HEAVY_PASS_INSTRUCTION_LIMIT = 500_000;
+
+function resolveSccpInstructionLimit(): number {
+  const raw = process.env.UDON_SCCP_INSTRUCTION_LIMIT;
+  if (raw === undefined || raw.trim() === "") return SCCP_INSTRUCTION_LIMIT;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : SCCP_INSTRUCTION_LIMIT;
+}
+
+function resolveSsaInstructionLimit(): number {
+  const raw = process.env.UDON_SSA_INSTRUCTION_LIMIT;
+  if (raw === undefined || raw.trim() === "") return SSA_INSTRUCTION_LIMIT;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : SSA_INSTRUCTION_LIMIT;
+}
+
+function resolveReadonlyDataCollectionFoldingInstructionLimit(): number {
+  const raw = process.env.UDON_READONLY_DATA_COLLECTION_FOLDING_LIMIT;
+  if (raw === undefined || raw.trim() === "") {
+    return READONLY_DATA_COLLECTION_FOLDING_INSTRUCTION_LIMIT;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : READONLY_DATA_COLLECTION_FOLDING_INSTRUCTION_LIMIT;
+}
+
+function resolveCfgHeavyPassInstructionLimit(): number {
+  const raw = process.env.UDON_CFG_HEAVY_PASS_INSTRUCTION_LIMIT;
+  if (raw === undefined || raw.trim() === "") {
+    return CFG_HEAVY_PASS_INSTRUCTION_LIMIT;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : CFG_HEAVY_PASS_INSTRUCTION_LIMIT;
+}
+
+function shouldSkipLargeInputPass(
+  passName: string,
+  currentInstructionCount: number,
+  inputInstructionCount: number,
+  limit: number,
+): boolean {
+  const guardInstructionCount = Math.max(
+    currentInstructionCount,
+    inputInstructionCount,
+  );
+  if (guardInstructionCount <= limit) return false;
+  console.warn(
+    `Skipping ${passName}: ${guardInstructionCount} input/current instructions exceeds limit of ${limit}`,
+  );
+  return true;
+}
 
 /** Pre-computed numeric index for each TACInstructionKind (avoids hashing kind strings per instruction). */
 const instructionKindIndex: Record<string, number> = Object.fromEntries(
@@ -412,6 +476,7 @@ export class TACOptimizer {
   ): TACInstruction[] {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
+    const inputInstructionCount = instructions.length;
 
     const edgeLabelSeed: EdgeLabelSeed = { value: 0 };
 
@@ -457,16 +522,53 @@ export class TACOptimizer {
         return cachedCFG;
       };
 
+      let ranPreLocalCleanup = false;
+
       // Apply constant folding
       run(timed("constantFolding", () => constantFolding(next)));
       // Coalesce string concatenation chains
       run(timed("stringConcat", () => optimizeStringConcatenation(next)));
-      // Apply SCCP and prune unreachable blocks (preserve exposedLabels)
-      run(
-        timed("sccpAndPrune", () =>
-          sccpAndPrune(next, exposedLabels, { cachedCFG: getCFG() }),
-        ),
-      );
+      run(timed("sccpLocal", () => sccpLocal(next, { cachedCFG: getCFG() })));
+      run(timed("constantFolding.afterSccpLocal", () => constantFolding(next)));
+      // On huge generated TAC, shrink with block-local passes before any
+      // global/fixpoint-heavy pass has a chance to allocate large state.
+      if (
+        Math.max(next.length, inputInstructionCount) >
+        resolveCfgHeavyPassInstructionLimit()
+      ) {
+        ranPreLocalCleanup = true;
+        run(
+          timed("preCopyPropagationLocal", () =>
+            propagateCopiesLocal(next, { cachedCFG: getCFG() }),
+          ),
+        );
+        run(
+          timed("preDeadStoresLocal", () =>
+            eliminateOverwrittenPureProducersLocal(next, {
+              cachedCFG: getCFG(),
+            }),
+          ),
+        );
+      }
+      // Apply SCCP and prune unreachable blocks (preserve exposedLabels).
+      // SCCP's current solver is expensive on very large generated TAC; skip
+      // it above a conservative instruction-count cap so optimization can
+      // still complete and later linear/local passes can run.
+      const sccpInstructionLimit = resolveSccpInstructionLimit();
+      if (
+        !shouldSkipLargeInputPass(
+          "SCCP",
+          next.length,
+          inputInstructionCount,
+          sccpInstructionLimit,
+        )
+      ) {
+        run(
+          timed("sccpAndPrune", () =>
+            sccpAndPrune(next, exposedLabels, { cachedCFG: getCFG() }),
+          ),
+        );
+      }
       // Fold readonly native arrays into constants
       run(
         timed("readonlyArrayFolding", () =>
@@ -474,21 +576,26 @@ export class TACOptimizer {
         ),
       );
       // Fold readonly DataList/DataDictionary into constants
-      run(
-        timed("readonlyDataCollectionFolding", () =>
-          readonlyDataCollectionFolding(next, exposedLabels),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "readonlyDataCollectionFolding",
+          next.length,
+          inputInstructionCount,
+          resolveReadonlyDataCollectionFoldingInstructionLimit(),
+        )
+      ) {
+        run(
+          timed("readonlyDataCollectionFolding", () =>
+            readonlyDataCollectionFolding(next, exposedLabels),
+          ),
+        );
+      }
       // Apply boolean simplifications
       run(timed("booleanSimplification", () => booleanSimplification(next)));
       // Simplify diamond patterns (ternary true/false → copy of condition)
       run(timed("diamondSimplification", () => simplifyDiamondPatterns(next)));
-      // Fuse negated comparisons
-      run(
-        timed("negatedComparisonFusion", () => negatedComparisonFusion(next)),
-      );
-      // Eliminate double negations
-      run(timed("doubleNegation", () => doubleNegationElimination(next)));
+      // Fuse negated comparisons and eliminate double negations in one scan.
+      run(timed("booleanNegationFusion", () => booleanNegationFusion(next)));
       // Apply algebraic simplifications and redundant cast removal
       run(
         timed("algebraicSimplification", () => algebraicSimplification(next)),
@@ -501,48 +608,60 @@ export class TACOptimizer {
       run(timed("reassociate", () => reassociate(next)));
       // SSA window: build SSA, run SSA-aware passes, then deconstruct
       if (runExpensivePasses) {
-        // Check reachable block count before SSA to avoid OOM on huge CFGs.
-        // Use a tighter limit on the second pass to prevent timeouts.
-        const ssaBlockLimit =
-          iteration === 0
-            ? SSA_REACHABLE_BLOCK_LIMIT
-            : SSA_REACHABLE_BLOCK_LIMIT_SECOND;
-        const ssaCfg = getCFG();
-        const rpo = computeRPO(ssaCfg);
-        if (rpo.length > ssaBlockLimit) {
-          console.warn(
-            `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${ssaBlockLimit}`,
-          );
+        const ssaInstructionLimit = resolveSsaInstructionLimit();
+        if (
+          shouldSkipLargeInputPass(
+            "SSA window",
+            next.length,
+            inputInstructionCount,
+            ssaInstructionLimit,
+          )
+        ) {
+          // The non-SSA lightweight/local passes above and below still run.
         } else {
-          const preSSAInstructions = next;
-          const preSSALen = preSSAInstructions.length;
-          const ssa = timed("buildSSA", () =>
-            buildSSA(next, { cachedCFG: getCFG() }),
-          );
-          const ssaPre = timed("pre(ssa)", () =>
-            performPRE(ssa.instructions, { useSSA: true }),
-          );
-          const ssaGvn = timed("gvn(ssa)", () =>
-            globalValueNumbering(ssaPre.instructions, {
-              useSSA: true,
-            }),
-          );
-          const ssaDecon = timed("deconstructSSA", () =>
-            deconstructSSA(ssaGvn.instructions, {
-              edgeLabelSeed,
-            }),
-          );
-          const postSSAInstructions = ssaDecon.instructions;
-          if (postSSAInstructions.length > preSSALen) {
-            next = preSSAInstructions;
+          // Check reachable block count before SSA to avoid OOM on huge CFGs.
+          // Use a tighter limit on the second pass to prevent timeouts.
+          const ssaBlockLimit =
+            iteration === 0
+              ? SSA_REACHABLE_BLOCK_LIMIT
+              : SSA_REACHABLE_BLOCK_LIMIT_SECOND;
+          const ssaCfg = getCFG();
+          const rpo = computeRPO(ssaCfg);
+          if (rpo.length > ssaBlockLimit) {
+            console.warn(
+              `Skipping SSA window: ${rpo.length} reachable blocks exceeds limit of ${ssaBlockLimit}`,
+            );
           } else {
-            next = postSSAInstructions;
-            if (next !== preSSAInstructions) {
-              anyPassChanged = true;
+            const preSSAInstructions = next;
+            const preSSALen = preSSAInstructions.length;
+            const ssa = timed("buildSSA", () =>
+              buildSSA(next, { cachedCFG: getCFG() }),
+            );
+            const ssaPre = timed("pre(ssa)", () =>
+              performPRE(ssa.instructions, { useSSA: true }),
+            );
+            const ssaGvn = timed("gvn(ssa)", () =>
+              globalValueNumbering(ssaPre.instructions, {
+                useSSA: true,
+              }),
+            );
+            const ssaDecon = timed("deconstructSSA", () =>
+              deconstructSSA(ssaGvn.instructions, {
+                edgeLabelSeed,
+              }),
+            );
+            const postSSAInstructions = ssaDecon.instructions;
+            if (postSSAInstructions.length > preSSALen) {
+              next = preSSAInstructions;
+            } else {
+              next = postSSAInstructions;
+              if (next !== preSSAInstructions) {
+                anyPassChanged = true;
+              }
             }
+            prevLen = next.length;
+            cachedCFG = null;
           }
-          prevLen = next.length;
-          cachedCFG = null;
         }
       }
       // Optimize tail calls (call followed immediately by return)
@@ -556,44 +675,130 @@ export class TACOptimizer {
       // Remove no-op copies/assignments
       run(timed("noopCopies", () => eliminateNoopCopies(next)));
       // Propagate copies within basic blocks
-      run(
-        timed("copyPropagation", () =>
-          propagateCopies(next, { cachedCFG: getCFG() }),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "copyPropagation",
+          next.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        run(
+          timed("copyPropagation", () =>
+            propagateCopies(next, { cachedCFG: getCFG() }),
+          ),
+        );
+      } else if (!ranPreLocalCleanup) {
+        run(
+          timed("copyPropagationLocal", () =>
+            propagateCopiesLocal(next, { cachedCFG: getCFG() }),
+          ),
+        );
+      }
       // Remove dead stores using CFG liveness
-      run(
-        timed("deadStoresCFG", () =>
-          eliminateDeadStoresCFG(next, { cachedCFG: getCFG() }),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "deadStoresCFG",
+          next.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        run(
+          timed("deadStoresCFG", () =>
+            eliminateDeadStoresCFG(next, { cachedCFG: getCFG() }),
+          ),
+        );
+      } else if (!ranPreLocalCleanup) {
+        run(
+          timed("deadStoresLocal", () =>
+            eliminateOverwrittenPureProducersLocal(next, {
+              cachedCFG: getCFG(),
+            }),
+          ),
+        );
+      }
       // Apply dead code elimination
       run(timed("dce", () => deadCodeElimination(next)));
       // Sink computations closer to their only use
-      run(timed("sink", () => sinkCode(next, { cachedCFG: getCFG() })));
+      if (
+        !shouldSkipLargeInputPass(
+          "sink",
+          next.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        run(timed("sink", () => sinkCode(next, { cachedCFG: getCFG() })));
+      }
       // Reorder basic blocks to reduce jumps
-      run(
-        timed("blockLayout", () =>
-          optimizeBlockLayout(next, { cachedCFG: getCFG() }),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "blockLayout",
+          next.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        run(
+          timed("blockLayout", () =>
+            optimizeBlockLayout(next, { cachedCFG: getCFG() }),
+          ),
+        );
+      }
       // Remove jumps that fall through to the next label
       run(timed("fallthrough", () => eliminateFallthroughJumps(next)));
       // Remove redundant jumps and thread jump chains
       run(timed("simplifyJumps", () => simplifyJumps(next, exposedLabels)));
       if (runExpensivePasses) {
         // Hoist loop-invariant code
-        run(timed("licm", () => performLICM(next, { cachedCFG: getCFG() })));
+        if (
+          !shouldSkipLargeInputPass(
+            "licm",
+            next.length,
+            inputInstructionCount,
+            resolveCfgHeavyPassInstructionLimit(),
+          )
+        ) {
+          run(timed("licm", () => performLICM(next, { cachedCFG: getCFG() })));
+        }
         // Unswitch loops with loop-invariant conditionals
-        run(timed("unswitch", () => unswitchLoops(next)));
+        if (
+          !shouldSkipLargeInputPass(
+            "unswitch",
+            next.length,
+            inputInstructionCount,
+            resolveCfgHeavyPassInstructionLimit(),
+          )
+        ) {
+          run(timed("unswitch", () => unswitchLoops(next)));
+        }
         // Optimize simple induction variables
-        run(
-          timed("induction", () =>
-            optimizeInductionVariables(next, { cachedCFG: getCFG() }),
-          ),
-        );
+        if (
+          !shouldSkipLargeInputPass(
+            "induction",
+            next.length,
+            inputInstructionCount,
+            resolveCfgHeavyPassInstructionLimit(),
+          )
+        ) {
+          run(
+            timed("induction", () =>
+              optimizeInductionVariables(next, { cachedCFG: getCFG() }),
+            ),
+          );
+        }
         // Unroll simple fixed-count loops
-        run(timed("loopStructures", () => optimizeLoopStructures(next)));
+        if (
+          !shouldSkipLargeInputPass(
+            "loopStructures",
+            next.length,
+            inputInstructionCount,
+            resolveCfgHeavyPassInstructionLimit(),
+          )
+        ) {
+          run(timed("loopStructures", () => optimizeLoopStructures(next)));
+        }
         // Fold scalar Vector3 updates into vector ops
         run(timed("vectorSwizzle", () => optimizeVectorSwizzle(next)));
       }
@@ -645,25 +850,52 @@ export class TACOptimizer {
       runPost(timed("dedupConstants", () => deduplicateConstants(optimized)));
 
       // Apply copy-on-write temporary reuse to reduce heap usage
-      runPost(
-        timed("cowTemporaries", () =>
-          copyOnWriteTemporaries(optimized, { cachedCFG: getPostCFG() }),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "cowTemporaries",
+          optimized.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        runPost(
+          timed("cowTemporaries", () =>
+            copyOnWriteTemporaries(optimized, { cachedCFG: getPostCFG() }),
+          ),
+        );
+      }
 
       // Reuse temporary variables to reduce heap usage
-      runPost(
-        timed("reuseTemporaries", () =>
-          reuseTemporaries(optimized, { cachedCFG: getPostCFG() }),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "reuseTemporaries",
+          optimized.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        runPost(
+          timed("reuseTemporaries", () =>
+            reuseTemporaries(optimized, { cachedCFG: getPostCFG() }),
+          ),
+        );
+      }
 
       // Reuse local variables when lifetimes do not overlap
-      runPost(
-        timed("reuseLocalVariables", () =>
-          reuseLocalVariables(optimized, { cachedCFG: getPostCFG() }),
-        ),
-      );
+      if (
+        !shouldSkipLargeInputPass(
+          "reuseLocalVariables",
+          optimized.length,
+          inputInstructionCount,
+          resolveCfgHeavyPassInstructionLimit(),
+        )
+      ) {
+        runPost(
+          timed("reuseLocalVariables", () =>
+            reuseLocalVariables(optimized, { cachedCFG: getPostCFG() }),
+          ),
+        );
+      }
     }
 
     // Final label integrity check after all passes

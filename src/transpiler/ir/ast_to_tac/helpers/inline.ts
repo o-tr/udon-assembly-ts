@@ -44,6 +44,7 @@ import {
   type NullCoalescingExpressionNode,
   type ObjectLiteralExpressionNode,
   type OptionalChainingExpressionNode,
+  type ProgramNode,
   type PropertyAccessExpressionNode,
   type PropertyDeclarationNode,
   type ReturnStatementNode,
@@ -127,8 +128,8 @@ export interface OutlinedMethodState {
   returnSiteIdxVarName: string;
   returnSites: Array<{ index: number; labelName: string }>;
   nextReturnSiteIndex: number;
-  /** Index of the JUMP(dispatchLabel) instruction at the end of the outlined body. */
-  bodyReturnJumpIdx: number;
+  /** JUMP(dispatchLabel) instruction at the end of the outlined body. */
+  bodyReturnJump: UnconditionalJumpInstruction;
   method: {
     parameters: Array<{
       name: string;
@@ -142,6 +143,17 @@ export interface OutlinedMethodState {
   className: string;
   methodName: string;
   instancePrefix: string | undefined;
+  receiverCopy?:
+    | {
+        className: string;
+        sharedPrefix: string;
+      }
+    | undefined;
+  paramFieldCopies?: Array<{
+    paramIndex: number;
+    paramName: string;
+    className: string;
+  }>;
 }
 
 type InlineInitializerState = NonNullable<
@@ -163,6 +175,214 @@ function outlineMapKey(
   return instancePrefix
     ? `${kind}:${declaringClassName}.${methodName}:${instancePrefix}`
     : `${kind}:${declaringClassName}.${methodName}`;
+}
+
+function shouldShareInstanceOutline(instancePrefix: string | undefined): boolean {
+  return (
+    instancePrefix !== undefined &&
+    process.env.UDON_SHARED_INSTANCE_OUTLINE === "1"
+  );
+}
+
+function sharedInstanceOutlineMapKey(
+  declaringClassName: string,
+  className: string,
+  methodName: string,
+): string {
+  return `inst-shared:${declaringClassName}.${methodName}:${className}`;
+}
+
+function sharedInstanceOutlinePrefix(
+  declaringClassName: string,
+  className: string,
+  methodName: string,
+): string {
+  return `__outline_receiver_${sanitizeIdentifierToken(
+    `${declaringClassName}_${className}_${methodName}`,
+  )}`;
+}
+
+function instanceOutlineMapKey(
+  declaringClassName: string,
+  className: string,
+  methodName: string,
+  instancePrefix: string | undefined,
+): string {
+  return shouldShareInstanceOutline(instancePrefix)
+    ? sharedInstanceOutlineMapKey(declaringClassName, className, methodName)
+    : outlineMapKey("inst", declaringClassName, methodName, instancePrefix);
+}
+
+function hasMetadataRelevantInlineAllocation(node: ASTNode | undefined): boolean {
+  if (!node) return false;
+  if (node.kind === ASTNodeKind.ObjectLiteralExpression) return true;
+  if (node.kind === ASTNodeKind.CallExpression) {
+    const call = node as CallExpressionNode;
+    if (call.isNew) return true;
+    if (hasMetadataRelevantInlineAllocation(call.callee)) return true;
+    return call.arguments.some((arg) => hasMetadataRelevantInlineAllocation(arg));
+  }
+
+  switch (node.kind) {
+    case ASTNodeKind.Program:
+      return (node as ProgramNode).statements.some(
+        hasMetadataRelevantInlineAllocation,
+      );
+    case ASTNodeKind.BlockStatement:
+      return (node as BlockStatementNode).statements.some(
+        hasMetadataRelevantInlineAllocation,
+      );
+    case ASTNodeKind.VariableDeclaration:
+      return hasMetadataRelevantInlineAllocation(
+        (node as VariableDeclarationNode).initializer,
+      );
+    case ASTNodeKind.ExpressionStatement:
+      return hasMetadataRelevantInlineAllocation(
+        (node as ExpressionStatementNode).expression,
+      );
+    case ASTNodeKind.ReturnStatement:
+      return hasMetadataRelevantInlineAllocation(
+        (node as ReturnStatementNode).value,
+      );
+    case ASTNodeKind.BinaryExpression: {
+      const expr = node as BinaryExpressionNode;
+      return (
+        hasMetadataRelevantInlineAllocation(expr.left) ||
+        hasMetadataRelevantInlineAllocation(expr.right)
+      );
+    }
+    case ASTNodeKind.AssignmentExpression: {
+      const expr = node as AssignmentExpressionNode;
+      return (
+        hasMetadataRelevantInlineAllocation(expr.target) ||
+        hasMetadataRelevantInlineAllocation(expr.value)
+      );
+    }
+    case ASTNodeKind.UnaryExpression:
+      return hasMetadataRelevantInlineAllocation(
+        (node as UnaryExpressionNode).operand,
+      );
+    case ASTNodeKind.UpdateExpression:
+      return hasMetadataRelevantInlineAllocation(
+        (node as UpdateExpressionNode).operand,
+      );
+    case ASTNodeKind.ConditionalExpression: {
+      const expr = node as ConditionalExpressionNode;
+      return (
+        hasMetadataRelevantInlineAllocation(expr.condition) ||
+        hasMetadataRelevantInlineAllocation(expr.whenTrue) ||
+        hasMetadataRelevantInlineAllocation(expr.whenFalse)
+      );
+    }
+    case ASTNodeKind.NullCoalescingExpression: {
+      const expr = node as NullCoalescingExpressionNode;
+      return (
+        hasMetadataRelevantInlineAllocation(expr.left) ||
+        hasMetadataRelevantInlineAllocation(expr.right)
+      );
+    }
+    case ASTNodeKind.PropertyAccessExpression:
+      return hasMetadataRelevantInlineAllocation(
+        (node as PropertyAccessExpressionNode).object,
+      );
+    case ASTNodeKind.ArrayAccessExpression: {
+      const expr = node as ArrayAccessExpressionNode;
+      return (
+        hasMetadataRelevantInlineAllocation(expr.array) ||
+        hasMetadataRelevantInlineAllocation(expr.index)
+      );
+    }
+    case ASTNodeKind.ArrayLiteralExpression:
+      return (node as ArrayLiteralExpressionNode).elements.some(
+        (element) => hasMetadataRelevantInlineAllocation(element.value),
+      );
+    case ASTNodeKind.DeleteExpression:
+      return hasMetadataRelevantInlineAllocation((node as DeleteExpressionNode).target);
+    case ASTNodeKind.AsExpression:
+      return hasMetadataRelevantInlineAllocation((node as AsExpressionNode).expression);
+    case ASTNodeKind.OptionalChainingExpression:
+      return hasMetadataRelevantInlineAllocation(
+        (node as OptionalChainingExpressionNode).object,
+      );
+    case ASTNodeKind.TemplateExpression:
+      return (node as TemplateExpressionNode).parts.some((part) =>
+        part.kind === "text"
+          ? false
+          : hasMetadataRelevantInlineAllocation(part.expression),
+      );
+    case ASTNodeKind.IfStatement: {
+      const stmt = node as IfStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.condition) ||
+        hasMetadataRelevantInlineAllocation(stmt.thenBranch) ||
+        hasMetadataRelevantInlineAllocation(stmt.elseBranch)
+      );
+    }
+    case ASTNodeKind.WhileStatement: {
+      const stmt = node as WhileStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.condition) ||
+        hasMetadataRelevantInlineAllocation(stmt.body)
+      );
+    }
+    case ASTNodeKind.DoWhileStatement: {
+      const stmt = node as DoWhileStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.body) ||
+        hasMetadataRelevantInlineAllocation(stmt.condition)
+      );
+    }
+    case ASTNodeKind.ForStatement: {
+      const stmt = node as ForStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.initializer) ||
+        hasMetadataRelevantInlineAllocation(stmt.condition) ||
+        hasMetadataRelevantInlineAllocation(stmt.incrementor) ||
+        hasMetadataRelevantInlineAllocation(stmt.body)
+      );
+    }
+    case ASTNodeKind.ForOfStatement: {
+      const stmt = node as ForOfStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.iterable) ||
+        hasMetadataRelevantInlineAllocation(stmt.body)
+      );
+    }
+    case ASTNodeKind.SwitchStatement: {
+      const stmt = node as SwitchStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.expression) ||
+        stmt.cases.some((c) =>
+          c.statements.some(hasMetadataRelevantInlineAllocation),
+        )
+      );
+    }
+    case ASTNodeKind.ThrowStatement:
+      return hasMetadataRelevantInlineAllocation(
+        (node as ThrowStatementNode).expression,
+      );
+    case ASTNodeKind.TryCatchStatement: {
+      const stmt = node as TryCatchStatementNode;
+      return (
+        hasMetadataRelevantInlineAllocation(stmt.tryBody) ||
+        hasMetadataRelevantInlineAllocation(stmt.catchBody) ||
+        hasMetadataRelevantInlineAllocation(stmt.finallyBody)
+      );
+    }
+    case ASTNodeKind.FunctionExpression:
+      return hasMetadataRelevantInlineAllocation((node as FunctionExpressionNode).body);
+    default:
+      return false;
+  }
+}
+
+function createMetadataOnlyInlineResult(
+  converter: ASTToTACConverter,
+  returnType: TypeSymbol,
+): TACOperand | null {
+  const resolvedReturnType = resolveInlineClassType(converter, returnType);
+  if (resolvedReturnType === PrimitiveTypes.void) return null;
+  return converter.newTemp(resolvedReturnType);
 }
 
 /**
@@ -2963,8 +3183,15 @@ export function visitInlineStaticMethodCall(
       return result;
     }
     // When bodyInstr is already set (second+ call site in pass 1), fall
-    // through to the normal inline path so metadata like soaClasses is
-    // still collected.
+    // through only when the body can allocate inline metadata (new inline
+    // classes / structural object literals). Pure computational helpers do
+    // not need to be walked again during pass 1.
+    if (
+      process.env.UDON_FAST_METADATA_PASS === "1" &&
+      !hasMetadataRelevantInlineAllocation(method.body)
+    ) {
+      return createMetadataOnlyInlineResult(this, method.returnType);
+    }
   } else {
     // Pass-2: reuse cached selfCallCount from pass-1 if available.
     const infoKey = outlineMapKey(
@@ -3950,6 +4177,10 @@ function checkOutlineIneligible(
   if (hasCollectionParam(params) && hasNestedCall(body)) {
     return true;
   }
+  if (process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS === "1") {
+    converter.outlineIneligibleCache.set(body, false);
+    return false;
+  }
   for (const param of params) {
     const structuralParam = structuralInterfaceForType(converter, param.type);
     if (!structuralParam || structuralParam.methods.size > 0) continue;
@@ -4005,6 +4236,158 @@ function hasNestedCall(body: BlockStatementNode): boolean {
   return found;
 }
 
+function collectInlineInstanceFieldProperties(
+  converter: ASTToTACConverter,
+  className: string,
+): PropertyDeclarationNode[] {
+  const fields: PropertyDeclarationNode[] = [];
+  const seen = new Set<string>();
+  const chain: ClassDeclarationNode[] = [];
+  let current = resolveClassNode(converter, className);
+  while (current && !seen.has(current.name)) {
+    seen.add(current.name);
+    chain.push(current);
+    current = current.baseClass
+      ? resolveClassNode(converter, current.baseClass)
+      : undefined;
+  }
+  for (const classNode of chain.reverse()) {
+    for (const prop of classNode.properties) {
+      if (prop.isStatic || prop.isGetter) continue;
+      const existingIndex = fields.findIndex((field) => field.name === prop.name);
+      if (existingIndex >= 0) {
+        fields[existingIndex] = prop;
+      } else {
+        fields.push(prop);
+      }
+    }
+  }
+  return fields;
+}
+
+function emitInlineReceiverFieldCopies(
+  converter: ASTToTACConverter,
+  className: string,
+  fromPrefix: string,
+  toPrefix: string,
+): void {
+  for (const prop of collectInlineInstanceFieldProperties(converter, className)) {
+    converter.emitCopyWithTracking(
+      createVariable(`${toPrefix}_${prop.name}`, prop.type),
+      createVariable(`${fromPrefix}_${prop.name}`, prop.type),
+    );
+  }
+}
+
+function inlineClassNameForType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): string | undefined {
+  const resolvedType = resolveInlineClassType(converter, type);
+  if (
+    resolvedType instanceof ClassTypeSymbol &&
+    resolveClassNode(converter, resolvedType.name) !== undefined &&
+    !converter.udonBehaviourClasses.has(resolvedType.name)
+  ) {
+    return resolvedType.name;
+  }
+  if (
+    type instanceof ClassTypeSymbol &&
+    resolveClassNode(converter, type.name) !== undefined &&
+    !converter.udonBehaviourClasses.has(type.name)
+  ) {
+    return type.name;
+  }
+  return undefined;
+}
+
+function collectOutlineParamFieldCopies(
+  converter: ASTToTACConverter,
+  params: ReadonlyArray<{ name: string; type: TypeSymbol }>,
+): OutlinedMethodState["paramFieldCopies"] {
+  if (process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS !== "1") return undefined;
+  const copies: NonNullable<OutlinedMethodState["paramFieldCopies"]> = [];
+  for (let i = 0; i < params.length; i++) {
+    const className = inlineClassNameForType(converter, params[i].type);
+    if (!className) continue;
+    copies.push({
+      paramIndex: i,
+      paramName: params[i].name,
+      className,
+    });
+  }
+  return copies.length > 0 ? copies : undefined;
+}
+
+function resolveOutlineArgInlineInstance(
+  converter: ASTToTACConverter,
+  arg: TACOperand | undefined,
+  paramType: TypeSymbol,
+): { prefix: string; className: string } | undefined {
+  if (!arg) return undefined;
+  const key = operandTrackingKey(arg);
+  const tracked = key ? converter.resolveInlineInstance(key) : undefined;
+  if (tracked) return tracked;
+  if (arg.kind !== TACOperandKind.Variable) return undefined;
+  const argVar = arg as VariableOperand;
+  const isHeapPrefix = HEAP_INSTANCE_PREFIXES.some((p) =>
+    argVar.name.startsWith(p),
+  );
+  if (!isHeapPrefix) return undefined;
+  const argTypeName = inlineClassNameForType(
+    converter,
+    converter.getOperandType(arg),
+  );
+  const paramTypeName = inlineClassNameForType(converter, paramType);
+  const className = argTypeName ?? paramTypeName;
+  return className ? { prefix: argVar.name, className } : undefined;
+}
+
+function bindOutlineBodyInlineParamFields(
+  converter: ASTToTACConverter,
+  paramFieldCopies: OutlinedMethodState["paramFieldCopies"],
+): void {
+  if (!paramFieldCopies) return;
+  for (const param of paramFieldCopies) {
+    converter.inlineInstanceMap.set(param.paramName, {
+      prefix: param.paramName,
+      className: param.className,
+    });
+  }
+}
+
+function emitOutlineParamFieldCopies(
+  converter: ASTToTACConverter,
+  state: OutlinedMethodState,
+  args: TACOperand[],
+  direction: "in" | "out",
+): void {
+  if (!state.paramFieldCopies) return;
+  for (const param of state.paramFieldCopies) {
+    const argInfo = resolveOutlineArgInlineInstance(
+      converter,
+      args[param.paramIndex],
+      state.method.parameters[param.paramIndex]?.type ?? ObjectType,
+    );
+    if (!argInfo) continue;
+    if (direction === "in") {
+      emitInlineReceiverFieldCopies(
+        converter,
+        param.className,
+        argInfo.prefix,
+        param.paramName,
+      );
+    } else {
+      emitInlineReceiverFieldCopies(
+        converter,
+        param.className,
+        param.paramName,
+        argInfo.prefix,
+      );
+    }
+  }
+}
+
 /**
  * Emit the shared body of a non-recursive outlined method (static or instance).
  * Called once (first encounter in pass 2) from inlineResolvedMethodBody.
@@ -4015,9 +4398,11 @@ function emitInlineOutlinedMethodBody(
   methodName: string,
   method: MethodDeclarationNode,
   args: TACOperand[],
-  instancePrefix: string | undefined,
+  bodyInstancePrefix: string | undefined,
+  callSiteInstancePrefix: string | undefined,
   declaringClassName: string,
   inlineKey: string,
+  outlineKey: string,
 ): TACOperand {
   let returnType: TypeSymbol = method.returnType;
   returnType = resolveInlineClassType(converter, returnType);
@@ -4030,8 +4415,10 @@ function emitInlineOutlinedMethodBody(
     args,
     inlineKey,
     declaringClassName,
-    instancePrefix,
+    bodyInstancePrefix,
+    callSiteInstancePrefix,
     "inst",
+    outlineKey,
   );
 }
 
@@ -4059,7 +4446,9 @@ function emitInlineOutlinedStaticMethod(
     inlineKey,
     declaringClassName,
     undefined,
+    undefined,
     "static",
+    outlineMapKey("static", declaringClassName, methodName, undefined),
   );
 }
 
@@ -4073,16 +4462,13 @@ function emitInlineOutlinedBody(
   inlineKey: string,
   declaringClassName: string,
   instancePrefix: string | undefined,
+  callSiteInstancePrefix: string | undefined,
   kind: "static" | "inst",
+  outlineKey: string,
 ): TACOperand {
   const { effectiveReturnType, isErasedReturn } =
     resolveInlineReturnType(returnType);
-  const uniqueKey = outlineMapKey(
-    kind,
-    declaringClassName,
-    methodName,
-    instancePrefix,
-  );
+  const uniqueKey = outlineKey;
   const sanitizedKey = sanitizeIdentifierToken(uniqueKey);
   const prefix = `__outline_${sanitizedKey}`;
   const returnSiteIdxVarName = `${prefix}_returnSiteIdx`;
@@ -4098,6 +4484,12 @@ function emitInlineOutlinedBody(
   const dispatchLabel = converter.newLabel("outline_dispatch");
   const bodyReturnLabel = converter.newLabel("outline_body_return");
   const doneLabel = converter.newLabel("outline_done");
+  const profileOutline =
+    process.env.UDON_PROFILE_OUTLINES === "1" && !converter.metadataOnlyMode;
+  const profileOutlineStartInstr = profileOutline
+    ? converter.instructions.length
+    : 0;
+  const profileOutlineStartTime = profileOutline ? performance.now() : 0;
 
   // Skip-around: jump past the outlined body to the first call site.
   const firstCallSiteLabel = converter.newLabel("outline_first_call");
@@ -4150,6 +4542,11 @@ function emitInlineOutlinedBody(
     converter.currentExpectedType = undefined;
 
     converter.inlineMethodStack.add(inlineKey);
+    const paramFieldCopies = collectOutlineParamFieldCopies(
+      converter,
+      method.parameters,
+    );
+    bindOutlineBodyInlineParamFields(converter, paramFieldCopies);
     const structuralReturnType = structuralInterfaceForType(
       converter,
       returnType,
@@ -4215,8 +4612,20 @@ function emitInlineOutlinedBody(
   // the deferred dispatch label.  bodyReturnLabel is also the target for
   // all early returns inside the outlined body.
   converter.emit(new LabelInstruction(bodyReturnLabel));
-  const bodyReturnJumpIdx = converter.instructions.length;
-  converter.emit(new UnconditionalJumpInstruction(dispatchLabel));
+  const bodyReturnJump = new UnconditionalJumpInstruction(dispatchLabel);
+  converter.emit(bodyReturnJump);
+  if (profileOutline) {
+    const deltaInstr = converter.instructions.length - profileOutlineStartInstr;
+    const threshold = Number.parseInt(
+      process.env.UDON_PROFILE_OUTLINE_THRESHOLD ?? "100000",
+      10,
+    );
+    if (!Number.isFinite(threshold) || deltaInstr >= threshold) {
+      console.log(
+        `[prof]     outline ${uniqueKey} in ${converter.currentClassName ?? "<top>"}.${converter.currentMethodName ?? "<top>"}: ${(performance.now() - profileOutlineStartTime).toFixed(1)}ms instr=${deltaInstr}`,
+      );
+    }
+  }
 
   // --- Register the outlined method state ---
   const state: OutlinedMethodState = {
@@ -4227,7 +4636,7 @@ function emitInlineOutlinedBody(
     returnSiteIdxVarName,
     returnSites: [],
     nextReturnSiteIndex: 1,
-    bodyReturnJumpIdx,
+    bodyReturnJump,
     method: {
       parameters: method.parameters.map((p) => ({
         name: p.name,
@@ -4241,6 +4650,17 @@ function emitInlineOutlinedBody(
     className,
     methodName,
     instancePrefix,
+    receiverCopy:
+      kind === "inst" &&
+      instancePrefix !== undefined &&
+      callSiteInstancePrefix !== undefined &&
+      instancePrefix !== callSiteInstancePrefix
+        ? { className, sharedPrefix: instancePrefix }
+        : undefined,
+    paramFieldCopies: collectOutlineParamFieldCopies(
+      converter,
+      method.parameters,
+    ),
   };
   // Currently always undefined: checkOutlineIneligible rejects
   // isInlineHandleType returns, which subsumes the returnInstancePrefix
@@ -4248,7 +4668,7 @@ function emitInlineOutlinedBody(
   // subsumption invariant is ever relaxed.
   state.returnVarInlineInstance = returnVarInlineInstance;
   converter.outlinedMethods.set(
-    outlineMapKey(kind, declaringClassName, methodName, instancePrefix),
+    outlineKey,
     state,
   );
 
@@ -4263,10 +4683,7 @@ function emitInlineOutlinedBody(
       // Only one call site reached this method in pass 2 (pass-1 over-counted).
       // Patch the body's end-jump to go directly to the single return site,
       // skipping the dispatch table entirely.
-      converter.instructions[state.bodyReturnJumpIdx] =
-        new UnconditionalJumpInstruction(
-          createLabel(state.returnSites[0].labelName),
-        );
+      state.bodyReturnJump.label = createLabel(state.returnSites[0].labelName);
       return;
     }
     converter.emit(new LabelInstruction(dispatchLabel));
@@ -4315,7 +4732,7 @@ function emitInlineOutlinedBody(
 
   // --- Emit the first call site ---
   converter.emit(new LabelInstruction(firstCallSiteLabel));
-  return emitOutlinedCallSite(converter, state, args);
+  return emitOutlinedCallSite(converter, state, args, callSiteInstancePrefix);
 }
 
 /**
@@ -4327,6 +4744,7 @@ function emitOutlinedCallSite(
   converter: ASTToTACConverter,
   state: OutlinedMethodState,
   args: TACOperand[],
+  callSiteInstancePrefix?: string,
 ): TACOperand {
   if (PROF)
     profEnter(converter, histKey(state.declaringClassName, state.methodName));
@@ -4334,6 +4752,18 @@ function emitOutlinedCallSite(
     converter.symbolTable.enterScope();
     const savedParamEntries: InlineParamSave = new Map();
     try {
+      if (
+        state.receiverCopy !== undefined &&
+        callSiteInstancePrefix !== undefined
+      ) {
+        emitInlineReceiverFieldCopies(
+          converter,
+          state.receiverCopy.className,
+          callSiteInstancePrefix,
+          state.receiverCopy.sharedPrefix,
+        );
+      }
+      emitOutlineParamFieldCopies(converter, state, args, "in");
       saveAndBindInlineParams(
         converter,
         state.method.parameters,
@@ -4365,6 +4795,19 @@ function emitOutlinedCallSite(
 
       // Return label (dispatch routes here)
       converter.emit(new LabelInstruction(returnLabel));
+
+      if (
+        state.receiverCopy !== undefined &&
+        callSiteInstancePrefix !== undefined
+      ) {
+        emitInlineReceiverFieldCopies(
+          converter,
+          state.receiverCopy.className,
+          state.receiverCopy.sharedPrefix,
+          callSiteInstancePrefix,
+        );
+      }
+      emitOutlineParamFieldCopies(converter, state, args, "out");
 
       if (state.method.returnType.udonType === UdonType.Void) {
         return VOID_INLINE_RESULT;
@@ -5367,9 +5810,9 @@ function inlineResolvedMethodBody(
   // --- Pass-1 outline candidate detection (instance methods only;
   //     static methods are counted in visitInlineStaticMethodCall) ---
   if (converter.metadataOnlyMode) {
-    const infoKey = outlineMapKey(
-      "inst",
+    const infoKey = instanceOutlineMapKey(
       declaringClassName,
+      className,
       methodName,
       instancePrefix,
     );
@@ -5404,15 +5847,22 @@ function inlineResolvedMethodBody(
       return result;
     }
     // When bodyInstr is already set (second+ call site in pass 1), fall
-    // through to the normal inline path so metadata like soaClasses is
-    // still collected.
+    // through only when the body can allocate inline metadata (new inline
+    // classes / structural object literals). Pure computational helpers do
+    // not need to be walked again during pass 1.
+    if (
+      process.env.UDON_FAST_METADATA_PASS === "1" &&
+      !hasMetadataRelevantInlineAllocation(method.body)
+    ) {
+      return createMetadataOnlyInlineResult(converter, method.returnType);
+    }
   }
 
   // --- Pass-2 outline check, plus the post-selection metadata pass. ---
   if (!converter.metadataOnlyMode || converter.collectOutlineMetadataMode) {
-    const outlineKey = outlineMapKey(
-      "inst",
+    const outlineKey = instanceOutlineMapKey(
       declaringClassName,
+      className,
       methodName,
       instancePrefix,
     );
@@ -5421,27 +5871,31 @@ function inlineResolvedMethodBody(
         converter,
         method.returnType,
       );
-      if (
-        !checkOutlineIneligible(
-          converter,
-          method.parameters,
-          method.body,
-          resolvedReturnType,
-        )
-      ) {
+      const outlineIneligible = checkOutlineIneligible(
+        converter,
+        method.parameters,
+        method.body,
+        resolvedReturnType,
+      );
+      if (!outlineIneligible) {
         const existing = converter.outlinedMethods.get(outlineKey);
         if (existing) {
-          return emitOutlinedCallSite(converter, existing, args);
+          return emitOutlinedCallSite(converter, existing, args, instancePrefix);
         }
+        const bodyInstancePrefix = shouldShareInstanceOutline(instancePrefix)
+          ? sharedInstanceOutlinePrefix(declaringClassName, className, methodName)
+          : instancePrefix;
         return emitInlineOutlinedMethodBody(
           converter,
           className,
           methodName,
           method,
           args,
+          bodyInstancePrefix,
           instancePrefix,
           declaringClassName,
           inlineKey,
+          outlineKey,
         );
       }
     }

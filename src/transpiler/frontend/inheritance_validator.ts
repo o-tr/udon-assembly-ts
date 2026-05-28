@@ -89,6 +89,7 @@ export class InheritanceValidator {
         (d) => d.name === "UdonBehaviour",
       );
       if (isUdonBehaviour) continue;
+      if (this.hasUdonBehaviourDescendant(cls.name)) continue;
       const impls = cls.node.implements ?? [];
       for (const ifaceName of impls) {
         if (udonBehaviourInterfaces.has(ifaceName)) {
@@ -103,6 +104,24 @@ export class InheritanceValidator {
         }
       }
     }
+  }
+
+  private hasUdonBehaviourDescendant(className: string): boolean {
+    for (const candidate of this.registry.getAllClasses()) {
+      if (
+        !candidate.decorators.some((d) => d.name === "UdonBehaviour")
+      ) {
+        continue;
+      }
+      let currentBase = candidate.baseClass;
+      const visited = new Set<string>();
+      while (currentBase && !visited.has(currentBase)) {
+        if (currentBase === className) return true;
+        visited.add(currentBase);
+        currentBase = this.registry.getClass(currentBase)?.baseClass ?? null;
+      }
+    }
+    return false;
   }
 
   private validateInterfaces(className: string, filePath: string): void {

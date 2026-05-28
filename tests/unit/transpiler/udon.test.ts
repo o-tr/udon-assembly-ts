@@ -2,7 +2,7 @@
  * Unit tests for Udon code generation
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { UdonAssembler } from "../../../src/transpiler/codegen/udon_assembler";
@@ -10,10 +10,17 @@ import {
   JumpIfFalseInstruction,
   JumpInstruction,
   LabelInstruction,
+  ExternInstruction,
+  PushInstruction,
   UdonInstructionKind,
 } from "../../../src/transpiler/codegen/udon_instruction";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
+
+afterEach(() => {
+  delete process.env.UDON_MINIFY_INTERNAL_SYMBOLS;
+  delete process.env.UDON_OMIT_INTERNAL_LABELS;
+});
 
 describe("Udon Code Generation", () => {
   beforeAll(() => {
@@ -288,6 +295,61 @@ describe("Udon Assembler", () => {
     // Should contain PUSH and COPY instructions with comma separator
     expect(uasm).toContain("PUSH,");
     expect(uasm).toContain("COPY");
+  });
+
+  it("can minify internal data symbols in assembled text", () => {
+    process.env.UDON_MINIFY_INTERNAL_SYMBOLS = "1";
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new PushInstruction("__very_long_internal_symbol"),
+      new ExternInstruction("__extern_0", true),
+      new PushInstruction("publicValue"),
+    ];
+    const dataSection: Array<[string, number, string, unknown]> = [
+      ["__very_long_internal_symbol", 0, "Int32", null],
+      ["__extern_0", 1, "String", "SystemInt32.__ToString__SystemString"],
+      ["publicValue", 2, "Int32", null],
+    ];
+
+    const uasm = assembler.assemble(instructions, [], dataSection);
+
+    expect(uasm).toContain("__v0: %SystemInt32, null");
+    expect(uasm).toContain(
+      '__v1: %SystemString, "SystemInt32.__ToString__SystemString"',
+    );
+    expect(uasm).toContain("PUSH, __v0");
+    expect(uasm).toContain("EXTERN, __v1");
+    expect(uasm).not.toContain("__very_long_internal_symbol");
+    expect(uasm).not.toContain("EXTERN, __extern_0");
+    expect(uasm).toContain("publicValue: %SystemInt32, null");
+    expect(uasm).toContain("PUSH, publicValue");
+  });
+
+  it("can omit non-exported internal labels from assembled text", () => {
+    process.env.UDON_OMIT_INTERNAL_LABELS = "1";
+    const assembler = new UdonAssembler();
+    const instructions = [
+      new LabelInstruction("_start"),
+      new LabelInstruction("internal_label"),
+      new JumpInstruction("internal_label"),
+      new LabelInstruction("Exported"),
+    ];
+
+    const uasm = assembler.assemble(
+      instructions,
+      [],
+      [],
+      undefined,
+      undefined,
+      new Set(["Exported"]),
+    );
+
+    expect(uasm).toContain("_start:");
+    expect(uasm).not.toContain("internal_label:");
+    expect(uasm).toContain("Exported:");
+    expect(uasm).toContain(".export Exported");
+    expect(uasm).toContain("JUMP, 0x00000000");
   });
 
   it("should avoid helper data name collisions for restricted type init", () => {

@@ -227,16 +227,42 @@ export const propagateCopies = (
   };
 };
 
+export const propagateCopiesLocal = (
+  instructions: TACInstruction[],
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
+
+  const result = instructions.slice();
+  let didRewrite = false;
+
+  for (const block of cfg.blocks) {
+    const copies: CopyMap = new Map();
+    for (let i = block.start; i <= block.end; i++) {
+      const inst = result[i];
+      if (inst.kind === TACInstructionKind.Label) {
+        continue;
+      }
+      didRewrite = stepCopyState(inst, copies, true) || didRewrite;
+    }
+  }
+
+  return {
+    instructions: didRewrite ? result : instructions,
+    changed: didRewrite,
+    structurallyChanged: false,
+  };
+};
+
 const resolve = (
   copies: CopyMap,
   key: string,
   original: TACOperand,
 ): TACOperand => {
-  const visited = new Set<string>();
   let current = key;
   let resolved = original;
-  while (copies.has(current) && !visited.has(current)) {
-    visited.add(current);
+  for (let steps = 0; steps < copies.size; steps += 1) {
     const val = copies.get(current);
     if (!val) break;
     resolved = val;

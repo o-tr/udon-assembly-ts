@@ -167,6 +167,56 @@ export const eliminateDeadStoresCFG = (
   };
 };
 
+export const eliminateOverwrittenPureProducersLocal = (
+  instructions: TACInstruction[],
+  options?: CFGPassOptions,
+): PassResult => {
+  const cfg = options?.cachedCFG ?? buildCFG(instructions);
+  if (cfg.blocks.length === 0) return { instructions, changed: false };
+
+  const removeIndexes = new Set<number>();
+
+  for (const block of cfg.blocks) {
+    const pendingPureDef = new Map<string, number>();
+
+    for (let i = block.start; i <= block.end; i++) {
+      const inst = instructions[i];
+
+      if (pendingPureDef.size > 0) {
+        forEachUsedOperand(inst, (op) => {
+          const key = livenessKey(op);
+          if (key) pendingPureDef.delete(key);
+        });
+      }
+
+      const defOp = getDefinedOperandForReuse(inst);
+      const defKey = livenessKey(defOp);
+      if (!defKey) continue;
+
+      const previous = pendingPureDef.get(defKey);
+      if (previous !== undefined) {
+        removeIndexes.add(previous);
+      }
+
+      if (isPureProducer(inst)) {
+        pendingPureDef.set(defKey, i);
+      } else {
+        pendingPureDef.delete(defKey);
+      }
+    }
+  }
+
+  if (removeIndexes.size === 0) {
+    return { instructions, changed: false };
+  }
+
+  const result = instructions.filter((_, index) => !removeIndexes.has(index));
+  return {
+    instructions: result,
+    changed: true,
+  };
+};
+
 export const eliminateNoopCopies = (
   instructions: TACInstruction[],
 ): PassResult => {

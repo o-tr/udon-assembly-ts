@@ -65,6 +65,7 @@ import {
   createConstant,
   createLabel,
   createVariable,
+  type LabelOperand,
   type TACOperand,
   TACOperandKind,
   type VariableOperand,
@@ -2807,6 +2808,12 @@ export function visitClassDeclaration(
   const orderedMethods = [...nonRecursive, ...recursive];
   for (const method of orderedMethods) {
     this.currentMethodName = method.name;
+    const profileMethod =
+      process.env.UDON_PROFILE_METHODS === "1" && !this.metadataOnlyMode;
+    const profileMethodStartInstr = profileMethod
+      ? this.instructions.length
+      : 0;
+    const profileMethodStartTime = profileMethod ? performance.now() : 0;
     const eventDef = getVrcEventDefinition(method.name);
     let labelName = eventDef
       ? eventDef.udonName
@@ -3275,6 +3282,18 @@ export function visitClassDeclaration(
     } else {
       this.emit(new ReturnInstruction(undefined, this.currentReturnVar));
     }
+    if (profileMethod) {
+      const deltaInstr = this.instructions.length - profileMethodStartInstr;
+      const threshold = Number.parseInt(
+        process.env.UDON_PROFILE_METHOD_THRESHOLD ?? "100000",
+        10,
+      );
+      if (!Number.isFinite(threshold) || deltaInstr >= threshold) {
+        console.log(
+          `[prof]   method ${node.name}.${method.name}: ${(performance.now() - profileMethodStartTime).toFixed(1)}ms instr=${deltaInstr}`,
+        );
+      }
+    }
     this.symbolTable.exitScope();
     this.currentReturnVar = undefined;
     this.currentRecursiveContext = undefined;
@@ -3304,6 +3323,20 @@ export function visitTryCatchStatement(
   this: ASTToTACConverter,
   node: TryCatchStatementNode,
 ): void {
+  if (
+    !node.catchBody &&
+    node.finallyBody &&
+    canEmitLightweightFinallyOnlyTry(node.tryBody)
+  ) {
+    if (hasBreakOrContinue(node.tryBody)) {
+      emitLightweightFinallyOnlyTryWithAbruptJumps(this, node);
+      return;
+    }
+    this.visitBlockStatement(node.tryBody);
+    this.visitBlockStatement(node.finallyBody);
+    return;
+  }
+
   const tryId = this.tryCounter++;
   const errorFlagName = `__error_flag_${tryId}`;
   const errorValueName = `__error_value_${tryId}`;
@@ -3340,6 +3373,54 @@ export function visitTryCatchStatement(
   this.emit(
     new AssignmentInstruction(errorValueVar, createConstant(null, ObjectType)),
   );
+
+  if (
+    process.env.UDON_LIGHTWEIGHT_TRY === "1" &&
+    node.catchBody &&
+    !node.finallyBody
+  ) {
+    this.tryContextStack.push({
+      errorFlag: errorFlagVar,
+      errorValue: errorValueVar,
+      errorTarget,
+      loopDepth: this.loopContextStack.length,
+    });
+    this.visitBlockStatement(node.tryBody);
+    this.tryContextStack.pop();
+    this.emit(new UnconditionalJumpInstruction(endLabel));
+    this.emit(new LabelInstruction(catchLabel as TACOperand));
+    if (node.catchVariable) {
+      const catchSlotName = this.currentInlineLocalPrefix
+        ? `${this.currentInlineLocalPrefix}${node.catchVariable}`
+        : undefined;
+      if (!this.symbolTable.hasInCurrentScope(node.catchVariable)) {
+        this.symbolTable.addSymbol(
+          node.catchVariable,
+          ObjectType,
+          false,
+          false,
+          undefined,
+          catchSlotName,
+        );
+      }
+      const catchVar = createVariable(
+        catchSlotName ?? node.catchVariable,
+        ObjectType,
+        {
+          isLocal: true,
+        },
+      );
+      this.emit(new CopyInstruction(catchVar, errorValueVar));
+    }
+    this.symbolTable.enterScope();
+    this.scanDeclarations(node.catchBody.statements);
+    for (const stmt of node.catchBody.statements) {
+      this.visitStatement(stmt);
+    }
+    this.symbolTable.exitScope();
+    this.emit(new LabelInstruction(endLabel));
+    return;
+  }
 
   const previousInstructions = this.instructions;
   const tryInstructions: TACInstruction[] = [];
@@ -3407,6 +3488,129 @@ export function visitTryCatchStatement(
   }
 
   this.emit(new LabelInstruction(endLabel));
+}
+
+function canEmitLightweightFinallyOnlyTry(block: BlockStatementNode): boolean {
+  const visit = (node: ASTNode): boolean => {
+    switch (node.kind) {
+      case ASTNodeKind.ReturnStatement:
+      case ASTNodeKind.ThrowStatement:
+      case ASTNodeKind.TryCatchStatement:
+        return false;
+      case ASTNodeKind.BlockStatement:
+        return (node as BlockStatementNode).statements.every(visit);
+      case ASTNodeKind.IfStatement: {
+        const stmt = node as IfStatementNode;
+        return (
+          visit(stmt.thenBranch) &&
+          (stmt.elseBranch ? visit(stmt.elseBranch) : true)
+        );
+      }
+      case ASTNodeKind.WhileStatement:
+        return visit((node as WhileStatementNode).body);
+      case ASTNodeKind.DoWhileStatement:
+        return visit((node as DoWhileStatementNode).body);
+      case ASTNodeKind.ForStatement:
+        return visit((node as ForStatementNode).body);
+      case ASTNodeKind.ForOfStatement:
+        return visit((node as ForOfStatementNode).body);
+      case ASTNodeKind.SwitchStatement:
+        return (node as SwitchStatementNode).cases.every((caseNode) =>
+          caseNode.statements.every(visit),
+        );
+      default:
+        return true;
+    }
+  };
+  return block.statements.every(visit);
+}
+
+function emitLightweightFinallyOnlyTryWithAbruptJumps(
+  converter: ASTToTACConverter,
+  node: TryCatchStatementNode,
+): void {
+  if (!node.finallyBody) return;
+
+  const outerJumpTargets = new Set<string>();
+  for (const context of converter.loopContextStack) {
+    outerJumpTargets.add((context.breakLabel as LabelOperand).name);
+    outerJumpTargets.add((context.continueLabel as LabelOperand).name);
+  }
+
+  const previousInstructions = converter.instructions;
+  const tryInstructions: TACInstruction[] = [];
+  converter.instructions = tryInstructions;
+  converter.visitBlockStatement(node.tryBody);
+  converter.instructions = previousInstructions;
+
+  const trampolineLabels = new Map<string, TACOperand>();
+  const getTrampoline = (targetName: string): TACOperand => {
+    let trampoline = trampolineLabels.get(targetName);
+    if (!trampoline) {
+      trampoline = converter.newLabel(`finally_jump_${targetName}`);
+      trampolineLabels.set(targetName, trampoline);
+    }
+    return trampoline;
+  };
+
+  for (const inst of tryInstructions) {
+    if (
+      inst.kind === "UnconditionalJump" &&
+      inst instanceof UnconditionalJumpInstruction &&
+      inst.label.kind === TACOperandKind.Label &&
+      outerJumpTargets.has((inst.label as LabelOperand).name)
+    ) {
+      converter.emit(
+        new UnconditionalJumpInstruction(
+          getTrampoline((inst.label as LabelOperand).name),
+        ),
+      );
+    } else {
+      converter.emit(inst);
+    }
+  }
+
+  converter.visitBlockStatement(node.finallyBody);
+  const endLabel = converter.newLabel("try_finally_end");
+  converter.emit(new UnconditionalJumpInstruction(endLabel));
+
+  for (const [targetName, trampoline] of trampolineLabels) {
+    converter.emit(new LabelInstruction(trampoline));
+    converter.visitBlockStatement(node.finallyBody);
+    converter.emit(new UnconditionalJumpInstruction(createLabel(targetName)));
+  }
+  converter.emit(new LabelInstruction(endLabel));
+}
+
+function hasBreakOrContinue(block: BlockStatementNode): boolean {
+  const visit = (node: ASTNode): boolean => {
+    switch (node.kind) {
+      case ASTNodeKind.BreakStatement:
+      case ASTNodeKind.ContinueStatement:
+        return true;
+      case ASTNodeKind.BlockStatement:
+        return (node as BlockStatementNode).statements.some(visit);
+      case ASTNodeKind.IfStatement: {
+        const stmt = node as IfStatementNode;
+        return visit(stmt.thenBranch) || (stmt.elseBranch ? visit(stmt.elseBranch) : false);
+      }
+      case ASTNodeKind.WhileStatement:
+        return visit((node as WhileStatementNode).body);
+      case ASTNodeKind.DoWhileStatement:
+        return visit((node as DoWhileStatementNode).body);
+      case ASTNodeKind.ForStatement:
+        return visit((node as ForStatementNode).body);
+      case ASTNodeKind.ForOfStatement:
+        return visit((node as ForOfStatementNode).body);
+      case ASTNodeKind.SwitchStatement:
+        return (node as SwitchStatementNode).cases.some((caseNode) =>
+          caseNode.statements.some(visit),
+        );
+      default:
+        return false;
+    }
+  };
+  return block.statements.some(visit);
 }
 
 export function visitThrowStatement(
