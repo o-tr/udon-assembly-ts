@@ -262,7 +262,10 @@ const resolve = (
 ): TACOperand => {
   let current = key;
   let resolved = original;
+  const visited = new Set<string>();
   for (let steps = 0; steps < copies.size; steps += 1) {
+    if (visited.has(current)) break;
+    visited.add(current);
     const val = copies.get(current);
     if (!val) break;
     resolved = val;

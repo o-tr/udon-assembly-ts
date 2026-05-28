@@ -87,7 +87,9 @@ interface CacheV3 {
 
 interface OutputCacheEntry {
   key: string;
-  uasm: string;
+  outputText: string;
+  /** Legacy cache field kept for reading pre-outputText cache entries. */
+  uasm?: string;
   warnings?: string[];
   /**
    * Structured diagnostics emitted by tacConverter (warnAt) for this entry
@@ -879,7 +881,7 @@ export class BatchTranspiler {
               `${entryPoint.name}.${ext}`,
             );
             fs.mkdirSync(path.dirname(outPath), { recursive: true });
-            fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
+            fs.writeFileSync(outPath, cachedOutput.outputText, "utf8");
             for (const w of cachedOutput.warnings ?? []) console.warn(w);
             outputs.push({
               className: entryPoint.name,
@@ -955,7 +957,7 @@ export class BatchTranspiler {
               const tsIr = fs.readFileSync(outPath, "utf8");
               this.saveOutputCache(cacheFilePath, {
                 key: outputCacheKey,
-                uasm: tsIr,
+                outputText: tsIr,
                 diagnostics:
                   entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
                 transpilerHash: getTranspilerHash(),
@@ -1095,7 +1097,7 @@ export class BatchTranspiler {
         ) {
           this.saveOutputCache(cacheFilePath, {
             key: outputCacheKey,
-            uasm,
+            outputText: uasm,
             warnings,
             diagnostics:
               entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
@@ -1386,12 +1388,13 @@ export class BatchTranspiler {
       ) as OutputCacheEntry;
       if (
         entry.key !== expectedKey ||
-        typeof entry.uasm !== "string" ||
-        !entry.uasm
+        (typeof entry.outputText !== "string" && typeof entry.uasm !== "string")
       ) {
         return null;
       }
-      return entry;
+      const outputText = entry.outputText ?? entry.uasm;
+      if (!outputText) return null;
+      return { ...entry, outputText };
     } catch {
       return null;
     }
