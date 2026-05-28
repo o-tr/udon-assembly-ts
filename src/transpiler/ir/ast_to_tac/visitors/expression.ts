@@ -165,15 +165,12 @@ function markUntrackedInlineInterfaceArrayElement(
     markUntrackedStructuralHandlePrefixes(converter, key, resolvedElementType);
     const classIds = converter.interfaceClassIdMap.get(interfaceName);
     if (!classIds) return;
-    const implementors = converter.classRegistry.getImplementorsOfInterface(
-      interfaceName,
-    );
+    const implementors =
+      converter.classRegistry.getImplementorsOfInterface(interfaceName);
     const implementorNames = new Set(implementors.map((impl) => impl.name));
-    const classIdVar = createVariable(
-      `${key}__classId`,
-      PrimitiveTypes.int32,
-      { isLocal: true },
-    );
+    const classIdVar = createVariable(`${key}__classId`, PrimitiveTypes.int32, {
+      isLocal: true,
+    });
     converter.emit(
       new AssignmentInstruction(
         classIdVar,
@@ -517,7 +514,7 @@ function resolveStructuralPropertyType(
     registryType ??
     (rawType?.name
       ? (converter.typeMapper.getAlias(rawType.name) ?? rawType)
-    : rawType)
+      : rawType)
   );
 }
 
@@ -576,11 +573,9 @@ function clearUntrackedStructuralPrefixes(
   converter.untrackedStructuralHandleTypes.delete(prefix);
   converter.untrackedStructuralHandleClassIds.delete(prefix);
   for (const [propertyName, rawPropertyType] of structuralType.properties) {
-    const propertyType = resolveStructuralPropertyType(
-      converter,
-      structuralType,
-      propertyName,
-    ) ?? rawPropertyType;
+    const propertyType =
+      resolveStructuralPropertyType(converter, structuralType, propertyName) ??
+      rawPropertyType;
     const nestedType = resolveStructuralInterface(converter, propertyType);
     if (nestedType) {
       clearUntrackedStructuralPrefixes(
@@ -673,8 +668,11 @@ function emitStructuralFieldsFromKnownHandle(
 
     for (const [propertyName, rawPropertyType] of targetInterface.properties) {
       const propertyType =
-        resolveStructuralPropertyType(converter, targetInterface, propertyName) ??
-        rawPropertyType;
+        resolveStructuralPropertyType(
+          converter,
+          targetInterface,
+          propertyName,
+        ) ?? rawPropertyType;
       targetFieldTypes.set(propertyName, propertyType);
       const sourceProperty = converter.mapInlineProperty(
         info.className,
@@ -762,9 +760,13 @@ function tryEmitStructuralInterfacePropertyDispatch(
     return undefined;
   }
 
-  const result = createVariable(`__uninst_prop_${converter.tempCounter++}`, resultType, {
-    isLocal: true,
-  });
+  const result = createVariable(
+    `__uninst_prop_${converter.tempCounter++}`,
+    resultType,
+    {
+      isLocal: true,
+    },
+  );
   converter.emit(
     new AssignmentInstruction(
       result,
@@ -1605,10 +1607,7 @@ function resolveDeclaredTypeFromNode(
     return symbol?.declaredType ?? symbol?.type ?? null;
   }
   if (node.kind === ASTNodeKind.AsExpression) {
-    return resolveDeclaredTypeFromNode(
-      converter,
-      (node as AsExpressionNode).expression,
-    );
+    return (node as AsExpressionNode).targetTypeSymbol;
   }
   return null;
 }
@@ -2646,6 +2645,17 @@ export function visitConditionalExpression(
   // branches — tracking would retain only the last-written branch's
   // prefix, producing incorrect property resolution for the other branch.
   this.emit(new CopyInstruction(result, trueVal));
+  const resultKey = operandTrackingKey(result);
+  if (resultKey) {
+    emitStructuralFieldCopies(
+      this,
+      resultKey,
+      this.getOperandType(trueVal),
+      trueVal,
+      { isLocal: true },
+      true,
+    );
+  }
   this.emit(new UnconditionalJumpInstruction(endLabel));
 
   this.emit(new LabelInstruction(falseLabel));
@@ -2669,6 +2679,16 @@ export function visitConditionalExpression(
     }
   }
   this.emit(new CopyInstruction(result, falseVal)); // Plain copy: see true-branch comment above.
+  if (resultKey) {
+    emitStructuralFieldCopies(
+      this,
+      resultKey,
+      this.getOperandType(falseVal),
+      falseVal,
+      { isLocal: true },
+      true,
+    );
+  }
   this.emit(new LabelInstruction(endLabel));
   return result;
 }
@@ -3031,13 +3051,20 @@ export function visitArrayLiteralExpression(
       .filter((type): type is TypeSymbol => type !== undefined);
     if (spreadElementTypes.length === node.elements.length) {
       const firstElementType = spreadElementTypes[0];
-      if (spreadElementTypes.every((type) => type.isAssignableTo(firstElementType))) {
+      if (
+        spreadElementTypes.every((type) =>
+          type.isAssignableTo(firstElementType),
+        )
+      ) {
         spreadElementType = firstElementType;
       }
     }
   }
   const elementType =
-    node.typeHint ?? expectedArrayElementType ?? spreadElementType ?? ObjectType;
+    node.typeHint ??
+    expectedArrayElementType ??
+    spreadElementType ??
+    ObjectType;
 
   // Native fixed-length array path: emit when the variable is eligible and
   // all elements are non-spread, so the length is known at compile time.
@@ -3772,9 +3799,9 @@ export function visitPropertyAccessExpression(
           isInlineHandleType(this, mapped.type) &&
           !this.resolveInlineInstance(mapped.name)
         ) {
-          const candidates = Array.from(this.allInlineInstances.values()).filter(
-            (info) => info.className === mapped.type.name,
-          );
+          const candidates = Array.from(
+            this.allInlineInstances.values(),
+          ).filter((info) => info.className === mapped.type.name);
           if (candidates.length === 1) {
             this.inlineInstanceMap.set(mapped.name, candidates[0]);
           }
@@ -3849,7 +3876,10 @@ export function visitPropertyAccessExpression(
             node.property,
           );
           const mappedKey = mapped ? operandTrackingKey(mapped) : undefined;
-          if (mapped && !this.untrackedStructuralHandleVars.has(mappedKey ?? "")) {
+          if (
+            mapped &&
+            !this.untrackedStructuralHandleVars.has(mappedKey ?? "")
+          ) {
             return mapped;
           }
           if (mappedKey && this.untrackedStructuralHandleVars.has(mappedKey)) {
@@ -3976,12 +4006,6 @@ export function visitPropertyAccessExpression(
           baseType,
           node.property,
         );
-        if (nestedType || (baseSlot && access.property === "hanConfig")) {
-          return createVariable(
-            `${this.currentInlineContext.instancePrefix}_${access.property}_${node.property}`,
-            nestedType ?? ObjectType,
-          );
-        }
         const directNestedSlot = tryReadPopulatedStructuralFieldSlot(
           this,
           `${this.currentInlineContext.instancePrefix}_${access.property}`,
@@ -3989,6 +4013,12 @@ export function visitPropertyAccessExpression(
           node.property,
         );
         if (directNestedSlot) return directNestedSlot;
+        if (baseSlot && access.property === "hanConfig") {
+          return createVariable(
+            `${this.currentInlineContext.instancePrefix}_${access.property}_${node.property}`,
+            nestedType ?? ObjectType,
+          );
+        }
         const nested = tryMapInlinePropertyWithConcreteFallback(
           this,
           {
@@ -4378,9 +4408,7 @@ export function visitPropertyAccessExpression(
         const isInterfaceHandlePropertyDispatch =
           untrackedAlias instanceof InterfaceTypeSymbol &&
           untrackedAlias.properties.has(node.property);
-        const untrackedAnonUnion = untrackedTypeName.startsWith(
-          "__anon_union_",
-        )
+        const untrackedAnonUnion = untrackedTypeName.startsWith("__anon_union_")
           ? untrackedType instanceof InterfaceTypeSymbol &&
             untrackedType.properties.size > 0
             ? untrackedType
@@ -4686,7 +4714,12 @@ export function visitPropertyAccessExpression(
           const soaClassName = dispInstances[0][1].className;
           if (
             this.soaClasses.has(soaClassName) &&
-            dispInstances.every(([, info]) => info.className === soaClassName)
+            dispInstances.every(
+              ([, info]) => info.className === soaClassName,
+            ) &&
+            dispInstances.every(([, info]) =>
+              this.soaInstancePrefixes.has(info.prefix),
+            )
           ) {
             dispInstances.splice(1);
           }
@@ -5050,7 +5083,7 @@ export function visitPropertyAccessExpression(
                     node.property,
                     anonUnionIface,
                     untrackedPropType,
-                );
+                  );
                 if (pv) {
                   const fieldList =
                     isRuntimeSoAInstance && this.soaClasses.has(info.className)
@@ -5666,7 +5699,10 @@ export function visitObjectLiteralExpression(
           const propShouldDispatchByHandle =
             propStructuralInterface !== undefined &&
             (propStructuralInterface.methods.size > 0 ||
-              structuralInterfaceHasImplementors(this, propStructuralInterface));
+              structuralInterfaceHasImplementors(
+                this,
+                propStructuralInterface,
+              ));
           const propIsUntrackedStructuralHandle =
             propShouldDispatchByHandle ||
             this.untrackedStructuralHandleVars.has(propKey) ||
@@ -5682,12 +5718,7 @@ export function visitObjectLiteralExpression(
             );
           }
           if (!propIsUntrackedStructuralHandle) {
-            emitStructuralFieldCopies(
-              this,
-              propKey,
-              structuralCopyType,
-              value,
-            );
+            emitStructuralFieldCopies(this, propKey, structuralCopyType, value);
           }
           if (
             propStructuralInterface &&

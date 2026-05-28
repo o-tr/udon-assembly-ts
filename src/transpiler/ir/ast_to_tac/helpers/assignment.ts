@@ -191,7 +191,8 @@ export function assignToTarget(
     // so reusing the same heap slot for defaultToken across iterations is safe.
     const growElementType =
       arrayType instanceof ArrayTypeSymbol
-        ? arrayType.elementType === ObjectType && assignedValueType !== ObjectType
+        ? arrayType.elementType === ObjectType &&
+          assignedValueType !== ObjectType
           ? assignedValueType
           : arrayType.elementType
         : arrayType instanceof DataListTypeSymbol
@@ -754,16 +755,16 @@ export function wrapDataToken(
   const trackedInlineInfo = valueKey
     ? this.resolveInlineInstance(valueKey)
     : undefined;
-  if (trackedInlineInfo) {
+  if (
+    trackedInlineInfo &&
+    isDataTokenInlineInstanceInfo(this, trackedInlineInfo)
+  ) {
     value = normalizeOperandToInt32(this, value);
     valueType = PrimitiveTypes.int32;
   }
   // Inline class instances are stored as Int32 handles. Wrap as Int32
   // so they can be unwrapped via DataToken.Int later.
-  if (
-    isInlineHandleType(this, valueType) ||
-    isStructuralTypeAliasDataTokenHandle(this, valueType)
-  ) {
+  if (isDataTokenIntHandleType(this, valueType)) {
     value = normalizeOperandToInt32(this, value);
     valueType = PrimitiveTypes.int32;
   }
@@ -845,10 +846,7 @@ export function unwrapDataToken(
   // guard would always return false and incorrectly pick a 0 fallback
   // instead of the -1 sentinel for inline handles.
   let isInlineHandle = false;
-  if (
-    isInlineHandleType(this, targetType) ||
-    isStructuralTypeAliasDataTokenHandle(this, targetType)
-  ) {
+  if (isDataTokenIntUnwrapType(this, targetType)) {
     property = "Int";
     isInlineHandle = true;
     // InterfaceTypeSymbol maps to %SystemObject in newTemp, but
@@ -947,7 +945,57 @@ function isStructuralTypeAliasDataTokenHandle(
     return false;
   }
   const alias = converter.typeMapper.getAlias(type.name);
-  return alias instanceof InterfaceTypeSymbol && alias.properties.size > 0;
+  return (
+    alias instanceof InterfaceTypeSymbol &&
+    alias.properties.size > 0 &&
+    alias.methods.size > 0 &&
+    isAllInlineInterface(converter, type.name)
+  );
+}
+
+function isDataTokenInlineInstanceInfo(
+  converter: ASTToTACConverter,
+  info: { className: string },
+): boolean {
+  if (info.className.startsWith("__anon_")) {
+    return true;
+  }
+  if (resolveClassNode(converter, info.className)) {
+    return true;
+  }
+  const alias = converter.typeMapper.getAlias(info.className);
+  return (
+    alias instanceof InterfaceTypeSymbol &&
+    alias.properties.size > 0 &&
+    alias.methods.size > 0 &&
+    isAllInlineInterface(converter, info.className)
+  );
+}
+
+function isDataTokenIntHandleType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  if (type instanceof InterfaceTypeSymbol) {
+    return isStructuralTypeAliasDataTokenHandle(converter, type);
+  }
+  return isInlineHandleType(converter, type);
+}
+
+function isDataTokenIntUnwrapType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  if (!(type instanceof InterfaceTypeSymbol)) {
+    return isInlineHandleType(converter, type);
+  }
+  if (type.name.startsWith("__anon_")) return true;
+  return (
+    isStructuralTypeAliasDataTokenHandle(converter, type) ||
+    Array.from(converter.allInlineInstances.values()).some(
+      (info) => info.className === type.name,
+    )
+  );
 }
 
 export function getOperandType(

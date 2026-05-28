@@ -89,6 +89,7 @@ import {
   emitSoaHandleToIndex,
   SOA_PARTITION_SIZE,
 } from "./soa_data_list.js";
+import { isAllInlineInterface } from "./udon_behaviour.js";
 
 // Heap-variable name prefixes that identify "real" inline-instance backing
 // slots (as opposed to synthetic temps such as `__inline_ret_*`). Only
@@ -177,7 +178,9 @@ function outlineMapKey(
     : `${kind}:${declaringClassName}.${methodName}`;
 }
 
-function shouldShareInstanceOutline(instancePrefix: string | undefined): boolean {
+function shouldShareInstanceOutline(
+  instancePrefix: string | undefined,
+): boolean {
   return (
     instancePrefix !== undefined &&
     process.env.UDON_SHARED_INSTANCE_OUTLINE === "1"
@@ -213,14 +216,18 @@ function instanceOutlineMapKey(
     : outlineMapKey("inst", declaringClassName, methodName, instancePrefix);
 }
 
-function hasMetadataRelevantInlineAllocation(node: ASTNode | undefined): boolean {
+function hasMetadataRelevantInlineAllocation(
+  node: ASTNode | undefined,
+): boolean {
   if (!node) return false;
   if (node.kind === ASTNodeKind.ObjectLiteralExpression) return true;
   if (node.kind === ASTNodeKind.CallExpression) {
     const call = node as CallExpressionNode;
     if (call.isNew) return true;
     if (hasMetadataRelevantInlineAllocation(call.callee)) return true;
-    return call.arguments.some((arg) => hasMetadataRelevantInlineAllocation(arg));
+    return call.arguments.some((arg) =>
+      hasMetadataRelevantInlineAllocation(arg),
+    );
   }
 
   switch (node.kind) {
@@ -293,13 +300,17 @@ function hasMetadataRelevantInlineAllocation(node: ASTNode | undefined): boolean
       );
     }
     case ASTNodeKind.ArrayLiteralExpression:
-      return (node as ArrayLiteralExpressionNode).elements.some(
-        (element) => hasMetadataRelevantInlineAllocation(element.value),
+      return (node as ArrayLiteralExpressionNode).elements.some((element) =>
+        hasMetadataRelevantInlineAllocation(element.value),
       );
     case ASTNodeKind.DeleteExpression:
-      return hasMetadataRelevantInlineAllocation((node as DeleteExpressionNode).target);
+      return hasMetadataRelevantInlineAllocation(
+        (node as DeleteExpressionNode).target,
+      );
     case ASTNodeKind.AsExpression:
-      return hasMetadataRelevantInlineAllocation((node as AsExpressionNode).expression);
+      return hasMetadataRelevantInlineAllocation(
+        (node as AsExpressionNode).expression,
+      );
     case ASTNodeKind.OptionalChainingExpression:
       return hasMetadataRelevantInlineAllocation(
         (node as OptionalChainingExpressionNode).object,
@@ -370,7 +381,9 @@ function hasMetadataRelevantInlineAllocation(node: ASTNode | undefined): boolean
       );
     }
     case ASTNodeKind.FunctionExpression:
-      return hasMetadataRelevantInlineAllocation((node as FunctionExpressionNode).body);
+      return hasMetadataRelevantInlineAllocation(
+        (node as FunctionExpressionNode).body,
+      );
     default:
       return false;
   }
@@ -832,7 +845,10 @@ function isStructurallyAssignableType(
   const source = resolveTypeThroughAliases(typeMapper, rawSource);
   const target = resolveTypeThroughAliases(typeMapper, rawTarget);
   if (source === target) return true;
-  if (source instanceof InterfaceTypeSymbol && target instanceof InterfaceTypeSymbol) {
+  if (
+    source instanceof InterfaceTypeSymbol &&
+    target instanceof InterfaceTypeSymbol
+  ) {
     const pairKey = `${source.name}::${target.name}`;
     if (visited.has(pairKey)) return false;
     visited.add(pairKey);
@@ -863,7 +879,10 @@ function isStructurallyAssignableType(
       )
     );
   }
-  if (source instanceof DataListTypeSymbol && target instanceof DataListTypeSymbol) {
+  if (
+    source instanceof DataListTypeSymbol &&
+    target instanceof DataListTypeSymbol
+  ) {
     return isStructurallyAssignableType(
       source.elementType,
       target.elementType,
@@ -871,7 +890,10 @@ function isStructurallyAssignableType(
       visited,
     );
   }
-  if (source instanceof CollectionTypeSymbol && target instanceof CollectionTypeSymbol) {
+  if (
+    source instanceof CollectionTypeSymbol &&
+    target instanceof CollectionTypeSymbol
+  ) {
     if (source.name !== target.name) return false;
     const assignable = (
       sourceInner: TypeSymbol | undefined,
@@ -938,30 +960,6 @@ export function resolveClassNode(
     }
   }
   return classNode;
-}
-
-function isAllInlineInterfaceWithDispatch(
-  converter: ASTToTACConverter,
-  ifaceName: string,
-): boolean {
-  const registry = converter.classRegistry;
-  if (!registry) return false;
-  const iface = registry.getInterface(ifaceName);
-  if (!iface || (!iface.methods?.length && !iface.properties?.length)) {
-    return false;
-  }
-
-  const implementors = registry.getImplementorsOfInterface(ifaceName);
-  return (
-    implementors.length > 0 &&
-    implementors.every(
-      (cls) =>
-        !converter.entryPointClasses.has(cls.name) &&
-        !converter.isUdonBehaviourType(
-          new ClassTypeSymbol(cls.name, UdonType.Object),
-        ),
-    )
-  );
 }
 
 /**
@@ -1326,14 +1324,17 @@ export function emitStructuralFieldCopies(
       : sourceHasKnownStructuralPrefix
         ? createVariable(`${sourceName}_${propertyName}`, propertyType)
         : sourceHandlePrefix
-          ? createVariable(`${sourceHandlePrefix}_${propertyName}`, propertyType)
+          ? createVariable(
+              `${sourceHandlePrefix}_${propertyName}`,
+              propertyType,
+            )
           : sourceInfo
-        ? converter.mapInlineProperty(
-            sourceInfo.className,
-            sourceInfo.prefix,
-            propertyName,
-          )
-        : createVariable(`${sourceName}_${propertyName}`, propertyType);
+            ? converter.mapInlineProperty(
+                sourceInfo.className,
+                sourceInfo.prefix,
+                propertyName,
+              )
+            : createVariable(`${sourceName}_${propertyName}`, propertyType);
     if (!sourceProperty) continue;
 
     const targetProperty = createVariable(
@@ -1808,9 +1809,7 @@ export function saveAndBindInlineParams(
         }
 
         const argType = converter.getOperandType(argVar);
-        const isTypeAlias =
-          converter.typeMapper.getAlias(argType.name) instanceof
-          InterfaceTypeSymbol;
+        const isTypeAlias = isInlineHandleAliasType(converter, argType);
         const isInlineClass =
           resolveClassNode(converter, argType.name) !== undefined &&
           !converter.udonBehaviourClasses.has(argType.name);
@@ -1825,9 +1824,10 @@ export function saveAndBindInlineParams(
           // declared type. The method signature is more reliable than the
           // operand's runtime type in this case.
           const paramTypeName = param.type.name;
-          const isParamTypeAlias =
-            converter.typeMapper.getAlias(paramTypeName) instanceof
-            InterfaceTypeSymbol;
+          const isParamTypeAlias = isInlineHandleAliasName(
+            converter,
+            paramTypeName,
+          );
           const isParamInlineClass =
             resolveClassNode(converter, paramTypeName) !== undefined &&
             !converter.udonBehaviourClasses.has(paramTypeName);
@@ -1872,7 +1872,7 @@ export function saveAndBindInlineParams(
       );
       converter.emit(
         new CopyInstruction(
-          createVariable(param.name, effectiveParamType, {
+          createVariable(paramSlotName, effectiveParamType, {
             isParameter: true,
           }),
           coercedDefault,
@@ -1892,7 +1892,7 @@ export function saveAndBindInlineParams(
       // default-emission branch above.
       converter.emit(
         new CopyInstruction(
-          createVariable(param.name, param.type, { isParameter: true }),
+          createVariable(paramSlotName, param.type, { isParameter: true }),
           createConstant(false, PrimitiveTypes.boolean),
         ),
       );
@@ -1942,6 +1942,26 @@ export function restoreInlineParams(
       converter.untrackedStructuralHandleClassIds.delete(name);
     }
   }
+}
+
+function isInlineHandleAliasType(
+  converter: ASTToTACConverter,
+  type: TypeSymbol,
+): boolean {
+  return isInlineHandleAliasName(converter, type.name);
+}
+
+function isInlineHandleAliasName(
+  converter: ASTToTACConverter,
+  typeName: string,
+): boolean {
+  const alias = converter.typeMapper.getAlias(typeName);
+  return (
+    alias instanceof InterfaceTypeSymbol &&
+    alias.properties.size > 0 &&
+    alias.methods.size > 0 &&
+    isAllInlineInterface(converter, typeName)
+  );
 }
 
 /**
@@ -3756,6 +3776,7 @@ function emitInlineRecursiveStaticMethod(
       converter.currentInlineConstructorClassName = undefined;
       converter.currentThisOverride = null;
       converter.currentInlineBaseClass = undefined;
+      converter.currentExpectedType = undefined;
 
       converter.inlineMethodStack.add(inlineKey);
       addedInlineMethodKey = true;
@@ -3831,6 +3852,7 @@ function emitInlineRecursiveStaticMethod(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
+      converter.currentExpectedType = savedExpectedType;
       if (prologueComplete && savedInitialParams)
         restoreInlineParams(converter, savedInitialParams);
       converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
@@ -4252,7 +4274,8 @@ function checkOutlineIneligible(
     body.statements.some(
       (stmt) =>
         stmt.kind === ASTNodeKind.ReturnStatement &&
-        (stmt as ReturnStatementNode).value?.kind === ASTNodeKind.CallExpression,
+        (stmt as ReturnStatementNode).value?.kind ===
+          ASTNodeKind.CallExpression,
     )
   ) {
     return true;
@@ -4337,7 +4360,9 @@ function collectInlineInstanceFieldProperties(
   for (const classNode of chain.reverse()) {
     for (const prop of classNode.properties) {
       if (prop.isStatic || prop.isGetter) continue;
-      const existingIndex = fields.findIndex((field) => field.name === prop.name);
+      const existingIndex = fields.findIndex(
+        (field) => field.name === prop.name,
+      );
       if (existingIndex >= 0) {
         fields[existingIndex] = prop;
       } else {
@@ -4354,7 +4379,10 @@ function emitInlineReceiverFieldCopies(
   fromPrefix: string,
   toPrefix: string,
 ): void {
-  for (const prop of collectInlineInstanceFieldProperties(converter, className)) {
+  for (const prop of collectInlineInstanceFieldProperties(
+    converter,
+    className,
+  )) {
     converter.emitCopyWithTracking(
       createVariable(`${toPrefix}_${prop.name}`, prop.type),
       createVariable(`${fromPrefix}_${prop.name}`, prop.type),
@@ -4750,10 +4778,7 @@ function emitInlineOutlinedBody(
   // condition. Retained for defensive correctness in case the
   // subsumption invariant is ever relaxed.
   state.returnVarInlineInstance = returnVarInlineInstance;
-  converter.outlinedMethods.set(
-    outlineKey,
-    state,
-  );
+  converter.outlinedMethods.set(outlineKey, state);
 
   // Deferred dispatch table: linear scan over return sites (O(N) per call).
   // N is typically 2–5. Even at higher N the 2N dispatch instructions are
@@ -6022,10 +6047,19 @@ function inlineResolvedMethodBody(
       if (!outlineIneligible) {
         const existing = converter.outlinedMethods.get(outlineKey);
         if (existing) {
-          return emitOutlinedCallSite(converter, existing, args, instancePrefix);
+          return emitOutlinedCallSite(
+            converter,
+            existing,
+            args,
+            instancePrefix,
+          );
         }
         const bodyInstancePrefix = shouldShareInstanceOutline(instancePrefix)
-          ? sharedInstanceOutlinePrefix(declaringClassName, className, methodName)
+          ? sharedInstanceOutlinePrefix(
+              declaringClassName,
+              className,
+              methodName,
+            )
           : instancePrefix;
         return emitInlineOutlinedMethodBody(
           converter,
@@ -6503,7 +6537,8 @@ export function maybeTrackInlineInstanceAssignment(
     this.inlineInstanceMap.delete(target.name);
     const targetType = this.getOperandType(target);
     const sourceType = this.getOperandType(value);
-    const sourceStructuralType = this.untrackedStructuralHandleTypes.get(srcName);
+    const sourceStructuralType =
+      this.untrackedStructuralHandleTypes.get(srcName);
     const targetDeclaredType = lookupDeclaredTypeForTrackingName(
       this,
       target.name,
@@ -6515,7 +6550,7 @@ export function maybeTrackInlineInstanceAssignment(
           ? targetType
           : sourceStructuralType
             ? sourceStructuralType
-          : sourceType;
+            : sourceType;
     markUntrackedStructuralHandlePrefixes(this, target.name, structuralType);
     const sourceClassId = this.untrackedStructuralHandleClassIds.get(srcName);
     if (sourceClassId) {
@@ -6636,7 +6671,8 @@ export function emitCopyWithTracking(
   if (srcName && this.untrackedStructuralHandleVars.has(srcName)) {
     this.inlineInstanceMap.delete(destName);
     const destDeclaredType = lookupDeclaredTypeForTrackingName(this, destName);
-    const sourceStructuralType = this.untrackedStructuralHandleTypes.get(srcName);
+    const sourceStructuralType =
+      this.untrackedStructuralHandleTypes.get(srcName);
     const structuralType =
       destDeclaredType && structuralInterfaceForType(this, destDeclaredType)
         ? destDeclaredType
@@ -6644,7 +6680,7 @@ export function emitCopyWithTracking(
           ? destType
           : sourceStructuralType
             ? sourceStructuralType
-          : srcType;
+            : srcType;
     markUntrackedStructuralHandlePrefixes(this, destName, structuralType);
     const sourceClassId = this.untrackedStructuralHandleClassIds.get(srcName);
     if (sourceClassId) {
@@ -6670,13 +6706,16 @@ export function emitCopyWithTracking(
       ? srcName.slice(0, -"__handle".length)
       : undefined;
     const sourceInfoFieldTypes =
-      srcInfo && structuralInterfaceForType(this, this.typeMapper.getAlias(srcInfo.className) ?? srcType)
+      srcInfo &&
+      structuralInterfaceForType(
+        this,
+        this.typeMapper.getAlias(srcInfo.className) ?? srcType,
+      )
         ? structuralInterfaceForType(
             this,
             this.typeMapper.getAlias(srcInfo.className) ?? srcType,
           )?.properties
         : undefined;
-    let inferredSourceFieldTypes: Map<string, TypeSymbol> | undefined;
     const inferSourceFieldTypes = (): Map<string, TypeSymbol> | undefined => {
       const inferred = new Map<string, TypeSymbol>();
       const prefix = `${srcName}_`;
@@ -6700,18 +6739,20 @@ export function emitCopyWithTracking(
       }
       return inferred.size > 0 ? inferred : undefined;
     };
+    const inferredSourceFieldTypes = inferSourceFieldTypes();
     const sourceFieldTypes =
       this.structuralFieldPrefixTypes.get(srcName) ??
       (sourceHandlePrefix
         ? this.structuralFieldPrefixTypes.get(sourceHandlePrefix)
         : undefined) ??
       sourceInfoFieldTypes ??
-      (inferredSourceFieldTypes = inferSourceFieldTypes());
+      inferredSourceFieldTypes;
     const sourcePrefix = this.structuralFieldPrefixTypes.has(srcName)
       ? srcName
-      : sourceHandlePrefix && this.structuralFieldPrefixTypes.has(sourceHandlePrefix)
+      : sourceHandlePrefix &&
+          this.structuralFieldPrefixTypes.has(sourceHandlePrefix)
         ? sourceHandlePrefix
-        : srcInfo?.prefix ?? (inferredSourceFieldTypes ? srcName : undefined);
+        : (srcInfo?.prefix ?? (inferredSourceFieldTypes ? srcName : undefined));
     if (sourceFieldTypes && sourcePrefix) {
       const targetFieldTypes =
         this.structuralFieldPrefixTypes.get(destName) ??

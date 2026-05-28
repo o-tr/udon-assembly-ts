@@ -487,7 +487,7 @@ export class BatchTranspiler {
 
     const _profValidate = pmark();
     const validator = new InheritanceValidator(registry, errorCollector);
-    for (const entryPoint of registry.getEntryPoints()) {
+    for (const entryPoint of selectedEntryPoints) {
       validator.validate(entryPoint.name);
     }
     pend("inheritance-validate", _profValidate);
@@ -527,6 +527,7 @@ export class BatchTranspiler {
     const reflect = options.reflect === true;
     const optimize = options.optimize === true;
     const useStringBuilder = options.useStringBuilder === true;
+    const shouldSweepUnusedSlotFiles = useOutputCache && !entryPointNameFilter;
 
     // Record slot files for ALL entry points (including skipped ones) so
     // sweepUnusedSlotFiles does not delete cache files for cached entries.
@@ -548,7 +549,7 @@ export class BatchTranspiler {
     }
 
     if (entryFilesToCompile.size === 0) {
-      if (useOutputCache) {
+      if (shouldSweepUnusedSlotFiles) {
         this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
       }
       // Replay structured diagnostics from the per-entry output cache so that
@@ -1091,7 +1092,7 @@ export class BatchTranspiler {
     // Remove output-cache slot files that were not used in this run (e.g. from
     // a prior build with different options). This prevents unbounded growth of
     // .transpiler-optcache/ when build flags cycle in CI.
-    if (useOutputCache) {
+    if (shouldSweepUnusedSlotFiles) {
       this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
     }
 

@@ -3,20 +3,35 @@
  * static method handling.
  */
 
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 const LOW_THRESHOLD = 200;
+let prevUdonSharedInstanceOutline: string | undefined;
+let prevAllowOutlineParamFields: string | undefined;
 
 describe("static method outlining", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
   });
 
+  beforeEach(() => {
+    prevUdonSharedInstanceOutline = process.env.UDON_SHARED_INSTANCE_OUTLINE;
+    prevAllowOutlineParamFields = process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS;
+  });
+
   afterEach(() => {
-    delete process.env.UDON_SHARED_INSTANCE_OUTLINE;
-    delete process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS;
+    if (prevUdonSharedInstanceOutline === undefined) {
+      delete process.env.UDON_SHARED_INSTANCE_OUTLINE;
+    } else {
+      process.env.UDON_SHARED_INSTANCE_OUTLINE = prevUdonSharedInstanceOutline;
+    }
+    if (prevAllowOutlineParamFields === undefined) {
+      delete process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS;
+    } else {
+      process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS = prevAllowOutlineParamFields;
+    }
   });
 
   /**
@@ -139,7 +154,9 @@ ${buildLargeInstanceMutationBody(150)}
 
     const entryMatches = result.tac.match(/outline_entry\d*:/g);
     expect(entryMatches).toHaveLength(1);
-    expect(result.tac).toContain("__outline_receiver_Counter_Counter_bump_value");
+    expect(result.tac).toContain(
+      "__outline_receiver_Counter_Counter_bump_value",
+    );
     expect(result.tac).toContain("__inst_Counter_0_value");
     expect(result.tac).toContain("__inst_Counter_1_value");
   });

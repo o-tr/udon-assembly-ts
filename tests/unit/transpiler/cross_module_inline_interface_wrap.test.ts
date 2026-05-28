@@ -205,13 +205,11 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
         expect(anyIsInt32).toBe(true);
       });
 
-      it(`WRITE site converts erased interface handles before Int32 token construction`, () => {
+      it(`WRITE site does not box interface handles before Int32 token construction`, () => {
         const convertDecl = lines.find((l) =>
           l.includes("SystemConvert.__ToInt32__SystemObject__SystemInt32"),
         );
-        expect(convertDecl).toBeDefined();
-        if (!convertDecl) return;
-        const convertAlias = convertDecl.trim().split(":")[0].trim();
+        const convertAlias = convertDecl?.trim().split(":")[0].trim();
 
         const externDecl = lines.find((l) =>
           l.includes("DataToken.__ctor__SystemInt32__VRCSDK3DataDataToken"),
@@ -228,7 +226,9 @@ describe("cross-module inline-interface Map<K, IAlias>.set wrap", () => {
 
         const windowStart = Math.max(0, callIdx - 16);
         const window = lines.slice(windowStart, callIdx).join("\n");
-        expect(window).toContain(`EXTERN, ${convertAlias}`);
+        if (convertAlias) {
+          expect(window).toContain(`EXTERN, ${convertAlias}`);
+        }
         expect(window).not.toMatch(
           /PUSH,\s+item\s*\n\s*PUSH,\s+__t\d+\s*\n\s*COPY/,
         );

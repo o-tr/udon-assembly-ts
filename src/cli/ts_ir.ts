@@ -87,24 +87,23 @@ function emitArtifacts(options: Options): void {
   }
 
   const transpiler = new TypeScriptToUdonTranspiler();
-  for (const sourcePath of [input]) {
-    const source = fs.readFileSync(sourcePath, "utf8");
-    const caseName = path.basename(sourcePath, ".ts");
-    const result = transpiler.transpile(source, {
-      emitTsIr: true,
-      optimize: options.optimize,
-      silent: true,
-      sourceFilePath: sourcePath,
-    });
-    if (!result.tsIr) {
-      throw new Error(`TS IR was not emitted for ${sourcePath}`);
-    }
-    fs.writeFileSync(path.join(casesDir, `${caseName}.ir.ts`), result.tsIr);
-    fs.writeFileSync(
-      path.join(casesDir, `${caseName}.test.ts`),
-      generatedTestSource(caseName),
-    );
+  const sourcePath = input;
+  const source = fs.readFileSync(sourcePath, "utf8");
+  const caseName = path.basename(sourcePath, ".ts");
+  const result = transpiler.transpile(source, {
+    emitTsIr: true,
+    optimize: options.optimize,
+    silent: true,
+    sourceFilePath: sourcePath,
+  });
+  if (!result.tsIr) {
+    throw new Error(`TS IR was not emitted for ${sourcePath}`);
   }
+  fs.writeFileSync(path.join(casesDir, `${caseName}.ir.ts`), result.tsIr);
+  fs.writeFileSync(
+    path.join(casesDir, `${caseName}.test.ts`),
+    generatedTestSource(caseName),
+  );
 }
 
 function emitDirectoryArtifacts(
@@ -136,14 +135,23 @@ function emitDirectoryArtifacts(
 
 async function runArtifacts(options: Options): Promise<void> {
   const casesDir = path.resolve(options.output, "cases");
+  const failures: string[] = [];
   for (const file of fs.readdirSync(casesDir)) {
     if (!file.endsWith(".ir.ts")) continue;
-    const mod = (await import(
-      pathToFileURL(path.join(casesDir, file)).href
-    )) as {
-      runTsIr: () => unknown;
-    };
-    mod.runTsIr();
+    const artifactPath = path.join(casesDir, file);
+    try {
+      const mod = (await import(pathToFileURL(artifactPath).href)) as {
+        runTsIr: () => unknown;
+      };
+      mod.runTsIr();
+    } catch (err) {
+      failures.push(file);
+      console.error(`TS IR artifact failed: ${artifactPath}`);
+      console.error(err);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} TS IR artifact(s) failed`);
   }
 }
 

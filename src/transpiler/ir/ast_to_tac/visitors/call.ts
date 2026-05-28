@@ -261,6 +261,7 @@ const resolveMapGetResultType = (
     expected instanceof InterfaceTypeSymbol ||
     (expected instanceof ClassTypeSymbol &&
       expected.name !== undefined &&
+      expected.udonType === UdonType.Int32 &&
       resolveClassNode(converter, expected.name) !== undefined)
   ) {
     return mapValueType;
@@ -569,6 +570,7 @@ type D3MethodDispatchOutlineState = {
   bodyReturnJump: UnconditionalJumpInstruction;
   returnVar?: VariableOperand;
   returnType?: TypeSymbol;
+  resultInlineMapping?: { prefix: string; className: string } | null;
   returnSiteIdxVar: VariableOperand;
   nextReturnSiteIndex: number;
   returnSites: Array<{ index: number; labelName: string }>;
@@ -603,7 +605,10 @@ function emitD3OutlinedCallSite(
   receiverClassIdVar: VariableOperand,
   dispatchArgs: TACOperand[],
 ): TACOperand | typeof VOID_RETURN {
-  converter.emitCopyWithTracking(state.receiverClassIdParam, receiverClassIdVar);
+  converter.emitCopyWithTracking(
+    state.receiverClassIdParam,
+    receiverClassIdVar,
+  );
   for (let i = 0; i < state.argParams.length; i++) {
     const arg = dispatchArgs[i] ?? createConstant(null, ObjectType);
     const param = state.argParams[i];
@@ -637,6 +642,12 @@ function emitD3OutlinedCallSite(
     return VOID_RETURN;
   }
   const result = converter.newTemp(state.returnType);
+  if (state.resultInlineMapping) {
+    converter.inlineInstanceMap.set(
+      state.returnVar.name,
+      state.resultInlineMapping,
+    );
+  }
   converter.emitCopyWithTracking(result, state.returnVar);
   const resultPrefix = operandTrackingKey(result);
   if (resultPrefix) {
@@ -696,6 +707,10 @@ function emitD3MethodDispatchOutline(
         isLocal: true,
         isInlineReturn: true,
       });
+  let resultInlineMapping:
+    | { prefix: string; className: string }
+    | null
+    | undefined;
 
   converter.emit(new UnconditionalJumpInstruction(firstCallSiteLabel));
   converter.emit(new LabelInstruction(entryLabel));
@@ -745,6 +760,13 @@ function emitD3MethodDispatchOutline(
         { isLocal: true },
         true,
       );
+      resultInlineMapping = mergeStructuralReturnMapping(
+        returnVar,
+        returnType ?? ObjectType,
+        inlineRes,
+        converter.inlineInstanceMap,
+        resultInlineMapping,
+      );
     }
     converter.inlineInstanceMap = branchMapSnapshot;
     converter.emit(new UnconditionalJumpInstruction(endLabel));
@@ -775,6 +797,7 @@ function emitD3MethodDispatchOutline(
     bodyReturnJump,
     returnVar,
     returnType,
+    resultInlineMapping,
     returnSiteIdxVar,
     nextReturnSiteIndex: 1,
     returnSites: [],
@@ -1854,9 +1877,7 @@ function tryD3MethodDispatch(
     ? converter.untrackedStructuralHandleClassIds.get(objectKey)
     : undefined;
   const receiverInterfaceName =
-    untrackedStructuralReceiverName ??
-    declaredReceiverName ??
-    objectTypeName;
+    untrackedStructuralReceiverName ?? declaredReceiverName ?? objectTypeName;
   const receiverClassIds = receiverInterfaceName
     ? converter.interfaceClassIdMap.get(receiverInterfaceName)
     : undefined;
@@ -1992,12 +2013,10 @@ function tryD3MethodDispatch(
     );
   }
 
-  const emitD3MethodGroupMatchCondition = (
-    group: {
-      representative: { prefix: string; className: string };
-      instances: Array<[number, { prefix: string; className: string }]>;
-    },
-  ): TACOperand => {
+  const emitD3MethodGroupMatchCondition = (group: {
+    representative: { prefix: string; className: string };
+    instances: Array<[number, { prefix: string; className: string }]>;
+  }): TACOperand => {
     const classId =
       receiverClassIdVar && receiverClassIds
         ? receiverClassIds.get(group.representative.className)
@@ -3458,7 +3477,7 @@ export function visitCallExpression(
           ? typedObjectType
           : typedObjectType instanceof DataListTypeSymbol
             ? new ArrayTypeSymbol(typedObjectType.elementType)
-          : new ArrayTypeSymbol(ObjectType);
+            : new ArrayTypeSymbol(ObjectType);
       switch (propAccess.property) {
         case "concat": {
           // Udon VM does not have a native Array.concat extern.

@@ -1,3 +1,4 @@
+import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
   AssignmentInstruction,
@@ -20,6 +21,13 @@ const invertComparison: Record<string, string> = {
   ">=": "<",
   "==": "!=",
   "!=": "==",
+};
+
+const isKnownBooleanOperand = (
+  operand: UnaryOpInstruction["operand"],
+): boolean => {
+  const typed = operand as { type?: { udonType?: unknown } };
+  return typed.type?.udonType === PrimitiveTypes.boolean.udonType;
 };
 
 export const negatedComparisonFusion = (
@@ -116,7 +124,11 @@ export const booleanNegationFusion = (
             }
           } else if (defInst.kind === TACInstructionKind.UnaryOp) {
             const inner = defInst as UnaryOpInstruction;
-            if (inner.operator === "!" && tempUses.get(operandTemp.id) === 1) {
+            if (
+              inner.operator === "!" &&
+              tempUses.get(operandTemp.id) === 1 &&
+              isKnownBooleanOperand(inner.operand)
+            ) {
               replacements.set(
                 i,
                 new AssignmentInstruction(outer.dest, inner.operand),

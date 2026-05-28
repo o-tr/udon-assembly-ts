@@ -84,6 +84,70 @@ class TsIrEmitter {
 
   emit(): TsIrEmitResult {
     this.collectLabelsAndSlots();
+    if (this.mode === "data") {
+      const lines = [
+        `import * as runtime from ${JSON.stringify(this.moduleImportPath)};`,
+        "",
+        "const program = JSON.parse(`[",
+      ];
+      for (let pc = 0; pc < this.instructions.length; pc += 1) {
+        lines.push(
+          `${pc > 0 ? "," : ""}${escapeTemplateJson(
+            JSON.stringify(
+              this.dataInstruction(this.instructions[pc] as TACInstruction),
+            ),
+          )}`,
+        );
+      }
+      lines.push(
+        "]`);",
+        "",
+        `const slotDefaults = JSON.parse(${JSON.stringify(
+          JSON.stringify(this.dataSlotDefaults()),
+        )});`,
+        "",
+        `export function ${this.functionName}() {`,
+        "  return runtime.runTacProgram(program, slotDefaults);",
+        "}",
+      );
+      return {
+        code: lines.join("\n"),
+        labels: Object.fromEntries(this.labels),
+        heapSlots: Object.fromEntries(
+          Array.from(this.slots, ([name, slot]) => [name, slot.type]),
+        ),
+      };
+    }
+    if (this.mode === "linear") {
+      this.buildSlotIdentifiers();
+      const lines: string[] = [...this.linearHeaderLines()];
+      for (const start of this.linearBlockStarts()) {
+        lines.push(`      case ${start}: {`);
+        const end = this.linearBlockEnd(start);
+        for (let pc = start; pc < end; pc += 1) {
+          lines.push(
+            ...this.emitLinearInstruction(
+              pc,
+              this.instructions[pc] as TACInstruction,
+            ),
+          );
+        }
+        const last = this.instructions[end - 1] as TACInstruction | undefined;
+        if (!last || !this.isTerminator(last)) {
+          lines.push(`        pc = ${end};`, "        continue;");
+        }
+        lines.push("      }");
+      }
+      lines.push(...this.linearFooterLines());
+      return {
+        code: lines.join("\n"),
+        labels: Object.fromEntries(this.labels),
+        heapSlots: Object.fromEntries(
+          Array.from(this.slots, ([name, slot]) => [name, slot.type]),
+        ),
+      };
+    }
+
     const lines: string[] = [...this.headerLines()];
 
     for (let pc = 0; pc < this.instructions.length; pc += 1) {
@@ -736,7 +800,7 @@ class TsIrEmitter {
       case "!=":
         return `(${left}!==${right})`;
       default:
-        return `runtime.binaryOp(${left}, ${JSON.stringify(inst.operator)})`;
+        return `runtime.binaryOp(${left}, ${JSON.stringify(inst.operator)}, ${right})`;
     }
   }
 

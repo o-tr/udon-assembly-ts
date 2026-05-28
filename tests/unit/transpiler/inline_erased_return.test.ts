@@ -144,10 +144,16 @@ describe("inline erased return handling", () => {
       ),
     ).toBeUndefined();
     expect(result.tac).toMatch(
-      /(__outline_[A-Za-z0-9_]+_retVal)_isTenpai = (__outline_[A-Za-z0-9_]+_retVal)_isTenpai/,
+      /__tmp\d+_isTenpai = __outline_[A-Za-z0-9_]+_retVal_isTenpai/,
     );
     expect(result.tac).toMatch(
-      /(__outline_[A-Za-z0-9_]+_retVal)_waits = (__outline_[A-Za-z0-9_]+_retVal)_waits/,
+      /__tmp\d+_waits = __outline_[A-Za-z0-9_]+_retVal_waits/,
+    );
+    expect(result.tac).toMatch(
+      /__inline_ret_\d+_isTenpai = __outline_[A-Za-z0-9_]+_retVal_isTenpai/,
+    );
+    expect(result.tac).toMatch(
+      /__inline_ret_\d+_waits = __outline_[A-Za-z0-9_]+_retVal_waits/,
     );
     expect(result.tac).not.toMatch(/__uninst_prop_\d+/);
   });
@@ -503,7 +509,7 @@ describe("inline erased return handling", () => {
     expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
-  it("includes both union branches in D-3 dispatch when nested anon property types are structurally equivalent", () => {
+  it("populates both union branches when nested anon property types are structurally equivalent", () => {
     // Win and Loss each declare `point: { x: number }`. Each occurrence of
     // the anonymous type literal produces its own `__anon_N` symbol, so a
     // naive identity check on property types would reject one branch and
@@ -533,11 +539,14 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
-    // The D-3 `r.point` dispatch table must reference BOTH concrete
-    // classes' `_point` slots, grouped on the same dispatch destination.
+    expect(
+      result.diagnostics?.find(
+        (diagnostic) => diagnostic.code === "UntrackedStructuralUnionReturn",
+      ),
+    ).toBeUndefined();
     const perDestination = new Map<string, Set<string>>();
     for (const match of result.tac.matchAll(
-      /(__uninst_prop_\d+) = (__inst_(?:Win|Loss)_\d+)_point/g,
+      /(__tmp\d+_point) = (__inline_M_pick_[wl]_point)/g,
     )) {
       const [, dest, source] = match;
       if (!perDestination.has(dest)) perDestination.set(dest, new Set());
@@ -550,7 +559,7 @@ describe("inline erased return handling", () => {
     expect(maxGroupSize).toBeGreaterThanOrEqual(2);
   });
 
-  it("includes both union branches when a shared named alias appears as a property type", () => {
+  it("populates both union branches when a shared named alias appears as a property type", () => {
     // Win and Loss share `point: Pt` where `Pt` is a named alias. Both
     // branches' `point` property type is the same `Pt` InterfaceTypeSymbol
     // after alias resolution. hasCompatibleUnionProperty must resolve
@@ -580,9 +589,14 @@ describe("inline erased return handling", () => {
       }
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
+    expect(
+      result.diagnostics?.find(
+        (diagnostic) => diagnostic.code === "UntrackedStructuralUnionReturn",
+      ),
+    ).toBeUndefined();
     const perDestination = new Map<string, Set<string>>();
     for (const match of result.tac.matchAll(
-      /(__uninst_prop_\d+) = (__inst_(?:Win|Loss)_\d+)_point/g,
+      /(__tmp\d+_point) = (__inline_M_pick_[wl]_point)/g,
     )) {
       const [, dest, source] = match;
       if (!perDestination.has(dest)) perDestination.set(dest, new Set());

@@ -1150,7 +1150,8 @@ export const sccpLocal = (
     operand: TACOperand,
     constants: Map<string, ConstantOperand>,
   ): ConstantOperand | null => {
-    if (operand.kind === TACOperandKind.Constant) return operand as ConstantOperand;
+    if (operand.kind === TACOperandKind.Constant)
+      return operand as ConstantOperand;
     const name = latticeNameForOperand(operand);
     if (name === null) return null;
     return constants.get(name) ?? null;
@@ -1212,13 +1213,11 @@ export const sccpLocal = (
       }
       case TACInstructionKind.MethodCall: {
         const call = inst as MethodCallInstruction;
-        const object = replace(call.object, constants);
         const args = call.args.map((arg) => replace(arg, constants));
-        return object !== call.object ||
-          args.some((arg, idx) => arg !== call.args[idx])
+        return args.some((arg, idx) => arg !== call.args[idx])
           ? new MethodCallInstruction(
               call.dest,
-              object,
+              call.object,
               call.method,
               args,
               call.isTailCall,
@@ -1234,11 +1233,10 @@ export const sccpLocal = (
       }
       case TACInstructionKind.PropertySet: {
         const set = inst as PropertySetInstruction;
-        const object = replace(set.object, constants);
         const value = replace(set.value, constants);
-        return object === set.object && value === set.value
+        return value === set.value
           ? inst
-          : new PropertySetInstruction(object, set.property, value);
+          : new PropertySetInstruction(set.object, set.property, value);
       }
       case TACInstructionKind.Return: {
         const ret = inst as ReturnInstruction;
@@ -1258,14 +1256,11 @@ export const sccpLocal = (
       }
       case TACInstructionKind.ArrayAssignment: {
         const assign = inst as ArrayAssignmentInstruction;
-        const array = replace(assign.array, constants);
         const index = replace(assign.index, constants);
         const value = replace(assign.value, constants);
-        return array === assign.array &&
-          index === assign.index &&
-          value === assign.value
+        return index === assign.index && value === assign.value
           ? inst
-          : new ArrayAssignmentInstruction(array, index, value);
+          : new ArrayAssignmentInstruction(assign.array, index, value);
       }
       default:
         return inst;

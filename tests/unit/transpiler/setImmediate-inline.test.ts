@@ -46,6 +46,6 @@ describe("setImmediate inline callback lowering", () => {
     const result = transpiler.transpile(src, { optimize: false });
 
     expect(result.tac).toContain("SendCustomEventDelayedFrames");
-    expect(result.tac).toContain("startLater");
+    expect(result.tac).toMatch(/SendCustomEventDelayedFrames[^\n]*startLater/);
   });
 });

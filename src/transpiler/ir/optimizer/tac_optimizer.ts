@@ -46,8 +46,8 @@ import {
   deadCodeElimination,
   eliminateDeadStoresCFG,
   eliminateDeadTemporaries,
-  eliminateOverwrittenPureProducersLocal,
   eliminateNoopCopies,
+  eliminateOverwrittenPureProducersLocal,
 } from "./passes/dead_code.js";
 import { simplifyDiamondPatterns } from "./passes/diamond_simplification.js";
 import { eliminateFallthroughJumps } from "./passes/fallthrough.js";
@@ -104,7 +104,9 @@ function resolveSsaInstructionLimit(): number {
 }
 
 function resolveReadonlyDataCollectionFoldingInstructionLimit(): number {
-  const raw = process.env.UDON_READONLY_DATA_COLLECTION_FOLDING_LIMIT;
+  const raw =
+    process.env.UDON_READONLY_DATA_COLLECTION_FOLDING_INSTRUCTION_LIMIT ??
+    process.env.UDON_READONLY_DATA_COLLECTION_FOLDING_LIMIT;
   if (raw === undefined || raw.trim() === "") {
     return READONLY_DATA_COLLECTION_FOLDING_INSTRUCTION_LIMIT;
   }

@@ -35,7 +35,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --hideSkippedTests",
+    "test": "node --max-old-space-size=8192 ./node_modules/vitest/vitest.mjs run tests --hideSkippedTests",
     "emit:ts-ir": "tsx src/cli/ts_ir.ts emit",
     "typecheck:ts-ir": "tsc -p tsconfig.ts-ir.json --noEmit",
     "test:ts-ir": "vitest run tests/unit/transpiler/ts_ir*.test.ts --hideSkippedTests && pnpm emit:ts-ir && pnpm typecheck:ts-ir && vitest run generated/ts-ir/cases --hideSkippedTests",

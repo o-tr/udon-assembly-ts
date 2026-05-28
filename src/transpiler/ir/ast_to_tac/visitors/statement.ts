@@ -14,9 +14,9 @@ import {
   type TypeSymbol,
 } from "../../../frontend/type_symbols.js";
 import {
+  type ArrayAccessExpressionNode,
   type ASTNode,
   ASTNodeKind,
-  type ArrayAccessExpressionNode,
   type BinaryExpressionNode,
   type BlockStatementNode,
   type BreakStatementNode,
@@ -29,8 +29,8 @@ import {
   type ExpressionStatementNode,
   type ForOfStatementNode,
   type ForStatementNode,
-  type IfStatementNode,
   type IdentifierNode,
+  type IfStatementNode,
   isNumericUdonType,
   type LiteralNode,
   type NullCoalescingExpressionNode,
@@ -81,9 +81,9 @@ import {
   countTryCatchBlocks,
   createSoaSentinelValue,
   emitStructuralFieldCopies,
-  markUntrackedStructuralHandlePrefixes,
   MAX_RECURSION_STACK_DEPTH,
   makeDefaultDataTokenForLocal,
+  markUntrackedStructuralHandlePrefixes,
   operandTrackingKey,
   resolveClassNode,
   resolveInlineClassType,
@@ -256,7 +256,8 @@ function inferElementTypeFromIdentifierInitializer(
   const access = call.callee as PropertyAccessExpressionNode;
   if (access.property !== "slice" && access.property !== "concat") return null;
   const sourceType = resolveTypeFromNode(converter, access.object);
-  if (sourceType instanceof ArrayTypeSymbol) return sourceType.peelOneDimension();
+  if (sourceType instanceof ArrayTypeSymbol)
+    return sourceType.peelOneDimension();
   if (sourceType instanceof DataListTypeSymbol) return sourceType.elementType;
   return null;
 }
@@ -415,7 +416,8 @@ function emitKnownStructuralPrefixCopies(
   targetPrefix: string,
   seen = new Set<string>(),
 ): boolean {
-  const sourceFieldTypes = converter.structuralFieldPrefixTypes.get(sourcePrefix);
+  const sourceFieldTypes =
+    converter.structuralFieldPrefixTypes.get(sourcePrefix);
   if (!sourceFieldTypes || sourceFieldTypes.size === 0) return false;
   const seenKey = `${sourcePrefix}->${targetPrefix}`;
   if (seen.has(seenKey)) return true;
@@ -937,7 +939,10 @@ export function visitVariableDeclaration(
     const structuralType = structuralInterfaceForType(this, destType);
     const srcKey = operandTrackingKey(src);
     const destKey = operandTrackingKey(dest);
-    if (destKey && node.initializer?.kind === ASTNodeKind.ObjectLiteralExpression) {
+    if (
+      destKey &&
+      node.initializer?.kind === ASTNodeKind.ObjectLiteralExpression
+    ) {
       const objectLiteral = node.initializer as ObjectLiteralExpressionNode;
       const fieldTypes =
         this.structuralFieldPrefixTypes.get(destKey) ??
@@ -992,11 +997,11 @@ export function visitVariableDeclaration(
       ? srcKey
       : sourcePrefixFromHandleSlots
         ? sourceHandlePrefix
-      : srcMapping
-        ? srcMapping.prefix
-        : sourcePrefixFromStructuralProperty
-          ? srcKey
-          : undefined;
+        : srcMapping
+          ? srcMapping.prefix
+          : sourcePrefixFromStructuralProperty
+            ? srcKey
+            : undefined;
     if (structuralType && srcKey && destKey && sourcePrefix) {
       // Resolve to the canonical inline-instance prefix so per-field copies
       // read from the underlying `__inst_*_<prop>` slots rather than
@@ -1014,8 +1019,7 @@ export function visitVariableDeclaration(
         srcMapping ??
         (srcKey.endsWith("__handle")
           ? Array.from(this.allInlineInstances.values()).find(
-              (info) =>
-                info.prefix === srcKey.slice(0, -"__handle".length),
+              (info) => info.prefix === srcKey.slice(0, -"__handle".length),
             )
           : undefined) ??
         Array.from(this.allInlineInstances.values()).find(
@@ -1059,9 +1063,7 @@ export function visitVariableDeclaration(
         (sourceHandlePrefix
           ? this.structuralFieldPrefixTypes.get(sourceHandlePrefix)
           : undefined);
-      const copiedSourcePrefix = sourceFieldTypes
-        ? srcKey
-        : sourceHandlePrefix;
+      const copiedSourcePrefix = sourceFieldTypes ? srcKey : sourceHandlePrefix;
       if (copiedSourceFieldTypes && copiedSourcePrefix) {
         const targetFieldTypes =
           this.structuralFieldPrefixTypes.get(destKey) ??
@@ -1393,10 +1395,7 @@ export function visitForOfStatement(
   // `DataToken` so copies are well-typed. Only unwrap to concrete element
   // types when we have a `DataListTypeSymbol` or `ArrayTypeSymbol` carrying
   // elementType info.
-  if (
-    isDataList &&
-    !typedIterableType
-  ) {
+  if (isDataList && !typedIterableType) {
     elementType = ExternTypes.dataToken;
   } else if (!isDestructured && !isObjectDestructured) {
     elementType = resolveInlineClassType(this, elementType);
@@ -1453,8 +1452,7 @@ export function visitForOfStatement(
       ]),
     );
     const hasTypedElements =
-      !!typedIterableType &&
-      elementType.name !== ExternTypes.dataToken.name;
+      !!typedIterableType && elementType.name !== ExternTypes.dataToken.name;
     const resolvedValue = hasTypedElements
       ? this.unwrapDataToken(tokenValue, elementType)
       : tokenValue;
@@ -1994,7 +1992,9 @@ export function visitForOfStatement(
   // mutation that requires a pop (handled by the try/finally).
   const needsVifaceEpilogue = !!vifacePrefix;
   const forOfSourceVariableName =
-    !isDestructured && !isObjectDestructured && typeof node.variable === "string"
+    !isDestructured &&
+    !isObjectDestructured &&
+    typeof node.variable === "string"
       ? node.variable
       : undefined;
   const forOfElementClassName = (() => {
@@ -2300,6 +2300,12 @@ export function visitReturnStatement(
     const retStructuralType = structuralInterfaceForType(this, retType);
     if (retStructuralType) {
       this.currentExpectedType = retStructuralType;
+    } else if (
+      node.value.kind === ASTNodeKind.ArrayLiteralExpression &&
+      (retType instanceof ArrayTypeSymbol ||
+        retType instanceof DataListTypeSymbol)
+    ) {
+      this.currentExpectedType = retType;
     } else if (
       node.value.kind === ASTNodeKind.ObjectLiteralExpression &&
       retType.name !== ObjectType.name
@@ -3436,6 +3442,7 @@ export function visitTryCatchStatement(
     this.tryContextStack.pop();
     this.emit(new UnconditionalJumpInstruction(endLabel));
     this.emit(new LabelInstruction(catchLabel as TACOperand));
+    this.symbolTable.enterScope();
     if (node.catchVariable) {
       const catchSlotName = this.currentInlineLocalPrefix
         ? `${this.currentInlineLocalPrefix}${node.catchVariable}`
@@ -3459,7 +3466,6 @@ export function visitTryCatchStatement(
       );
       this.emit(new CopyInstruction(catchVar, errorValueVar));
     }
-    this.symbolTable.enterScope();
     this.scanDeclarations(node.catchBody.statements);
     for (const stmt of node.catchBody.statements) {
       this.visitStatement(stmt);
@@ -3639,7 +3645,10 @@ function hasBreakOrContinue(block: BlockStatementNode): boolean {
         return (node as BlockStatementNode).statements.some(visit);
       case ASTNodeKind.IfStatement: {
         const stmt = node as IfStatementNode;
-        return visit(stmt.thenBranch) || (stmt.elseBranch ? visit(stmt.elseBranch) : false);
+        return (
+          visit(stmt.thenBranch) ||
+          (stmt.elseBranch ? visit(stmt.elseBranch) : false)
+        );
       }
       case ASTNodeKind.WhileStatement:
         return visit((node as WhileStatementNode).body);
