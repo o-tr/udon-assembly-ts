@@ -53,7 +53,12 @@ export const negatedComparisonFusion = (
           if (defInst.kind === TACInstructionKind.BinaryOp) {
             const bin = defInst as BinaryOpInstruction;
             const inverted = invertComparison[bin.operator];
-            if (inverted && tempUses.get(operandTemp.id) === 1) {
+            if (
+              inverted &&
+              tempUses.get(operandTemp.id) === 1 &&
+              !removed.has(defIndex) &&
+              !replacements.has(defIndex)
+            ) {
               replacements.set(
                 i,
                 new BinaryOpInstruction(un.dest, bin.left, inverted, bin.right),
@@ -110,7 +115,12 @@ export const booleanNegationFusion = (
           if (defInst.kind === TACInstructionKind.BinaryOp) {
             const bin = defInst as BinaryOpInstruction;
             const inverted = invertComparison[bin.operator];
-            if (inverted && tempUses.get(operandTemp.id) === 1) {
+            if (
+              inverted &&
+              tempUses.get(operandTemp.id) === 1 &&
+              !removed.has(defIndex) &&
+              !replacements.has(defIndex)
+            ) {
               replacements.set(
                 i,
                 new BinaryOpInstruction(
