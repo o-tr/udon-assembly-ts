@@ -3717,37 +3717,37 @@ function emitLightweightFinallyOnlyTryWithAbruptJumps(
 }
 
 function hasBreakOrContinue(block: BlockStatementNode): boolean {
-  const visit = (node: ASTNode): boolean => {
+  const visit = (node: ASTNode, insideSwitch = false): boolean => {
     switch (node.kind) {
       case ASTNodeKind.BreakStatement:
+        return !insideSwitch;
       case ASTNodeKind.ContinueStatement:
         return true;
       case ASTNodeKind.BlockStatement:
-        return (node as BlockStatementNode).statements.some(visit);
+        return (node as BlockStatementNode).statements.some((stmt) =>
+          visit(stmt, insideSwitch),
+        );
       case ASTNodeKind.IfStatement: {
         const stmt = node as IfStatementNode;
         return (
-          visit(stmt.thenBranch) ||
-          (stmt.elseBranch ? visit(stmt.elseBranch) : false)
+          visit(stmt.thenBranch, insideSwitch) ||
+          (stmt.elseBranch ? visit(stmt.elseBranch, insideSwitch) : false)
         );
       }
       case ASTNodeKind.WhileStatement:
-        return visit((node as WhileStatementNode).body);
       case ASTNodeKind.DoWhileStatement:
-        return visit((node as DoWhileStatementNode).body);
       case ASTNodeKind.ForStatement:
-        return visit((node as ForStatementNode).body);
       case ASTNodeKind.ForOfStatement:
-        return visit((node as ForOfStatementNode).body);
+        return false;
       case ASTNodeKind.SwitchStatement:
         return (node as SwitchStatementNode).cases.some((caseNode) =>
-          caseNode.statements.some(visit),
+          caseNode.statements.some((stmt) => visit(stmt, true)),
         );
       default:
         return false;
     }
   };
-  return block.statements.some(visit);
+  return block.statements.some((stmt) => visit(stmt));
 }
 
 export function visitThrowStatement(
