@@ -23,3 +23,11 @@
 - root cause: udon-go is still under validation and can diverge from Unity VM semantics, so it is not an authoritative oracle for this repository's runtime correctness.
 - fix: Use Unity VM results as the source of truth for Udon runtime behavior; treat udon-go output only as optional diagnostic context.
 - prevention: Before reporting runtime validation, identify the authoritative executor. For current Udon VM investigations, do not classify a failure as confirmed unless Unity VM reproduces it.
+
+## 2026-05-29 - Stage cheap optimizer passes before heavy global passes
+
+- tags: performance, optimizer, assumptions/interpretation
+- symptom: Large generated TAC was made to complete by skipping heavy optimizer passes, but this under-addressed the user's goal that larger code should also benefit from optimization.
+- root cause: The optimization strategy focused on avoiding timeout/OOM rather than first shrinking the input with cheap local passes and then conditionally attempting heavier global/fixpoint passes.
+- fix: Reorient large-input optimization around a staged pipeline: converge lightweight/local passes first, then gate heavy passes using the original input size and current reduced size.
+- prevention: For performance fixes in optimizer pipelines, compare both "completion" and "optimization effectiveness"; prefer cheap-to-heavy staging before adding broad skips.
