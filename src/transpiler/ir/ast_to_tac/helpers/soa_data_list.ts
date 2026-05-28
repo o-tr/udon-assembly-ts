@@ -16,24 +16,8 @@ import {
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { sanitizeIdentifierToken } from "./identifier_sanitize.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
-
-function sanitizeSoAIdentifierToken(raw: string): string {
-  const replaced = raw.replace(/[^A-Za-z0-9_]/g, "_");
-  const normalized =
-    replaced.length === 0
-      ? "_anon"
-      : /^[A-Za-z_]/.test(replaced)
-        ? replaced
-        : `_${replaced}`;
-  if (normalized === raw) return normalized;
-  let hash = 2166136261 >>> 0;
-  for (let i = 0; i < raw.length; i++) {
-    hash ^= raw.charCodeAt(i);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return `${normalized}__h${hash.toString(16)}`;
-}
 
 /**
  * Number of handle slots reserved per SoA class.
@@ -122,7 +106,7 @@ export function emitBoundedDataListGetItem(
     const listReady = converter.newLabel("soa_list_ready");
     if (guardClassName) {
       const initedVar = createVariable(
-        `__soa_${sanitizeSoAIdentifierToken(guardClassName)}__inited`,
+        `__soa_${sanitizeIdentifierToken(guardClassName)}__inited`,
         PrimitiveTypes.int32,
       );
       const alreadyInited = converter.newTemp(PrimitiveTypes.boolean);

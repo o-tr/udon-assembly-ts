@@ -3644,13 +3644,10 @@ function canEmitLightweightFinallyOnlyTry(block: BlockStatementNode): boolean {
         );
       }
       case ASTNodeKind.WhileStatement:
-        return visit((node as WhileStatementNode).body);
       case ASTNodeKind.DoWhileStatement:
-        return visit((node as DoWhileStatementNode).body);
       case ASTNodeKind.ForStatement:
-        return visit((node as ForStatementNode).body);
       case ASTNodeKind.ForOfStatement:
-        return visit((node as ForOfStatementNode).body);
+        return false;
       case ASTNodeKind.SwitchStatement:
         return (node as SwitchStatementNode).cases.every((caseNode) =>
           caseNode.statements.every(visit),

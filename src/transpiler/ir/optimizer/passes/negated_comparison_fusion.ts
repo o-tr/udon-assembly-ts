@@ -30,64 +30,6 @@ const isKnownBooleanOperand = (
   return typed.type?.udonType === PrimitiveTypes.boolean.udonType;
 };
 
-export const negatedComparisonFusion = (
-  instructions: TACInstruction[],
-): PassResult => {
-  const tempUses = countTempUses(instructions);
-  const lastDefinition = new Map<string, number>();
-  const removed = new Set<number>();
-  const replacements = new Map<number, TACInstruction>();
-
-  for (let i = 0; i < instructions.length; i++) {
-    const inst = instructions[i];
-    if (inst.kind === TACInstructionKind.Label) {
-      lastDefinition.clear();
-    }
-    if (inst.kind === TACInstructionKind.UnaryOp) {
-      const un = inst as UnaryOpInstruction;
-      if (un.operator === "!" && un.operand.kind === TACOperandKind.Temporary) {
-        const operandTemp = un.operand as TemporaryOperand;
-        const defIndex = lastDefinition.get(operandKey(un.operand));
-        if (defIndex !== undefined) {
-          const defInst = instructions[defIndex];
-          if (defInst.kind === TACInstructionKind.BinaryOp) {
-            const bin = defInst as BinaryOpInstruction;
-            const inverted = invertComparison[bin.operator];
-            if (
-              inverted &&
-              tempUses.get(operandTemp.id) === 1 &&
-              !removed.has(defIndex) &&
-              !replacements.has(defIndex)
-            ) {
-              replacements.set(
-                i,
-                new BinaryOpInstruction(un.dest, bin.left, inverted, bin.right),
-              );
-              removed.add(defIndex);
-            }
-          }
-        }
-      }
-    }
-
-    const defined = getDefinedOperandForReuse(inst);
-    if (defined) {
-      lastDefinition.set(operandKey(defined), i);
-    }
-  }
-
-  const changed = removed.size > 0 || replacements.size > 0;
-  if (!changed) return { instructions, changed: false };
-
-  const result: TACInstruction[] = [];
-  for (let i = 0; i < instructions.length; i++) {
-    if (removed.has(i)) continue;
-    result.push(replacements.get(i) ?? instructions[i]);
-  }
-
-  return { instructions: result, changed: true };
-};
-
 export const booleanNegationFusion = (
   instructions: TACInstruction[],
 ): PassResult => {
