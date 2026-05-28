@@ -308,6 +308,12 @@ export class ASTToTACConverter {
     loopDepth: number;
     returnInstancePrefix?: string;
     isErasedReturn?: boolean;
+    /** Per-return-site tracking of structural prefix population. Each entry records
+     * the source prefix key and whether its field copies were emitted (tracked=true)
+     * or not (tracked=false). Used at nested inline boundaries to gate field-copy
+     * propagation: only copy `${srcKey}_<prop>` → `${outerPrefix}_<prop>` when every
+     * runtime path reaching this boundary populated the source prefix. */
+    structuralPrefixPaths?: Array<{ srcKey: string; populated: boolean }>;
   }> = [];
   currentThisOverride: TACOperand | null = null;
   propertyAccessDepth = 0;

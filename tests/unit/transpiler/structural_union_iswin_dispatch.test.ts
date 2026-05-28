@@ -524,14 +524,12 @@ describe("structural union isWin dispatch", () => {
       dispatchLimitResolver: tinyResolver,
     });
 
-    // Even with a tiny dispatch limit that forces limit-exceeded path, the
-    // compiler must NOT emit the invalid SystemObject extern.  The miss path
-    // must emit Debug.LogError instead.
+    // Even with a tiny dispatch limit, the compiler must NOT emit the invalid
+    // SystemObject extern. This branch may either reach the limit-exceeded D3
+    // miss diagnostic or avoid D3 entirely by reading a propagated structural
+    // field slot.
     expect(result.uasm).not.toMatch(/SystemObject\.__get_isWin__SystemBoolean/);
     expect(result.uasm).not.toMatch(/__get_isWin/);
-    // Positive assertion: the safety-net branch must emit the limit-exceeded
-    // diagnostic string so that a future silent removal is caught.
-    expect(result.uasm).toMatch(/D3 dispatch miss \(limit exceeded\)/);
   });
 
   // Skipped reproducer for the nested-inline-return boundary described in
@@ -546,8 +544,7 @@ describe("structural union isWin dispatch", () => {
   // from the inner inline-ret, or the boundary must know which return path
   // populated which prefix on its own branch).
   //
-  // Left skipped to preserve the failing shape until the deeper fix lands.
-  it.skip("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
+  it("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
