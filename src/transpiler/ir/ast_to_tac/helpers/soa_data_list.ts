@@ -110,7 +110,7 @@ export function emitBoundedDataListGetItem(
         PrimitiveTypes.int32,
       );
       const alreadyInited = converter.newTemp(PrimitiveTypes.boolean);
-      const seedList = converter.newLabel("soa_seed_list");
+      const needsSeed = converter.newLabel("soa_needs_seed");
       converter.emit(
         new BinaryOpInstruction(
           alreadyInited,
@@ -119,9 +119,11 @@ export function emitBoundedDataListGetItem(
           createConstant(1, PrimitiveTypes.int32),
         ),
       );
-      converter.emit(new ConditionalJumpInstruction(alreadyInited, seedList));
+      // ConditionalJumpInstruction jumps when the condition is false: jump to
+      // needsSeed only when the SoA class has not been initialized yet.
+      converter.emit(new ConditionalJumpInstruction(alreadyInited, needsSeed));
       converter.emit(new UnconditionalJumpInstruction(listReady));
-      converter.emit(new LabelInstruction(seedList));
+      converter.emit(new LabelInstruction(needsSeed));
     } else {
       const boxedList = converter.newTemp(ObjectType);
       converter.emit(new CopyInstruction(boxedList, listVar));

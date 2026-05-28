@@ -3708,6 +3708,9 @@ function emitLightweightFinallyOnlyTryWithAbruptJumps(
   const endLabel = converter.newLabel("try_finally_end");
   converter.emit(new UnconditionalJumpInstruction(endLabel));
 
+  // This deliberately duplicates finally-body TAC per distinct outer
+  // break/continue target. Keep finally bodies small on this lightweight path:
+  // every trampoline mints fresh temps and therefore increases heap usage.
   for (const [targetName, trampoline] of trampolineLabels) {
     converter.emit(new LabelInstruction(trampoline));
     converter.visitBlockStatement(node.finallyBody);
