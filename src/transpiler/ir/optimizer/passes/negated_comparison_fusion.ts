@@ -127,7 +127,9 @@ export const booleanNegationFusion = (
             if (
               inner.operator === "!" &&
               tempUses.get(operandTemp.id) === 1 &&
-              isKnownBooleanOperand(inner.operand)
+              isKnownBooleanOperand(inner.operand) &&
+              !removed.has(defIndex) &&
+              !replacements.has(defIndex)
             ) {
               replacements.set(
                 i,

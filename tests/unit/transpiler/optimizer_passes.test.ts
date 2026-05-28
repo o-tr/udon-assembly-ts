@@ -25,6 +25,7 @@ import { optimizeInductionVariables } from "../../../src/transpiler/ir/optimizer
 import { performLICM } from "../../../src/transpiler/ir/optimizer/passes/licm";
 import { optimizeLoopStructures } from "../../../src/transpiler/ir/optimizer/passes/loop_opts";
 import { unswitchLoops } from "../../../src/transpiler/ir/optimizer/passes/loop_unswitching";
+import { booleanNegationFusion } from "../../../src/transpiler/ir/optimizer/passes/negated_comparison_fusion";
 import { performPRE } from "../../../src/transpiler/ir/optimizer/passes/pre";
 import {
   sccpAndPrune,
@@ -1695,6 +1696,27 @@ describe("optimizer passes", () => {
     const text = stringify(optimized);
     expect(text).not.toContain("!");
     expect(optimized.filter((inst) => inst.kind === "UnaryOp").length).toBe(0);
+  });
+
+  it("does not drop chained negated-comparison replacement", () => {
+    const a = createVariable("a", PrimitiveTypes.int32);
+    const b = createVariable("b", PrimitiveTypes.int32);
+    const t0 = createTemporary(0, PrimitiveTypes.boolean);
+    const t1 = createTemporary(1, PrimitiveTypes.boolean);
+    const t2 = createTemporary(2, PrimitiveTypes.boolean);
+    const instructions = [
+      new BinaryOpInstruction(t0, a, "==", b),
+      new UnaryOpInstruction(t1, "!", t0),
+      new UnaryOpInstruction(t2, "!", t1),
+      new ReturnInstruction(t2),
+    ];
+
+    const optimized = booleanNegationFusion(instructions);
+    const text = stringify(optimized.instructions);
+
+    expect(text).toContain("t1 = a != b");
+    expect(text).toContain("t2 = !t1");
+    expect(text).not.toContain("t2 = t0");
   });
 
   it("does not eliminate double negation when inner result is reused", () => {
