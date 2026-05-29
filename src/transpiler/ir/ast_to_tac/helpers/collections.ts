@@ -82,7 +82,7 @@ export function ensureDataListForCount(
   converter.emit(new CopyInstruction(boxedList, operand));
   const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
   const listReady = converter.newLabel(labelPrefix);
-  const listIsNull = converter.newLabel(`${labelPrefix}_is_null`);
+  const listIsNullBranch = converter.newLabel(`${labelPrefix}_is_null`);
   converter.emit(
     new BinaryOpInstruction(
       listIsNotNull,
@@ -91,10 +91,12 @@ export function ensureDataListForCount(
       createConstant(null, ObjectType),
     ),
   );
-  converter.emit(new ConditionalJumpInstruction(listIsNotNull, listIsNull));
+  converter.emit(
+    new ConditionalJumpInstruction(listIsNotNull, listIsNullBranch),
+  );
   converter.emit(new CopyInstruction(safeList, operand));
   converter.emit(new UnconditionalJumpInstruction(listReady));
-  converter.emit(new LabelInstruction(listIsNull));
+  converter.emit(new LabelInstruction(listIsNullBranch));
   const listCtorSig = converter.requireExternSignature(
     "DataList",
     "ctor",
@@ -260,6 +262,8 @@ export function emitDataListGetRangeLoop(
   converter.emit(
     new BinaryOpInstruction(inSourceBounds, srcIdx, "<", sourceCount),
   );
+  // `idx < count` caps the requested range length; this second guard caps the
+  // source tail when start + count extends past the current list size.
   // ConditionalJumpInstruction jumps when the condition is false, so when
   // inSourceBounds is false (srcIdx >= sourceCount) we jump to loopEnd.
   converter.emit(new ConditionalJumpInstruction(inSourceBounds, loopEnd));

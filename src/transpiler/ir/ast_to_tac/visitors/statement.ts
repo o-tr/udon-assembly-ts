@@ -3468,6 +3468,8 @@ export function visitTryCatchStatement(
     node.finallyBody &&
     canEmitLightweightFinallyOnlyTry(node.tryBody)
   ) {
+    // canEmitLightweightFinallyOnlyTry rejects throw-containing bodies, so this
+    // inline path does not need tryContextStack exception propagation.
     if (hasBreakOrContinue(node.tryBody)) {
       emitLightweightFinallyOnlyTryWithAbruptJumps(this, node);
       return;

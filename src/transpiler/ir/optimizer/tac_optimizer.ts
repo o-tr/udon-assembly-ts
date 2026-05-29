@@ -524,11 +524,23 @@ export class TACOptimizer {
       run(timed("constantFolding", () => constantFolding(next)));
       // Coalesce string concatenation chains
       run(timed("stringConcat", () => optimizeStringConcatenation(next)));
-      run(timed("sccpLocal", () => sccpLocal(next, { cachedCFG: getCFG() })));
-      run(timed("constantFolding.afterSccpLocal", () => constantFolding(next)));
+      const cfgHeavyPassInstructionLimit =
+        resolveCfgHeavyPassInstructionLimit();
+      if (
+        !shouldSkipLargeInputPass(
+          "sccpLocal",
+          next.length,
+          cfgHeavyPassInstructionLimit,
+        )
+      ) {
+        run(timed("sccpLocal", () => sccpLocal(next, { cachedCFG: getCFG() })));
+        run(
+          timed("constantFolding.afterSccpLocal", () => constantFolding(next)),
+        );
+      }
       // On huge generated TAC, shrink with block-local passes before any
       // global/fixpoint-heavy pass has a chance to allocate large state.
-      if (next.length > resolveCfgHeavyPassInstructionLimit()) {
+      if (next.length > cfgHeavyPassInstructionLimit) {
         ranPreLocalCleanup = true;
         run(
           timed("preCopyPropagationLocal", () =>

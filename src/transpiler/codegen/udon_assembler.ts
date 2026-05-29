@@ -97,6 +97,63 @@ export class UdonAssembler {
     return this.warnings.slice();
   }
 
+  private emitDataSection(
+    dataSection: Array<[string, number, string, unknown]> | undefined,
+    syncModes: Map<string, string> | undefined,
+    internalSymbolMap: Map<string, string>,
+    writeLine: (line?: string) => void,
+  ): void {
+    writeLine(".data_start");
+    writeLine();
+
+    if (dataSection && dataSection.length > 0) {
+      const sortedData = [...dataSection].sort((a, b) => a[1] - b[1]);
+
+      for (const [name, _address, type, value] of sortedData) {
+        const { csharpType, udonType, category } = this.classifyType(type);
+        let initialValue: string;
+
+        if (value === null) {
+          initialValue = "null";
+        } else if (category === "boolean") {
+          initialValue = value === true ? "true" : "false";
+        } else if (udonType === "SystemType" && typeof value === "string") {
+          initialValue = value;
+        } else if (
+          typeof value === "string" &&
+          value.startsWith("0x") &&
+          category !== "string"
+        ) {
+          initialValue = value;
+        } else if (typeof value === "number" && category === "float") {
+          initialValue = this.formatFloatLiteral(value);
+        } else if (typeof value === "number" && category === "integer") {
+          const integerTypeName = this.isIntegerType(udonType)
+            ? udonType
+            : this.isIntegerType(csharpType)
+              ? csharpType
+              : type;
+          initialValue = this.formatIntegerLiteral(value, integerTypeName);
+        } else {
+          initialValue = JSON.stringify(value);
+        }
+
+        const outputName = this.formatSymbolName(name, internalSymbolMap);
+        writeLine(`    ${outputName}: %${udonType}, ${initialValue}`);
+
+        if (!name.startsWith("__")) {
+          writeLine(`    .export ${outputName}`);
+          const syncMode = syncModes?.get(name);
+          writeLine(`    .sync ${outputName}, ${syncMode ?? "none"}`);
+        }
+      }
+      writeLine();
+    }
+
+    writeLine(".data_end");
+    writeLine();
+  }
+
   private expandExponentialLiteral(text: string): string {
     const match = /^([+-]?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(text);
     if (!match) {
@@ -682,72 +739,9 @@ export class UdonAssembler {
     );
     const internalSymbolMap = this.buildInternalSymbolMap(effectiveData);
 
-    // Data section
-    lines.push(".data_start");
-    lines.push("");
-
-    // Data definitions (variables and constants)
-    if (effectiveData && effectiveData.length > 0) {
-      // Sort by address to ensure consistent output
-      const sortedData = [...effectiveData].sort((a, b) => a[1] - b[1]);
-
-      for (const [name, _address, type, value] of sortedData) {
-        // Variable declaration: name: %Type, initialValue
-        const { csharpType, udonType, category } = this.classifyType(type);
-
-        const resolvedValue = value;
-
-        let initialValue: string;
-
-        if (resolvedValue === null) {
-          initialValue = "null";
-        } else if (category === "boolean") {
-          initialValue = resolvedValue === true ? "true" : "false";
-        } else if (
-          udonType === "SystemType" &&
-          typeof resolvedValue === "string"
-        ) {
-          initialValue = resolvedValue;
-        } else if (
-          typeof resolvedValue === "string" &&
-          resolvedValue.startsWith("0x") &&
-          category !== "string"
-        ) {
-          initialValue = resolvedValue;
-        } else if (typeof resolvedValue === "number" && category === "float") {
-          initialValue = this.formatFloatLiteral(resolvedValue);
-        } else if (
-          typeof resolvedValue === "number" &&
-          category === "integer"
-        ) {
-          const integerTypeName = this.isIntegerType(udonType)
-            ? udonType
-            : this.isIntegerType(csharpType)
-              ? csharpType
-              : type;
-          initialValue = this.formatIntegerLiteral(
-            resolvedValue,
-            integerTypeName,
-          );
-        } else {
-          initialValue = JSON.stringify(resolvedValue);
-        }
-
-        const outputName = this.formatSymbolName(name, internalSymbolMap);
-        lines.push(`    ${outputName}: %${udonType}, ${initialValue}`);
-
-        // internal variables should not be exported or synced
-        if (!name.startsWith("__")) {
-          lines.push(`    .export ${outputName}`);
-          const syncMode = syncModes?.get(name);
-          lines.push(`    .sync ${outputName}, ${syncMode ?? "none"}`);
-        }
-      }
-      lines.push("");
-    }
-
-    lines.push(".data_end");
-    lines.push("");
+    this.emitDataSection(effectiveData, syncModes, internalSymbolMap, (line) =>
+      lines.push(line ?? ""),
+    );
 
     // Code section
     lines.push(".code_start");
@@ -869,55 +863,12 @@ export class UdonAssembler {
     };
 
     try {
-      writeLine(".data_start");
-      writeLine();
-
-      if (effectiveData && effectiveData.length > 0) {
-        const sortedData = [...effectiveData].sort((a, b) => a[1] - b[1]);
-
-        for (const [name, _address, type, value] of sortedData) {
-          const { csharpType, udonType, category } = this.classifyType(type);
-
-          let initialValue: string;
-          if (value === null) {
-            initialValue = "null";
-          } else if (category === "boolean") {
-            initialValue = value === true ? "true" : "false";
-          } else if (udonType === "SystemType" && typeof value === "string") {
-            initialValue = value;
-          } else if (
-            typeof value === "string" &&
-            value.startsWith("0x") &&
-            category !== "string"
-          ) {
-            initialValue = value;
-          } else if (typeof value === "number" && category === "float") {
-            initialValue = this.formatFloatLiteral(value);
-          } else if (typeof value === "number" && category === "integer") {
-            const integerTypeName = this.isIntegerType(udonType)
-              ? udonType
-              : this.isIntegerType(csharpType)
-                ? csharpType
-                : type;
-            initialValue = this.formatIntegerLiteral(value, integerTypeName);
-          } else {
-            initialValue = JSON.stringify(value);
-          }
-
-          const outputName = this.formatSymbolName(name, internalSymbolMap);
-          writeLine(`    ${outputName}: %${udonType}, ${initialValue}`);
-
-          if (!name.startsWith("__")) {
-            writeLine(`    .export ${outputName}`);
-            const syncMode = syncModes?.get(name);
-            writeLine(`    .sync ${outputName}, ${syncMode ?? "none"}`);
-          }
-        }
-        writeLine();
-      }
-
-      writeLine(".data_end");
-      writeLine();
+      this.emitDataSection(
+        effectiveData,
+        syncModes,
+        internalSymbolMap,
+        writeLine,
+      );
       writeLine(".code_start");
       writeLine();
 
