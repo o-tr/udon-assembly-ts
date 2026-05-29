@@ -54,6 +54,33 @@ describe("inline instance tracking across method boundaries", () => {
     expect(startSection).not.toMatch(/EXTERN.*Config/);
   });
 
+  it("restores structural fields when an inline parameter shadows a caller local", () => {
+    const source = `
+      type Ctx = { isTsumo: boolean };
+      class Helper {
+        check(context: Ctx): boolean {
+          return context.isTsumo;
+        }
+      }
+      class Entry {
+        test(context: Ctx): boolean {
+          const alt: Ctx = { isTsumo: false };
+          new Helper().check(alt);
+          return context.isTsumo;
+        }
+        Start(): void {
+          const context: Ctx = { isTsumo: true };
+          Debug.Log(this.test(context));
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/__tmp\d+_isTsumo = context_isTsumo/);
+    expect(result.tac).toMatch(/context_isTsumo = __tmp\d+_isTsumo/);
+    expect(result.tac).toContain("return context_isTsumo");
+  });
+
   it("tracks inline class instance through inlined instance method parameter", () => {
     const source = `
       class Vec2 {
@@ -266,6 +293,71 @@ describe("inline instance tracking across method boundaries", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
     expect(result.uasm).not.toMatch(/Result\.__get_/);
+  });
+
+  it("destructures from the currently bound structural parameter slots", () => {
+    const source = `
+      type OuterCtx = { hand: number };
+      type InnerCtx = { hand: number };
+      class Yaku {
+        static check(context: InnerCtx): number {
+          const { hand } = context;
+          return hand;
+        }
+      }
+      class Analyzer {
+        static outer(context: OuterCtx): number {
+          const inner: InnerCtx = { hand: 2 };
+          return Yaku.check(inner);
+        }
+      }
+      class Main {
+        Start(): void {
+          const context: OuterCtx = { hand: 1 };
+          Debug.Log(Analyzer.outer(context));
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(
+      /__inline_Yaku_check___destructure_\d+_hand = context_hand/,
+    );
+    expect(result.tac).not.toMatch(
+      /__inline_Yaku_check___destructure_\d+_hand = __inst_OuterCtx_\d+_hand/,
+    );
+  });
+
+  it("reads optional-chain properties from copied structural parameter slots", () => {
+    const source = `
+      type Win = { isWin: boolean; yaku: string[]; han: number };
+      type Lose = { isWin: boolean };
+      type Result = Win | Lose;
+      class Maker {
+        static make(): Result | null {
+          return { isWin: true, yaku: ["A"], han: 1 };
+        }
+      }
+      class Helper {
+        static select(standardWin: Result | null, other: Result | null): Result {
+          if (standardWin?.isWin) return standardWin;
+          if (other?.isWin) return other;
+          return { isWin: false };
+        }
+      }
+      class Main {
+        Start(): void {
+          const standardWin = Maker.make();
+          const r = Helper.select(standardWin, null);
+          if (r.isWin) Debug.Log(r.yaku.length);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/standardWin_isWin = __inline_ret_\d+_isWin/);
+    expect(result.tac).toMatch(/__opt_base_\d+_isWin = __tmp\d+_isWin/);
+    expect(result.tac).not.toContain("d3_prop_next");
   });
 
   it("tracks inline instance parameter through copy", () => {

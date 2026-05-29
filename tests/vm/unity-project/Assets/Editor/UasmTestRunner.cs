@@ -181,13 +181,24 @@ public static class UasmTestRunner
             }
 
             var uasmText = File.ReadAllText(uasmPath);
+            Debug.Log($"[UasmTestRunner] {testDef.name}: loaded {uasmText.Length} chars from {testDef.uasmFile}");
 
             // Assemble (with dynamic heap sizing for large programs)
             IUdonProgram program;
             try
             {
                 uint heapSize = TASMProgramAsset.CalculateHeapSize(uasmText);
+                if (uasmText.Length > 50_000_000 && heapSize < 33_554_432)
+                {
+                    heapSize = 33_554_432;
+                    Debug.Log($"[UasmTestRunner] {testDef.name}: large UASM, starting assemble with max heap {heapSize}");
+                }
+                else
+                {
+                    Debug.Log($"[UasmTestRunner] {testDef.name}: assembling with heap {heapSize}");
+                }
                 program = TASMProgramAsset.AssembleWithHeapSize(uasmText, heapSize);
+                Debug.Log($"[UasmTestRunner] {testDef.name}: assembly completed");
             }
             catch (Exception e)
             {
@@ -233,6 +244,7 @@ public static class UasmTestRunner
 
             uint address = program.EntryPoints.GetAddressFromSymbol(entryPoint);
             vm.SetProgramCounter(address);
+            Debug.Log($"[UasmTestRunner] {testDef.name}: interpreting entry '{entryPoint}' at 0x{address:X8}");
 
             // Register log capture and execute
             Application.logMessageReceived += logHandler;
@@ -246,6 +258,7 @@ public static class UasmTestRunner
                 // an error (verified empirically; the SDK does not document the
                 // exact semantics of the return value).
                 uint execResult = vm.Interpret();
+                Debug.Log($"[UasmTestRunner] {testDef.name}: Interpret() returned {execResult}");
                 if (execResult != 0)
                 {
                     if (testDef.expectError)

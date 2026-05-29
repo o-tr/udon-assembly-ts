@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry";
 import { TACToUdonConverter } from "../../../src/transpiler/codegen/tac_to_udon/index.js";
 import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
 
 describe("collections support", () => {
@@ -74,6 +75,26 @@ describe("collections support", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it("treats false optional includes results as false in conditions", () => {
+    const source = `
+      class Demo {
+        Start(): void {
+          const yaku: string[] = ["Pinfu"];
+          if (yaku?.includes("Chiitoitsu")) {
+            Debug.Log(1);
+          } else {
+            Debug.Log(2);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toContain("opt_call_null");
+    expect(result.tac).toMatch(/= false/);
+    expect(result.tac).not.toMatch(/!= null\s*\nifFalse .* goto else/);
   });
 
   it("emits UdonSharp collection externs and indexers", () => {

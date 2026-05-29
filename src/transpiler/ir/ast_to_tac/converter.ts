@@ -181,7 +181,25 @@ export const OUTLINE_MIN_CALL_SITES = 2;
  *  Default 200 targets mid-size and large methods; very small methods
  *  (accessors, tiny helpers) remain fully inlined.
  *  Overridable per-converter via constructor options for testing. */
-export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 200;
+export const OUTLINE_MIN_BODY_INSTR_ESTIMATE = 50;
+const OUTLINE_CALL_OVERHEAD_ESTIMATE = 80;
+const OUTLINE_MAX_CANDIDATES = 64;
+// Broader outlining can regress when outlined bodies still bake receiver or
+// param-field prefixes. Raise the default only when those two cases are using
+// shared/copy-backed outlines; explicit UDON_OUTLINE_MAX_CANDIDATES still wins.
+const OUTLINE_MAX_CANDIDATES_WITH_SHARED_INLINE_FIELDS = 256;
+
+function resolveOutlineMaxCandidates(): number {
+  const raw = process.env.UDON_OUTLINE_MAX_CANDIDATES;
+  const defaultMax =
+    process.env.UDON_SHARED_INSTANCE_OUTLINE === "1" &&
+    process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS === "1"
+      ? OUTLINE_MAX_CANDIDATES_WITH_SHARED_INLINE_FIELDS
+      : OUTLINE_MAX_CANDIDATES;
+  if (raw === undefined || raw.trim() === "") return defaultMax;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : defaultMax;
+}
 
 /**
  * AST to TAC converter
@@ -312,6 +330,8 @@ export class ASTToTACConverter {
   inlineMethodStack: Set<string> = new Set();
   /** Maps interface name → (class name → classId) for inline dispatch */
   interfaceClassIdMap: Map<string, Map<string, number>> = new Map();
+  /** Optional per-virtual-interface-prefix class subset for classId dispatch. */
+  vifaceAllowedClassNames: Map<string, Set<string>> = new Map();
   /** Maps instanceId → {prefix, className} for all inline instances */
   allInlineInstances: Map<number, { prefix: string; className: string }> =
     new Map();
@@ -328,6 +348,19 @@ export class ASTToTACConverter {
    * prefix from a sibling tracked return.
    */
   untrackedStructuralHandleVars: Set<string> = new Set();
+  /** Structural/interface type associated with an untracked handle prefix. */
+  untrackedStructuralHandleTypes: Map<string, TypeSymbol> = new Map();
+  /** Runtime class id slot associated with an untracked all-inline interface handle. */
+  untrackedStructuralHandleClassIds: Map<string, VariableOperand> = new Map();
+  /** Shared D3 method-dispatch bodies keyed by receiver interface/method/candidate set. */
+  d3MethodDispatchOutlines: Map<string, unknown> = new Map();
+  /**
+   * Prefixes whose structural `${prefix}_<prop>` slots have been populated
+   * by explicit field-copy/default emission. Property reads may use these
+   * slots directly without falling back to D-3 handle dispatch.
+   */
+  structuralFieldPrefixes: Set<string> = new Set();
+  structuralFieldPrefixTypes: Map<string, Map<string, TypeSymbol>> = new Map();
   /** Dispatch success tracking per dispatch result temp key.
    *  Key: operand tracking key (e.g., "__tmpN") → boolean (true=matched, false=miss).
    *  Used by wrapDataToken to short-circuit on undispatched results and prevent
@@ -365,6 +398,10 @@ export class ASTToTACConverter {
    * post-construction reads (which must go through the per-field DataList).
    */
   soaConstructionPrefixes: Set<string> = new Set();
+  /** Prefixes whose handles are runtime SoA handles rather than static IDs. */
+  soaInstancePrefixes: Set<string> = new Set();
+  /** Source variable names introduced by for-of over SoA-backed inline classes. */
+  soaForOfHandleVars: Set<string> = new Set();
   // Start at 1: Udon zero-initialises heap slots, so an uninitialised
   // array element holds 0. Reserving 0 as "no valid instance" prevents
   // false dispatch matches on partially-populated interface arrays.
@@ -381,12 +418,13 @@ export class ASTToTACConverter {
    * handles, so D-3 dispatch and viface dispatch work uniformly across call sites.
    *
    * Cache key: the body AST node object (identity, not structural equality).
-   * Cache value: ordered list of {prefix, instanceId} for each constructor call
-   *   encountered in visit order within that body.
+   * Cache value: ordered list of per-position maps. A position may need
+   * separate entries when the same inlined body is emitted once with static
+   * instance slots and once with runtime SoA slots.
    */
   methodBodyInstanceCache: Map<
     ASTNode,
-    Array<{ prefix: string; instanceId: number }>
+    Array<Map<string, { prefix: string; instanceId: number }>>
   > = new Map();
   /** Per-body call index for the current invocation of that body.
    *  Reset to 0 at the start of each visitInlineStaticMethodCall /
@@ -490,6 +528,7 @@ export class ASTToTACConverter {
    *  wrapper around a large inlined callee will appear large. This is
    *  conservative: it may outline methods that are themselves tiny. */
   pass1EmitCount = 0;
+  pass2ProgressLastLength = 0;
   /** Per-method call count and body instruction estimate from pass 1.
    *  Key: outlineMapKey() — "static:Cls.method" or "inst:Cls.method:prefix" */
   inlineStaticCallInfo: Map<
@@ -499,6 +538,8 @@ export class ASTToTACConverter {
   /** Set of method keys eligible for outlining. Computed between passes from
    *  inlineStaticCallInfo and survives resetState(). */
   outlineCandidates: Set<string> = new Set();
+  /** Metadata pass after outline selection, used to collect outlined body instances. */
+  collectOutlineMetadataMode = false;
   /** Pass-2 only: tracks outlined methods whose body has already been emitted. */
   outlinedMethods: Map<string, OutlinedMethodState> = new Map();
   /** Deferred dispatch-table emitters executed after convertImpl finishes. */
@@ -706,11 +747,17 @@ export class ASTToTACConverter {
     this.soaClassOffsets = new Map();
     this.soaInitialized = new Set();
     this.soaConstructionPrefixes = new Set();
+    this.soaInstancePrefixes = new Set();
     this.implementorNamesCache = new Map();
     this.dispatchResultFlags = new Map();
     this.allInlineInterfaceCache = new Map();
     this.anonymousInlineClassNames = new Set();
     this.untrackedStructuralHandleVars = new Set();
+    this.untrackedStructuralHandleTypes = new Map();
+    this.untrackedStructuralHandleClassIds = new Map();
+    this.d3MethodDispatchOutlines = new Map();
+    this.structuralFieldPrefixes = new Set();
+    this.structuralFieldPrefixTypes = new Map();
     this.inlineStructuralPropertyTypeCache = new Map();
     this.methodBodyInstanceCache = new Map();
     this.methodBodyConstructorIndex = new Map();
@@ -748,9 +795,11 @@ export class ASTToTACConverter {
     this.nativeArrayIneligible = new Set();
     this.currentNativeArrayVarName = null;
     this.pass1EmitCount = 0;
+    this.pass2ProgressLastLength = 0;
     this.inlineStaticCallInfo = new Map();
     this.inlineMethodSelfCallCount = new Map();
     // outlineCandidates intentionally NOT cleared — survives between passes
+    this.collectOutlineMetadataMode = false;
     this.outlinedMethods = new Map();
     this.pendingOutlineDispatches = [];
     this.outlineIneligibleCache = new WeakMap();
@@ -779,6 +828,12 @@ export class ASTToTACConverter {
       return;
     }
     this.instructions.push(instruction);
+    if (PROF && this.instructions.length % 1_000_000 === 0) {
+      console.log(
+        `[prof]   tac-pass2 progress instr=${this.instructions.length}`,
+      );
+      this.pass2ProgressLastLength = this.instructions.length;
+    }
   }
 
   /**
@@ -861,16 +916,16 @@ export class ASTToTACConverter {
       }
     }
 
-    const allInstancesFromPass1 = new Map(this.allInlineInstances);
-    const interfaceClassIdMapFromPass1 = new Map(
+    let allInstancesFromPass1 = new Map(this.allInlineInstances);
+    let interfaceClassIdMapFromPass1 = new Map(
       [...this.interfaceClassIdMap.entries()].map(([k, v]) => [k, new Map(v)]),
     );
-    const soaClassesFromPass1 = new Set(this.soaClasses);
+    let soaClassesFromPass1 = new Set(this.soaClasses);
     // Snapshot offsets from pass 1 so pass 2 reuses the same assignments.
     // If a SoA class somehow appears only in pass 2, ensureSoaOperands will
     // assign it a new slot; this is safe but unexpected in normal operation
     // since pass 1 is a full codegen sweep.
-    const soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
+    let soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
 
     // Compute outline candidates from pass-1 call info.
     const outlineCandidatesFromPass1 = new Set<string>();
@@ -887,6 +942,10 @@ export class ASTToTACConverter {
         );
       }
     }
+    const eligibleOutlineCandidates: Array<{
+      key: string;
+      estimatedSavings: number;
+    }> = [];
     for (const [key, info] of this.inlineStaticCallInfo) {
       if (
         info.callSites >= OUTLINE_MIN_CALL_SITES &&
@@ -894,19 +953,57 @@ export class ASTToTACConverter {
         info.bodyInstr >= this.outlineBodyInstrThreshold &&
         (info.selfCallCount ?? 0) === 0
       ) {
-        outlineCandidatesFromPass1.add(key);
+        eligibleOutlineCandidates.push({
+          key,
+          estimatedSavings:
+            Math.max(1, info.bodyInstr - OUTLINE_CALL_OVERHEAD_ESTIMATE) *
+            (info.callSites - 1),
+        });
       }
+    }
+    eligibleOutlineCandidates.sort(
+      (a, b) =>
+        b.estimatedSavings - a.estimatedSavings || a.key.localeCompare(b.key),
+    );
+    const outlineMaxCandidates = resolveOutlineMaxCandidates();
+    for (const candidate of eligibleOutlineCandidates.slice(
+      0,
+      outlineMaxCandidates,
+    )) {
+      outlineCandidatesFromPass1.add(candidate.key);
     }
     if (PROF && outlineCandidatesFromPass1.size > 0) {
       console.log(
-        `[prof] outline selected: ${[...outlineCandidatesFromPass1].join(", ")}`,
+        `[prof] outline selected (${outlineCandidatesFromPass1.size}/${eligibleOutlineCandidates.length}, max=${outlineMaxCandidates}): ${[...outlineCandidatesFromPass1].join(", ")}`,
       );
+    }
+
+    const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
+    const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
+    if (
+      outlineCandidatesFromPass1.size > 0 &&
+      process.env.UDON_SKIP_OUTLINE_METADATA_PASS !== "1"
+    ) {
+      this.resetState();
+      this.metadataOnlyMode = true;
+      this.collectOutlineMetadataMode = true;
+      this.outlineCandidates = outlineCandidatesFromPass1;
+      this.inlineStaticCallInfo = inlineStaticCallInfoFromPass1;
+      this.inlineMethodSelfCallCount = inlineMethodSelfCallCountFromPass1;
+      this.convertImpl(program);
+      allInstancesFromPass1 = new Map(this.allInlineInstances);
+      interfaceClassIdMapFromPass1 = new Map(
+        [...this.interfaceClassIdMap.entries()].map(([k, v]) => [
+          k,
+          new Map(v),
+        ]),
+      );
+      soaClassesFromPass1 = new Set(this.soaClasses);
+      soaClassOffsetsFromPass1 = new Map(this.soaClassOffsets);
     }
 
     // Pass 2: actual codegen, pre-seeded with pass-1 metadata.
     // resetState() already clears metadataOnlyMode, so no explicit reset here.
-    const inlineStaticCallInfoFromPass1 = this.inlineStaticCallInfo;
-    const inlineMethodSelfCallCountFromPass1 = this.inlineMethodSelfCallCount;
     this.resetState();
     this.restoreInlineInstanceState(allInstancesFromPass1);
     this.outlineCandidates = outlineCandidatesFromPass1;

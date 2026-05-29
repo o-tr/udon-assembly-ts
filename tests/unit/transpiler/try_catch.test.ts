@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { TypeScriptParser } from "../../../src/transpiler/frontend/parser/index.js";
-import { ASTToTACConverter } from "../../../src/transpiler/ir/ast_to_tac/index.js";
-import { TACInstructionKind } from "../../../src/transpiler/ir/tac_instruction";
+import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
-const stringify = (tac: { toString(): string }[]) =>
-  tac.map((inst) => inst.toString()).join("\n");
+const transpileTac = (source: string): string =>
+  new TypeScriptToUdonTranspiler().transpile(source, { silent: true }).tac;
 
 describe("try/catch expansion", () => {
   it("inserts error flag and catch labels", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Demo {
         Start(): void {
@@ -20,23 +17,13 @@ describe("try/catch expansion", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const tacText = stringify(tac);
+    const tacText = transpileTac(source);
 
     expect(tacText).toContain("__error_flag_");
-    expect(tac.some((inst) => inst.kind === TACInstructionKind.Label)).toBe(
-      true,
-    );
     expect(tacText).toContain("catch_");
   });
 
   it("handles throw by jumping to catch", () => {
-    const parser = new TypeScriptParser();
     const source = `
       class Demo {
         Start(): void {
@@ -48,14 +35,42 @@ describe("try/catch expansion", () => {
         }
       }
     `;
-    const ast = parser.parse(source);
-    const converter = new ASTToTACConverter(
-      parser.getSymbolTable(),
-      parser.getEnumRegistry(),
-    );
-    const tac = converter.convert(ast);
-    const tacText = stringify(tac);
+    const tacText = transpileTac(source);
 
     expect(tacText).toContain("goto catch_");
+  });
+
+  it("runs finally before a break without heavy error-flag lowering", () => {
+    const source = `
+      class Demo {
+        Start(): void {
+          while (true) {
+            try {
+              break;
+            } finally {
+              this.SendCustomEvent("Done");
+            }
+          }
+        }
+      }
+    `;
+    const tacText = transpileTac(source);
+    const doneIndex = tacText.indexOf(
+      'SendCustomEvent__SystemString__SystemVoid(this, "Done")',
+    );
+    const finallyJumpIndex = tacText.indexOf("finally_jump_while_end");
+    const gotoIndex = tacText.lastIndexOf("goto while_end");
+
+    expect(tacText).not.toContain("__error_flag_");
+    expect(tacText).toContain("finally_jump_while_end");
+    expect(tacText).toContain(
+      'SendCustomEvent__SystemString__SystemVoid(this, "Done")',
+    );
+    expect(tacText).toContain("goto while_end");
+    expect(doneIndex).toBeGreaterThanOrEqual(0);
+    expect(finallyJumpIndex).toBeGreaterThanOrEqual(0);
+    expect(gotoIndex).toBeGreaterThanOrEqual(0);
+    expect(doneIndex).toBeLessThan(gotoIndex);
+    expect(finallyJumpIndex).toBeLessThan(gotoIndex);
   });
 });

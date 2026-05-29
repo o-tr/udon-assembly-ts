@@ -3,15 +3,35 @@
  * static method handling.
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
 const LOW_THRESHOLD = 200;
+let prevUdonSharedInstanceOutline: string | undefined;
+let prevAllowOutlineParamFields: string | undefined;
 
 describe("static method outlining", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
+  });
+
+  beforeEach(() => {
+    prevUdonSharedInstanceOutline = process.env.UDON_SHARED_INSTANCE_OUTLINE;
+    prevAllowOutlineParamFields = process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS;
+  });
+
+  afterEach(() => {
+    if (prevUdonSharedInstanceOutline === undefined) {
+      delete process.env.UDON_SHARED_INSTANCE_OUTLINE;
+    } else {
+      process.env.UDON_SHARED_INSTANCE_OUTLINE = prevUdonSharedInstanceOutline;
+    }
+    if (prevAllowOutlineParamFields === undefined) {
+      delete process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS;
+    } else {
+      process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS = prevAllowOutlineParamFields;
+    }
   });
 
   /**
@@ -35,6 +55,15 @@ describe("static method outlining", () => {
       lines.push(`    acc = acc + ${i};`);
     }
     lines.push("    Debug.Log(acc);");
+    return lines.join("\n");
+  }
+
+  function buildLargeInstanceMutationBody(varCount: number): string {
+    const lines: string[] = [];
+    for (let i = 0; i < varCount; i++) {
+      lines.push(`    this.value = this.value + ${i};`);
+    }
+    lines.push("    return this.value;");
     return lines.join("\n");
   }
 
@@ -95,6 +124,41 @@ ${buildLargeVoidBody(150)}
 
     expect(result.tac).toContain("outline_entry");
     expect(result.uasm).not.toMatch(/%SystemVoid/);
+  });
+
+  it("can opt in to shared instance outlining across receiver prefixes", () => {
+    process.env.UDON_SHARED_INSTANCE_OUTLINE = "1";
+    const source = `
+      class Counter {
+        private value: number = 0;
+        bump(): number {
+${buildLargeInstanceMutationBody(150)}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        private a: Counter = new Counter();
+        private b: Counter = new Counter();
+        Start(): void {
+          const r1: number = this.a.bump();
+          const r2: number = this.b.bump();
+          const r3: number = this.a.bump();
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    const entryMatches = result.tac.match(/outline_entry\d*:/g);
+    expect(entryMatches).toHaveLength(1);
+    expect(result.tac).toContain(
+      "__outline_receiver_Counter_Counter_bump_value",
+    );
+    expect(result.tac).toContain("__inst_Counter_0_value");
+    expect(result.tac).toContain("__inst_Counter_1_value");
   });
 
   it("does NOT outline a small static method (below threshold)", () => {
@@ -340,6 +404,49 @@ ${bodyLines.join("\n")}
 
     // Body accesses obj.value → ineligible for outlining
     expect(result.tac).not.toContain("outline_entry");
+  });
+
+  it("can outline inline-class param field access behind opt-in field copies", () => {
+    process.env.UDON_ALLOW_OUTLINE_PARAM_FIELDS = "1";
+    const bodyLines = [
+      "    obj.value = obj.value + delta;",
+      "    let acc: number = obj.value;",
+    ];
+    for (let i = 0; i < 150; i++) {
+      bodyLines.push(`    acc = acc + ${i};`);
+    }
+    bodyLines.push("    return acc;");
+    const source = `
+      class InlineObj {
+        value: number = 0;
+      }
+      class Helper {
+        static process(obj: InlineObj, delta: number): number {
+${bodyLines.join("\n")}
+        }
+      }
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const a = new InlineObj();
+          const b = new InlineObj();
+          const r1: number = Helper.process(a, 1);
+          const r2: number = Helper.process(b, 2);
+          const r3: number = Helper.process(a, 3);
+        }
+      }
+    `;
+
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+      outlineBodyInstrThreshold: LOW_THRESHOLD,
+    });
+
+    expect(result.tac).toContain("outline_entry");
+    expect(result.tac).toContain("obj_value = __inst_InlineObj_0_value");
+    expect(result.tac).toContain("__inst_InlineObj_0_value = obj_value");
+    expect(result.tac).toContain("obj_value = __inst_InlineObj_1_value");
+    expect(result.tac).toContain("__inst_InlineObj_1_value = obj_value");
   });
 
   it("falls through to full inline when body passes inline-class param to nested inline call", () => {

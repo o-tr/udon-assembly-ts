@@ -1,10 +1,49 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BatchTranspiler } from "../../../src/transpiler/batch/batch_transpiler";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
+import { runTacProgram } from "../../../src/transpiler/ts_ir/runtime/index.js";
+
+const createdDirs: string[] = [];
+
+function parseGeneratedTsIr(filePath: string): {
+  program: readonly (readonly unknown[])[];
+  slotDefaults: Readonly<Record<string, string>>;
+} {
+  const source = fs.readFileSync(filePath, "utf8");
+  const programMarker = "const program = JSON.parse(";
+  const programStart = source.indexOf(programMarker);
+  expect(programStart).toBeGreaterThanOrEqual(0);
+  const tick = source.indexOf("`", programStart);
+  const endTick = source.indexOf("`);", tick + 1);
+  const program = JSON.parse(source.slice(tick + 1, endTick));
+
+  const defaultsMarker = "const slotDefaults = JSON.parse(";
+  const defaultsStart = source.indexOf(defaultsMarker);
+  expect(defaultsStart).toBeGreaterThanOrEqual(0);
+  const quote = source.indexOf('"', defaultsStart);
+  let encoded = '"';
+  for (let i = quote + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    encoded += ch;
+    if (ch === '"' && source[i - 1] !== "\\") break;
+  }
+  const slotDefaults = JSON.parse(JSON.parse(encoded));
+  return { program, slotDefaults };
+}
 
 describe("registry double-init guard", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
+  });
+
+  afterAll(() => {
+    for (const dir of createdDirs) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("emits __inited guard for each inline instance with a Map field initializer", () => {
@@ -190,5 +229,121 @@ describe("registry double-init guard", () => {
     );
     expect(baseVars.length).toBeGreaterThan(0);
     expect(derivedVars.length).toBeGreaterThan(0);
+  });
+
+  it("does not replay projected ancestor field initializers after a derived super call", () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "projected-ancestor-init-"),
+    );
+    createdDirs.push(tempDir);
+    const sourceDir = path.join(tempDir, "src");
+    const outputDir = path.join(tempDir, "out");
+    fs.mkdirSync(sourceDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(sourceDir, "types.ts"),
+      `
+export interface IYaku {
+  readonly name: string;
+}
+`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "BaseYaku.ts"),
+      `
+import type { IYaku } from "./types";
+
+export abstract class BaseYaku implements IYaku {
+  abstract readonly name: string;
+}
+`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "DragonYaku.ts"),
+      `
+import { BaseYaku } from "./BaseYaku";
+
+export class DragonYaku extends BaseYaku {
+  readonly name: string;
+  readonly category: string = "honor";
+
+  constructor(name: string) {
+    super();
+    this.name = name;
+  }
+}
+`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "HakuYaku.ts"),
+      `
+import { DragonYaku } from "./DragonYaku";
+
+export class HakuYaku extends DragonYaku {
+  constructor() {
+    super("Haku");
+  }
+}
+`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Registry.ts"),
+      `
+import { HakuYaku } from "./HakuYaku";
+import type { IYaku } from "./types";
+
+export class Registry {
+  private yaku: Map<string, IYaku> = new Map<string, IYaku>();
+
+  constructor() {
+    this.register(new HakuYaku());
+  }
+
+  register(yaku: IYaku): void {
+    this.yaku.set(yaku.name, yaku);
+  }
+
+  get(name: string): IYaku | null {
+    return this.yaku.get(name) ?? null;
+  }
+}
+`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(sourceDir, "Demo.ts"),
+      `
+import { Registry } from "./Registry";
+
+@UdonBehaviour()
+class Demo extends UdonSharpBehaviour {
+  Start(): void {
+    const registry = new Registry();
+    const yaku = registry.get("Haku");
+    Debug.Log(yaku ? yaku.name : "MISS");
+  }
+}
+`,
+      "utf8",
+    );
+
+    const result = new BatchTranspiler().transpile({
+      sourceDir,
+      outputDir,
+      excludeDirs: [],
+      outputExtension: "ir.ts",
+      silent: true,
+    });
+    expect(result.outputs).toHaveLength(1);
+    const { program, slotDefaults } = parseGeneratedTsIr(
+      result.outputs[0]?.outputPath as string,
+    );
+    const vmResult = runTacProgram(program, slotDefaults);
+
+    expect(vmResult.logs.map((entry) => entry.value)).toEqual(["Haku"]);
   });
 });

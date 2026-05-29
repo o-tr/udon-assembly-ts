@@ -89,14 +89,24 @@ const getIntegerRangeForUdonType = (
  * at the narrower width.
  */
 export const narrowTypes = (instructions: TACInstruction[]): PassResult => {
-  // Phase 1: Find Cast instructions that widen integer types
-  const castCandidates = new Map<
-    string,
-    { castIndex: number; castInst: CastInstruction; srcOperand: TACOperand }
-  >();
+  // Phase 1: Find Cast instructions that widen integer types, and count
+  // definitions once. The old implementation rescanned the full instruction
+  // list for each cast candidate, which is prohibitive for generated TAC.
+  type Candidate = {
+    srcOperand: TACOperand;
+    range: { min: bigint; max: bigint };
+  };
+  const castCandidates = new Map<string, Candidate>();
+  const defCounts = new Map<string, number>();
 
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
+    const def = getDefinedOperandForReuse(inst);
+    const defKey = def ? livenessKey(def) : undefined;
+    if (defKey) {
+      defCounts.set(defKey, (defCounts.get(defKey) ?? 0) + 1);
+    }
+
     if (inst.kind !== TACInstructionKind.Cast) continue;
     const castInst = inst as CastInstruction;
     if (castInst.dest.kind !== TACOperandKind.Temporary) continue;
@@ -113,68 +123,67 @@ export const narrowTypes = (instructions: TACInstruction[]): PassResult => {
     const destKey = livenessKey(castInst.dest);
     if (!destKey) continue;
 
-    // Check the cast dest is only defined once
-    let defCount = 0;
-    for (const otherInst of instructions) {
-      const def = getDefinedOperandForReuse(otherInst);
-      if (def && livenessKey(def) === destKey) defCount++;
-    }
-    if (defCount !== 1) continue;
+    const candidateSrcType = getOperandType(castInst.src).udonType as UdonType;
+    const range = getIntegerRangeForUdonType(candidateSrcType);
+    if (!range) continue;
 
     castCandidates.set(destKey, {
-      castIndex: i,
-      castInst,
       srcOperand: castInst.src,
+      range,
     });
+  }
+
+  for (const key of [...castCandidates.keys()]) {
+    if ((defCounts.get(key) ?? 0) !== 1) {
+      castCandidates.delete(key);
+    }
   }
 
   if (castCandidates.size === 0) return { instructions, changed: false };
 
-  // Phase 2: For each cast candidate, check all uses
-  const eliminable = new Set<string>();
+  // Phase 2: Check all candidate uses in a single pass.
+  const useState = new Map<
+    string,
+    { allUsesAreComparisons: boolean; hasUses: boolean }
+  >();
+  for (const key of castCandidates.keys()) {
+    useState.set(key, { allUsesAreComparisons: true, hasUses: false });
+  }
 
-  for (const [destKey, candidate] of castCandidates) {
-    let allUsesAreComparisons = true;
-    let hasUses = false;
-
-    const candidateSrcType = getOperandType(candidate.srcOperand)
-      .udonType as UdonType;
-    const range = getIntegerRangeForUdonType(candidateSrcType);
-    if (!range) continue;
-
-    for (const inst of instructions) {
-      let usesCandidate = false;
-      forEachUsedOperand(inst, (op) => {
-        if (usesCandidate) return;
-        if (livenessKey(op) === destKey) usesCandidate = true;
-      });
-      if (!usesCandidate) continue;
-      hasUses = true;
+  for (const inst of instructions) {
+    forEachUsedOperand(inst, (op) => {
+      const destKey = livenessKey(op);
+      if (!destKey) return;
+      const candidate = castCandidates.get(destKey);
+      if (!candidate) return;
+      const state = useState.get(destKey);
+      if (!state || !state.allUsesAreComparisons) return;
+      state.hasUses = true;
 
       // Check if this is a comparison BinaryOp
       if (inst.kind !== TACInstructionKind.BinaryOp) {
-        allUsesAreComparisons = false;
-        break;
+        state.allUsesAreComparisons = false;
+        return;
       }
       const bin = inst as BinaryOpInstruction;
       if (!isComparisonOperator(bin.operator)) {
-        allUsesAreComparisons = false;
-        break;
+        state.allUsesAreComparisons = false;
+        return;
       }
 
       // Check the other operand is a constant that fits in the narrow type
       const srcType = getOperandType(candidate.srcOperand).udonType;
       const srcWidth = TYPE_WIDTH[srcType as UdonType];
       if (!srcWidth) {
-        allUsesAreComparisons = false;
-        break;
+        state.allUsesAreComparisons = false;
+        return;
       }
 
       // Find the "other" operand (the one that's not the cast result)
       const otherOp = livenessKey(bin.left) === destKey ? bin.right : bin.left;
       if (otherOp.kind !== TACOperandKind.Constant) {
-        allUsesAreComparisons = false;
-        break;
+        state.allUsesAreComparisons = false;
+        return;
       }
 
       // Ensure the constant is representable in the source (narrow) type
@@ -187,27 +196,28 @@ export const narrowTypes = (instructions: TACInstruction[]): PassResult => {
         constBigInt = rawVal as bigint;
       } else if (typeof rawVal === "number") {
         if (!Number.isFinite(rawVal) || !Number.isInteger(rawVal)) {
-          allUsesAreComparisons = false;
-          break;
+          state.allUsesAreComparisons = false;
+          return;
         }
         constBigInt = BigInt(Math.trunc(rawVal));
       } else {
         // Non-integer constant: unsafe
-        allUsesAreComparisons = false;
-        break;
+        state.allUsesAreComparisons = false;
+        return;
       }
 
-      if (!range) {
-        allUsesAreComparisons = false;
-        break;
+      if (
+        constBigInt < candidate.range.min ||
+        constBigInt > candidate.range.max
+      ) {
+        state.allUsesAreComparisons = false;
       }
-      if (constBigInt < range.min || constBigInt > range.max) {
-        allUsesAreComparisons = false;
-        break;
-      }
-    }
+    });
+  }
 
-    if (allUsesAreComparisons && hasUses) {
+  const eliminable = new Set<string>();
+  for (const [destKey, state] of useState) {
+    if (state.allUsesAreComparisons && state.hasUses) {
       eliminable.add(destKey);
     }
   }

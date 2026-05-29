@@ -237,6 +237,10 @@ export class SystemMath {
   static Truncate(_value: UdonDouble | number): UdonDouble {
     return 0 as UdonDouble;
   }
+
+  static Pow(_x: UdonDouble | number, _y: UdonDouble | number): UdonDouble {
+    return 0 as UdonDouble;
+  }
 }
 
 @UdonStub("System.Type")

@@ -1100,6 +1100,69 @@ describe("known transpiler bugs", () => {
       );
     });
 
+    it("Map<string, unknown>.get() cast to array should unwrap via DataList", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const m: Map<string, unknown> = new Map<string, unknown>();
+            const values: number[] = [];
+            values.push(1);
+            m.set("values", values);
+            const cached = m.get("values");
+            const nums = cached as number[];
+            Debug.Log(nums.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList",
+      );
+      expect(result.uasm).not.toContain(
+        "VRCSDK3DataDataToken.__get_Reference__SystemObject",
+      );
+    });
+
+    it("inline unknown parameter stores array values as DataList tokens", () => {
+      const source = `
+        class Cache {
+          private cache: Map<string, unknown> = new Map<string, unknown>();
+
+          set(key: string, value: unknown): void {
+            this.cache.set(key, value);
+          }
+
+          get(key: string): unknown {
+            return this.cache.get(key);
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const cache = new Cache();
+            const values: number[] = [];
+            values.push(1);
+            cache.set("values", values);
+            const cached = cache.get("values");
+            const nums = cached as number[];
+            Debug.Log(nums.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken",
+      );
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataToken.__get_DataList__VRCSDK3DataDataList",
+      );
+      expect(result.tac).toContain(
+        "call VRCSDK3DataDataToken.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken(value)",
+      );
+    });
+
     it("Map<string, unknown>.keys().next().value should not use get_Reference", () => {
       const source = `
         class Main {
@@ -1456,6 +1519,34 @@ describe("known transpiler bugs", () => {
       );
     });
 
+    it("SoA simple getter read from any-annotated local uses backing DataList fast path", () => {
+      const source = `
+        class Tile {
+          private _code: number;
+          constructor(code: number) {
+            this._code = code;
+          }
+          get code(): number {
+            return this._code;
+          }
+        }
+        class Main {
+          Start(): void {
+            const tiles: Tile[] = [];
+            for (let i: number = 0; i < 3; i++) {
+              tiles.push(new Tile(i));
+            }
+            const boxed: any = tiles[1];
+            Debug.Log(boxed.code);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__soa_Tile__code.get_Item");
+      expect(result.tac).not.toContain("uninst_prop_next");
+    });
+
     it("SoA method dispatch from any-annotated local keeps Int32 handle", () => {
       const source = `
         class Tile {
@@ -1513,6 +1604,263 @@ describe("known transpiler bugs", () => {
         "SystemConvert.__ToInt32__SystemObject__SystemInt32",
       );
       expect(result.uasm).not.toContain("dispatch miss");
+    });
+
+    it("for-of object destructuring over structural arrays avoids SystemObject getters", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const estimated: Array<{
+              decomposition: number[];
+              estimate: { minHan: number; maxHan: number };
+            }> = [];
+            const decomposition: number[] = [];
+            estimated.push({
+              decomposition,
+              estimate: { minHan: 1, maxHan: 2 },
+            });
+            for (const { decomposition, estimate } of estimated) {
+              Debug.Log(decomposition.length);
+              Debug.Log(estimate.maxHan);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_decomposition__SystemObject",
+      );
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_estimate__SystemObject",
+      );
+    });
+
+    it("array pop lowers to DataList RemoveAt instead of unsupported pop extern", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const values: number[] = [];
+            values.push(1);
+            values.push(2);
+            const last = values.pop();
+            Debug.Log(last);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(".__pop__");
+      expect(result.uasm).toContain(
+        "VRCSDK3DataDataList.__RemoveAt__SystemInt32__SystemVoid",
+      );
+    });
+
+    it("nested interface fields in structural array items read through handle dispatch", () => {
+      const source = `
+        type IItem = {
+          readonly name: string;
+        };
+
+        class ConcreteItem implements IItem {
+          readonly name = "Concrete";
+        }
+
+        class Main {
+          Start(): void {
+            const item: IItem = new ConcreteItem();
+            const rows: Array<{ item: IItem; han: number }> = [];
+            rows.push({ item, han: 1 });
+            for (const row of rows) {
+              const key = row.item.name;
+              Debug.Log(key);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(
+        /__uninst_prop_\d+ = __inst_ConcreteItem_0_name/,
+      );
+      expect(result.tac).not.toContain("SystemObject.__get_name");
+    });
+
+    it("method-bearing interface handles do not seed phantom structural fields", () => {
+      const source = `
+        type IYaku = {
+          readonly name: string;
+          getHan(): number;
+        };
+
+        class ConcreteYaku implements IYaku {
+          readonly name = "Concrete";
+          getHan(): number {
+            return 1;
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const yakus: IYaku[] = [];
+            yakus.push(new ConcreteYaku());
+            const yaku = yakus[0];
+            const rows: Array<{ yaku: IYaku; han: number }> = [];
+            rows.push({ yaku, han: 1 });
+            for (const row of rows) {
+              const key = row.yaku.name;
+              Debug.Log(key);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toContain("_yaku_name = yaku_name");
+      expect(result.tac).toMatch(
+        /__uninst_prop_\d+ = __inst_ConcreteYaku_0_name/,
+      );
+    });
+
+    it("dictionary reads guard null DataToken keys before ContainsKey", () => {
+      const source = `
+        class Main {
+          Start(): void {
+            const names: Record<string, string> = { ok: "value" };
+            const key = null as any;
+            const value = names[key] || "fallback";
+            Debug.Log(value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("IsNull");
+      expect(result.tac.indexOf("IsNull")).toBeLessThan(
+        result.tac.indexOf("ContainsKey"),
+      );
+    });
+
+    it("inline params read structural array elements through handle dispatch", () => {
+      const source = `
+        type Dec = { waitType: string; value: number };
+
+        class Main {
+          consume(d: Dec): string {
+            return d.waitType;
+          }
+
+          Start(): void {
+            const rows: Dec[] = [];
+            rows.push({ waitType: "ok", value: 1 });
+            const d = rows[0];
+            Debug.Log(this.consume(d));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toMatch(/__inline_ret_\d+ = d_waitType/);
+      expect(result.tac).toContain("__uninst_prop_");
+      expect(result.tac).toContain("__inst_Dec_0_waitType");
+    });
+
+    it("object literals preserve nested untracked structural handles", () => {
+      const source = `
+        type Dec = { waitType: string; value: number };
+
+        class Main {
+          Start(): void {
+            const rows: Dec[] = [];
+            rows.push({ waitType: "ok", value: 1 });
+            const decomposition = rows[0];
+            const candidate = { decomposition, fu: 30 };
+            Debug.Log(candidate.decomposition.waitType);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toContain(
+        "candidate_decomposition_waitType = decomposition_waitType",
+      );
+      expect(result.tac).toContain("__uninst_prop_");
+      expect(result.tac).toContain("__inst_Dec_0_waitType");
+    });
+
+    it("interface dispatch does not bind nested structural fields to the last implementor", () => {
+      const source = `
+        type Config = { type: string; fixed?: number };
+        type IY = {
+          readonly name: string;
+          readonly hanConfig: Config;
+          check(): boolean;
+          getHan(open: boolean): number;
+        };
+
+        class Base implements IY {
+          readonly name: string = "Base";
+          readonly hanConfig: Config = { type: "fixed", fixed: 0 };
+          check(): boolean { return false; }
+          getHan(_open: boolean): number {
+            switch (this.hanConfig.type) {
+              case "fixed": return this.hanConfig.fixed ?? 0;
+              default: return 0;
+            }
+          }
+        }
+
+        class A extends Base {
+          readonly name = "A";
+          readonly hanConfig: Config = { type: "fixed", fixed: 1 };
+          check(): boolean { return true; }
+        }
+
+        class Main {
+          Start(): void {
+            const ys: IY[] = [];
+            ys.push(new A());
+            ys.push(new Base());
+            for (const y of ys) {
+              if (y.check()) {
+                Debug.Log(y.getHan(false));
+              }
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__uninst_prop_");
+      expect(result.tac).toContain("__inst_Config_2_fixed");
+      expect(result.tac).not.toMatch(/t\d+ = __inst_Config_4_fixed/);
+    });
+
+    it("optional primitive structural fields keep null sentinel slots", () => {
+      const source = `
+        type Result = { ok: boolean; value?: number };
+        type Checker = { check(): Result };
+
+        class C implements Checker {
+          check(): Result {
+            return { ok: true };
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const c: Checker = new C();
+            const r = c.check();
+            Debug.Log(r.value ?? 7);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain("__inst_Result_1_value: %SystemObject");
+      expect(result.uasm).toContain("__inline_ret_1_value: %SystemObject");
+      expect(result.uasm).toContain("r_value: %SystemObject");
+      expect(result.uasm).not.toContain("__inst_Result_1_value: %SystemInt32");
     });
   });
 
@@ -3336,6 +3684,694 @@ class Main extends UdonSharpBehaviour {
       expect(dataSection.some((l) => /\bd\b.*%SystemDouble/.test(l))).toBe(
         true,
       );
+    });
+
+    it("structural object literal fields cast enum Int32 values before Double slot copies", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import type { UdonInt } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        enum PlayerCount {
+          Three = 3 as UdonInt,
+          Four = 4 as UdonInt,
+        }
+
+        type CheckWinContext = {
+          playerCount: number;
+        };
+
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          Start(): void {
+            const context: CheckWinContext = {
+              playerCount: PlayerCount.Four,
+            };
+            Debug.Log(context.playerCount === 4);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      const dataSection = getDataSection(result.uasm);
+      expect(
+        dataSection.some((line) =>
+          /\b__inst_CheckWinContext_\d+_playerCount\b.*%SystemDouble/.test(
+            line,
+          ),
+        ),
+      ).toBe(true);
+      expect(result.uasm).not.toMatch(
+        /PUSH, __const_\d+_SystemInt32\s+PUSH, __inst_CheckWinContext_\d+_playerCount\s+COPY/,
+      );
+      expect(result.uasm).toMatch(
+        /PUSH, __const_\d+_SystemDouble\s+PUSH, __inst_CheckWinContext_\d+_playerCount\s+COPY/,
+      );
+    });
+
+    it("structural type assertions preserve sibling fields for parameter binding", () => {
+      const source = `
+        import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+        import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+        import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+        type Win = { isWin: true; fu: number };
+        type NotWin = { isWin: false };
+        type Result = Win | NotWin;
+
+        @UdonBehaviour()
+        export class T extends UdonSharpBehaviour {
+          check(): Result {
+            return { isWin: true, fu: 25 };
+          }
+
+          score(win: Win): number {
+            if (!win.isWin) return 0;
+            return win.fu;
+          }
+
+          Start(): void {
+            const result = this.check();
+            if (result.isWin) {
+              Debug.Log(this.score(result as Win));
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/__tmp\d+_isWin = result_isWin/);
+      expect(result.tac).toMatch(/win_isWin = __tmp\d+_isWin/);
+      expect(result.tac).toMatch(/__tmp\d+_fu = result_fu/);
+      expect(result.tac).toMatch(/win_fu = __tmp\d+_fu/);
+    });
+
+    it("structural subset params dispatch nested object fields through handles", () => {
+      const source = `
+        type Estimate = { minHan: number; maxHan: number };
+        type Candidate = { estimate: Estimate };
+
+        class Main {
+          compare(
+            a: { estimate: { maxHan: number } },
+            b: { estimate: { maxHan: number } },
+          ): number {
+            return b.estimate.maxHan - a.estimate.maxHan;
+          }
+
+          Start(): void {
+            const list: Candidate[] = [];
+            list.push({ estimate: { minHan: 1, maxHan: 7 } });
+            const current = list[0];
+            Debug.Log(this.compare(current, current));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).not.toMatch(/\bt\d+ = [ab]\.estimate\b/);
+      expect(result.tac).toContain(
+        "[udon-assembly-ts] D3 dispatch miss: estimate on untracked instance",
+      );
+      expect(result.tac).toContain("__inst_Candidate_0_estimate");
+      expect(result.tac).toContain("__inst_Estimate_1_maxHan");
+    });
+
+    it("object literals preserve nullable nested structural property fields", () => {
+      const source = `
+        type Child = { name: string; count: number };
+        type Context = { child: Child | null };
+
+        class Main {
+          build(): Child {
+            return { name: "ok", count: 3 };
+          }
+
+          use(ctx: Context): number {
+            return ctx.child === null ? 0 : ctx.child.count;
+          }
+
+          Start(): void {
+            const child = this.build();
+            const ctx: Context = { child };
+            Debug.Log(this.use(ctx));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/__inst_Context_\d+_child = child/);
+      expect(result.tac).toMatch(/__inst_Context_\d+_child_name = child_name/);
+      expect(result.tac).toMatch(
+        /__inst_Context_\d+_child_count = child_count/,
+      );
+    });
+
+    it("object literal handle assignments populate structural local fields", () => {
+      const source = `
+        type Hand = { tiles: number[] };
+        type Context = { hand: Hand };
+
+        class Main {
+          use(ctx: Context): number {
+            return ctx.hand.tiles.length;
+          }
+
+          Start(): void {
+            const hand: Hand = { tiles: [1, 2, 3] };
+            const ctx: Context = { hand };
+            Debug.Log(this.use(ctx));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/ctx_hand = __inst_Context_\d+_hand/);
+      expect(result.tac).toMatch(
+        /ctx_hand_tiles = __inst_Context_\d+_hand_tiles/,
+      );
+      expect(result.tac).not.toContain(
+        "[udon-assembly-ts] D3 dispatch miss: hand on untracked instance",
+      );
+    });
+
+    it("structural reassignments preserve object literal fields", () => {
+      const source = `
+        type Candidate = {
+          yaku: string[];
+          han: number;
+          points: number;
+        };
+
+        class Main {
+          Start(): void {
+            let best: Candidate | null = null;
+            const candidate: Candidate = {
+              yaku: ["Haku"],
+              han: 1,
+              points: 1000,
+            };
+            best = candidate;
+            Debug.Log(best.han);
+            Debug.Log(best.yaku.length);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toMatch(/best_han = candidate_han/);
+      expect(result.tac).toMatch(/best_yaku = candidate_yaku/);
+      expect(result.tac).toMatch(/best_points = candidate_points/);
+    });
+
+    it("object destructuring preserves nested structural property fields", () => {
+      const source = `
+        type Child = { count: number };
+        type Candidate = { child: Child };
+        type Context = { child: Child | null };
+
+        class Main {
+          use(ctx: Context): number {
+            return ctx.child === null ? 0 : ctx.child.count;
+          }
+
+          Start(): void {
+            const list: Candidate[] = [];
+            list.push({ child: { count: 7 } });
+            for (const { child } of list) {
+              const ctx: Context = { child };
+              Debug.Log(this.use(ctx));
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("child = __uninst_prop_");
+      expect(result.tac).not.toMatch(/^child_count = __uninst_prop_/m);
+      expect(result.tac).not.toMatch(
+        /__inst_Context_\d+_child_count = child_count/,
+      );
+      expect(result.tac).toContain("= ctx_child");
+      expect(result.tac).toContain("= __uninst_prop_");
+    });
+
+    it("object literals wrap untracked structural handles without stale nested slots", () => {
+      const source = `
+        type Child = { count: number };
+        type Candidate = { child: Child };
+
+        class Main {
+          build(): Child[] {
+            const list: Child[] = [];
+            list.push({ count: 7 });
+            return list;
+          }
+
+          Start(): void {
+            const children = this.build();
+            const candidates: Candidate[] = [];
+            for (const child of children) {
+              candidates.push({ child });
+            }
+            for (const { child } of candidates) {
+              Debug.Log(child.count);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain("SystemObject.__get_count");
+      expect(result.tac).toMatch(
+        /__inst_Candidate_\d+_child_count = __inst_Child_\d+_count/,
+      );
+      expect(result.tac).toMatch(
+        /t\d+ = call __soa_Candidate_child_count\.get_Item\(t\d+\)[\s\S]*__uninst_prop_\d+_count = t\d+/,
+      );
+      expect(result.tac).not.toMatch(
+        /__uninst_prop_\d+_count = __inst_Candidate_\d+_child_count/,
+      );
+    });
+
+    it("object literals copy nested fields from untracked structural handles before contextual dispatch", () => {
+      const source = `
+        type Child = { count: number };
+        type Candidate = { child: Child; estimate: { max: number } };
+        type Context = { child: Child | null };
+
+        class Main {
+          consume(ctx: Context): void {
+            if (ctx.child === null) return;
+            Debug.Log(ctx.child.count);
+          }
+
+          Start(): void {
+            const children: Child[] = [];
+            children.push({ count: 7 });
+            const candidates: Candidate[] = [];
+            for (const child of children) {
+              candidates.push({ child, estimate: { max: 1 } });
+            }
+            const topCandidates = candidates.slice(0, 1);
+            for (const { child } of topCandidates) {
+              const ctx: Context = { child };
+              this.consume(ctx);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain("SystemObject.__get_count");
+      expect(result.tac).toMatch(
+        /__inst_Context_\d+_child_count = __inst_Child_\d+_count/,
+      );
+      expect(result.tac).toMatch(
+        /ctx_child_count = __inst_Context_\d+_child_count/,
+      );
+    });
+
+    it("array slice preserves structural element types for object destructuring", () => {
+      const source = `
+        type Estimate = { minHan: number; maxHan: number };
+        type Candidate = { decomposition: string; estimate: Estimate };
+
+        class Main {
+          Start(): void {
+            const candidates: Candidate[] = [];
+            candidates.push({
+              decomposition: "ok",
+              estimate: { minHan: 1, maxHan: 7 },
+            });
+            const topCandidates = candidates.slice(0, 1);
+            for (const { decomposition, estimate } of topCandidates) {
+              Debug.Log(decomposition);
+              Debug.Log(estimate.maxHan);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_decomposition__SystemObject",
+      );
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_estimate__SystemObject",
+      );
+      expect(result.tac).toContain("__forof_destructure_");
+      expect(result.tac).toContain("__inst_Candidate_0_decomposition");
+      expect(result.tac).toContain("__inst_Candidate_0_estimate_maxHan");
+    });
+
+    it("for-of structural array elements populate nested field slots", () => {
+      const source = `
+        type Estimate = { minHan: number; maxHan: number };
+        type Candidate = { decomposition: string; estimate: Estimate };
+
+        class Main {
+          Start(): void {
+            const candidates: Candidate[] = [];
+            candidates.push({
+              decomposition: "ok",
+              estimate: { minHan: 1, maxHan: 7 },
+            });
+            for (const candidate of candidates) {
+              Debug.Log(candidate.estimate.maxHan);
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__inst_Candidate_0_estimate_maxHan");
+      expect(result.tac).not.toContain(
+        "[udon-assembly-ts] D3 dispatch miss: maxHan on untracked instance",
+      );
+    });
+
+    it("structural array elements can dispatch to named class fields", () => {
+      const source = `
+        class Meld {
+          constructor(public readonly isOpen: boolean = true) {}
+        }
+
+        class Main {
+          Start(): void {
+            const meld = new Meld(true);
+            const melds: Meld[] = [meld];
+            Debug.Log(this.hasOpenMelds(melds));
+          }
+
+          private hasOpenMelds(melds: readonly { isOpen: boolean }[]): boolean {
+            for (const meld of melds) {
+              if (meld.isOpen) return true;
+            }
+            return false;
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).toContain("__inst_Meld_0_isOpen");
+      expect(result.uasm).not.toContain(
+        "[udon-assembly-ts] structural dispatch miss: isOpen on untracked interface value",
+      );
+    });
+
+    it("structural return forwarding methods are not outlined", () => {
+      const source = `
+        type Result = { ok: boolean; waits: number[] };
+
+        class Service {
+          check(flag: boolean): Result {
+            if (flag) return { ok: true, waits: [1, 2] };
+            return { ok: false, waits: [] };
+          }
+        }
+
+        class Analyzer {
+          private service: Service;
+
+          constructor() {
+            this.service = new Service();
+          }
+
+          check(flag: boolean): Result {
+            return this.service.check(flag);
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const analyzer = new Analyzer();
+            const first = analyzer.check(true);
+            const second = analyzer.check(false);
+            Debug.Log(first.ok);
+            Debug.Log(first.waits.length);
+            Debug.Log(second.ok);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source, {
+        outlineBodyInstrThreshold: 1,
+      });
+
+      expect(result.uasm).not.toContain("outline_inst_Analyzer_check");
+    });
+
+    it("collection-param methods with nested calls are not outlined", () => {
+      const source = `
+        class Helper {
+          check(counts: number[], needed: number): boolean {
+            return counts.length >= needed;
+          }
+        }
+
+        class Service {
+          private helper: Helper;
+
+          constructor() {
+            this.helper = new Helper();
+          }
+
+          scan(counts: number[], needed: number): boolean {
+            for (let i = 0; i < counts.length; i += 1) {
+              if (this.helper.check(counts, needed)) return true;
+            }
+            return false;
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const service = new Service();
+            const counts = [1, 2, 3];
+            Debug.Log(service.scan(counts, 2));
+            Debug.Log(service.scan(counts, 4));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source, {
+        outlineBodyInstrThreshold: 1,
+      });
+
+      expect(result.uasm).not.toContain("outline_inst_Service_scan");
+    });
+
+    it("anonymous Array<T> structural destructuring avoids raw SystemObject property externs", () => {
+      const source = `
+        type UdonInt = number & { __brand: "UdonInt" };
+        type WinDecomposition = { waitType: string };
+
+        class Analyzer {
+          run(
+            items: Array<{
+              decomposition: WinDecomposition;
+              estimate: { minHan: UdonInt; maxHan: UdonInt };
+            }>,
+          ): void {
+            const filteredCandidates: Array<{
+              decomposition: WinDecomposition;
+              estimate: { minHan: UdonInt; maxHan: UdonInt };
+            }> = [];
+            for (const candidate of items) filteredCandidates.push(candidate);
+            const topCandidates = filteredCandidates.slice(0, 1);
+            for (const { decomposition, estimate } of topCandidates) {
+              Debug.Log(decomposition.waitType);
+              Debug.Log(estimate.maxHan);
+            }
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const analyzer = new Analyzer();
+            const items: Array<{
+              decomposition: WinDecomposition;
+              estimate: { minHan: UdonInt; maxHan: UdonInt };
+            }> = [];
+            analyzer.run(items);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain("SystemObject.__get_decomposition");
+      expect(result.uasm).not.toContain("SystemObject.__get_estimate");
+      expect(result.uasm).not.toContain("SystemObject.__get_waitType");
+      expect(result.uasm).not.toContain("SystemObject.__get_maxHan");
+      expect(result.tac).toContain(
+        "[udon-assembly-ts] structural dispatch miss: decomposition on untracked interface value",
+      );
+    });
+
+    it("object literals preserve nested fields from untracked structural values", () => {
+      const source = `
+        type Decomposition = {
+          waitType: string;
+          pair: number[];
+        };
+        type Result = {
+          ok: boolean;
+          decomposition: Decomposition | null;
+        };
+        type Context = {
+          decomposition: Decomposition | null;
+        };
+
+        class Analyzer {
+          get(flag: boolean): Result {
+            if (flag) {
+              return {
+                ok: true,
+                decomposition: {
+                  waitType: "ryanmen",
+                  pair: [1, 1],
+                },
+              };
+            }
+            return { ok: false, decomposition: null };
+          }
+        }
+
+        class Checker {
+          check(context: Context): boolean {
+            const { decomposition } = context;
+            if (!decomposition) return false;
+            return decomposition.waitType === "ryanmen";
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const analyzer = new Analyzer();
+            const checker = new Checker();
+            const result = analyzer.get(true);
+            Debug.Log(result.decomposition.waitType);
+            Debug.Log(checker.check({ decomposition: result.decomposition }));
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.tac).toContain("__inst_Context_");
+      expect(result.tac).toMatch(
+        /__inst_Context_\d+_decomposition_waitType = result_decomposition_waitType/,
+      );
+    });
+
+    it("constructor-bearing factory results allocate distinct inline instances", () => {
+      const source = `
+        class Box {
+          value: number = 0;
+          constructor() {
+            this.value = 1;
+          }
+        }
+
+        class Factory {
+          make(): Box {
+            return new Box();
+          }
+        }
+
+        class Main {
+          Start(): void {
+            const factory = new Factory();
+            const a = factory.make();
+            const b = factory.make();
+            Debug.Log(a.value);
+            Debug.Log(b.value);
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      const boxPrefixes = new Set(result.tac.match(/__inst_Box_\d+/g) ?? []);
+      expect(boxPrefixes.size).toBeGreaterThanOrEqual(2);
+    });
+
+    it("structural interface handle chains avoid raw SystemObject property externs", () => {
+      const source = `
+        interface IYaku {
+          readonly name: string;
+        }
+
+        class KokushiMusouYaku implements IYaku {
+          readonly name = "KokushiMusou";
+        }
+
+        class DaisangenYaku implements IYaku {
+          readonly name = "Daisangen";
+        }
+
+        class Main {
+          Start(): void {
+            const yakuList: Array<{ yaku: IYaku; name: string; han: number }> = [];
+            const kokushi: IYaku = new KokushiMusouYaku();
+            const daisangen: IYaku = new DaisangenYaku();
+            yakuList.push({ yaku: kokushi, name: "KokushiMusou", han: 13 });
+            yakuList.push({ yaku: daisangen, name: "Daisangen", han: 13 });
+
+            for (const item of yakuList) {
+              if (item.yaku.name === "KokushiMusou") {
+                Debug.Log(item.name);
+              }
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__get_name__SystemString",
+      );
+    });
+
+    it("all-inline interface array bracket reads avoid raw SystemObject method externs", () => {
+      const source = `
+        interface IYaku {
+          check(): boolean;
+        }
+
+        class TanyaoYaku implements IYaku {
+          check(): boolean {
+            return true;
+          }
+        }
+
+        class PinfuYaku implements IYaku {
+          check(): boolean {
+            return false;
+          }
+        }
+
+        class Main {
+          private yakuList!: IYaku[];
+
+          constructor() {
+            this.yakuList = [new TanyaoYaku(), new PinfuYaku()];
+          }
+
+          Start(): void {
+            for (let i = 0; i < this.yakuList.length; i += 1) {
+              const yaku = this.yakuList[i];
+              if (yaku.check()) {
+                Debug.Log("hit");
+              }
+            }
+          }
+        }
+      `;
+      const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+      expect(result.uasm).not.toContain(
+        "SystemObject.__check__SystemObject__SystemObject",
+      );
+      expect(result.tac).toContain("d3_method_end");
     });
   });
 });

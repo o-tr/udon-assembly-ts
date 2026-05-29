@@ -2,6 +2,7 @@
  * Udon Assembly (.uasm) file generator
  */
 
+import * as fs from "node:fs";
 import { isVrcEventLabel } from "../vrc/event_registry.js";
 import type { UdonInstruction } from "./udon_instruction.js";
 import {
@@ -71,6 +72,11 @@ const STRING_TYPES = new Set(["String", "SystemString", "System.String"]);
 
 const BOOLEAN_TYPES = new Set(["Boolean", "SystemBoolean", "System.Boolean"]);
 
+const omitInternalLabels = (): boolean =>
+  process.env.UDON_OMIT_INTERNAL_LABELS === "1";
+const minifyInternalSymbols = (): boolean =>
+  process.env.UDON_MINIFY_INTERNAL_SYMBOLS === "1";
+
 /**
  * Udon assembler - generates .uasm output
  */
@@ -89,6 +95,63 @@ export class UdonAssembler {
 
   getWarnings(): string[] {
     return this.warnings.slice();
+  }
+
+  private emitDataSection(
+    dataSection: Array<[string, number, string, unknown]> | undefined,
+    syncModes: Map<string, string> | undefined,
+    internalSymbolMap: Map<string, string>,
+    writeLine: (line?: string) => void,
+  ): void {
+    writeLine(".data_start");
+    writeLine();
+
+    if (dataSection && dataSection.length > 0) {
+      const sortedData = [...dataSection].sort((a, b) => a[1] - b[1]);
+
+      for (const [name, _address, type, value] of sortedData) {
+        const { csharpType, udonType, category } = this.classifyType(type);
+        let initialValue: string;
+
+        if (value === null) {
+          initialValue = "null";
+        } else if (category === "boolean") {
+          initialValue = value === true ? "true" : "false";
+        } else if (udonType === "SystemType" && typeof value === "string") {
+          initialValue = value;
+        } else if (
+          typeof value === "string" &&
+          value.startsWith("0x") &&
+          category !== "string"
+        ) {
+          initialValue = value;
+        } else if (typeof value === "number" && category === "float") {
+          initialValue = this.formatFloatLiteral(value);
+        } else if (typeof value === "number" && category === "integer") {
+          const integerTypeName = this.isIntegerType(udonType)
+            ? udonType
+            : this.isIntegerType(csharpType)
+              ? csharpType
+              : type;
+          initialValue = this.formatIntegerLiteral(value, integerTypeName);
+        } else {
+          initialValue = JSON.stringify(value);
+        }
+
+        const outputName = this.formatSymbolName(name, internalSymbolMap);
+        writeLine(`    ${outputName}: %${udonType}, ${initialValue}`);
+
+        if (!name.startsWith("__")) {
+          writeLine(`    .export ${outputName}`);
+          const syncMode = syncModes?.get(name);
+          writeLine(`    .sync ${outputName}, ${syncMode ?? "none"}`);
+        }
+      }
+      writeLine();
+    }
+
+    writeLine(".data_end");
+    writeLine();
   }
 
   private expandExponentialLiteral(text: string): string {
@@ -262,6 +325,61 @@ export class UdonAssembler {
       return toUdonTypeNameWithArray(`System.${typeName}`);
     }
     return toUdonTypeNameWithArray(csharpType);
+  }
+
+  private buildInternalSymbolMap(
+    dataSection?: Array<[string, number, string, unknown]>,
+  ): Map<string, string> {
+    const map = new Map<string, string>();
+    if (!minifyInternalSymbols() || !dataSection) return map;
+
+    const sorted = [...dataSection].sort((a, b) => a[1] - b[1]);
+    let nextId = 0;
+    for (const [name] of sorted) {
+      if (!name.startsWith("__")) continue;
+      map.set(name, `__v${nextId++}`);
+    }
+    return map;
+  }
+
+  private formatSymbolName(
+    name: string,
+    internalSymbolMap: Map<string, string>,
+  ): string {
+    return internalSymbolMap.get(name) ?? name;
+  }
+
+  private formatPushInstruction(
+    inst: PushInstruction,
+    internalSymbolMap: Map<string, string>,
+  ): string {
+    const address =
+      typeof inst.address === "string"
+        ? this.formatSymbolName(inst.address, internalSymbolMap)
+        : inst.address;
+    return `    PUSH, ${address}`;
+  }
+
+  private formatExternInstruction(
+    inst: ExternInstruction,
+    internalSymbolMap: Map<string, string>,
+  ): string {
+    if (!inst.isSymbol) return inst.toString();
+    return `    EXTERN, ${this.formatSymbolName(inst.signature, internalSymbolMap)}`;
+  }
+
+  private shouldEmitLabel(
+    labelName: string,
+    canonicalLabel: string,
+    exportLabels?: Set<string>,
+  ): boolean {
+    const preserveAliasLabel =
+      isVrcEventLabel(labelName) || exportLabels?.has(labelName);
+    if (canonicalLabel !== labelName && !preserveAliasLabel) return false;
+    if (omitInternalLabels() && !preserveAliasLabel && labelName !== "_start") {
+      return false;
+    }
+    return true;
   }
 
   private classifyType(type: string): TypeClassification {
@@ -619,72 +737,11 @@ export class UdonAssembler {
       effectiveInstructions,
       exportLabels,
     );
+    const internalSymbolMap = this.buildInternalSymbolMap(effectiveData);
 
-    // Data section
-    lines.push(".data_start");
-    lines.push("");
-
-    // Data definitions (variables and constants)
-    if (effectiveData && effectiveData.length > 0) {
-      // Sort by address to ensure consistent output
-      const sortedData = [...effectiveData].sort((a, b) => a[1] - b[1]);
-
-      for (const [name, _address, type, value] of sortedData) {
-        // Variable declaration: name: %Type, initialValue
-        const { csharpType, udonType, category } = this.classifyType(type);
-
-        const resolvedValue = value;
-
-        let initialValue: string;
-
-        if (resolvedValue === null) {
-          initialValue = "null";
-        } else if (category === "boolean") {
-          initialValue = resolvedValue === true ? "true" : "false";
-        } else if (
-          udonType === "SystemType" &&
-          typeof resolvedValue === "string"
-        ) {
-          initialValue = resolvedValue;
-        } else if (
-          typeof resolvedValue === "string" &&
-          resolvedValue.startsWith("0x") &&
-          category !== "string"
-        ) {
-          initialValue = resolvedValue;
-        } else if (typeof resolvedValue === "number" && category === "float") {
-          initialValue = this.formatFloatLiteral(resolvedValue);
-        } else if (
-          typeof resolvedValue === "number" &&
-          category === "integer"
-        ) {
-          const integerTypeName = this.isIntegerType(udonType)
-            ? udonType
-            : this.isIntegerType(csharpType)
-              ? csharpType
-              : type;
-          initialValue = this.formatIntegerLiteral(
-            resolvedValue,
-            integerTypeName,
-          );
-        } else {
-          initialValue = JSON.stringify(resolvedValue);
-        }
-
-        lines.push(`    ${name}: %${udonType}, ${initialValue}`);
-
-        // internal variables should not be exported or synced
-        if (!name.startsWith("__")) {
-          lines.push(`    .export ${name}`);
-          const syncMode = syncModes?.get(name);
-          lines.push(`    .sync ${name}, ${syncMode ?? "none"}`);
-        }
-      }
-      lines.push("");
-    }
-
-    lines.push(".data_end");
-    lines.push("");
+    this.emitDataSection(effectiveData, syncModes, internalSymbolMap, (line) =>
+      lines.push(line ?? ""),
+    );
 
     // Code section
     lines.push(".code_start");
@@ -696,11 +753,7 @@ export class UdonAssembler {
         // Labels appear on their own line
         const labelName = (inst as LabelInstruction).name;
         const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
-        // Keep externally callable labels even when same-address labels are
-        // canonicalized; VRC events and exportLabels are part of the public ABI.
-        const preserveAliasLabel =
-          isVrcEventLabel(labelName) || exportLabels?.has(labelName);
-        if (canonicalLabel !== labelName && !preserveAliasLabel) {
+        if (!this.shouldEmitLabel(labelName, canonicalLabel, exportLabels)) {
           continue;
         }
         if (labelName === "_start") {
@@ -750,10 +803,19 @@ export class UdonAssembler {
           }
         }
       } else if (inst.kind === UdonInstructionKind.Push) {
-        const _pushInst = inst as PushInstruction;
-        // If address is a variable name from data section, keep it as-is
-        // Otherwise convert to address
-        lines.push(inst.toString());
+        lines.push(
+          this.formatPushInstruction(
+            inst as PushInstruction,
+            internalSymbolMap,
+          ),
+        );
+      } else if (inst.kind === UdonInstructionKind.Extern) {
+        lines.push(
+          this.formatExternInstruction(
+            inst as ExternInstruction,
+            internalSymbolMap,
+          ),
+        );
       } else {
         lines.push(inst.toString());
       }
@@ -763,6 +825,131 @@ export class UdonAssembler {
     lines.push(".code_end");
 
     return lines.join("\n");
+  }
+
+  /**
+   * Generate .uasm directly to a file without materialising the whole output
+   * as a single JavaScript string. Large inline-dispatch programs can exceed
+   * V8's maximum string length even though writing the same text incrementally
+   * is still possible.
+   */
+  assembleToFile(
+    filePath: string,
+    instructions: UdonInstruction[],
+    _externSignatures: string[],
+    dataSection?: Array<[string, number, string, unknown]>,
+    syncModes?: Map<string, string>,
+    _behaviourSyncMode?: string,
+    exportLabels?: Set<string>,
+  ): number {
+    let effectiveData = dataSection;
+    let effectiveInstructions = instructions;
+    if (dataSection && dataSection.length > 0) {
+      const lowered = this.lowerRestrictedTypes(dataSection, instructions);
+      effectiveData = lowered.dataSection;
+      effectiveInstructions = lowered.instructions;
+    }
+
+    const { labelAddresses, canonicalLabels } = this.computeLabelAddressInfo(
+      effectiveInstructions,
+      exportLabels,
+    );
+    const internalSymbolMap = this.buildInternalSymbolMap(effectiveData);
+
+    const fd = fs.openSync(filePath, "w");
+    let bytes = 0;
+    const writeLine = (line = ""): void => {
+      bytes += fs.writeSync(fd, `${line}\n`, undefined, "utf8");
+    };
+
+    try {
+      this.emitDataSection(
+        effectiveData,
+        syncModes,
+        internalSymbolMap,
+        writeLine,
+      );
+      writeLine(".code_start");
+      writeLine();
+
+      for (const inst of effectiveInstructions) {
+        if (inst.kind === UdonInstructionKind.Label) {
+          const labelName = (inst as LabelInstruction).name;
+          const canonicalLabel = canonicalLabels.get(labelName) ?? labelName;
+          if (!this.shouldEmitLabel(labelName, canonicalLabel, exportLabels)) {
+            continue;
+          }
+          if (labelName === "_start") {
+            writeLine("    .export _start");
+          } else if (isVrcEventLabel(labelName)) {
+            writeLine(`    .export ${labelName}`);
+          } else if (exportLabels?.has(labelName)) {
+            writeLine(`    .export ${labelName}`);
+          }
+          writeLine(inst.toString());
+        } else if (inst.kind === UdonInstructionKind.Jump) {
+          const jumpInst = inst as JumpInstruction;
+          if (typeof jumpInst.address === "number") {
+            writeLine(`    JUMP, ${this.formatHexAddress(jumpInst.address)}`);
+          } else {
+            const canonicalLabel =
+              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+            const byteAddr = labelAddresses.get(canonicalLabel);
+            if (byteAddr !== undefined) {
+              writeLine(`    JUMP, ${this.formatHexAddress(byteAddr)}`);
+            } else {
+              this.warnings.push(
+                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+              );
+              writeLine("    JUMP, 0xFFFFFFFC");
+            }
+          }
+        } else if (inst.kind === UdonInstructionKind.JumpIfFalse) {
+          const jumpInst = inst as JumpIfFalseInstruction;
+          if (typeof jumpInst.address === "number") {
+            writeLine(
+              `    JUMP_IF_FALSE, ${this.formatHexAddress(jumpInst.address)}`,
+            );
+          } else {
+            const canonicalLabel =
+              canonicalLabels.get(jumpInst.address) ?? jumpInst.address;
+            const byteAddr = labelAddresses.get(canonicalLabel);
+            if (byteAddr !== undefined) {
+              writeLine(
+                `    JUMP_IF_FALSE, ${this.formatHexAddress(byteAddr)}`,
+              );
+            } else {
+              this.warnings.push(
+                `Unresolved label '${jumpInst.address}' in assembly output, using halt address`,
+              );
+              writeLine("    JUMP_IF_FALSE, 0xFFFFFFFC");
+            }
+          }
+        } else if (inst.kind === UdonInstructionKind.Push) {
+          writeLine(
+            this.formatPushInstruction(
+              inst as PushInstruction,
+              internalSymbolMap,
+            ),
+          );
+        } else if (inst.kind === UdonInstructionKind.Extern) {
+          writeLine(
+            this.formatExternInstruction(
+              inst as ExternInstruction,
+              internalSymbolMap,
+            ),
+          );
+        } else {
+          writeLine(inst.toString());
+        }
+      }
+
+      writeLine();
+      writeLine(".code_end");
+      return bytes;
+    } finally {
+      fs.closeSync(fd);
+    }
   }
 
   /**

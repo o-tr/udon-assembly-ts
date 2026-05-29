@@ -27,4 +27,25 @@ describe("setImmediate inline callback lowering", () => {
     expect(result.tac).toContain("SendCustomEventDelayedFrames");
     expect(result.uasm.length).toBeGreaterThan(0);
   });
+
+  it("unwraps block-bodied callback expression statements", () => {
+    const src = `
+    class Foo {
+      start() {
+        setImmediate(() => {
+          this.startLater();
+        });
+      }
+      startLater() {
+        console.log(1);
+      }
+    }
+    `;
+
+    const transpiler = new TypeScriptToUdonTranspiler();
+    const result = transpiler.transpile(src, { optimize: false });
+
+    expect(result.tac).toContain("SendCustomEventDelayedFrames");
+    expect(result.tac).toMatch(/SendCustomEventDelayedFrames[^\n]*startLater/);
+  });
 });

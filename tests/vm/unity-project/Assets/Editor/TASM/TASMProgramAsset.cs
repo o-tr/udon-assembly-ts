@@ -76,7 +76,7 @@ namespace VRC.Udon.Editor.ProgramSources
             string assembly, uint heapSize, IUAssemblyTypeResolver typeResolver)
         {
             const int maxRetries = 4; // retry on IndexOutOfRangeException by doubling heap size
-            const uint maxHeapSize = 1048576; // 1 MB cap to prevent runaway allocations
+            const uint maxHeapSize = 33554432; // large VM fixtures can exceed 8M heap/address slots
             Exception lastException = null;
             for (int i = 0; i < maxRetries; i++)
             {
@@ -107,7 +107,10 @@ namespace VRC.Udon.Editor.ProgramSources
                 }
             }
             throw new InvalidOperationException(
-                "[TASM] Failed to assemble after retrying with larger heap.",
+                "[TASM] Failed to assemble after retrying with larger heap."
+                + (lastException == null
+                    ? ""
+                    : $" Last error: {lastException.GetType().Name}: {lastException.Message}"),
                 lastException);
         }
 

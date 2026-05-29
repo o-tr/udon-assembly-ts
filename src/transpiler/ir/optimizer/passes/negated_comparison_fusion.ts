@@ -1,6 +1,8 @@
+import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
   BinaryOpInstruction,
+  CopyInstruction,
   TACInstructionKind,
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
@@ -21,7 +23,14 @@ const invertComparison: Record<string, string> = {
   "!=": "==",
 };
 
-export const negatedComparisonFusion = (
+const isKnownBooleanOperand = (
+  operand: UnaryOpInstruction["operand"],
+): boolean => {
+  const typed = operand as { type?: { udonType?: unknown } };
+  return typed.type?.udonType === PrimitiveTypes.boolean.udonType;
+};
+
+export const booleanNegationFusion = (
   instructions: TACInstruction[],
 ): PassResult => {
   const tempUses = countTempUses(instructions);
@@ -34,20 +43,49 @@ export const negatedComparisonFusion = (
     if (inst.kind === TACInstructionKind.Label) {
       lastDefinition.clear();
     }
+
     if (inst.kind === TACInstructionKind.UnaryOp) {
-      const un = inst as UnaryOpInstruction;
-      if (un.operator === "!" && un.operand.kind === TACOperandKind.Temporary) {
-        const operandTemp = un.operand as TemporaryOperand;
-        const defIndex = lastDefinition.get(operandKey(un.operand));
+      const outer = inst as UnaryOpInstruction;
+      if (
+        outer.operator === "!" &&
+        outer.operand.kind === TACOperandKind.Temporary
+      ) {
+        const operandTemp = outer.operand as TemporaryOperand;
+        const defIndex = lastDefinition.get(operandKey(outer.operand));
         if (defIndex !== undefined) {
           const defInst = instructions[defIndex];
           if (defInst.kind === TACInstructionKind.BinaryOp) {
             const bin = defInst as BinaryOpInstruction;
             const inverted = invertComparison[bin.operator];
-            if (inverted && tempUses.get(operandTemp.id) === 1) {
+            if (
+              inverted &&
+              tempUses.get(operandTemp.id) === 1 &&
+              !removed.has(defIndex) &&
+              !replacements.has(defIndex)
+            ) {
               replacements.set(
                 i,
-                new BinaryOpInstruction(un.dest, bin.left, inverted, bin.right),
+                new BinaryOpInstruction(
+                  outer.dest,
+                  bin.left,
+                  inverted,
+                  bin.right,
+                ),
+              );
+              removed.add(defIndex);
+            }
+          } else if (defInst.kind === TACInstructionKind.UnaryOp) {
+            const inner = defInst as UnaryOpInstruction;
+            if (
+              inner.operator === "!" &&
+              tempUses.get(operandTemp.id) === 1 &&
+              isKnownBooleanOperand(inner.operand) &&
+              !removed.has(defIndex) &&
+              !replacements.has(defIndex)
+            ) {
+              replacements.set(
+                i,
+                new CopyInstruction(outer.dest, inner.operand),
               );
               removed.add(defIndex);
             }

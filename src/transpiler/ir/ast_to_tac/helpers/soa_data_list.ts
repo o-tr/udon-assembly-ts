@@ -11,10 +11,12 @@ import {
 } from "../../tac_instruction.js";
 import {
   createConstant,
+  createVariable,
   type TACOperand,
   TACOperandKind,
 } from "../../tac_operand.js";
 import type { ASTToTACConverter } from "../converter.js";
+import { sanitizeIdentifierToken } from "./identifier_sanitize.js";
 import { normalizeOperandToInt32 } from "./int32_normalization.js";
 
 /**
@@ -75,6 +77,7 @@ export function emitBoundedDataListGetItem(
   sentinelValue: TACOperand | (() => TACOperand) = () =>
     createConstant(null, ObjectType),
   guardListNotNull = false,
+  guardClassName?: string,
 ): void {
   if (guardListNotNull) {
     if (listVar.kind !== TACOperandKind.Variable) {
@@ -100,19 +103,41 @@ export function emitBoundedDataListGetItem(
     // overwrite / clear the pre-existing DataList before skipping.
     const resolvedSentinelValue =
       typeof sentinelValue === "function" ? sentinelValue() : sentinelValue;
-    const boxedList = converter.newTemp(ObjectType);
-    converter.emit(new CopyInstruction(boxedList, listVar));
-    const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
     const listReady = converter.newLabel("soa_list_ready");
-    converter.emit(
-      new BinaryOpInstruction(
-        listIsNull,
-        boxedList,
-        "==",
-        createConstant(null, ObjectType),
-      ),
-    );
-    converter.emit(new ConditionalJumpInstruction(listIsNull, listReady));
+    if (guardClassName) {
+      const initedVar = createVariable(
+        `__soa_${sanitizeIdentifierToken(guardClassName)}__inited`,
+        PrimitiveTypes.int32,
+      );
+      const alreadyInited = converter.newTemp(PrimitiveTypes.boolean);
+      const needsSeed = converter.newLabel("soa_needs_seed");
+      converter.emit(
+        new BinaryOpInstruction(
+          alreadyInited,
+          initedVar,
+          "==",
+          createConstant(1, PrimitiveTypes.int32),
+        ),
+      );
+      // ConditionalJumpInstruction jumps when the condition is false: jump to
+      // needsSeed only when the SoA class has not been initialized yet.
+      converter.emit(new ConditionalJumpInstruction(alreadyInited, needsSeed));
+      converter.emit(new UnconditionalJumpInstruction(listReady));
+      converter.emit(new LabelInstruction(needsSeed));
+    } else {
+      const boxedList = converter.newTemp(ObjectType);
+      converter.emit(new CopyInstruction(boxedList, listVar));
+      const listIsNull = converter.newTemp(PrimitiveTypes.boolean);
+      converter.emit(
+        new BinaryOpInstruction(
+          listIsNull,
+          boxedList,
+          "==",
+          createConstant(null, ObjectType),
+        ),
+      );
+      converter.emit(new ConditionalJumpInstruction(listIsNull, listReady));
+    }
     const listCtorSig = converter.requireExternSignature(
       "DataList",
       "ctor",

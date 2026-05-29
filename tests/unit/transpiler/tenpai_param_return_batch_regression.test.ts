@@ -159,33 +159,20 @@ export class TestBehaviour extends UdonSharpBehaviour {
     ).toBeGreaterThan(0);
   });
 
-  it("UntrackedStructuralUnionReturn diagnostic fires for cross-module param-direct-return", () => {
-    // If structuralInterfaceForType returns null for the cross-module WaitInfo type,
-    // the "stay neutral" path in visitReturnStatement is never entered and this
-    // diagnostic is never emitted — revealing that the batch type resolution is broken.
+  it("does not need the untracked-return diagnostic for cross-module param-direct-return", () => {
     const diag = batchDiagnostics.find(
       (d) => d.code === "UntrackedStructuralUnionReturn",
     );
-    expect(diag).toBeDefined();
+    expect(diag).toBeUndefined();
   });
 
-  it("D-3 dispatch (__uninst_prop_*) appears in generated assembly for cross-module untracked arg", () => {
+  it("propagates cross-module param-direct-return fields without D-3 dispatch", () => {
     // Guard: verify Debug.Log was emitted as a live EXTERN (UnityEngineDebug),
     // not silently dropped. This confirms r3.count is live so the assertion
     // below is not vacuous.
     expect(assembledUasm).toContain("UnityEngineDebug");
 
-    // D-3 dispatch creates a TAC-level slot named __uninst_prop_N which the
-    // assembler preserves verbatim in the .tasm data section (local variables
-    // keep their TAC names in the output format). BatchResult does not expose
-    // a tac field, so this is the only layer at which the slot name is
-    // observable without refactoring the batch pipeline. If the assembly
-    // lowering stage ever renames these slots, update this pattern to match.
-    //
-    // If returnTrackingInvalidated was not set — because structuralInterfaceForType
-    // returned null for the cross-module WaitInfo, or untrackedStructuralHandleVars
-    // propagation failed — the caller uses a direct prefix read and __uninst_prop_N
-    // never appears in the output.
-    expect(assembledUasm).toMatch(/__uninst_prop_\d+/);
+    expect(assembledUasm).not.toMatch(/__uninst_prop_\d+/);
+    expect(assembledUasm).toContain("r3_count");
   });
 });

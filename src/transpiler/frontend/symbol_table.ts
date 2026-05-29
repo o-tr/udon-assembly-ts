@@ -49,6 +49,7 @@ export class SymbolTable {
     isConstant = false,
     initialValue?: unknown,
     heapSlotName?: string,
+    declaredType?: TypeSymbol,
   ): void {
     const currentScopeMap = this.scopes[this.currentScope];
     if (currentScopeMap.has(name)) {
@@ -65,6 +66,7 @@ export class SymbolTable {
       isConstant,
       initialValue,
       heapSlotName,
+      declaredType,
     });
   }
 
@@ -98,6 +100,20 @@ export class SymbolTable {
     const symbol = scope.get(name);
     if (!symbol) return;
     scope.set(name, { ...symbol, type });
+  }
+
+  /**
+   * Update a symbol's type and declared type in the current scope if it exists.
+   */
+  updateTypeAndDeclaredTypeInCurrentScope(
+    name: string,
+    type: TypeSymbol,
+    declaredType?: TypeSymbol,
+  ): void {
+    const scope = this.scopes[this.currentScope];
+    const symbol = scope.get(name);
+    if (!symbol) return;
+    scope.set(name, { ...symbol, type, declaredType });
   }
 
   /**

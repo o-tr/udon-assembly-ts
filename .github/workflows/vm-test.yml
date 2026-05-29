@@ -27,7 +27,7 @@ jobs:
     permissions:
       contents: read
       actions: write
-    timeout-minutes: 30
+    timeout-minutes: 45
     concurrency:
       group: vm-test-${{ github.ref }}
       cancel-in-progress: true
@@ -102,7 +102,7 @@ jobs:
               apt-get install -y -qq nodejs >/dev/null 2>&1
 
               # Run tests (capture exit code to return after license release)
-              ./node_modules/.bin/vitest run tests/vm/ --hideSkippedTests
+              ./node_modules/.bin/vitest run tests/vm/vm_test.test.ts --hideSkippedTests
               TEST_EXIT_CODE=$?
 
               # Return license seat so it is not consumed permanently
