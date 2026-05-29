@@ -4390,10 +4390,10 @@ function emitInlineReceiverFieldCopies(
     converter,
     className,
   )) {
-    converter.emitCopyWithTracking(
-      createVariable(`${toPrefix}_${prop.name}`, prop.type),
-      createVariable(`${fromPrefix}_${prop.name}`, prop.type),
-    );
+    const target = createVariable(`${toPrefix}_${prop.name}`, prop.type);
+    const source = createVariable(`${fromPrefix}_${prop.name}`, prop.type);
+    converter.emitCopyWithTracking(target, source);
+    emitStructuralFieldCopies(converter, target.name, prop.type, source);
   }
 }
 
@@ -4989,6 +4989,33 @@ function emitInlineRecursiveSelfCall(
     //    after the recursive call (push/pop only covers runtime locals, not
     //    the compile-time inline tracking map).
     const savedInstanceMap = new Map(converter.inlineInstanceMap);
+    const savedUntrackedHandleVars = new Set(
+      converter.untrackedStructuralHandleVars,
+    );
+    const savedUntrackedHandleTypes = new Map(
+      converter.untrackedStructuralHandleTypes,
+    );
+    const savedUntrackedHandleClassIds = new Map(
+      converter.untrackedStructuralHandleClassIds,
+    );
+    const restoreStructuralHandleTracking = (): void => {
+      converter.inlineInstanceMap.clear();
+      for (const [k, v] of savedInstanceMap) {
+        converter.inlineInstanceMap.set(k, v);
+      }
+      converter.untrackedStructuralHandleVars.clear();
+      for (const name of savedUntrackedHandleVars) {
+        converter.untrackedStructuralHandleVars.add(name);
+      }
+      converter.untrackedStructuralHandleTypes.clear();
+      for (const [k, v] of savedUntrackedHandleTypes) {
+        converter.untrackedStructuralHandleTypes.set(k, v);
+      }
+      converter.untrackedStructuralHandleClassIds.clear();
+      for (const [k, v] of savedUntrackedHandleClassIds) {
+        converter.untrackedStructuralHandleClassIds.set(k, v);
+      }
+    };
 
     // 1. Push all locals to stack (save caller's current state)
     emitInlineRecursivePush.call(converter);
@@ -5101,10 +5128,7 @@ function emitInlineRecursiveSelfCall(
 
     if (ctx.returnsVoid) {
       emitInlineRecursivePop.call(converter);
-      converter.inlineInstanceMap.clear();
-      for (const [k, v] of savedInstanceMap) {
-        converter.inlineInstanceMap.set(k, v);
-      }
+      restoreStructuralHandleTracking();
       return VOID_INLINE_RESULT;
     }
 
@@ -5117,11 +5141,8 @@ function emitInlineRecursiveSelfCall(
     // 8. Pop all locals from stack (restore caller's state)
     emitInlineRecursivePop.call(converter);
 
-    // 8b. Restore compile-time inlineInstanceMap to caller's state
-    converter.inlineInstanceMap.clear();
-    for (const [k, v] of savedInstanceMap) {
-      converter.inlineInstanceMap.set(k, v);
-    }
+    // 8b. Restore compile-time inline structural tracking to caller's state.
+    restoreStructuralHandleTracking();
 
     // 9. Copy captured result into a named selfCallResult variable
     //    that is part of the push/pop set (survives sibling calls)
@@ -5250,6 +5271,7 @@ function emitInlineRecursiveInstanceMethod(
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
+    const savedExpectedType = converter.currentExpectedType;
     const savedRecNativeIneligible = converter.nativeArrayIneligible;
     const savedRecNativeVarName = converter.currentNativeArrayVarName;
     const returnStackDepth = converter.inlineReturnStack.length;
@@ -5443,6 +5465,7 @@ function emitInlineRecursiveInstanceMethod(
       converter.currentInlineConstructorClassName = undefined;
       converter.currentThisOverride = null;
       converter.currentInlineBaseClass = undefined;
+      converter.currentExpectedType = undefined;
 
       converter.inlineMethodStack.add(inlineKey);
       addedInlineMethodKey = true;
@@ -5529,6 +5552,7 @@ function emitInlineRecursiveInstanceMethod(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
+      converter.currentExpectedType = savedExpectedType;
       if (prologueComplete && savedInitialParams)
         restoreInlineParams(converter, savedInitialParams);
       converter.currentInlineLocalPrefix = savedInlineLocalPrefix;
@@ -6136,6 +6160,7 @@ function inlineResolvedMethodBodyImpl(
     const savedInlineCtorClass = converter.currentInlineConstructorClassName;
     const savedThisOverride = converter.currentThisOverride;
     const savedBaseClass = converter.currentInlineBaseClass;
+    const savedExpectedType = converter.currentExpectedType;
     const savedInstNativeIneligible = converter.nativeArrayIneligible;
     const savedInstNativeVarName = converter.currentNativeArrayVarName;
     let enteredScope = false;
@@ -6165,6 +6190,7 @@ function inlineResolvedMethodBodyImpl(
       converter.currentInlineConstructorClassName = undefined;
       converter.currentThisOverride = null;
       converter.currentInlineBaseClass = undefined;
+      converter.currentExpectedType = undefined;
       converter.currentInlineContext = instancePrefix
         ? { className, instancePrefix }
         : undefined;
@@ -6231,6 +6257,7 @@ function inlineResolvedMethodBodyImpl(
       converter.currentInlineConstructorClassName = savedInlineCtorClass;
       converter.currentThisOverride = savedThisOverride;
       converter.currentInlineBaseClass = savedBaseClass;
+      converter.currentExpectedType = savedExpectedType;
       // Emit label BEFORE restore so goto inline_return* falls through into COPYs.
       if (prologueComplete) {
         converter.emit(new LabelInstruction(returnLabel));
