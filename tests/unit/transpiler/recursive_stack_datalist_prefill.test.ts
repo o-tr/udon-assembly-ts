@@ -251,7 +251,8 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     // the stack would contain wrong-type tokens and unwrapDataToken would crash
     // when accessing .DataList on a boxed-null token instead of a DataList token.
     const source = `
-      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 
       class BranchLocalTest {

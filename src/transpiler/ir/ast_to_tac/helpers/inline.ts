@@ -621,66 +621,18 @@ export function makeDefaultDataTokenForLocal(
   }
 }
 
-function needsNullSafeRecursiveStackToken(
-  converter: ASTToTACConverter,
-  localType: TypeSymbol,
-): boolean {
-  if (isInlineHandleType(converter, localType)) {
-    return true;
-  }
-  switch (localType.udonType) {
-    case UdonType.Array:
-    case UdonType.DataList:
-    case UdonType.DataDictionary:
-      return true;
-    default:
-      return false;
-  }
-}
-
-function wrapRecursiveStackLocal(
-  converter: ASTToTACConverter,
-  localVar: TACOperand,
-  localType: TypeSymbol,
-): TACOperand {
-  if (!needsNullSafeRecursiveStackToken(converter, localType)) {
-    return converter.wrapDataToken(localVar);
-  }
-
-  const isNull = converter.newTemp(PrimitiveTypes.boolean);
-  const nonNullLabel = converter.newLabel("rec_stack_local_non_null");
-  const doneLabel = converter.newLabel("rec_stack_local_done");
-  const token = converter.newTemp(ExternTypes.dataToken);
-
-  converter.emit(
-    new BinaryOpInstruction(
-      isNull,
-      localVar,
-      "==",
-      createConstant(null, ObjectType),
-    ),
-  );
-  converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
-
-  const defaultToken = makeDefaultDataTokenForLocal(converter, localType);
-  converter.emit(new CopyInstruction(token, defaultToken));
-  converter.emit(new UnconditionalJumpInstruction(doneLabel));
-
-  converter.emit(new LabelInstruction(nonNullLabel));
-  const wrapped = converter.wrapDataToken(localVar);
-  converter.emit(new CopyInstruction(token, wrapped));
-
-  converter.emit(new LabelInstruction(doneLabel));
-  return token;
-}
-
 /**
- * Emit a null-safe DataToken for the given local at save (push) time.
- * For types whose unwrap accessor rejects non-matching tokens (DataList,
- * Array, DataDictionary, String), always emit a default token so that an
- * uninitialized / branch-local slot never receives a boxed-null value.
- * For all other types fall through to wrapDataToken which already handles
- * implicit boxing correctly.
+ * Emit a DataToken for the given local at save (push) time.
+ *
+ * All context locals are synthesized upfront during inline recursion
+ * context setup, before any body execution. The prefill mechanism
+ * (makeDefaultDataTokenForLocal) ensures each per-local stack slot starts
+ * with a type-correct token. At push time the localVar is always present
+ * and non-null, so wrapDataToken is unconditionally safe.
+ *
+ * Call-sites that need runtime null-safety for possibly uninitialized
+ * locals should go through makeDefaultDataTokenForLocal (prefill path)
+ * rather than this helper (push path).
  */
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
