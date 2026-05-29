@@ -632,7 +632,6 @@ export function makeDefaultDataTokenForLocal(
  */
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
-  _localType: TypeSymbol,
   localVar: VariableOperand,
 ): TACOperand {
   return converter.wrapDataToken(localVar);
@@ -7261,8 +7260,9 @@ function hasThisFieldMutation(method: { body: BlockStatementNode }): boolean {
  * Push all locals onto per-local DataList stacks at the current SP.
  * Used at each self-call site BEFORE the JUMP to the recursive method.
  * Increments SP first, then saves all locals at the new SP index. Uses
- * saveLocalAsSafeToken so that branch-local arrays which have not yet been
- * initialized do not write null tokens into DataList-typed stack slots.
+ * saveLocalAsSafeToken, which unconditionally wraps localVar — safe because
+ * all context locals are synthesized upfront and the prefill mechanism
+ * ensures type-correct tokens for every stack slot.
  */
 export function emitCallSitePush(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
@@ -7299,9 +7299,9 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]. Use saveLocalAsSafeToken to guard against
-  // writing null tokens into DataList-typed slots (branch-local arrays that
-  // have not yet been initialized).
+  // Save each local at stack[SP]. All context locals are synthesized upfront
+  // during setup; the prefill already guarantees type-correct tokens for every
+  // slot, so wrapDataToken is unconditionally safe.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -7309,7 +7309,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = saveLocalAsSafeToken(this, local.type, localVar);
+    const token = saveLocalAsSafeToken(this, localVar);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
@@ -7832,8 +7832,9 @@ export function countStaticSelfCalls(
 /**
  * Push all locals onto per-local DataList stacks for inline recursive context.
  * Same logic as emitCallSitePush but uses currentInlineRecursiveContext. Uses
- * saveLocalAsSafeToken so that branch-local arrays which have not yet been
- * initialized do not write null tokens into DataList-typed stack slots.
+ * saveLocalAsSafeToken, which unconditionally wraps localVar — safe because
+ * all context locals are synthesized upfront and the prefill mechanism
+ * ensures type-correct tokens for every stack slot.
  */
 export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   const context = this.currentInlineRecursiveContext;
@@ -7868,9 +7869,9 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]. Use saveLocalAsSafeToken to guard against
-  // writing null tokens into DataList-typed slots (branch-local arrays that
-  // have not yet been initialized).
+  // Save each local at stack[SP]. All context locals are synthesized upfront
+  // during setup; the prefill already guarantees type-correct tokens for every
+  // slot, so wrapDataToken is unconditionally safe.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -7878,7 +7879,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = saveLocalAsSafeToken(this, local.type, localVar);
+    const token = saveLocalAsSafeToken(this, localVar);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
