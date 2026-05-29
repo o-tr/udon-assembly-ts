@@ -304,7 +304,8 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     // inline recursion, all context locals are synthesized during context setup
     // before any body execution, so they are always present.
     const source = `
-      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 
       class PushPathTest {
@@ -356,7 +357,8 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     // before the call. Both should produce set_Item calls whose token ctor args
     // reference their respective variable names, confirming wrapDataToken was used.
     const source = `
-      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
 
       class PushPathTest {
