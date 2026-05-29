@@ -374,19 +374,6 @@ function emitSoaNestedStructuralFieldCopies(
       nestedType,
       { isLocal: true },
     );
-    for (const [, info] of converter.allInlineInstances) {
-      if (info.className !== ownerClassName) continue;
-      converter.emit(
-        new CopyInstruction(
-          nestedSlot,
-          createVariable(
-            `${info.prefix}_${ownerProperty}_${nestedName}`,
-            nestedType,
-          ),
-        ),
-      );
-      break;
-    }
     emitBoundedDataListGetItem(
       converter,
       nestedList,

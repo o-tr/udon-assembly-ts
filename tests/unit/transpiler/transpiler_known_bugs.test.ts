@@ -3948,6 +3948,9 @@ class Main extends UdonSharpBehaviour {
         /__inst_Candidate_\d+_child_count = __inst_Child_\d+_count/,
       );
       expect(result.tac).toMatch(
+        /t\d+ = call __soa_Candidate_child_count\.get_Item\(t\d+\)[\s\S]*__uninst_prop_\d+_count = t\d+/,
+      );
+      expect(result.tac).not.toMatch(
         /__uninst_prop_\d+_count = __inst_Candidate_\d+_child_count/,
       );
     });

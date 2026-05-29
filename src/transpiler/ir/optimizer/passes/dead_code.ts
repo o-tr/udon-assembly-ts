@@ -214,6 +214,7 @@ export const eliminateOverwrittenPureProducersLocal = (
   return {
     instructions: result,
     changed: true,
+    structurallyChanged: true,
   };
 };
 

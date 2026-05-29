@@ -155,6 +155,7 @@ describe("optimizer passes", () => {
       const result = eliminateOverwrittenPureProducersLocal(instructions);
       const text = stringify(result.instructions);
       expect(result.changed).toBe(true);
+      expect(result.structurallyChanged).toBe(true);
       expect(text).not.toContain("t0 = 1");
       expect(text).toContain("t0 = 2");
       expect(text).toContain("t0 = 3");
