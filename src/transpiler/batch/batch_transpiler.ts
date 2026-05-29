@@ -67,6 +67,7 @@ import type { EntryProfile } from "../ir/ast_to_tac/profiling.js";
 import { extractProfileData } from "../ir/ast_to_tac/profiling.js";
 import { computeFingerprintPair, TACOptimizer } from "../ir/optimizer/index.js";
 import { buildUdonBehaviourLayouts } from "../ir/udon_behaviour_layout.js";
+import { emitTsIrToFile } from "../ts_ir/index.js";
 import { DependencyResolver } from "./dependency_resolver.js";
 import { discoverTypeScriptFiles } from "./file_discovery.js";
 
@@ -86,7 +87,9 @@ interface CacheV3 {
 
 interface OutputCacheEntry {
   key: string;
-  uasm: string;
+  outputText: string;
+  /** Legacy cache field kept for reading pre-outputText cache entries. */
+  uasm?: string;
   warnings?: string[];
   /**
    * Structured diagnostics emitted by tacConverter (warnAt) for this entry
@@ -178,6 +181,8 @@ export interface BatchTranspilerOptions {
   allowCircular?: boolean;
   includeExternalDependencies?: boolean;
   outputExtension?: string;
+  /** Optional entry point class names to compile. Defaults to all entry points. */
+  entryPointNames?: string[];
   heapLimit?: number;
   dispatchLimitResolver?: DispatchLimitResolver;
   /**
@@ -271,8 +276,34 @@ export class BatchTranspiler {
     pend("parse-initial", _profParseStart, `files=${sourceFileCount}`);
 
     // Derive entry files from registry instead of discoverEntryFilesUsingTS
+    const entryPointNameFilter =
+      options.entryPointNames && options.entryPointNames.length > 0
+        ? new Set(options.entryPointNames)
+        : null;
+    const selectedEntryPoints = entryPointNameFilter
+      ? registry
+          .getEntryPoints()
+          .filter((ep) => entryPointNameFilter.has(ep.name))
+      : registry.getEntryPoints();
+    if (entryPointNameFilter && selectedEntryPoints.length === 0) {
+      const availableEntryPointNames = registry
+        .getEntryPoints()
+        .map((ep) => ep.name);
+      errorCollector.addWarning({
+        code: "EntryPointFilterNoMatch",
+        message:
+          "entryPointNames filter matched no registered entry points. " +
+          `Requested: [${[...entryPointNameFilter].join(", ")}]. ` +
+          `Available: [${availableEntryPointNames.join(", ")}].`,
+        location: {
+          filePath: options.sourceDir,
+          line: 0,
+          column: 0,
+        },
+      });
+    }
     const entryFiles = [
-      ...new Set(registry.getEntryPoints().map((ep) => ep.filePath)),
+      ...new Set(selectedEntryPoints.map((ep) => ep.filePath)),
     ];
 
     const resolver = new DependencyResolver(options.sourceDir, {
@@ -420,12 +451,24 @@ export class BatchTranspiler {
         for (const f of ep.usedFiles) trackedFiles.add(f);
       }
     }
+    const rawExt = options.outputExtension ?? "tasm";
+    const normalized = rawExt.trim().toLowerCase();
+    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
+    const ext = sanitized.length > 0 ? sanitized : "tasm";
+    if (ext !== "tasm" && ext !== "uasm" && ext !== "ir.ts") {
+      pend("transpile-total", _profTopStart, "error=outputExtension");
+      throw new Error(
+        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm", "ir.ts".`,
+      );
+    }
+
+    const useOutputCache = options.useOutputCache !== false;
     const { changed: changedFiles, computedHashes } = this.getChangedFiles(
       Array.from(trackedFiles),
       cache,
     );
     const entryFilesToCompile = new Set<string>(entryFiles);
-    if (cache) {
+    if (cache && useOutputCache) {
       entryFilesToCompile.clear();
       for (const entryFile of entryFiles) {
         // Tier 3: Use recorded usedFiles when available (faster, avoids full
@@ -463,7 +506,7 @@ export class BatchTranspiler {
 
     const _profValidate = pmark();
     const validator = new InheritanceValidator(registry, errorCollector);
-    for (const entryPoint of registry.getEntryPoints()) {
+    for (const entryPoint of selectedEntryPoints) {
       validator.validate(entryPoint.name);
     }
     pend("inheritance-validate", _profValidate);
@@ -485,21 +528,10 @@ export class BatchTranspiler {
       throw new AggregateTranspileError(errorCollector.getErrors());
     }
 
-    const rawExt = options.outputExtension ?? "tasm";
-    const normalized = rawExt.trim().toLowerCase();
-    const sanitized = normalized.replace(/^\.+/, "").replace(/[/\\]/g, "");
-    const ext = sanitized.length > 0 ? sanitized : "tasm";
-    if (ext !== "tasm" && ext !== "uasm") {
-      pend("transpile-total", _profTopStart, "error=outputExtension");
-      throw new Error(
-        `Unsupported outputExtension "${ext}". Supported values: "tasm", "uasm".`,
-      );
-    }
     const heapLimit =
       options.heapLimit ?? (ext === "tasm" ? TASM_HEAP_LIMIT : UASM_HEAP_LIMIT);
 
     const optCacheDir = path.join(options.sourceDir, ".transpiler-optcache");
-    const useOutputCache = options.useOutputCache !== false;
     // Sweep stale output-cache entries when there is no prior cache or when the
     // transpiler hash changed (including v2→v3 upgrades where loadCache injects
     // the current hash but old optcache entries still carry the prior version's).
@@ -514,12 +546,13 @@ export class BatchTranspiler {
     const reflect = options.reflect === true;
     const optimize = options.optimize === true;
     const useStringBuilder = options.useStringBuilder === true;
+    const shouldSweepUnusedSlotFiles = useOutputCache && !entryPointNameFilter;
 
     // Record slot files for ALL entry points (including skipped ones) so
     // sweepUnusedSlotFiles does not delete cache files for cached entries.
     const activeSlotFiles = new Set<string>();
     if (useOutputCache) {
-      for (const ep of registry.getEntryPoints()) {
+      for (const ep of selectedEntryPoints) {
         activeSlotFiles.add(
           this.outputCacheFilePath(
             optCacheDir,
@@ -535,7 +568,7 @@ export class BatchTranspiler {
     }
 
     if (entryFilesToCompile.size === 0) {
-      if (useOutputCache) {
+      if (shouldSweepUnusedSlotFiles) {
         this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
       }
       // Replay structured diagnostics from the per-entry output cache so that
@@ -545,7 +578,7 @@ export class BatchTranspiler {
       // re-adds them; this no-op early-return has no other source.
       if (useOutputCache) {
         const currentTranspilerHash = getTranspilerHash();
-        for (const entry of registry.getEntryPoints()) {
+        for (const entry of selectedEntryPoints) {
           const slot = this.outputCacheFilePath(
             optCacheDir,
             entry.name,
@@ -648,7 +681,7 @@ export class BatchTranspiler {
       ...(cache?.entryPoints ?? {}),
     };
 
-    for (const entryPoint of registry.getEntryPoints()) {
+    for (const entryPoint of selectedEntryPoints) {
       if (!entryFilesToCompile.has(entryPoint.filePath)) {
         continue;
       }
@@ -865,7 +898,7 @@ export class BatchTranspiler {
               `${entryPoint.name}.${ext}`,
             );
             fs.mkdirSync(path.dirname(outPath), { recursive: true });
-            fs.writeFileSync(outPath, cachedOutput.uasm, "utf8");
+            fs.writeFileSync(outPath, cachedOutput.outputText, "utf8");
             for (const w of cachedOutput.warnings ?? []) console.warn(w);
             outputs.push({
               className: entryPoint.name,
@@ -890,12 +923,74 @@ export class BatchTranspiler {
         if (options.optimize === true) {
           const _profOpt = pmark();
           const optimizer = new TACOptimizer();
-          tacInstructions = optimizer.optimize(tacInstructions, exposedLabels);
+          tacInstructions = optimizer.optimize(tacInstructions, exposedLabels, {
+            profile: PROF
+              ? {
+                  record: (name, ms) => {
+                    console.log(
+                      `[prof]   optimizer ${entryPoint.name}.${name}: ${ms.toFixed(1)}ms`,
+                    );
+                  },
+                }
+              : undefined,
+          });
           pend(
             `entry-${entryPoint.name}-optimize`,
             _profOpt,
             `instr=${tacInstructions.length}`,
           );
+        }
+
+        if (ext === "ir.ts") {
+          const outPath = path.join(
+            options.outputDir,
+            `${entryPoint.name}.${ext}`,
+          );
+          fs.mkdirSync(path.dirname(outPath), { recursive: true });
+          emitTsIrToFile(tacInstructions, outPath, {
+            moduleImportPath: "../runtime/index.js",
+            compact: true,
+            mode: "data",
+          });
+          outputs.push({
+            className: entryPoint.name,
+            outputPath: outPath,
+          });
+          entryPointsCache[entryPoint.name] = {
+            usedFiles: this.collectUsedFiles(
+              entryPoint.filePath,
+              entryPoint.name,
+              filteredInlineClassNames,
+              registry,
+              entryCompilationOrder,
+            ),
+          };
+          if (
+            useOutputCache &&
+            cacheFilePath !== undefined &&
+            outputCacheKey !== undefined
+          ) {
+            try {
+              const tsIr = fs.readFileSync(outPath, "utf8");
+              this.saveOutputCache(cacheFilePath, {
+                key: outputCacheKey,
+                outputText: tsIr,
+                diagnostics:
+                  entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
+                transpilerHash: getTranspilerHash(),
+              });
+            } catch (e) {
+              if (
+                !(e instanceof RangeError) ||
+                !String(e.message).includes("Invalid string length")
+              ) {
+                throw e;
+              }
+              // File too large to hold in a JS string; skip output-cache save.
+            }
+          }
+          pend(`entry-${entryPoint.name}`, _profEntryStart, "ts-ir");
+          continue;
         }
 
         const _profCodegen = pmark();
@@ -921,14 +1016,11 @@ export class BatchTranspiler {
 
         const _profAssemble = pmark();
         const assembler = new UdonAssembler();
-        const uasm = assembler.assemble(
-          udonInstructions,
-          externSignatures,
-          dataSectionWithTypes,
-          syncModes,
-          entryPoint.behaviourSyncMode,
-          exposedLabels, // same as computeExportLabels(...)
+        const outPath = path.join(
+          options.outputDir,
+          `${entryPoint.name}.${ext}`,
         );
+        fs.mkdirSync(path.dirname(outPath), { recursive: true });
         const heapWarnings: string[] = [];
         const heapUsage = computeHeapUsage(dataSectionWithTypes);
         if (ext === "uasm" && heapUsage > UASM_RUNTIME_LIMIT) {
@@ -947,24 +1039,82 @@ export class BatchTranspiler {
             `${formatLabel} heap usage ${heapUsage} exceeds limit ${heapLimit} for ${entryPoint.name}.\nHeap usage by class:\n${breakdown}`,
           );
         }
+        let uasm: string | undefined;
+        let outputBytes = 0;
+        const shouldSaveOutputCache =
+          useOutputCache &&
+          cacheFilePath !== undefined &&
+          outputCacheKey !== undefined;
+        if (ext === "uasm") {
+          outputBytes = assembler.assembleToFile(
+            outPath,
+            udonInstructions,
+            externSignatures,
+            dataSectionWithTypes,
+            syncModes,
+            entryPoint.behaviourSyncMode,
+            exposedLabels,
+          );
+          if (shouldSaveOutputCache) {
+            try {
+              uasm = fs.readFileSync(outPath, "utf8");
+            } catch (e) {
+              if (
+                !(e instanceof RangeError) ||
+                !String(e.message).includes("Invalid string length")
+              ) {
+                throw e;
+              }
+              // File too large to hold in a JS string; skip output-cache save.
+            }
+          }
+        } else {
+          try {
+            uasm = assembler.assemble(
+              udonInstructions,
+              externSignatures,
+              dataSectionWithTypes,
+              syncModes,
+              entryPoint.behaviourSyncMode,
+              exposedLabels, // same as computeExportLabels(...)
+            );
+            outputBytes = uasm.length;
+            fs.writeFileSync(outPath, uasm, "utf8");
+          } catch (e) {
+            if (
+              !(e instanceof RangeError) ||
+              !String(e.message).includes("Invalid string length")
+            ) {
+              throw e;
+            }
+            outputBytes = assembler.assembleToFile(
+              outPath,
+              udonInstructions,
+              externSignatures,
+              dataSectionWithTypes,
+              syncModes,
+              entryPoint.behaviourSyncMode,
+              exposedLabels,
+            );
+          }
+        }
+
         const assemblerWarnings = assembler.getWarnings();
         for (const w of heapWarnings) console.warn(w);
         for (const w of assemblerWarnings) console.warn(w);
 
-        const outPath = path.join(
-          options.outputDir,
-          `${entryPoint.name}.${ext}`,
-        );
-        fs.mkdirSync(path.dirname(outPath), { recursive: true });
-        fs.writeFileSync(outPath, uasm, "utf8");
-
         const allWarnings = [...heapWarnings, ...assemblerWarnings];
         const warnings = allWarnings.length > 0 ? allWarnings : undefined;
         // Tier 2: Save assembled output to cache.
-        if (useOutputCache && cacheFilePath && outputCacheKey) {
+        if (
+          useOutputCache &&
+          cacheFilePath !== undefined &&
+          outputCacheKey !== undefined &&
+          uasm
+        ) {
           this.saveOutputCache(cacheFilePath, {
             key: outputCacheKey,
-            uasm,
+            outputText: uasm,
             warnings,
             diagnostics:
               entryDiagnostics.length > 0 ? entryDiagnostics : undefined,
@@ -984,7 +1134,7 @@ export class BatchTranspiler {
         pend(
           `entry-${entryPoint.name}-assemble`,
           _profAssemble,
-          `bytes=${uasm.length}`,
+          `bytes=${outputBytes}`,
         );
         outputs.push({
           className: entryPoint.name,
@@ -1007,7 +1157,7 @@ export class BatchTranspiler {
     // Remove output-cache slot files that were not used in this run (e.g. from
     // a prior build with different options). This prevents unbounded growth of
     // .transpiler-optcache/ when build flags cycle in CI.
-    if (useOutputCache) {
+    if (shouldSweepUnusedSlotFiles) {
       this.sweepUnusedSlotFiles(optCacheDir, activeSlotFiles);
     }
 
@@ -1255,12 +1405,13 @@ export class BatchTranspiler {
       ) as OutputCacheEntry;
       if (
         entry.key !== expectedKey ||
-        typeof entry.uasm !== "string" ||
-        !entry.uasm
+        (typeof entry.outputText !== "string" && typeof entry.uasm !== "string")
       ) {
         return null;
       }
-      return entry;
+      const outputText = entry.outputText ?? entry.uasm;
+      if (!outputText) return null;
+      return { ...entry, outputText };
     } catch {
       return null;
     }

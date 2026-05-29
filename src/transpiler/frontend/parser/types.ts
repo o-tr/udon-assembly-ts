@@ -38,6 +38,48 @@ function isInlineSafePropertyName(propName: string): boolean {
   return /^[$A-Z_a-z][$\w]*$/.test(propName);
 }
 
+function getIndexedAccessKey(node: ts.TypeNode): string | null {
+  if (ts.isLiteralTypeNode(node)) {
+    const literal = node.literal;
+    if (
+      ts.isStringLiteral(literal) ||
+      ts.isNumericLiteral(literal) ||
+      ts.isNoSubstitutionTemplateLiteral(literal)
+    ) {
+      return literal.text;
+    }
+  }
+  return null;
+}
+
+function resolveIndexedAccessType(
+  parser: TypeScriptParser,
+  node: ts.IndexedAccessTypeNode,
+): TypeSymbol | null {
+  const key = getIndexedAccessKey(node.indexType);
+  if (!key) return null;
+
+  const objectType = parser.mapTypeWithGenerics(
+    node.objectType.getText(),
+    node.objectType,
+  );
+  // Prefer parser-registered aliases over checker-built anonymous shapes.
+  // The checker resolver intentionally widens heterogeneous union properties
+  // to ObjectType, while the parser's alias registry preserves structural
+  // union metadata such as ScoreResult["payment"].
+  const resolvedObjectType = objectType.name
+    ? (parser.typeMapper.getAlias(objectType.name) ?? objectType)
+    : objectType;
+
+  if (!(resolvedObjectType instanceof InterfaceTypeSymbol)) return null;
+
+  const propertyType = resolvedObjectType.properties.get(key);
+  if (!propertyType) return null;
+  return propertyType.name
+    ? (parser.typeMapper.getAlias(propertyType.name) ?? propertyType)
+    : propertyType;
+}
+
 function tryResolveBrandedPrimitive(
   node: ts.IntersectionTypeNode,
 ): PrimitiveTypeSymbol | null {
@@ -213,6 +255,11 @@ export function mapTypeWithGenerics(
     return PrimitiveTypes.boolean;
   }
 
+  if (node && ts.isIndexedAccessTypeNode(node)) {
+    const indexedAccess = resolveIndexedAccessType(this, node);
+    if (indexedAccess) return indexedAccess;
+  }
+
   if (node && ts.isIntersectionTypeNode(node)) {
     const branded = tryResolveBrandedPrimitive(node);
     if (branded) return branded;
@@ -222,7 +269,6 @@ export function mapTypeWithGenerics(
   if (
     node &&
     (ts.isTypeQueryNode(node) ||
-      ts.isIndexedAccessTypeNode(node) ||
       ts.isConditionalTypeNode(node) ||
       ts.isMappedTypeNode(node))
   ) {
@@ -274,7 +320,12 @@ export function mapTypeWithGenerics(
           resolveArg(1),
         );
       case "Record":
-        return ExternTypes.dataDictionary;
+        return new CollectionTypeSymbol(
+          ExternTypes.dataDictionary.name,
+          undefined,
+          resolveArg(0),
+          resolveArg(1),
+        );
       case "Map":
       case "ReadonlyMap":
         return new CollectionTypeSymbol(
@@ -458,8 +509,16 @@ export function inferType(
       } else if (ts.isPropertyAccessExpression(access.expression)) {
         baseType = this.inferType(access.expression);
       }
-      if (baseType instanceof InterfaceTypeSymbol) {
-        return baseType.properties.get(access.name.getText()) ?? ObjectType;
+      const resolvedBaseType =
+        baseType?.name && !(baseType instanceof InterfaceTypeSymbol)
+          ? (this.typeMapper.getAlias(baseType.name) ?? baseType)
+          : baseType;
+      if (resolvedBaseType instanceof InterfaceTypeSymbol) {
+        const rawType =
+          resolvedBaseType.properties.get(access.name.getText()) ?? ObjectType;
+        return rawType.name
+          ? (this.typeMapper.getAlias(rawType.name) ?? rawType)
+          : rawType;
       }
       return ObjectType;
     }

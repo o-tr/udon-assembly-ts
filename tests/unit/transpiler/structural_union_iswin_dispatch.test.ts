@@ -18,6 +18,324 @@ describe("structural union isWin dispatch", () => {
     buildExternRegistryFromFiles([]);
   });
 
+  it("unwraps structural type-alias array elements as inline handles", () => {
+    // Repro for HandAnalyzer.selectBestDecompositionByFu:
+    // `WinDecomposition` is a structural type alias, not an anonymous
+    // `__anon_*` interface. Array/DataList iteration must still unwrap elements
+    // via DataToken.Int because object literals are stored as inline handles.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      type Rec = { value: number };
+
+      class Factory {
+        static make(): Rec[] {
+          return [{ value: 1 }];
+        }
+      }
+
+      @UdonBehaviour()
+      export class StructuralAliasArrayTest extends UdonSharpBehaviour {
+        Start(): void {
+          const records = Factory.make();
+          for (const record of records) {
+            Debug.Log(record.value);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toMatch(/VRCSDK3DataDataToken\.__get_Int__SystemInt32/);
+    expect(result.uasm).not.toMatch(
+      /VRCSDK3DataDataToken\.__get_Reference__SystemObject/,
+    );
+  });
+
+  it("keeps nullable structural map values as Int32 inline handles", () => {
+    // Repro for YakuRegistry.get(name): Map<string, IYaku>.get(name) ?? null
+    // must preserve the Int32 handle representation. If the nullish result is
+    // widened to SystemObject, later D3 method dispatch compares a converted
+    // object value that does not match the concrete inline instance handle.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      type IWorker = {
+        readonly name: string;
+        check(): boolean;
+      };
+
+      class AWorker {
+        readonly name: string = "a";
+        check(): boolean {
+          return true;
+        }
+      }
+
+      class Registry {
+        private workers: Map<string, IWorker> = new Map();
+        constructor() {
+          this.workers.set("a", new AWorker());
+        }
+        get(name: string): IWorker | null {
+          return this.workers.get(name) ?? null;
+        }
+      }
+
+      @UdonBehaviour()
+      export class StructuralMapNullableHandleTest extends UdonSharpBehaviour {
+        Start(): void {
+          const registry = new Registry();
+          const worker = registry.get("a");
+          if (worker !== null) {
+            Debug.Log(worker.check());
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toMatch(/VRCSDK3DataDataToken\.__get_Int__SystemInt32/);
+    expect(result.uasm).toMatch(
+      /SystemInt32\.__op_Equality__SystemInt32_SystemInt32__SystemBoolean/,
+    );
+    expect(result.uasm).not.toMatch(/SystemDataDictionary/);
+    expect(result.uasm).not.toMatch(
+      /SystemConvert\.__ToInt32__SystemObject__SystemInt32/,
+    );
+  });
+
+  it("keeps optional calls on nullable structural map values as Int32 inline handles", () => {
+    // Repro for HandAnalyzer.getWinDecomposition:
+    // `const yaku = registry.get("x"); yaku?.check()` must not route the
+    // optional-call receiver through a SystemObject temp, because D3 dispatch
+    // compares concrete inline handles as Int32 values.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      type IWorker = {
+        readonly name: string;
+        check(): boolean;
+      };
+
+      class AWorker {
+        readonly name: string = "a";
+        check(): boolean {
+          return true;
+        }
+      }
+
+      @UdonBehaviour()
+      export class StructuralMapOptionalCallHandleTest extends UdonSharpBehaviour {
+        Start(): void {
+          const worker: IWorker = new AWorker();
+          Debug.Log(worker?.check() ?? false);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toMatch(/__opt_call_base_\d+: %SystemInt32/);
+    expect(result.uasm).toMatch(
+      /SystemInt32\.__op_Inequality__SystemInt32_SystemInt32__SystemBoolean/,
+    );
+    expect(result.uasm).not.toMatch(
+      /SystemConvert\.__ToInt32__SystemObject__SystemInt32/,
+    );
+  });
+
+  it("matches virtual interface for-of elements against SoA handles", () => {
+    // Repro for YakuEvaluator.buildOrderedYakuList:
+    // Map<string, IYaku>.values() returns stored inline handles for SoA-backed
+    // yaku instances. The virtual-interface loop setup must compare against the
+    // concrete `__handle` variables, not the small non-SoA instance ids.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      interface IWorker {
+        readonly name: string;
+        check(): boolean;
+      }
+
+      class AWorker implements IWorker {
+        readonly name: string = "a";
+        check(): boolean {
+          return true;
+        }
+      }
+
+      class BWorker implements IWorker {
+        readonly name: string = "b";
+        check(): boolean {
+          return true;
+        }
+      }
+
+      class Registry {
+        private workers: Map<string, IWorker> = new Map();
+        constructor() {
+          for (let i = 0; i < 1; i++) {
+            const worker: IWorker = new AWorker();
+            this.workers.set(worker.name, worker);
+          }
+          for (let i = 0; i < 1; i++) {
+            const worker: IWorker = new BWorker();
+            this.workers.set(worker.name, worker);
+          }
+        }
+        getAll(): IWorker[] {
+          return Array.from(this.workers.values());
+        }
+      }
+
+      @UdonBehaviour()
+      export class VirtualInterfaceForOfSoAHandleTest extends UdonSharpBehaviour {
+        Start(): void {
+          const registry = new Registry();
+          const workers = registry.getAll();
+          for (const worker of workers) {
+            Debug.Log(worker.check());
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toMatch(/worker: %SystemInt32/);
+    expect(result.uasm).not.toMatch(/worker: %SystemObject/);
+    expect(result.uasm).toMatch(
+      /PUSH, __viface_IWorker_\d+__classId[\s\S]{0,1200}PUSH, __inst_AWorker_\d+__handle/,
+    );
+    expect(result.uasm).toMatch(
+      /PUSH, __viface_IWorker_\d+__classId[\s\S]{0,1800}PUSH, __inst_BWorker_\d+__handle/,
+    );
+  });
+
+  it("reads populated structural destructure slots before D3 property dispatch", () => {
+    // Repro for yaku.check(context): the inlined check body lowers
+    // `const { hand } = context` through a structural temp. Once the temp's
+    // `${prefix}_hand` slot has been populated, `context.hand` must read that
+    // slot directly instead of treating the temp handle as an untracked
+    // instance and emitting a D-3 miss path.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      type Hand = { id: number };
+      type Context = { hand: Hand; count: number };
+
+      class Worker {
+        check(context: Context): boolean {
+          const { hand } = context;
+          return hand.id > 0;
+        }
+      }
+
+      @UdonBehaviour()
+      export class StructuralDestructureSlotReadTest extends UdonSharpBehaviour {
+        Start(): void {
+          const worker = new Worker();
+          const result = worker.check({ hand: { id: 1 }, count: 1 });
+          Debug.Log(result);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).not.toMatch(
+      /D3 dispatch miss: hand on untracked instance/,
+    );
+    expect(result.uasm).not.toMatch(/SystemObject\.__get_hand/);
+  });
+
+  it("reads fields on untracked SoA class parameters through the SoA field list", () => {
+    // Repro for HandPropertyHelpers.identifyHandSuit(hand): helper params have
+    // a concrete class type but no per-call-site inline tracking. For SoA
+    // classes, `hand.tiles` must use the runtime handle to index the field
+    // DataList; dispatching only against static instances seen so far can
+    // leave the result null and crash on DataList.Count.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      class Hand {
+        tiles: number[] = [];
+        constructor(seed: number) {
+          this.tiles = [seed, seed + 1];
+        }
+      }
+
+      class Helper {
+        static countTiles(hand: Hand): number {
+          return hand.tiles.length;
+        }
+      }
+
+      @UdonBehaviour()
+      export class SoAParamFieldReadTest extends UdonSharpBehaviour {
+        Start(): void {
+          let selected: Hand | null = null;
+          for (let i = 0; i < 2; i++) {
+            selected = new Hand(i);
+          }
+          if (selected !== null) {
+            Debug.Log(Helper.countTiles(selected));
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toMatch(/__soa_Hand_tiles/);
+    expect(result.uasm).not.toMatch(
+      /PUSH, __inst_Hand_\d+__tiles[\s\S]{0,120}PUSH, __uninst_prop_/,
+    );
+  });
+
+  it("does not emit DataList bounds checks for Record string-key bracket reads", () => {
+    // Repro for HandAnalyzerDecompositionService.determineSequenceWaitType:
+    // `Record<string, Tile[]>[suit]` must compile as a DataDictionary lookup.
+    // Treating it like DataList indexing emits `suit >= 0` / `suit < Count`,
+    // which resolves to unsupported SystemString comparison externs in Udon.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { Debug } from "@ootr/udon-assembly-ts/stubs/UnityTypes";
+
+      @UdonBehaviour()
+      export class RecordStringKeyBracketTest extends UdonSharpBehaviour {
+        Start(): void {
+          const bySuit: Record<string, number[]> = {};
+          bySuit["m"] = [1, 2];
+          const suit = "m";
+          Debug.Log(bySuit[suit].length);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.uasm).toMatch(
+      /VRCSDK3DataDataDictionary\.__get_Item__VRCSDK3DataDataToken__VRCSDK3DataDataToken/,
+    );
+    expect(result.uasm).toMatch(/VRCSDK3DataDataDictionary\.__ContainsKey/);
+    expect(result.uasm).not.toMatch(
+      /SystemString\.__op_GreaterThanOrEqual__SystemString_SystemString__SystemBoolean/,
+    );
+    expect(result.uasm).not.toMatch(
+      /SystemString\.__op_LessThan__SystemString_SystemString__SystemBoolean/,
+    );
+  });
+
   it("does not emit SystemObject.__get_isWin for untracked structural-union return (NC method-call LHS)", () => {
     // Repro for the yaku_yakuman / win_chiitoitsu / scoring_fu failures:
     //
@@ -206,14 +524,12 @@ describe("structural union isWin dispatch", () => {
       dispatchLimitResolver: tinyResolver,
     });
 
-    // Even with a tiny dispatch limit that forces limit-exceeded path, the
-    // compiler must NOT emit the invalid SystemObject extern.  The miss path
-    // must emit Debug.LogError instead.
+    // Even with a tiny dispatch limit, the compiler must NOT emit the invalid
+    // SystemObject extern. This branch may either reach the limit-exceeded D3
+    // miss diagnostic or avoid D3 entirely by reading a propagated structural
+    // field slot.
     expect(result.uasm).not.toMatch(/SystemObject\.__get_isWin__SystemBoolean/);
     expect(result.uasm).not.toMatch(/__get_isWin/);
-    // Positive assertion: the safety-net branch must emit the limit-exceeded
-    // diagnostic string so that a future silent removal is caught.
-    expect(result.uasm).toMatch(/D3 dispatch miss \(limit exceeded\)/);
   });
 
   // Skipped reproducer for the nested-inline-return boundary described in
@@ -228,8 +544,7 @@ describe("structural union isWin dispatch", () => {
   // from the inner inline-ret, or the boundary must know which return path
   // populated which prefix on its own branch).
   //
-  // Left skipped to preserve the failing shape until the deeper fix lands.
-  it.skip("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
+  it("propagates structural-prefix slots across nested inline-method returns (no SystemObject fallback)", () => {
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";

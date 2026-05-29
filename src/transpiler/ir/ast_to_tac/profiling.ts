@@ -106,6 +106,17 @@ export function profExit(c: ASTToTACConverter): void {
   const e = histGet(c, key);
   e.selfInstr += selfEmitted;
   e.totalInstr += totalEmitted;
+  if (process.env.UDON_PROFILE_INLINE_EXITS === "1") {
+    const threshold = Number.parseInt(
+      process.env.UDON_PROFILE_INLINE_THRESHOLD ?? "200000",
+      10,
+    );
+    if (!Number.isFinite(threshold) || totalEmitted >= threshold) {
+      console.log(
+        `[prof]     inline ${key}: total=${totalEmitted.toLocaleString()} self=${selfEmitted.toLocaleString()} outer=${c.currentClassName ?? "<top>"}.${c.currentMethodName ?? "<top>"}`,
+      );
+    }
+  }
 }
 
 export function countKinds(

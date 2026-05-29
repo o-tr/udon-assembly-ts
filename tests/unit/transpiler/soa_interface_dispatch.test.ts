@@ -15,6 +15,27 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildExternRegistryFromFiles } from "../../../src/transpiler/codegen/extern_registry.js";
 import { TypeScriptToUdonTranspiler } from "../../../src/transpiler/index.js";
 
+function d3DispatchReceiverComparisonLines(
+  tac: string,
+  receiverName: string,
+): string[] {
+  const lines = tac.split("\n");
+  const comparisons: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/ifFalse \S+ goto d3_method_next/.test(lines[i]?.trim() ?? "")) {
+      continue;
+    }
+    const windowStart = Math.max(0, i - 24);
+    const window = lines.slice(windowStart, i + 1);
+    comparisons.push(
+      ...window.filter((line) =>
+        new RegExp(`= ${receiverName} (?:==|>=|<) `).test(line.trim()),
+      ),
+    );
+  }
+  return comparisons;
+}
+
 describe("SoA interface dispatch", () => {
   beforeAll(() => {
     buildExternRegistryFromFiles([]);
@@ -64,12 +85,15 @@ describe("SoA interface dispatch", () => {
     `;
     const result = new TypeScriptToUdonTranspiler().transpile(source);
 
-    // The dispatch comparison must use __handle variables, not constant instIds.
-    // Bug form: "tN = tM == 5"  (sequential compile-time instanceId, never
-    //           matches the per-class SoA counter at runtime → dispatch miss).
-    // Fix form: "tN = tM == __inst_TanyaoYaku_K__handle"  (runtime variable).
-    expect(result.tac).toContain("== __inst_TanyaoYaku_");
-    expect(result.tac).toContain("== __inst_PinfuYaku_");
+    // SoA dispatch may use either a concrete __handle equality or a partition
+    // range check. It must not compare against compile-time instance ids.
+    const comparisons = d3DispatchReceiverComparisonLines(result.tac, "y");
+    expect(comparisons.length).toBeGreaterThanOrEqual(2);
+    expect(comparisons.some((line) => line.includes("1048577"))).toBe(true);
+    expect(comparisons.some((line) => line.includes("2097153"))).toBe(true);
+    for (const line of comparisons) {
+      expect(line).not.toMatch(/= y == \d+$/);
+    }
   });
 
   it("uses __handle variable (not constant) for SoA implementors in multi-instance dispatch", () => {
@@ -122,24 +146,47 @@ describe("SoA interface dispatch", () => {
     //   Bug form: "tN = tM == 4"                       (constant instId)
     //   Fix form: "tN = tM == __inst_Circle_4__handle" (runtime variable)
     //
-    // Identify D3 dispatch comparisons structurally: each is the line that
-    // immediately precedes an "ifFalse tN goto d3_method_next*" instruction.
-    // This is form-independent — it catches the broken (constant) form as well
-    // as the fixed (variable) form, and avoids collateral matches from
-    // unrelated comparisons inside inlined pick(which === 0) bodies.
-    const tacLines = result.tac.split("\n");
-    const d3ComparisonLines = tacLines.filter((_, i) =>
-      /ifFalse \S+ goto d3_method_next/.test(tacLines[i + 1]?.trim() ?? ""),
-    );
-
-    // There must be at least two D3 dispatch branches (Circle + Square)
-    expect(d3ComparisonLines.length).toBeGreaterThanOrEqual(2);
-
-    // Every D3 comparison must reference an __handle variable on the RHS.
-    // A bare integer ("== 4") means the constant-instId bug is present.
-    for (const line of d3ComparisonLines) {
-      expect(line).toContain("__handle");
-      expect(line).not.toMatch(/== \d+$/);
+    const comparisons = d3DispatchReceiverComparisonLines(result.tac, "shape");
+    expect(comparisons.length).toBeGreaterThanOrEqual(2);
+    expect(comparisons.some((line) => line.includes("1048577"))).toBe(true);
+    expect(comparisons.some((line) => line.includes("2097153"))).toBe(true);
+    for (const line of comparisons) {
+      expect(line).not.toMatch(/= shape == \d+$/);
     }
+  });
+
+  it("copies non-name compound SoA fields into for-of loop elements", () => {
+    const source = `
+      type Info = { value: number };
+      type Candidate = {
+        tile: Info;
+        hand_count: number;
+      };
+
+      class Factory {
+        static make(): Candidate[] {
+          const result: Candidate[] = [];
+          for (let i = 0; i < 1; i++) {
+            result.push({ tile: { value: 3 }, hand_count: 4 });
+          }
+          return result;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const items = Factory.make();
+          for (const item of items) {
+            Debug.Log(item.tile.value + item.hand_count);
+          }
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source);
+
+    expect(result.tac).toMatch(/\bitem_tile_value = /);
+    expect(result.tac).toMatch(/\bitem_hand_count = /);
+    expect(result.tac).not.toContain("structural dispatch miss");
   });
 });

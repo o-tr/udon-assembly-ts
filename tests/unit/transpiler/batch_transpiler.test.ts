@@ -44,6 +44,49 @@ describe("BatchTranspiler", () => {
     expect(output).toContain(".code_start");
   });
 
+  it("warns when entryPointNames matches no registered entry points", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mahjong-t2-batch-"));
+    const sourceDir = path.join(tempDir, "src");
+    const outputDir = path.join(tempDir, "out");
+    fs.mkdirSync(sourceDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(sourceDir, "Demo.ts"),
+      `
+      @UdonBehaviour()
+      class Demo extends UdonSharpBehaviour {
+        Start(): void {}
+      }
+    `,
+      "utf8",
+    );
+
+    const transpiler = new BatchTranspiler();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const result = transpiler.transpile({
+        sourceDir,
+        outputDir,
+        excludeDirs: [],
+        entryPointNames: ["Typo"],
+      });
+
+      expect(result.outputs).toHaveLength(0);
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          code: "EntryPointFilterNoMatch",
+          message: expect.stringContaining("Requested: [Typo]"),
+        }),
+      ]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("entryPointNames filter matched no registered"),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("should warn when heap usage exceeds limit", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mahjong-t2-batch-"));
     const sourceDir = path.join(tempDir, "src");

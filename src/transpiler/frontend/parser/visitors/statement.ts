@@ -193,8 +193,12 @@ export function visitVariableStatement(
     const initExpr = declaration.initializer;
     const tempType = this.inferType(initExpr);
     this.symbolTable.addSymbol(tempName, tempType, false, true);
+    const resolvedTempType =
+      tempType.name && !(tempType instanceof InterfaceTypeSymbol)
+        ? (this.typeMapper.getAlias(tempType.name) ?? tempType)
+        : tempType;
     const tempInterfaceType =
-      tempType instanceof InterfaceTypeSymbol ? tempType : null;
+      resolvedTempType instanceof InterfaceTypeSymbol ? resolvedTempType : null;
 
     const tempDecl: VariableDeclarationNode = this.attachLoc(declaration, {
       kind: ASTNodeKind.VariableDeclaration,
@@ -211,9 +215,16 @@ export function visitVariableStatement(
       const propName = element.propertyName
         ? element.propertyName.getText()
         : varName;
-      const propType = tempInterfaceType
-        ? (tempInterfaceType.properties.get(propName) ?? ObjectType)
-        : ObjectType;
+      let propType =
+        this.checkerTypeResolver?.resolveFromTsNode(element.name) ?? ObjectType;
+      if (propType === ObjectType && tempInterfaceType) {
+        propType = (() => {
+          const rawType = tempInterfaceType.properties.get(propName);
+          return rawType?.name
+            ? (this.typeMapper.getAlias(rawType.name) ?? rawType)
+            : (rawType ?? ObjectType);
+        })();
+      }
       if (!this.symbolTable.hasInCurrentScope(varName)) {
         this.symbolTable.addSymbol(varName, propType, false, isConst);
       }

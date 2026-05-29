@@ -12,6 +12,7 @@ import {
   BinaryOpInstruction,
   CallInstruction,
   ConditionalJumpInstruction,
+  CopyInstruction,
   LabelInstruction,
   MethodCallInstruction,
   PropertyGetInstruction,
@@ -70,6 +71,43 @@ export const emitMapKeysList = (
   );
   return keysList;
 };
+
+export function ensureDataListForCount(
+  converter: ASTToTACConverter,
+  operand: TACOperand,
+  labelPrefix = "datalist_ready",
+): TACOperand {
+  const safeList = converter.newTemp(ExternTypes.dataList);
+  const boxedList = converter.newTemp(ObjectType);
+  converter.emit(new CopyInstruction(boxedList, operand));
+  const listIsNotNull = converter.newTemp(PrimitiveTypes.boolean);
+  const listReady = converter.newLabel(labelPrefix);
+  const listIsNullBranch = converter.newLabel(`${labelPrefix}_is_null`);
+  converter.emit(
+    new BinaryOpInstruction(
+      listIsNotNull,
+      boxedList,
+      "!=",
+      createConstant(null, ObjectType),
+    ),
+  );
+  converter.emit(
+    new ConditionalJumpInstruction(listIsNotNull, listIsNullBranch),
+  );
+  converter.emit(new CopyInstruction(safeList, operand));
+  converter.emit(new UnconditionalJumpInstruction(listReady));
+  converter.emit(new LabelInstruction(listIsNullBranch));
+  const listCtorSig = converter.requireExternSignature(
+    "DataList",
+    "ctor",
+    "method",
+    [],
+    "DataList",
+  );
+  converter.emit(new CallInstruction(safeList, listCtorSig, []));
+  converter.emit(new LabelInstruction(listReady));
+  return safeList;
+}
 
 /**
  * Emits TAC instructions that build a DataList of [key, value] pair lists
@@ -193,7 +231,14 @@ export function emitDataListGetRangeLoop(
   const coercedStart = normalizeToInt32(converter, start);
   const coercedCount = normalizeToInt32(converter, count);
 
-  // Loop: for i in 0..countVar, copy source.get_Item(start + i) → result.Add(token)
+  // Snapshot source length too. JS slice clamps end to the source length;
+  // DataList.get_Item does not, so the loop must stop before source.Count even
+  // when the requested count is larger than the available tail.
+  const sourceCount = converter.newTemp(PrimitiveTypes.int32);
+  converter.emit(new PropertyGetInstruction(sourceCount, source, "Count"));
+
+  // Loop: for i in 0..countVar while start+i < source.Count,
+  // copy source.get_Item(start + i) → result.Add(token)
   const idx = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(
     new AssignmentInstruction(idx, createConstant(0, PrimitiveTypes.int32)),
@@ -212,6 +257,16 @@ export function emitDataListGetRangeLoop(
   // srcIdx = start + idx
   const srcIdx = converter.newTemp(PrimitiveTypes.int32);
   converter.emit(new BinaryOpInstruction(srcIdx, coercedStart, "+", idx));
+
+  const inSourceBounds = converter.newTemp(PrimitiveTypes.boolean);
+  converter.emit(
+    new BinaryOpInstruction(inSourceBounds, srcIdx, "<", sourceCount),
+  );
+  // `idx < count` caps the requested range length; this second guard caps the
+  // source tail when start + count extends past the current list size.
+  // ConditionalJumpInstruction jumps when the condition is false, so when
+  // inSourceBounds is false (srcIdx >= sourceCount) we jump to loopEnd.
+  converter.emit(new ConditionalJumpInstruction(inSourceBounds, loopEnd));
 
   // token = source.get_Item(srcIdx)
   const token = converter.newTemp(ExternTypes.dataToken);

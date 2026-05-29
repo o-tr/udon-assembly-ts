@@ -84,11 +84,13 @@ export class InheritanceValidator {
   validateUdonBehaviourInterfaceConsistency(
     udonBehaviourInterfaces: Set<string>,
   ): void {
+    const udonBehaviourAncestorNames = this.collectUdonBehaviourAncestorNames();
     for (const cls of this.registry.getAllClasses()) {
       const isUdonBehaviour = cls.decorators.some(
         (d) => d.name === "UdonBehaviour",
       );
       if (isUdonBehaviour) continue;
+      if (udonBehaviourAncestorNames.has(cls.name)) continue;
       const impls = cls.node.implements ?? [];
       for (const ifaceName of impls) {
         if (udonBehaviourInterfaces.has(ifaceName)) {
@@ -103,6 +105,23 @@ export class InheritanceValidator {
         }
       }
     }
+  }
+
+  private collectUdonBehaviourAncestorNames(): Set<string> {
+    const ancestorNames = new Set<string>();
+    for (const candidate of this.registry.getAllClasses()) {
+      if (!candidate.decorators.some((d) => d.name === "UdonBehaviour")) {
+        continue;
+      }
+      let currentBase = candidate.baseClass;
+      const visited = new Set<string>();
+      while (currentBase && !visited.has(currentBase)) {
+        ancestorNames.add(currentBase);
+        visited.add(currentBase);
+        currentBase = this.registry.getClass(currentBase)?.baseClass ?? null;
+      }
+    }
+    return ancestorNames;
   }
 
   private validateInterfaces(className: string, filePath: string): void {

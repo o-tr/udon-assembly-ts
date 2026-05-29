@@ -25,7 +25,8 @@ export type TranspileWarningCode =
   | "UnsupportedOperator"
   | "OutlineDispatchInvariant"
   | "InlineInstanceRecursionUnsupported"
-  | "Int64RemainderNotSupported";
+  | "Int64RemainderNotSupported"
+  | "EntryPointFilterNoMatch";
 
 export interface TranspileErrorLocation {
   filePath: string;

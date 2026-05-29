@@ -38,6 +38,16 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    include: ["tests/**/*.{test,spec}.?(c|m)[jt]s?(x)"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.git/**"],
+    execArgv: ["--max-old-space-size=8192"],
+    maxWorkers: process.env.VITEST_MAX_WORKERS ?? "1",
+    chaiConfig: {
+      truncateThreshold: 4_000,
+    },
+    diff: {
+      truncateThreshold: 3,
+    },
     testTimeout: 60_000,
     hookTimeout: 120_000,
   },
