@@ -624,11 +624,15 @@ export function makeDefaultDataTokenForLocal(
 /**
  * Emit a DataToken for the given local at save (push) time.
  *
- * All context locals are synthesized upfront during inline recursion
- * context setup, before any body execution, so localVar is always present
- * and non-null at push time. wrapDataToken is unconditionally safe for
- * every type: DataList/Array/DataDictionary/String, numeric, Boolean, and
- * reference types alike.
+ * wrapDataToken dispatches on the compile-time type of localVar (selecting
+ * __op_Implicit__VRCSDK3DataDataList for a DataList variable, etc.), so
+ * even a null DataList reference is boxed as a DataList-typed token.
+ * The pop site's __get_DataList__ can then safely unwrap it to null
+ * without a wrong-type-token crash.
+ *
+ * This contrasts with the prefill path (makeDefaultDataTokenForLocal),
+ * which constructs fresh default-value tokens for stack init; the push
+ * path wraps whatever value the local currently holds.
  */
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
@@ -7299,11 +7303,10 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]. All context locals are synthesized upfront
-  // during setup before any body execution, so every local holds a
-  // pre-initialised (non-null) value; wrapDataToken is therefore safe
-  // unconditionally. Note: set_Item overwrites the prefilled slot — the
-  // prefill only protects slots that are never reached by a push.
+  // Save each local at stack[SP]. wrapDataToken selects the implicit operator
+  // based on the compile-time type of localVar, so even a null branch-local
+  // produces a type-correct DataList/Array/DataDictionary token. The pop site
+  // can safely unwrap a DataList-typed token to null without crashing.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -7871,11 +7874,10 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]. All context locals are synthesized upfront
-  // during setup before any body execution, so every local holds a
-  // pre-initialised (non-null) value; wrapDataToken is therefore safe
-  // unconditionally. Note: set_Item overwrites the prefilled slot — the
-  // prefill only protects slots that are never reached by a push.
+  // Save each local at stack[SP]. wrapDataToken selects the implicit operator
+  // based on the compile-time type of localVar, so even a null branch-local
+  // produces a type-correct DataList/Array/DataDictionary token. The pop site
+  // can safely unwrap a DataList-typed token to null without crashing.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
