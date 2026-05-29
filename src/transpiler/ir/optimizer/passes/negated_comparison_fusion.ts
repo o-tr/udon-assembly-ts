@@ -1,8 +1,8 @@
 import { PrimitiveTypes } from "../../../frontend/type_symbols.js";
 import type { TACInstruction } from "../../tac_instruction.js";
 import {
-  AssignmentInstruction,
   BinaryOpInstruction,
+  CopyInstruction,
   TACInstructionKind,
   type UnaryOpInstruction,
 } from "../../tac_instruction.js";
@@ -85,7 +85,7 @@ export const booleanNegationFusion = (
             ) {
               replacements.set(
                 i,
-                new AssignmentInstruction(outer.dest, inner.operand),
+                new CopyInstruction(outer.dest, inner.operand),
               );
               removed.add(defIndex);
             }

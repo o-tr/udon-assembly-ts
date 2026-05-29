@@ -130,16 +130,12 @@ function resolveCfgHeavyPassInstructionLimit(): number {
 function shouldSkipLargeInputPass(
   passName: string,
   currentInstructionCount: number,
-  inputInstructionCount: number,
   limit: number,
 ): boolean {
-  const guardInstructionCount = Math.max(
-    currentInstructionCount,
-    inputInstructionCount,
-  );
+  const guardInstructionCount = currentInstructionCount;
   if (guardInstructionCount <= limit) return false;
   console.warn(
-    `Skipping ${passName}: ${guardInstructionCount} input/current instructions exceeds limit of ${limit}`,
+    `Skipping ${passName}: ${guardInstructionCount} current instructions exceeds limit of ${limit}`,
   );
   return true;
 }
@@ -478,8 +474,6 @@ export class TACOptimizer {
   ): TACInstruction[] {
     const MAX_ITERATIONS = 3;
     let optimized = instructions;
-    const inputInstructionCount = instructions.length;
-
     const edgeLabelSeed: EdgeLabelSeed = { value: 0 };
 
     // Opt-in per-pass profiler. When no sink is provided `timed` is effectively
@@ -534,10 +528,7 @@ export class TACOptimizer {
       run(timed("constantFolding.afterSccpLocal", () => constantFolding(next)));
       // On huge generated TAC, shrink with block-local passes before any
       // global/fixpoint-heavy pass has a chance to allocate large state.
-      if (
-        Math.max(next.length, inputInstructionCount) >
-        resolveCfgHeavyPassInstructionLimit()
-      ) {
+      if (next.length > resolveCfgHeavyPassInstructionLimit()) {
         ranPreLocalCleanup = true;
         run(
           timed("preCopyPropagationLocal", () =>
@@ -558,12 +549,7 @@ export class TACOptimizer {
       // still complete and later linear/local passes can run.
       const sccpInstructionLimit = resolveSccpInstructionLimit();
       if (
-        !shouldSkipLargeInputPass(
-          "SCCP",
-          next.length,
-          inputInstructionCount,
-          sccpInstructionLimit,
-        )
+        !shouldSkipLargeInputPass("SCCP", next.length, sccpInstructionLimit)
       ) {
         run(
           timed("sccpAndPrune", () =>
@@ -582,7 +568,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "readonlyDataCollectionFolding",
           next.length,
-          inputInstructionCount,
           resolveReadonlyDataCollectionFoldingInstructionLimit(),
         )
       ) {
@@ -615,7 +600,6 @@ export class TACOptimizer {
           shouldSkipLargeInputPass(
             "SSA window",
             next.length,
-            inputInstructionCount,
             ssaInstructionLimit,
           )
         ) {
@@ -681,7 +665,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "copyPropagation",
           next.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
@@ -702,7 +685,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "deadStoresCFG",
           next.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
@@ -727,7 +709,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "sink",
           next.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
@@ -738,7 +719,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "blockLayout",
           next.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
@@ -758,7 +738,6 @@ export class TACOptimizer {
           !shouldSkipLargeInputPass(
             "licm",
             next.length,
-            inputInstructionCount,
             resolveCfgHeavyPassInstructionLimit(),
           )
         ) {
@@ -769,7 +748,6 @@ export class TACOptimizer {
           !shouldSkipLargeInputPass(
             "unswitch",
             next.length,
-            inputInstructionCount,
             resolveCfgHeavyPassInstructionLimit(),
           )
         ) {
@@ -780,7 +758,6 @@ export class TACOptimizer {
           !shouldSkipLargeInputPass(
             "induction",
             next.length,
-            inputInstructionCount,
             resolveCfgHeavyPassInstructionLimit(),
           )
         ) {
@@ -795,7 +772,6 @@ export class TACOptimizer {
           !shouldSkipLargeInputPass(
             "loopStructures",
             next.length,
-            inputInstructionCount,
             resolveCfgHeavyPassInstructionLimit(),
           )
         ) {
@@ -856,7 +832,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "cowTemporaries",
           optimized.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
@@ -872,7 +847,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "reuseTemporaries",
           optimized.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
@@ -888,7 +862,6 @@ export class TACOptimizer {
         !shouldSkipLargeInputPass(
           "reuseLocalVariables",
           optimized.length,
-          inputInstructionCount,
           resolveCfgHeavyPassInstructionLimit(),
         )
       ) {
