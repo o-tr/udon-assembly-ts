@@ -625,46 +625,17 @@ export function makeDefaultDataTokenForLocal(
  * Emit a DataToken for the given local at save (push) time.
  *
  * All context locals are synthesized upfront during inline recursion
- * context setup, before any body execution. The prefill mechanism
- * (makeDefaultDataTokenForLocal) ensures each per-local stack slot starts
- * with a type-correct token. At push time the localVar is always present
- * and non-null, so wrapDataToken is unconditionally safe.
- *
- * Call-sites that need runtime null-safety for possibly uninitialized
- * locals should go through makeDefaultDataTokenForLocal (prefill path)
- * rather than this helper (push path).
+ * context setup, before any body execution, so localVar is always present
+ * and non-null at push time. wrapDataToken is unconditionally safe for
+ * every type: DataList/Array/DataDictionary/String, numeric, Boolean, and
+ * reference types alike.
  */
 export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
-  localType: TypeSymbol,
+  _localType: TypeSymbol,
   localVar: VariableOperand,
 ): TACOperand {
-  const udonType = localType.udonType;
-
-  if (isInlineHandleType(converter, localType)) {
-    // Inline handle types are boxed via wrapDataToken which handles implicit
-    // boxing correctly. The localVar is always present because both call
-    // sites unconditionally create it before passing to this function.
-    return converter.wrapDataToken(localVar);
-  }
-
-  switch (udonType) {
-    case UdonType.DataList:
-    case UdonType.Array:
-    case UdonType.DataDictionary:
-    case UdonType.String:
-      // These types use typed ctors in unwrapDataToken. Wrap the localVar
-      // via wrapDataToken so the live DataList survives the recursive
-      // round-trip. The localVar is always present; no default token needed.
-      return converter.wrapDataToken(localVar);
-
-    default: {
-      // Numeric, Boolean, and other reference types are safe to box via
-      // wrapDataToken — unwrapDataToken accepts the resulting token for these
-      // types. The localVar is always present; use it directly.
-      return converter.wrapDataToken(localVar);
-    }
-  }
+  return converter.wrapDataToken(localVar);
 }
 
 /**
