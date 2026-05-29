@@ -247,9 +247,11 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     // Regression for the residual problem tracked by issue 2026-05-09T133000.
     // Both locals are declared inside separate branches so that at the recursive
     // call site, one local is truly absent/uninitialized depending on which
-    // branch was taken. Without prefill tokens (makeDefaultDataTokenForLocal),
-    // the stack would contain wrong-type tokens and unwrapDataToken would crash
-    // when accessing .DataList on a boxed-null token instead of a DataList token.
+    // branch was taken. tokenCtorForStack scans the prefill initialisation block
+    // (after the stack ctor, before the first Add), confirming that both
+    // branch-local DataList stacks are prefilled with op_Implicit tokens.
+    // The push path (set_Item at SP) uses unconditional wrapDataToken, tested
+    // separately by the push-path test below.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
       import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";

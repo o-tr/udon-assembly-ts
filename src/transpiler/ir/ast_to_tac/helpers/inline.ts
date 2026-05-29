@@ -7300,8 +7300,10 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   this.emitCopyWithTracking(spVar, spTemp);
 
   // Save each local at stack[SP]. All context locals are synthesized upfront
-  // during setup; the prefill already guarantees type-correct tokens for every
-  // slot, so wrapDataToken is unconditionally safe.
+  // during setup before any body execution, so every local holds a
+  // pre-initialised (non-null) value; wrapDataToken is therefore safe
+  // unconditionally. Note: set_Item overwrites the prefilled slot — the
+  // prefill only protects slots that are never reached by a push.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -7870,8 +7872,10 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   this.emitCopyWithTracking(spVar, spTemp);
 
   // Save each local at stack[SP]. All context locals are synthesized upfront
-  // during setup; the prefill already guarantees type-correct tokens for every
-  // slot, so wrapDataToken is unconditionally safe.
+  // during setup before any body execution, so every local holds a
+  // pre-initialised (non-null) value; wrapDataToken is therefore safe
+  // unconditionally. Note: set_Item overwrites the prefilled slot — the
+  // prefill only protects slots that are never reached by a push.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
