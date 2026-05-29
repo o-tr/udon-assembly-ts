@@ -58,6 +58,7 @@ import {
   PropertyGetInstruction,
   ReturnInstruction,
   type TACInstruction,
+  TACInstructionKind,
   UnconditionalJumpInstruction,
 } from "../../tac_instruction.js";
 import {
@@ -3691,7 +3692,7 @@ function emitLightweightFinallyOnlyTryWithAbruptJumps(
 
   for (const inst of tryInstructions) {
     if (
-      inst.kind === "UnconditionalJump" &&
+      inst.kind === TACInstructionKind.UnconditionalJump &&
       inst instanceof UnconditionalJumpInstruction &&
       inst.label.kind === TACOperandKind.Label &&
       outerJumpTargets.has((inst.label as LabelOperand).name)

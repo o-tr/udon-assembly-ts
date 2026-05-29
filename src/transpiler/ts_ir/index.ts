@@ -38,6 +38,7 @@ export interface TsIrEmitOptions {
 }
 
 export interface TsIrEmitResult {
+  /** Generated module text. Empty when using emitTsIrToFile; read filePath for streamed output. */
   code: string;
   labels: Record<string, number>;
   heapSlots: Record<string, string>;
