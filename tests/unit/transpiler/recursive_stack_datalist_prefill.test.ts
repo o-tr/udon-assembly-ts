@@ -296,12 +296,11 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
     );
   });
 
-  it("push path: all inline DataList locals emit op_Implicit via wrapDataToken(localVar)", () => {
-    // This test verifies that the push path wraps each local via wrapDataToken
-    // (producing op_Implicit), not via the old wrapRecursiveStackLocal (which
-    // constructed ctor tokens). In inline recursion, all context locals are
-    // synthesized during context setup before any body execution, so they are
-    // always present regardless of initialization state.
+  it("prefill: DataList locals emit op_Implicit tokens (not ctor)", () => {
+    // This test verifies that the prefill path wraps each local consistently
+    // (producing op_Implicit), not via the old ctor-construction approach. In
+    // inline recursion, all context locals are synthesized during context setup
+    // before any body execution, so they are always present.
     const source = `
       import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
       import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
