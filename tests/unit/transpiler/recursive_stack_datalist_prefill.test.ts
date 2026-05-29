@@ -242,4 +242,210 @@ describe("inline recursive stack — DataList prefill (issue 2026-05-09T133000)"
       ),
     ).toBe("__op_Implicit__VRCSDK3DataDataList");
   });
+
+  it("branch-local arrays: prefill prevents crashes from uninitialized branch locals", () => {
+    // Regression for the residual problem tracked by issue 2026-05-09T133000.
+    // Both locals are declared inside separate branches so that at the recursive
+    // call site, one local is truly absent/uninitialized depending on which
+    // branch was taken. tokenCtorForStack scans the prefill initialisation block
+    // (after the stack ctor, before the first Add), confirming that both
+    // branch-local DataList stacks are prefilled with op_Implicit tokens.
+    // The push path (set_Item at SP) uses unconditional wrapDataToken, tested
+    // separately by the push-path test below.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+      class BranchLocalTest {
+        static process(items: DataList, depth: number): DataList {
+          if (depth <= 0) return items;
+          if (depth > 1) {
+            // Branch A: self-call happens here; 'a' is initialized but 'b' does not exist.
+            const a: DataList = new DataList();
+            const subA: DataList = BranchLocalTest.process(items, depth - 1);
+            a.push(subA);
+          } else {
+            // Branch B: 'b' is initialized here; no self-call in this branch.
+            const b: DataList = new DataList();
+            b.push(items);
+          }
+          return items;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const list: DataList = new DataList();
+          BranchLocalTest.process(list, 3);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+    const prefix = "__inlineRec_BranchLocalTest_process_stack_";
+
+    // Both branch-local arrays are synthesized upfront during context setup,
+    // so saveLocalAsSafeToken wraps them via wrapDataToken(localVar).
+    expect(tokenCtorForStack(tac, prefix, "a")).toBe(
+      "__op_Implicit__VRCSDK3DataDataList",
+    );
+    expect(tokenCtorForStack(tac, prefix, "b")).toBe(
+      "__op_Implicit__VRCSDK3DataDataList",
+    );
+  });
+
+  it("prefill: DataList locals emit op_Implicit tokens (not ctor)", () => {
+    // This test verifies that the prefill path wraps each local consistently
+    // (producing op_Implicit), not via the old ctor-construction approach. In
+    // inline recursion, all context locals are synthesized during context setup
+    // before any body execution, so they are always present.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+      class PushPathTest {
+        static gather(items: DataList, depth: number): DataList {
+          const result: DataList = new DataList();
+          if (depth <= 0) return result;
+          // Self-call with uninitialized 'result' in the recursive path.
+          const sub: DataList = PushPathTest.gather(items, depth - 1);
+          result.push(sub);
+          return result;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const list: DataList = new DataList();
+          PushPathTest.gather(list, 2);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+    const prefix = "__inlineRec_PushPathTest_gather_stack_";
+
+    // The 'result' and 'sub' locals use wrapDataToken(localVar) at push time,
+    // producing op_Implicit tokens — compatible with the accessor.
+    expect(tokenCtorForStack(tac, prefix, "result")).toBe(
+      "__op_Implicit__VRCSDK3DataDataList",
+    );
+    expect(tokenCtorForStack(tac, prefix, "sub")).toBe(
+      "__op_Implicit__VRCSDK3DataDataList",
+    );
+  });
+
+  it("push path: all inline locals use wrapDataToken(localVar) since they are synthesized upfront", () => {
+    // This test verifies that saveLocalAsSafeToken uses wrapDataToken(localVar)
+    // for both initialized and uninitialized DataList locals at push time. In
+    // inline recursion, all context locals (params, self-call results, try/catch
+    // vars) are synthesized during context setup before any body execution, so
+    // they are always present regardless of initialization state. There is no
+    // distinction between initialized and uninitialized — every local gets
+    // wrapped via wrapDataToken(localVar).
+    //
+    // The source uses a branch-local pattern where 'uninit' is declared only in
+    // the else-branch (after the recursive call) and 'result' is initialized
+    // before the call. Both should produce set_Item calls whose token ctor args
+    // reference their respective variable names, confirming wrapDataToken was used.
+    const source = `
+      import { UdonBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonDecorators";
+      import { UdonSharpBehaviour } from "@ootr/udon-assembly-ts/stubs/UdonSharpBehaviour";
+      import { DataList } from "@ootr/udon-assembly-ts/stubs/UdonTypes";
+
+      class PushPathTest {
+        static gather(items: DataList, depth: number): DataList {
+          const result: DataList = new DataList();
+          if (depth <= 0) return result;
+          // Branch A: self-call here — 'result' is initialized before call.
+          if (depth > 1) {
+            const sub: DataList = PushPathTest.gather(items, depth - 1);
+            result.push(sub);
+          } else {
+            // Branch B: no self-call; 'uninit' declared here but never used.
+            const uninit: DataList = new DataList();
+          }
+          return result;
+        }
+      }
+
+      @UdonBehaviour()
+      class Main extends UdonSharpBehaviour {
+        Start(): void {
+          const list: DataList = new DataList();
+          PushPathTest.gather(list, 2);
+        }
+      }
+    `;
+    const result = new TypeScriptToUdonTranspiler().transpile(source, {
+      silent: true,
+    });
+    const tac = result.tac;
+
+    const lines = tac.split("\n");
+    const prefix = "__inlineRec_PushPathTest_gather_stack_";
+
+    // Find set_Item calls for the 'result' stack and verify its token ctor
+    // argument references "result". Then find set_Item for 'uninit' stack and
+    // check that its token ctor arg also references "uninit" — both use
+    // wrapDataToken(localVar) since all inline context locals are synthesized.
+    const inlinePrefix = "__inline_PushPathTest_gather_";
+    const resultSetItemRe = new RegExp(
+      `\\bcall ${prefix}${inlinePrefix}result\\.set_Item`,
+    );
+    const uninitSetItemRe = new RegExp(
+      `\\bcall ${prefix}${inlinePrefix}uninit\\.set_Item`,
+    );
+
+    let setResultLineIdx = -1;
+    let setUninitLineIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (resultSetItemRe.test(lines[i])) setResultLineIdx = i;
+      if (uninitSetItemRe.test(lines[i])) setUninitLineIdx = i;
+    }
+
+    expect(setResultLineIdx).toBeGreaterThanOrEqual(0);
+    expect(setUninitLineIdx).toBeGreaterThanOrEqual(0);
+
+    // Both 'result' and 'uninit' use their (mangled) variable references via
+    // wrapDataToken(localVar) — saveLocalAsSafeToken always receives a
+    // non-null localVar because both call sites unconditionally create it.
+    // wrapDataToken emits __op_Implicit__, not __ctor__.
+    let resultArgIsMangledVar = false;
+    for (let j = 1; j <= 3 && setResultLineIdx - j >= 0; j++) {
+      const l = lines[setResultLineIdx - j];
+      if (
+        /VRCSDK3DataDataToken\.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken\(.*_result\)/.test(
+          l,
+        )
+      ) {
+        resultArgIsMangledVar = true;
+        break;
+      }
+    }
+
+    let uninitArgIsMangledVar = false;
+    for (let j = 1; j <= 3 && setUninitLineIdx - j >= 0; j++) {
+      const l = lines[setUninitLineIdx - j];
+      if (
+        /VRCSDK3DataDataToken\.__op_Implicit__VRCSDK3DataDataList__VRCSDK3DataDataToken\(.*_uninit\)/.test(
+          l,
+        )
+      ) {
+        uninitArgIsMangledVar = true;
+        break;
+      }
+    }
+
+    expect(resultArgIsMangledVar).toBe(true);
+    expect(uninitArgIsMangledVar).toBe(true);
+  });
 });

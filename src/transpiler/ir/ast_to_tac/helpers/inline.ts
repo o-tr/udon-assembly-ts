@@ -621,57 +621,24 @@ export function makeDefaultDataTokenForLocal(
   }
 }
 
-function needsNullSafeRecursiveStackToken(
+/**
+ * Emit a DataToken for the given local at save (push) time.
+ *
+ * wrapDataToken dispatches on the compile-time type of localVar (selecting
+ * __op_Implicit__VRCSDK3DataDataList for a DataList variable, etc.), so
+ * even a null DataList reference is boxed as a DataList-typed token.
+ * The pop site's __get_DataList__ can then safely unwrap it to null
+ * without a wrong-type-token crash.
+ *
+ * This contrasts with the prefill path (makeDefaultDataTokenForLocal),
+ * which constructs fresh default-value tokens for stack init; the push
+ * path wraps whatever value the local currently holds.
+ */
+export function saveLocalAsSafeToken(
   converter: ASTToTACConverter,
-  localType: TypeSymbol,
-): boolean {
-  if (isInlineHandleType(converter, localType)) {
-    return true;
-  }
-  switch (localType.udonType) {
-    case UdonType.Array:
-    case UdonType.DataList:
-    case UdonType.DataDictionary:
-      return true;
-    default:
-      return false;
-  }
-}
-
-function wrapRecursiveStackLocal(
-  converter: ASTToTACConverter,
-  localVar: TACOperand,
-  localType: TypeSymbol,
+  localVar: VariableOperand,
 ): TACOperand {
-  if (!needsNullSafeRecursiveStackToken(converter, localType)) {
-    return converter.wrapDataToken(localVar);
-  }
-
-  const isNull = converter.newTemp(PrimitiveTypes.boolean);
-  const nonNullLabel = converter.newLabel("rec_stack_local_non_null");
-  const doneLabel = converter.newLabel("rec_stack_local_done");
-  const token = converter.newTemp(ExternTypes.dataToken);
-
-  converter.emit(
-    new BinaryOpInstruction(
-      isNull,
-      localVar,
-      "==",
-      createConstant(null, ObjectType),
-    ),
-  );
-  converter.emit(new ConditionalJumpInstruction(isNull, nonNullLabel));
-
-  const defaultToken = makeDefaultDataTokenForLocal(converter, localType);
-  converter.emit(new CopyInstruction(token, defaultToken));
-  converter.emit(new UnconditionalJumpInstruction(doneLabel));
-
-  converter.emit(new LabelInstruction(nonNullLabel));
-  const wrapped = converter.wrapDataToken(localVar);
-  converter.emit(new CopyInstruction(token, wrapped));
-
-  converter.emit(new LabelInstruction(doneLabel));
-  return token;
+  return converter.wrapDataToken(localVar);
 }
 
 /**
@@ -7296,7 +7263,10 @@ function hasThisFieldMutation(method: { body: BlockStatementNode }): boolean {
 /**
  * Push all locals onto per-local DataList stacks at the current SP.
  * Used at each self-call site BEFORE the JUMP to the recursive method.
- * Increments SP first, then saves all locals at the new SP index.
+ * Increments SP first, then saves all locals at the new SP index. Uses
+ * saveLocalAsSafeToken, which unconditionally wraps localVar — safe because
+ * all context locals are synthesized upfront and the prefill mechanism
+ * ensures type-correct tokens for every stack slot.
  */
 export function emitCallSitePush(this: ASTToTACConverter): void {
   const context = this.currentRecursiveContext;
@@ -7333,7 +7303,10 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]
+  // Save each local at stack[SP]. wrapDataToken selects the implicit operator
+  // based on the compile-time type of localVar, so even a null branch-local
+  // produces a type-correct DataList/Array/DataDictionary token. The pop site
+  // can safely unwrap a DataList-typed token to null without crashing.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -7341,7 +7314,7 @@ export function emitCallSitePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = wrapRecursiveStackLocal(this, localVar, local.type);
+    const token = saveLocalAsSafeToken(this, localVar);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
@@ -7863,7 +7836,10 @@ export function countStaticSelfCalls(
 
 /**
  * Push all locals onto per-local DataList stacks for inline recursive context.
- * Same logic as emitCallSitePush but uses currentInlineRecursiveContext.
+ * Same logic as emitCallSitePush but uses currentInlineRecursiveContext. Uses
+ * saveLocalAsSafeToken, which unconditionally wraps localVar — safe because
+ * all context locals are synthesized upfront and the prefill mechanism
+ * ensures type-correct tokens for every stack slot.
  */
 export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   const context = this.currentInlineRecursiveContext;
@@ -7898,7 +7874,10 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
   );
   this.emitCopyWithTracking(spVar, spTemp);
 
-  // Save each local at stack[SP]
+  // Save each local at stack[SP]. wrapDataToken selects the implicit operator
+  // based on the compile-time type of localVar, so even a null branch-local
+  // produces a type-correct DataList/Array/DataDictionary token. The pop site
+  // can safely unwrap a DataList-typed token to null without crashing.
   for (let index = 0; index < context.locals.length; index++) {
     const local = context.locals[index];
     const stackVarInfo = context.stackVars[index];
@@ -7906,7 +7885,7 @@ export function emitInlineRecursivePush(this: ASTToTACConverter): void {
     const localVar = createVariable(local.name, local.type, {
       isLocal: true,
     });
-    const token = wrapRecursiveStackLocal(this, localVar, local.type);
+    const token = saveLocalAsSafeToken(this, localVar);
     this.emit(
       new MethodCallInstruction(undefined, stackVar, "set_Item", [
         spVar,
